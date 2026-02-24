@@ -1,4 +1,5 @@
 import argparse
+import base64
 import json
 import os
 import re
@@ -352,8 +353,9 @@ def validate_or_reencode_image(
         log_append(release_dir, f"{now_ts()} | {title} | IMAGE_VALIDATE_FAIL | path={path} | stderr={err_tail}")
 
     safe_png = tmp_dir / f"{path.stem}__safe.png"
+    path_size = path.stat().st_size if path.exists() else -1
     if not reencode_image_to_safe(path, safe_png):
-        raise RuntimeError(f"invalid/corrupted image: {path.name} | stderr={err_tail}")
+        raise RuntimeError(f"file={path} size={path_size}B stderr={err_tail or 'n/a'}")
 
     safe_jpg = safe_png.with_suffix(".jpg")
     if safe_png.exists() and safe_png.stat().st_size > 0:
@@ -366,12 +368,45 @@ def validate_or_reencode_image(
     ok2, err_tail2 = validate_image_decodable(candidate)
     if not ok2:
         raise RuntimeError(
-            f"invalid/corrupted image after reencode: {path.name} -> {candidate.name} | stderr={err_tail2 or err_tail}"
+            f"file={path} size={path_size}B safe={candidate} stderr={err_tail2 or err_tail or 'n/a'}"
         )
 
     if release_dir is not None:
         log_append(release_dir, f"{now_ts()} | {title} | IMAGE_VALIDATE_RECOVERED | src={path} | safe={candidate}")
     return candidate
+
+
+def _is_local_dev_flow() -> bool:
+    origin_backend = str(os.environ.get("ORIGIN_BACKEND", "")).strip().lower()
+    app_env = str(os.environ.get("APP_ENV", "")).strip().lower()
+    return origin_backend in ("", "local") or app_env in ("", "dev", "local")
+
+
+def is_smoke_mode(title: str) -> bool:
+    env_smoke = str(os.environ.get("SMOKE_PLACEHOLDER_IMAGES", "")).strip().lower() in ("1", "true", "yes", "on")
+    title_smoke = title.startswith("DEV Smoke Test")
+    return _is_local_dev_flow() and (env_smoke or title_smoke)
+
+
+def generate_placeholder_cover(tmp_dir: Path) -> Path:
+    tiny_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mNgAAAAAgABSK+kcQAAAABJRU5ErkJggg=="
+    out_path = tmp_dir / "smoke_placeholder_cover.png"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(base64.b64decode(tiny_png_b64))
+    print(f"SMOKE_PLACEHOLDER_COVER_USED: {out_path}", flush=True)
+    return out_path
+
+
+def resolve_cover_image(path: Path, tmp_dir: Path, *, release_dir: Path, title: str) -> Path:
+    try:
+        return validate_or_reencode_image(path, tmp_dir, release_dir=release_dir, title=title)
+    except Exception as e:
+        if is_smoke_mode(title):
+            return generate_placeholder_cover(tmp_dir)
+
+        msg = f"invalid cover image: file={path} size={path.stat().st_size if path.exists() else -1}B decoder={e}"
+        print(f"FATAL_IMAGE_INVALID: {msg}", flush=True)
+        raise RuntimeError(msg) from e
 
 
 def ffprobe_json(path: Path) -> Dict[str, object]:
@@ -2055,7 +2090,7 @@ def process_project(
                 continue
 
             try:
-                image_path = validate_or_reencode_image(
+                image_path = resolve_cover_image(
                     image_path,
                     tmp_dir,
                     release_dir=release_dir,
@@ -2066,7 +2101,7 @@ def process_project(
                 update_job_status_in_lines(lines, job, fail_msg)
                 write_playlists_file(playlists_path, lines)
                 log_append(release_dir, f"{now_ts()} | {title} | FAIL | invalid/corrupted image: {job.image_name} | {e}")
-                continue
+                raise
 
             # Validate tracks
             track_paths: List[Path] = []
