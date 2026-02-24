@@ -11,6 +11,19 @@ This project uses **unittest** (standard library) for Unit/Integration/E2E tests
 
 ```bash
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
+```
+
+---
+
+## Codex/CI environment setup
+
+For Codex/CI environments, run:
+
+```bash
+python -m pip install -U pip
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 ---
@@ -50,8 +63,6 @@ PYTHONPATH=. python -m unittest discover -s tests/e2e -v
 ---
 
 ## 3) Coverage
-
-> `coverage` is included in `requirements.txt`.
 
 ### Console report
 ```bash
