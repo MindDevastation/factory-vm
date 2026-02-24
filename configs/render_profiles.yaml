@@ -1,0 +1,22 @@
+render_profiles:
+  long_1080p24:
+    video:
+      width: 1920
+      height: 1080
+      fps: 24
+      codec_required: "h264"
+    audio:
+      sample_rate: 48000
+      channels: 2
+      codec_required: "aac"
+
+  titanwave_1080p24:
+    video:
+      width: 1920
+      height: 1080
+      fps: 24
+      codec_required: "h264"
+    audio:
+      sample_rate: 48000
+      channels: 2
+      codec_required: "aac"

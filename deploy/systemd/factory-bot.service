@@ -1,0 +1,13 @@
+[Unit]
+Description=Factory Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/factory-vm
+EnvironmentFile=/opt/factory-vm/deploy/env
+ExecStart=/opt/factory-vm/.venv/bin/python -m services.bot
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

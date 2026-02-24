@@ -4,6 +4,7 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+.idea
 
 # local data
 data/

@@ -1,0 +1,13 @@
+[Unit]
+Description=Factory worker (importer)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/factory-vm
+EnvironmentFile=/opt/factory-vm/deploy/env
+ExecStart=/opt/factory-vm/.venv/bin/python -m services.workers --role importer
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,46 @@
+qa_policy:
+  duration_diff_hard_fail_sec: 2.0
+  warning_blocks_pipeline: true
+
+  video:
+    fps_target: 24
+    fps_tolerance: 0.5
+    require_resolution_match: true
+    require_codec: "h264"
+
+  audio:
+    require_codec: "aac"
+    require_sample_rate: 48000
+    require_channels: 2
+
+  loudness:
+    # Limit volumedetect analysis window to keep QA fast for multi-hour videos.
+    seconds: 60
+    warn_if_max_volume_gte_db: -0.1
+    warn_if_mean_volume_gt_db: -10.0
+    warn_if_mean_volume_lt_db: -55.0
+    info_if_mean_volume_lt_db: -45.0
+
+preview_policy:
+  enabled: true
+  seconds: 60
+  video:
+    width: 1280
+    height: 720
+    fps: 24
+    codec: "h264"
+    video_bitrate: "1200k"
+  audio:
+    codec: "aac"
+    bitrate: "96k"
+    sample_rate: 48000
+    channels: 2
+
+retention_policy:
+  workspace_ephemeral: true
+  delete_mp4_after_published_hours: 48
+  keep_forever:
+    - "meta"
+    - "qa"
+    - "logs"
+    - "youtube_link"

@@ -1,0 +1,7 @@
+upload:
+  privacy_default: "private"
+  resumable: true
+
+publish:
+  mode_default: "MANUAL"
+  autopublish_flag_field: "autopublish_enabled"

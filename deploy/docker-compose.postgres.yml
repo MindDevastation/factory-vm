@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: factory_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: factory
+      POSTGRES_USER: factory
+      POSTGRES_PASSWORD: change_me
+    ports:
+      - "5432:5432"
+    volumes:
+      - factory_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factory -d factory"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  factory_pg_data:

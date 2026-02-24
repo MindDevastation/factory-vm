@@ -1,0 +1,1 @@
+0 * * * * cd /opt/factory-vm && /opt/factory-vm/.venv/bin/python -m services.workers --role cleanup --once

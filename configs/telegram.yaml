@@ -1,0 +1,14 @@
+bot:
+  approval_message:
+    include_preview_60s: true
+    buttons:
+      - "APPROVE"
+      - "REJECT"
+      - "SHOW_QA"
+      - "SHOW_LOGS"
+      - "MARK_PUBLISHED"
+
+  progress_notifications:
+    enabled: true
+    milestones_pct: [0, 25, 50, 75, 100]
+    on_fail: true

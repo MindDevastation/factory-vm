@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Factory VM</h1>
+<p class="muted">Последние 200 jobs</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Канал</th>
+      <th>Релиз</th>
+      <th>State</th>
+      <th>Stage</th>
+      <th>Progress</th>
+      <th>Updated</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for j in jobs %}
+    <tr>
+      <td><a href="/jobs/{{ j.id }}">{{ j.id }}</a></td>
+      <td>{{ j.channel_name }}<div class="muted">{{ j.channel_slug }}</div></td>
+      <td>{{ j.release_title }}</td>
+      <td><span class="pill">{{ j.state }}</span></td>
+      <td>{{ j.stage }}</td>
+      <td>
+        <div class="bar"><div style="width: {{ j.progress_pct }}%"></div></div>
+        <div class="muted">{{ "%.1f"|format(j.progress_pct) }}% {{ j.progress_text or "" }}</div>
+      </td>
+      <td class="muted">{{ j.updated_at }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

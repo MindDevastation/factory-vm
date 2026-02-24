@@ -1,0 +1,35 @@
+channels:
+  - slug: "darkwood-reverie"
+    display_name: "Darkwood Reverie"
+    kind: "LONG"
+    weight: 1.0
+    render_profile: "long_1080p24"
+    autopublish_enabled: false
+
+  - slug: "channel-b"
+    display_name: "Channel B"
+    kind: "LONG"
+    weight: 1.0
+    render_profile: "long_1080p24"
+    autopublish_enabled: false
+
+  - slug: "channel-c"
+    display_name: "Channel C"
+    kind: "LONG"
+    weight: 1.0
+    render_profile: "long_1080p24"
+    autopublish_enabled: false
+
+  - slug: "channel-d"
+    display_name: "Channel D"
+    kind: "LONG"
+    weight: 1.0
+    render_profile: "long_1080p24"
+    autopublish_enabled: false
+
+  - slug: "titanwave-sonic"
+    display_name: "TitanWave Sonic"
+    kind: "TITANWAVE"
+    weight: 0.0
+    render_profile: "titanwave_1080p24"
+    autopublish_enabled: false

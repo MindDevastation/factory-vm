@@ -1,0 +1,15 @@
+{
+  "channel_slug": "darkwood-reverie",
+  "title": "Example Long (180m)",
+  "description": "Example description",
+  "tags": [
+    "#LongFormAmbient",
+    "#DarkwoodReverie"
+  ],
+  "assets": {
+    "audio": [
+      "audio/my_track.wav"
+    ],
+    "cover": "images/cover.png"
+  }
+}

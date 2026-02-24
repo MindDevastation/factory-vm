@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block body %}
+<p><a href="/">← назад</a></p>
+<h1>Job #{{ job.id }}</h1>
+
+<div class="grid">
+  <div>
+    <h3>Основное</h3>
+    <p><b>Channel:</b> {{ job.channel_name }} ({{ job.channel_slug }})</p>
+    <p><b>Title:</b> {{ job.release_title }}</p>
+    <p><b>State:</b> <span class="pill" id="state">{{ job.state }}</span> <b>Stage:</b> <span id="stage">{{ job.stage }}</span></p>
+    <p><b>Progress:</b> <span id="progress">{{ "%.1f"|format(job.progress_pct) }}</span>% <span id="progress_text">{{ job.progress_text or "" }}</span></p>
+    <p><b>Error:</b> <span class="muted" id="error">{{ job.error_reason or "-" }}</span></p>
+
+    {% set terminal_states = ['PUBLISHED','APPROVED','REJECTED','CANCELLED','RENDER_FAILED','QA_FAILED','UPLOAD_FAILED'] %}
+    {% if job.state not in terminal_states %}
+      <p>
+        <button id="cancelBtn" style="padding:8px 12px;border-radius:8px;border:1px solid #ef4444;background:#fee2e2;cursor:pointer" onclick="cancelJob()">Cancel job</button>
+        <span class="muted" id="cancelStatus"></span>
+      </p>
+    {% endif %}
+
+  </div>
+  <div>
+    <h3>YouTube</h3>
+    {% if yt %}
+      <p><a href="{{ yt.url }}" target="_blank">Open video</a></p>
+      <p><a href="{{ yt.studio_url }}" target="_blank">Open Studio</a></p>
+      <p class="muted">privacy={{ yt.privacy }} uploaded_at={{ yt.uploaded_at }}</p>
+    {% else %}
+      <p class="muted">нет</p>
+    {% endif %}
+  </div>
+</div>
+
+<h3>QA</h3>
+{% if qa %}
+  <pre>{{ qa | tojson(indent=2) }}</pre>
+{% else %}
+  <p class="muted">нет</p>
+{% endif %}
+
+<h3>Logs tail</h3>
+<pre id="logs">loading...</pre>
+
+<script>
+  
+  async function loadJob(){
+    const r = await fetch("/v1/jobs/{{ job.id }}");
+    const j = await r.json();
+    const job = j.job;
+    document.getElementById("state").textContent = job.state;
+    document.getElementById("stage").textContent = job.stage;
+    document.getElementById("progress").textContent = (job.progress_pct ?? 0).toFixed(1);
+    document.getElementById("progress_text").textContent = job.progress_text || "";
+    document.getElementById("error").textContent = job.error_reason || "-";
+
+    const terminal = ["PUBLISHED","APPROVED","REJECTED","CANCELLED","RENDER_FAILED","QA_FAILED","UPLOAD_FAILED"];
+    const btn = document.getElementById("cancelBtn");
+    if (btn){
+      btn.disabled = terminal.includes(job.state);
+      if (job.state === "CANCELLED"){
+        document.getElementById("cancelStatus").textContent = " cancelled";
+      }
+    }
+  }
+
+  async function cancelJob(){
+    const btn = document.getElementById("cancelBtn");
+    if (btn) btn.disabled = true;
+    const st = document.getElementById("cancelStatus");
+    if (st) st.textContent = " cancelling...";
+
+    const r = await fetch("/v1/jobs/{{ job.id }}/cancel", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({"reason": "cancelled from UI"})
+    });
+    if (!r.ok){
+      const t = await r.text();
+      if (st) st.textContent = " cancel failed: " + t;
+      if (btn) btn.disabled = false;
+      return;
+    }
+    if (st) st.textContent = " cancelled";
+    await loadJob();
+  }
+
+async function loadLogs(){
+    const r = await fetch("/v1/jobs/{{ job.id }}/logs?tail=200");
+    const t = await r.text();
+    document.getElementById("logs").textContent = t;
+  }
+  loadLogs();
+  loadJob();
+  setInterval(loadLogs, 5000);
+  setInterval(loadJob, 2000);
+</script>
+
+{% endblock %}

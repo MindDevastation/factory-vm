@@ -1,0 +1,4 @@
+long_pool:
+  window_hours: 48
+  target_videos_per_window: 4
+  allocation: "WEIGHTED"
