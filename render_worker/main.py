@@ -305,6 +305,12 @@ def reencode_image_to_safe(path: Path, out_path: Path) -> bool:
         print(f"IMAGE_REENCODE_DONE: src={path} dst={out_path}", flush=True)
         return True
 
+    if out_path.exists():
+        try:
+            out_path.unlink()
+        except OSError:
+            pass
+
     jpg_out = out_path.with_suffix(".jpg")
     jpg_cmd = [
         "ffmpeg", "-y", "-hide_banner", "-v", "error",
@@ -349,7 +355,14 @@ def validate_or_reencode_image(
     if not reencode_image_to_safe(path, safe_png):
         raise RuntimeError(f"invalid/corrupted image: {path.name} | stderr={err_tail}")
 
-    candidate = safe_png if safe_png.exists() else safe_png.with_suffix(".jpg")
+    safe_jpg = safe_png.with_suffix(".jpg")
+    if safe_png.exists() and safe_png.stat().st_size > 0:
+        candidate = safe_png
+    elif safe_jpg.exists() and safe_jpg.stat().st_size > 0:
+        candidate = safe_jpg
+    else:
+        candidate = safe_png if safe_png.exists() else safe_jpg
+
     ok2, err_tail2 = validate_image_decodable(candidate)
     if not ok2:
         raise RuntimeError(

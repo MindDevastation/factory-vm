@@ -45,6 +45,32 @@ class TestRenderImageSafety(unittest.TestCase):
             self.assertFalse(ok)
             self.assertTrue(err_tail)
 
+
+    def test_validate_or_reencode_image_prefers_valid_jpg_when_safe_png_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            bad_png = d / "invalid.png"
+            bad_png.write_bytes(b"\x89PNG\r\n\x1a\n" + (b"\x00" * 10))
+            tmp_dir = d / "tmp"
+
+            def _fake_reencode(_src: Path, safe_png: Path) -> bool:
+                safe_png.parent.mkdir(parents=True, exist_ok=True)
+                safe_png.write_bytes(b"")
+                safe_png.with_suffix(".jpg").write_bytes(b"jpg-ok")
+                return True
+
+            def _fake_validate(path: Path):
+                if path.suffix.lower() == ".jpg" and path.stat().st_size > 0:
+                    return True, ""
+                return False, "decode failed"
+
+            with mock.patch("render_worker.main.reencode_image_to_safe", side_effect=_fake_reencode):
+                with mock.patch("render_worker.main.validate_image_decodable", side_effect=_fake_validate):
+                    selected = validate_or_reencode_image(bad_png, tmp_dir)
+
+            self.assertEqual(selected.suffix.lower(), ".jpg")
+            self.assertGreater(selected.stat().st_size, 0)
+
     def test_validate_or_reencode_image_invalid_does_not_hang(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             d = Path(td)
