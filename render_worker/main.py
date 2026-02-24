@@ -221,6 +221,159 @@ def run_cmd(cmd: List[str], timeout: Optional[int] = None) -> Tuple[int, str, st
     return p.returncode, out, err
 
 
+def stderr_tail(stderr_text: str, max_lines: int = 8) -> str:
+    lines = [ln for ln in stderr_text.strip().splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    return "\n".join(lines[-max_lines:])
+
+
+def wait_file_stable(
+    path: Path,
+    *,
+    stable_sec: float = 2,
+    timeout_sec: float = 30,
+    min_size: int = 1,
+    release_dir: Optional[Path] = None,
+    title: str = "INPUT",
+) -> bool:
+    start = time.time()
+    stable_since: Optional[float] = None
+    last_size: Optional[int] = None
+    print(f"INPUT_STABLE_WAIT: path={path} stable_sec={stable_sec} timeout_sec={timeout_sec}", flush=True)
+
+    while True:
+        now = time.time()
+        if now - start > timeout_sec:
+            print(f"INPUT_STABLE_TIMEOUT: path={path} last_size={last_size}", flush=True)
+            if release_dir is not None:
+                log_append(release_dir, f"{now_ts()} | {title} | INPUT_STABLE_TIMEOUT | path={path} | size={last_size}")
+            return False
+
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            size = -1
+
+        if size >= min_size and size == last_size:
+            if stable_since is None:
+                stable_since = now
+            if now - stable_since >= stable_sec:
+                print(f"INPUT_STABLE_OK: path={path} size={size}", flush=True)
+                if release_dir is not None:
+                    log_append(release_dir, f"{now_ts()} | {title} | INPUT_STABLE_OK | path={path} | size={size}")
+                return True
+        else:
+            stable_since = None
+            last_size = size
+
+        time.sleep(0.2)
+
+
+def validate_image_decodable(path: Path) -> Tuple[bool, str]:
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-v",
+        "error",
+        "-i",
+        str(path),
+        "-frames:v",
+        "1",
+        "-f",
+        "null",
+        "-",
+    ]
+    code, _out, err = run_cmd(cmd, timeout=30)
+    tail = stderr_tail(err)
+    return code == 0, tail
+
+
+def reencode_image_to_safe(path: Path, out_path: Path) -> bool:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"IMAGE_REENCODE_START: src={path} dst={out_path}", flush=True)
+
+    png_cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-v", "error",
+        "-i", str(path),
+        "-frames:v", "1",
+        "-vf", "format=rgba",
+        str(out_path),
+    ]
+    code, _out, err = run_cmd(png_cmd, timeout=30)
+    if code == 0 and out_path.exists() and out_path.stat().st_size > 0:
+        print(f"IMAGE_REENCODE_DONE: src={path} dst={out_path}", flush=True)
+        return True
+
+    if out_path.exists():
+        try:
+            out_path.unlink()
+        except OSError:
+            pass
+
+    jpg_out = out_path.with_suffix(".jpg")
+    jpg_cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-v", "error",
+        "-i", str(path),
+        "-frames:v", "1",
+        "-vf", "format=yuvj420p",
+        str(jpg_out),
+    ]
+    code2, _out2, err2 = run_cmd(jpg_cmd, timeout=30)
+    if code2 == 0 and jpg_out.exists() and jpg_out.stat().st_size > 0:
+        print(f"IMAGE_REENCODE_DONE: src={path} dst={jpg_out}", flush=True)
+        return True
+
+    print(
+        "IMAGE_REENCODE_FAIL:",
+        f"src={path}",
+        f"png_err={stderr_tail(err)}",
+        f"jpg_err={stderr_tail(err2)}",
+        flush=True,
+    )
+    return False
+
+
+def validate_or_reencode_image(
+    path: Path,
+    tmp_dir: Path,
+    *,
+    release_dir: Optional[Path] = None,
+    title: str = "INPUT",
+) -> Path:
+    if not wait_file_stable(path, release_dir=release_dir, title=title):
+        raise RuntimeError(f"image file not stable in time: {path}")
+
+    ok, err_tail = validate_image_decodable(path)
+    if ok:
+        return path
+
+    if release_dir is not None:
+        log_append(release_dir, f"{now_ts()} | {title} | IMAGE_VALIDATE_FAIL | path={path} | stderr={err_tail}")
+
+    safe_png = tmp_dir / f"{path.stem}__safe.png"
+    if not reencode_image_to_safe(path, safe_png):
+        raise RuntimeError(f"invalid/corrupted image: {path.name} | stderr={err_tail}")
+
+    safe_jpg = safe_png.with_suffix(".jpg")
+    if safe_png.exists() and safe_png.stat().st_size > 0:
+        candidate = safe_png
+    elif safe_jpg.exists() and safe_jpg.stat().st_size > 0:
+        candidate = safe_jpg
+    else:
+        candidate = safe_png if safe_png.exists() else safe_jpg
+
+    ok2, err_tail2 = validate_image_decodable(candidate)
+    if not ok2:
+        raise RuntimeError(
+            f"invalid/corrupted image after reencode: {path.name} -> {candidate.name} | stderr={err_tail2 or err_tail}"
+        )
+
+    if release_dir is not None:
+        log_append(release_dir, f"{now_ts()} | {title} | IMAGE_VALIDATE_RECOVERED | src={path} | safe={candidate}")
+    return candidate
+
+
 def ffprobe_json(path: Path) -> Dict[str, object]:
     cmd = [
         "ffprobe",
@@ -409,7 +562,10 @@ def ensure_rounded_bg_png(assets_dir: Path, *, w: int, h: int, alpha: float, rad
     a = int(round(alpha * 100))
     out = assets_dir / f"bg_round_v2_{w}x{h}_a{a}_r{radius}.png"
     if out.exists():
-        return out
+        validated, _ = validate_image_decodable(out)
+        if validated:
+            return out
+        out.unlink(missing_ok=True)
 
     r = int(max(0, radius))
 
@@ -443,17 +599,24 @@ def ensure_rounded_bg_png(assets_dir: Path, *, w: int, h: int, alpha: float, rad
     )
 
     
+    tmp_out = assets_dir / f".{out.name}.tmp"
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-v", "error",
         "-f", "lavfi",
         "-i", f"color=c=black:s={w}x{h}:d=0.1",
         "-vf", vf,
         "-frames:v", "1",
-        str(out),
+        str(tmp_out),
     ]
     code, out_s, err_s = run_cmd(cmd)
-    if code != 0 or not out.exists():
+    if code != 0 or not tmp_out.exists():
+        tmp_out.unlink(missing_ok=True)
         raise RuntimeError(f"Failed to generate bg png: {err_s.strip() or out_s.strip()}")
+    ok, err_tail = validate_image_decodable(tmp_out)
+    if not ok:
+        tmp_out.unlink(missing_ok=True)
+        raise RuntimeError(f"Failed to generate bg png (invalid): {err_tail}")
+    os.replace(tmp_out, out)
     return out
 
 
@@ -1889,6 +2052,20 @@ def process_project(
                 update_job_status_in_lines(lines, job, f"Fail (image not found: {job.image_name})")
                 write_playlists_file(playlists_path, lines)
                 log_append(release_dir, f"{now_ts()} | {title} | FAIL | image not found: {image_path}")
+                continue
+
+            try:
+                image_path = validate_or_reencode_image(
+                    image_path,
+                    tmp_dir,
+                    release_dir=release_dir,
+                    title=title,
+                )
+            except Exception as e:
+                fail_msg = f"Fail (invalid/corrupted image: {job.image_name})"
+                update_job_status_in_lines(lines, job, fail_msg)
+                write_playlists_file(playlists_path, lines)
+                log_append(release_dir, f"{now_ts()} | {title} | FAIL | invalid/corrupted image: {job.image_name} | {e}")
                 continue
 
             # Validate tracks
