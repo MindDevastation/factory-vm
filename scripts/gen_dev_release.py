@@ -9,7 +9,7 @@ import wave
 from pathlib import Path
 from typing import Any, Dict
 
-TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X+Jb8AAAAASUVORK5CYII="
+PLACEHOLDER_COVER_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mNgAAAAAgABSK+kcQAAAABJRU5ErkJggg=="
 
 
 def _write_sine_wav(path: Path, seconds: int = 30, sr: int = 48000, freq: float = 220.0) -> None:
@@ -26,9 +26,9 @@ def _write_sine_wav(path: Path, seconds: int = 30, sr: int = 48000, freq: float 
             wf.writeframesraw(frame)
 
 
-def _write_cover_png(path: Path) -> None:
+def generate_placeholder_cover(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = base64.b64decode(TINY_PNG_B64)
+    data = base64.b64decode(PLACEHOLDER_COVER_PNG_B64)
     path.write_bytes(data)
 
 
@@ -47,7 +47,7 @@ def main() -> None:
     meta_path = release_dir / "meta.json"
 
     _write_sine_wav(audio_path, seconds=args.seconds)
-    _write_cover_png(cover_path)
+    generate_placeholder_cover(cover_path)
 
     meta: Dict[str, Any] = {
         "channel_slug": args.channel,

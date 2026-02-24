@@ -5,7 +5,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from render_worker.main import validate_image_decodable, validate_or_reencode_image
+from render_worker.main import (
+    resolve_cover_image,
+    validate_image_decodable,
+    validate_or_reencode_image,
+)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is required")
@@ -45,7 +49,6 @@ class TestRenderImageSafety(unittest.TestCase):
             self.assertFalse(ok)
             self.assertTrue(err_tail)
 
-
     def test_validate_or_reencode_image_prefers_valid_jpg_when_safe_png_is_empty(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             d = Path(td)
@@ -79,8 +82,51 @@ class TestRenderImageSafety(unittest.TestCase):
             tmp_dir = d / "tmp"
 
             with mock.patch("render_worker.main.reencode_image_to_safe", return_value=False):
-                with self.assertRaisesRegex(RuntimeError, "invalid/corrupted image"):
+                with self.assertRaisesRegex(RuntimeError, "file=.*invalid.png"):
                     validate_or_reencode_image(bad_png, tmp_dir)
+
+    def test_smoke_mode_corrupt_cover_uses_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            bad_png = d / "cover.png"
+            bad_png.write_bytes(b"\x89PNG\r\n\x1a\n" + (b"\x00" * 10))
+            tmp_dir = d / "tmp"
+            release_dir = d / "Release"
+            release_dir.mkdir(parents=True, exist_ok=True)
+
+            with mock.patch.dict("os.environ", {"ORIGIN_BACKEND": "local"}, clear=False):
+                selected = resolve_cover_image(
+                    bad_png,
+                    tmp_dir,
+                    release_dir=release_dir,
+                    title="DEV Smoke Test (unit)",
+                )
+
+            self.assertTrue(selected.exists())
+            ok, err_tail = validate_image_decodable(selected)
+            self.assertTrue(ok, msg=err_tail)
+
+    def test_non_smoke_corrupt_cover_raises_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            bad_png = d / "cover.png"
+            bad_png.write_bytes(b"\x89PNG\r\n\x1a\n" + (b"\x00" * 10))
+            tmp_dir = d / "tmp"
+            release_dir = d / "Release"
+            release_dir.mkdir(parents=True, exist_ok=True)
+
+            with mock.patch("builtins.print") as print_mock:
+                with self.assertRaisesRegex(RuntimeError, "invalid cover image: file="):
+                    with mock.patch.dict("os.environ", {"ORIGIN_BACKEND": "prod", "APP_ENV": "prod"}, clear=False):
+                        resolve_cover_image(
+                            bad_png,
+                            tmp_dir,
+                            release_dir=release_dir,
+                            title="Regular Title",
+                        )
+
+            printed = "\n".join(" ".join(str(x) for x in c.args) for c in print_mock.call_args_list)
+            self.assertIn("FATAL_IMAGE_INVALID:", printed)
 
 
 if __name__ == "__main__":

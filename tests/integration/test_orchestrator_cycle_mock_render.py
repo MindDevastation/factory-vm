@@ -15,11 +15,12 @@ from tests._helpers import temp_env, seed_minimal_db, insert_release_and_job, ad
 
 
 class _FakeProc:
-    def __init__(self, *, release_dir: Path, cancel_flag: Path | None = None, exit_code: int = 0):
+    def __init__(self, *, release_dir: Path, cancel_flag: Path | None = None, exit_code: int = 0, fatal_image: str | None = None):
         self._release_dir = release_dir
         self._exit_code = exit_code
         self._terminated = False
         self._cancel_flag = cancel_flag
+        self._fatal_image = fatal_image
 
         class _Stdout:
             def __init__(self, outer: _FakeProc):
@@ -36,6 +37,9 @@ class _FakeProc:
                     return
 
                 yield "0.0 %"
+                if self._o._fatal_image is not None:
+                    yield f"FATAL_IMAGE_INVALID: {self._o._fatal_image}"
+                    return
 
                 # simulate progress
                 yield "10.0 %"
@@ -111,6 +115,32 @@ class TestOrchestratorMockRender(unittest.TestCase):
                 assert job is not None
                 self.assertEqual(job["state"], "CANCELLED")
                 self.assertEqual(job["stage"], "CANCELLED")
+            finally:
+                conn.close()
+
+    def test_orchestrator_uses_fatal_image_marker(self) -> None:
+        with temp_env() as (_, _env0):
+            os.environ["ORIGIN_BACKEND"] = "local"
+            env = Env.load()
+            seed_minimal_db(env)
+
+            job_id = insert_release_and_job(env, state="READY_FOR_RENDER", stage="FETCH")
+            add_local_inputs_for_job(env, job_id, tracks=1)
+
+            release_dir = Path(env.storage_root) / "workspace" / f"job_{job_id}" / "YouTubeRoot" / "Darkwood Reverie" / "Release"
+
+            with patch(
+                "services.workers.orchestrator.subprocess.Popen",
+                lambda *a, **k: _FakeProc(release_dir=release_dir, exit_code=1, fatal_image="invalid cover image")
+            ):
+                orchestrator_cycle(env=env, worker_id="t-orch")
+
+            conn = dbm.connect(env)
+            try:
+                job = dbm.get_job(conn, job_id)
+                assert job is not None
+                self.assertEqual(job["state"], "READY_FOR_RENDER")
+                self.assertIn("invalid cover image", str(job.get("error_reason") or ""))
             finally:
                 conn.close()
 

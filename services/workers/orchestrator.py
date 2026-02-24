@@ -233,11 +233,15 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
         last_update = 0.0
         last_cancel_check = 0.0
         cancelled = False
+        fatal_image_invalid: str | None = None
 
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
                 append_job_log(env, job_id, line.rstrip())
+                line_text = line.rstrip()
+                if line_text.startswith("FATAL_IMAGE_INVALID:"):
+                    fatal_image_invalid = line_text.split(":", 1)[1].strip()
 
                 now = time.time()
                 if now - last_cancel_check >= 1.0:
@@ -291,6 +295,8 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
             return
 
         if ret != 0:
+            if fatal_image_invalid:
+                raise RuntimeError(fatal_image_invalid)
             raise RuntimeError(f"renderer exited {ret}")
 
         # output mp4
