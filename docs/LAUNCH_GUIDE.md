@@ -56,11 +56,11 @@ Recommended for MVP: Service Account.
 1) In Google Cloud project enable "YouTube Data API v3".
 2) Configure OAuth consent screen.
 3) Create OAuth Client "Desktop App", download JSON.
-4) Put it on server: `/secure/youtube_client_secret.json`.
+4) Put it on server: `/secure/youtube/client_secret.json`.
 5) Create token on server:
 ```bash
-export YT_CLIENT_SECRET_JSON=/secure/youtube_client_secret.json
-export YT_TOKEN_JSON=/secure/youtube_token.json
+export YT_CLIENT_SECRET_JSON=/secure/youtube/client_secret.json
+export YT_TOKEN_JSON=/secure/youtube/global/token.json
 python scripts/youtube_auth.py
 ```
 
@@ -72,9 +72,19 @@ nano deploy/env
 Fill all required fields:
 - FACTORY_DB_PATH, FACTORY_STORAGE_ROOT
 - GDRIVE_ROOT_ID, GDRIVE_SERVICE_ACCOUNT_JSON
-- YT_CLIENT_SECRET_JSON, YT_TOKEN_JSON
+- YT_CLIENT_SECRET_JSON, YT_TOKEN_JSON (global fallback)
 - TG_BOT_TOKEN, TG_ADMIN_CHAT_ID
 - BASIC AUTH user/pass for dashboard
+
+Per-channel YouTube credential overrides (paths only):
+- Optional in `configs/channels.yaml` per channel:
+  - `yt_token_json_path`
+  - `yt_client_secret_json_path`
+- When channel fields are set, they override global `YT_*` for that channel.
+- Recommended VPS layout:
+  - `/secure/youtube/client_secret.json`
+  - `/secure/youtube/global/token.json`
+  - `/secure/youtube/channels/<channel_slug>/token.json`
 
 ## 8) Init DB + seed configs
 ```bash

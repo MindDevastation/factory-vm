@@ -10,6 +10,8 @@ channels:
     weight: 1.0
     render_profile: "long_1080p24"
     autopublish_enabled: false
+    yt_token_json_path: "/secure/youtube/channels/darkwood-reverie/token.json"
+    yt_client_secret_json_path: "/secure/youtube/client_secret.json"
 
   - slug: "channel-b"
     display_name: "Channel B"

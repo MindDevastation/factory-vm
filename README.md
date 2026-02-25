@@ -38,6 +38,15 @@ Tests:
 - Smoke QA test: `PYTHONPATH=. FACTORY_BASIC_AUTH_PASS=... python scripts/selftest_smoke.py`
 - Claim stress test: `PYTHONPATH=. python scripts/stress_claim_job.py`
 
+YouTube credential config (paths only):
+- Global env `YT_CLIENT_SECRET_JSON` + `YT_TOKEN_JSON` remain the default fallback for all channels.
+- `configs/channels.yaml` may override per channel via optional `yt_token_json_path` and `yt_client_secret_json_path`.
+- Recommended VPS layout:
+  - `/secure/youtube/client_secret.json`
+  - `/secure/youtube/global/token.json`
+  - `/secure/youtube/channels/<channel_slug>/token.json`
+- Never store OAuth JSON content in repo or DB; store only filesystem paths in config/env.
+
 Publish flow:
 - Bot sends YouTube private link + 60s preview.
 - Approve in bot.
