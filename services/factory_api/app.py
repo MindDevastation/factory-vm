@@ -326,36 +326,66 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
         failed = 0
         for r in rows:
             job_id = int(r["id"])
-            result = run_preflight_for_job(conn, env, job_id, drive=drive)
-            if not result.ok:
+            try:
+                result = run_preflight_for_job(conn, env, job_id, drive=drive)
+                if not result.ok:
+                    failed += 1
+                    continue
+
+                draft = dbm.get_ui_job_draft(conn, job_id)
+                if not draft:
+                    failed += 1
+                    continue
+
+                channel_id = int(draft["channel_id"])
+                tracks = list(result.resolved.get("tracks") or [])
+                bg_id = str(result.resolved.get("background_file_id") or "")
+                bg_name = str(result.resolved.get("background_filename") or "")
+                cover_id = str(result.resolved.get("cover_file_id") or "")
+                cover_name = str(result.resolved.get("cover_filename") or "")
+
+                tx_started = False
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    tx_started = True
+
+                    job = conn.execute("SELECT job_type, state FROM jobs WHERE id=?", (job_id,)).fetchone()
+                    if not job or str(job.get("job_type") or "") != "UI" or str(job.get("state") or "") != "DRAFT":
+                        conn.execute("ROLLBACK")
+                        tx_started = False
+                        continue
+
+                    has_inputs = conn.execute("SELECT 1 FROM job_inputs WHERE job_id=? LIMIT 1", (job_id,)).fetchone()
+                    if has_inputs:
+                        conn.execute("ROLLBACK")
+                        tx_started = False
+                        continue
+
+                    for idx, track in enumerate(tracks):
+                        fid = str(track.get("file_id") or "")
+                        fname = str(track.get("filename") or "")
+                        aid = dbm.create_asset(conn, channel_id=channel_id, kind="AUDIO", origin="GDRIVE", origin_id=fid, name=fname, path=f"gdrive:{fid}")
+                        dbm.link_job_input(conn, job_id, aid, "TRACK", idx)
+
+                    bg_aid = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="GDRIVE", origin_id=bg_id, name=bg_name, path=f"gdrive:{bg_id}")
+                    dbm.link_job_input(conn, job_id, bg_aid, "BACKGROUND", 0)
+
+                    if cover_id:
+                        c_aid = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="GDRIVE", origin_id=cover_id, name=cover_name, path=f"gdrive:{cover_id}")
+                        dbm.link_job_input(conn, job_id, c_aid, "COVER", 0)
+
+                    dbm.update_job_state(conn, job_id, state="READY_FOR_RENDER", stage="FETCH", error_reason="")
+                    conn.execute("COMMIT")
+                    tx_started = False
+                    enqueued += 1
+                except Exception:
+                    if tx_started:
+                        conn.execute("ROLLBACK")
+                    raise
+            except Exception as exc:
                 failed += 1
-                continue
-
-            draft = dbm.get_ui_job_draft(conn, job_id)
-            if not draft:
-                failed += 1
-                continue
-            channel_id = int(draft["channel_id"])
-            tracks = list(result.resolved.get("tracks") or [])
-            for idx, track in enumerate(tracks):
-                fid = str(track.get("file_id") or "")
-                fname = str(track.get("filename") or "")
-                aid = dbm.create_asset(conn, channel_id=channel_id, kind="AUDIO", origin="GDRIVE", origin_id=fid, name=fname, path=f"gdrive:{fid}")
-                dbm.link_job_input(conn, job_id, aid, "TRACK", idx)
-
-            bg_id = str(result.resolved.get("background_file_id") or "")
-            bg_name = str(result.resolved.get("background_filename") or "")
-            bg_aid = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="GDRIVE", origin_id=bg_id, name=bg_name, path=f"gdrive:{bg_id}")
-            dbm.link_job_input(conn, job_id, bg_aid, "BACKGROUND", 0)
-
-            cover_id = str(result.resolved.get("cover_file_id") or "")
-            cover_name = str(result.resolved.get("cover_filename") or "")
-            if cover_id:
-                c_aid = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="GDRIVE", origin_id=cover_id, name=cover_name, path=f"gdrive:{cover_id}")
-                dbm.link_job_input(conn, job_id, c_aid, "COVER", 0)
-
-            dbm.update_job_state(conn, job_id, state="READY_FOR_RENDER", stage="FETCH", error_reason="")
-            enqueued += 1
+                error_reason = f"render_all: {exc}".strip()[:500]
+                dbm.update_job_state(conn, job_id, state="DRAFT", stage="DRAFT", error_reason=error_reason)
     finally:
         conn.close()
     return {"enqueued_count": enqueued, "failed_count": failed}
