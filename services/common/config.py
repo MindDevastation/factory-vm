@@ -16,6 +16,8 @@ class ChannelCfg:
     weight: float
     render_profile: str
     autopublish_enabled: bool
+    yt_token_json_path: Optional[str]
+    yt_client_secret_json_path: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,8 @@ def load_channels(cfg_path: str) -> List[ChannelCfg]:
                 weight=float(c.get("weight", 1.0)),
                 render_profile=str(c["render_profile"]),
                 autopublish_enabled=bool(c.get("autopublish_enabled", False)),
+                yt_token_json_path=(str(c["yt_token_json_path"]) if c.get("yt_token_json_path") else None),
+                yt_client_secret_json_path=(str(c["yt_client_secret_json_path"]) if c.get("yt_client_secret_json_path") else None),
             )
         )
     return out

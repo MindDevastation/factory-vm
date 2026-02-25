@@ -6,6 +6,7 @@ import socket
 from pathlib import Path
 
 from services.common.env import Env
+from services.common.config import load_channels
 from services.common import db as dbm
 from services.common.paths import outbox_dir, cancel_flag_path
 from services.common.logging_setup import get_logger
@@ -13,6 +14,42 @@ from services.integrations.youtube import YouTubeClient
 
 
 log = get_logger("uploader")
+
+
+class YouTubeCredentialConfigError(RuntimeError):
+    pass
+
+def _resolve_youtube_credentials_for_channel(*, env: Env, channel_slug: str) -> tuple[str, str]:
+    token_json = env.yt_token_json
+    client_secret_json = env.yt_client_secret_json
+
+    try:
+        channels = load_channels("configs/channels.yaml")
+    except Exception:
+        channels = []
+
+    for ch in channels:
+        if ch.slug == channel_slug:
+            if ch.yt_token_json_path:
+                token_json = ch.yt_token_json_path
+            if ch.yt_client_secret_json_path:
+                client_secret_json = ch.yt_client_secret_json_path
+            break
+
+    token_json = str(token_json or "").strip()
+    client_secret_json = str(client_secret_json or "").strip()
+
+    if not token_json:
+        raise YouTubeCredentialConfigError(
+            f"youtube credentials misconfigured for channel={channel_slug}: missing yt_token_json_path and YT_TOKEN_JSON fallback"
+        )
+
+    if not client_secret_json:
+        raise YouTubeCredentialConfigError(
+            f"youtube credentials misconfigured for channel={channel_slug}: missing yt_client_secret_json_path and YT_CLIENT_SECRET_JSON fallback"
+        )
+
+    return client_secret_json, token_json
 
 
 def uploader_cycle(*, env: Env, worker_id: str) -> None:
@@ -86,7 +123,26 @@ def uploader_cycle(*, env: Env, worker_id: str) -> None:
             return
 
         # Real YouTube upload
-        yt = YouTubeClient(client_secret_json=env.yt_client_secret_json, token_json=env.yt_token_json)
+        try:
+            client_secret_json, token_json = _resolve_youtube_credentials_for_channel(
+                env=env, channel_slug=str(job.get("channel_slug") or "")
+            )
+            yt = YouTubeClient(client_secret_json=client_secret_json, token_json=token_json)
+        except YouTubeCredentialConfigError as e:
+            dbm.increment_attempt(conn, job_id)
+            dbm.set_youtube_error(conn, job_id, str(e))
+            dbm.update_job_state(conn, job_id, state="UPLOAD_FAILED", stage="UPLOAD", error_reason=str(e))
+            dbm.clear_retry(conn, job_id)
+            dbm.release_lock(conn, job_id, worker_id)
+            return
+        except Exception as e:
+            msg = f"youtube client init failed for channel={str(job.get('channel_slug') or '')}: {e}"
+            dbm.increment_attempt(conn, job_id)
+            dbm.set_youtube_error(conn, job_id, msg)
+            dbm.update_job_state(conn, job_id, state="UPLOAD_FAILED", stage="UPLOAD", error_reason=msg)
+            dbm.clear_retry(conn, job_id)
+            dbm.release_lock(conn, job_id, worker_id)
+            return
 
         dbm.update_job_state(conn, job_id, state="UPLOADING", stage="UPLOAD", progress_text="uploading")
     finally:
