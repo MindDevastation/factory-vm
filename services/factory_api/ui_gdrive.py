@@ -112,12 +112,25 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
         "tracks": [],
     }
 
+    def _set_job_error_reason(reason: str) -> None:
+        if not job:
+            return
+        dbm.update_job_state(
+            conn,
+            job_id,
+            state=str(job["state"]),
+            stage=str(job["stage"]),
+            error_reason=reason,
+        )
+
     if not draft or not job:
         errors["project"].append("job draft not found")
+        _set_job_error_reason("job draft not found")
         return PreflightResult(ok=False, field_errors=errors, resolved=resolved)
 
     if not env.gdrive_root_id:
         errors["project"].append("GDRIVE_ROOT_ID is not configured")
+        _set_job_error_reason("GDRIVE_ROOT_ID is not configured")
         return PreflightResult(ok=False, field_errors=errors, resolved=resolved)
 
     if drive is None:
@@ -130,7 +143,9 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
     try:
         ids = resolve_project_folder_ids(drive, env.gdrive_root_id, str(job["channel_name"]))
     except Exception as e:
-        errors["project"].append(str(e))
+        message = str(e)
+        errors["project"].append(message)
+        _set_job_error_reason(message)
         return PreflightResult(ok=False, field_errors=errors, resolved=resolved)
 
     try:
