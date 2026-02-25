@@ -86,6 +86,11 @@ class TestUiJobsRenderAllSlice3(unittest.TestCase):
             self.assertEqual(rr.json()["enqueued_count"], 1)
             self.assertEqual(rr.json()["failed_count"], 1)
 
+            rr2 = client.post("/v1/ui/jobs/render_all", headers=h)
+            self.assertEqual(rr2.status_code, 200)
+            self.assertEqual(rr2.json()["enqueued_count"], 0)
+            self.assertEqual(rr2.json()["failed_count"], 1)
+
             conn2 = dbm.connect(env)
             try:
                 ok = dbm.get_job(conn2, ok_job)
@@ -93,6 +98,19 @@ class TestUiJobsRenderAllSlice3(unittest.TestCase):
                 self.assertEqual(ok["state"], "READY_FOR_RENDER")
                 self.assertEqual(ok["stage"], "FETCH")
                 self.assertTrue(conn2.execute("SELECT 1 FROM job_inputs WHERE job_id=?", (ok_job,)).fetchone())
+                input_count = conn2.execute("SELECT COUNT(*) AS c FROM job_inputs WHERE job_id=?", (ok_job,)).fetchone()["c"]
+                self.assertEqual(input_count, 4)
+
+                asset_count = conn2.execute(
+                    """
+                    SELECT COUNT(*) AS c
+                    FROM assets a
+                    JOIN job_inputs ji ON ji.asset_id=a.id
+                    WHERE ji.job_id=?
+                    """,
+                    (ok_job,),
+                ).fetchone()["c"]
+                self.assertEqual(asset_count, 4)
 
                 roles = [r["role"] for r in conn2.execute("SELECT role FROM job_inputs WHERE job_id=? ORDER BY role, order_index", (ok_job,)).fetchall()]
                 self.assertIn("BACKGROUND", roles)
