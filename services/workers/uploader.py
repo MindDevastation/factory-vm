@@ -80,6 +80,16 @@ def uploader_cycle(*, env: Env, worker_id: str) -> None:
             dbm.release_lock(conn, job_id, worker_id)
             return
 
+        log.info(
+            "uploader claimed job",
+            extra={
+                "job_id": int(job_id),
+                "state": str(job.get("state") or ""),
+                "channel_slug": str(job.get("channel_slug") or ""),
+                "channel_id": int(job.get("channel_id") or 0),
+            },
+        )
+
         try:
             if cancel_flag_path(env, job_id).exists():
                 dbm.cancel_job(conn, job_id, reason="cancelled by user")

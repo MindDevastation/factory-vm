@@ -305,6 +305,7 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> Optional[Dict[str, Any]]:
     cur = conn.execute(
         """
         SELECT j.*, r.title AS release_title, r.description AS release_description, r.tags_json AS release_tags_json,
+               r.channel_id AS channel_id,
                c.slug AS channel_slug, c.display_name AS channel_name, c.kind AS channel_kind, c.autopublish_enabled
         FROM jobs j
         JOIN releases r ON r.id = j.release_id
