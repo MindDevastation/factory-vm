@@ -47,6 +47,43 @@ YouTube credential config (paths only):
   - `/secure/youtube/channels/<channel_slug>/token.json`
 - Never store OAuth JSON content in repo or DB; store only filesystem paths in config/env.
 
+Manual verification: multi-channel YouTube upload (local)
+1) Generate two different OAuth token files (one per YouTube account/channel):
+   ```bash
+   mkdir -p /secure/youtube/channels/channel-a /secure/youtube/channels/channel-b
+
+   export YT_CLIENT_SECRET_JSON=/secure/youtube/client_secret.json
+
+   export YT_TOKEN_JSON=/secure/youtube/channels/channel-a/token.json
+   python scripts/youtube_auth.py  # sign in with Channel A Google account
+
+   export YT_TOKEN_JSON=/secure/youtube/channels/channel-b/token.json
+   python scripts/youtube_auth.py  # sign in with Channel B Google account
+   ```
+2) Reference token paths in `configs/channels.yaml`:
+   ```yaml
+   channels:
+     - slug: "channel-a"
+       yt_token_json_path: "/secure/youtube/channels/channel-a/token.json"
+       yt_client_secret_json_path: "/secure/youtube/client_secret.json"
+
+     - slug: "channel-b"
+       yt_token_json_path: "/secure/youtube/channels/channel-b/token.json"
+       yt_client_secret_json_path: "/secure/youtube/client_secret.json"
+   ```
+3) Run with real uploader backend:
+   ```bash
+   export UPLOAD_BACKEND=youtube
+   python -m services.workers --role uploader
+   ```
+4) Confirm in logs that channel-level credentials are used for each job:
+   - Look for `resolved youtube credentials` log lines.
+   - Confirm `channel_slug` matches expected channel and `source_label` is `channel`.
+   - Run one upload job for `channel-a` and one for `channel-b`; each should emit its own `channel_slug` resolution log before upload.
+5) Safety for manual tests:
+   - Keep test uploads as `private` (default uploader behavior).
+   - If needed for reviewer access, set videos to `unlisted` manually in YouTube Studio after upload.
+
 Publish flow:
 - Bot sends YouTube private link + 60s preview.
 - Approve in bot.
