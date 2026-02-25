@@ -5,6 +5,8 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+from services.common.config import ChannelCfg
+
 from services.common import db as dbm
 from services.common.env import Env
 from services.common.paths import outbox_dir
@@ -53,7 +55,7 @@ class TestUploaderBranchesMore(unittest.TestCase):
     def test_real_youtube_upload_success_and_thumbnail_failure_is_ignored(self) -> None:
         with temp_env() as (_, _env0):
             env0 = Env.load()
-            env = replace(env0, upload_backend="youtube")
+            env = replace(env0, upload_backend="youtube", yt_client_secret_json="/env/client_secret.json", yt_token_json="/env/token.json")
             seed_minimal_db(env)
             job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD")
 
@@ -79,7 +81,7 @@ class TestUploaderBranchesMore(unittest.TestCase):
     def test_real_youtube_upload_exception_sets_failed_when_max_attempts_1(self) -> None:
         with temp_env() as (_, _env0):
             env0 = Env.load()
-            env = replace(env0, upload_backend="youtube", max_upload_attempts=1)
+            env = replace(env0, upload_backend="youtube", max_upload_attempts=1, yt_client_secret_json="/env/client_secret.json", yt_token_json="/env/token.json")
             seed_minimal_db(env)
             job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD")
 
@@ -120,7 +122,7 @@ class TestUploaderBranchesMore(unittest.TestCase):
     def test_real_youtube_upload_without_cover_skips_thumbnail(self) -> None:
         with temp_env() as (_, _env0):
             env0 = Env.load()
-            env = replace(env0, upload_backend="youtube")
+            env = replace(env0, upload_backend="youtube", yt_client_secret_json="/env/client_secret.json", yt_token_json="/env/token.json")
             seed_minimal_db(env)
             job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD")
 
@@ -138,6 +140,71 @@ class TestUploaderBranchesMore(unittest.TestCase):
                 job = dbm.get_job(conn, job_id)
                 self.assertEqual(str(job["state"]), "WAIT_APPROVAL")
                 self.assertEqual(yt_inst.thumbnail_calls, 0)
+            finally:
+                conn.close()
+
+
+    def test_missing_channel_and_env_youtube_token_fails_with_clear_error(self) -> None:
+        with temp_env() as (_, _env0):
+            env0 = Env.load()
+            env = replace(env0, upload_backend="youtube", yt_token_json="", yt_client_secret_json="")
+            seed_minimal_db(env)
+            job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD", channel_slug="channel-d")
+
+            mp4 = outbox_dir(env, job_id) / "render.mp4"
+            mp4.parent.mkdir(parents=True, exist_ok=True)
+            mp4.write_bytes(b"x")
+
+            channels = [
+                ChannelCfg(
+                    slug="channel-d",
+                    display_name="Channel D",
+                    kind="LONG",
+                    weight=1.0,
+                    render_profile="long_1080p24",
+                    autopublish_enabled=False,
+                    yt_token_json_path=None,
+                    yt_client_secret_json_path=None,
+                )
+            ]
+
+            with mock.patch.object(uploader_worker, "load_channels", return_value=channels):
+                uploader_worker.uploader_cycle(env=env, worker_id="wu")
+
+            conn = dbm.connect(env)
+            try:
+                job = dbm.get_job(conn, job_id)
+                self.assertEqual(str(job["state"]), "UPLOAD_FAILED")
+                self.assertIn("youtube credentials misconfigured", str(job["error_reason"]))
+                row = conn.execute("SELECT locked_by FROM jobs WHERE id = ?", (job_id,)).fetchone()
+                self.assertIsNone(row["locked_by"])
+            finally:
+                conn.close()
+
+
+    def test_youtube_client_init_failure_is_terminal(self) -> None:
+        with temp_env() as (_, _env0):
+            env0 = Env.load()
+            env = replace(env0, upload_backend="youtube", yt_client_secret_json="/env/client_secret.json", yt_token_json="/env/token.json")
+            seed_minimal_db(env)
+            job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD")
+
+            mp4 = outbox_dir(env, job_id) / "render.mp4"
+            mp4.parent.mkdir(parents=True, exist_ok=True)
+            mp4.write_bytes(b"x")
+
+            class _YTInitFail:
+                def __init__(self, *a, **k):
+                    raise RuntimeError("bad oauth client")
+
+            with mock.patch.object(uploader_worker, "YouTubeClient", _YTInitFail):
+                uploader_worker.uploader_cycle(env=env, worker_id="wu")
+
+            conn = dbm.connect(env)
+            try:
+                job = dbm.get_job(conn, job_id)
+                self.assertEqual(str(job["state"]), "UPLOAD_FAILED")
+                self.assertIn("youtube client init failed", str(job["error_reason"]))
             finally:
                 conn.close()
 
