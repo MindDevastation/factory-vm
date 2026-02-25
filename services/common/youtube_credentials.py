@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Tuple
+from typing import Optional, Tuple
 
 from services.common.config import load_channels
 
@@ -10,7 +10,12 @@ class YouTubeCredentialResolutionError(RuntimeError):
     """Raised when YouTube credential paths cannot be resolved for a channel."""
 
 
-def resolve_youtube_channel_credentials(channel_slug: str) -> Tuple[str, str, str]:
+def resolve_youtube_channel_credentials(
+    channel_slug: str,
+    *,
+    global_client_secret_path: Optional[str] = None,
+    global_token_path: Optional[str] = None,
+) -> Tuple[str, str, str]:
     """Resolve YouTube credential paths for a channel.
 
     Resolution order for token path:
@@ -25,8 +30,12 @@ def resolve_youtube_channel_credentials(channel_slug: str) -> Tuple[str, str, st
     Path existence/readability is left to the uploader/client initialization phase.
     """
 
-    token_path = (os.getenv("YT_TOKEN_JSON") or "").strip()
-    client_secret_path = (os.getenv("YT_CLIENT_SECRET_JSON") or "").strip()
+    token_path = str(global_token_path if global_token_path is not None else (os.getenv("YT_TOKEN_JSON") or "")).strip()
+    client_secret_path = str(
+        global_client_secret_path
+        if global_client_secret_path is not None
+        else (os.getenv("YT_CLIENT_SECRET_JSON") or "")
+    ).strip()
     source_label = "global"
 
     channels = load_channels("configs/channels.yaml")
@@ -43,7 +52,7 @@ def resolve_youtube_channel_credentials(channel_slug: str) -> Tuple[str, str, st
 
         break
 
-    if not token_path:
+    if not token_path or not client_secret_path:
         raise YouTubeCredentialResolutionError(
             f"YouTube credentials not configured for channel {channel_slug}"
         )

@@ -5,11 +5,10 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from services.common.config import ChannelCfg
-
 from services.common import db as dbm
 from services.common.env import Env
 from services.common.paths import outbox_dir
+from services.common.youtube_credentials import YouTubeCredentialResolutionError
 from services.workers import uploader as uploader_worker
 
 from tests._helpers import insert_release_and_job, seed_minimal_db, temp_env
@@ -155,27 +154,18 @@ class TestUploaderBranchesMore(unittest.TestCase):
             mp4.parent.mkdir(parents=True, exist_ok=True)
             mp4.write_bytes(b"x")
 
-            channels = [
-                ChannelCfg(
-                    slug="channel-d",
-                    display_name="Channel D",
-                    kind="LONG",
-                    weight=1.0,
-                    render_profile="long_1080p24",
-                    autopublish_enabled=False,
-                    yt_token_json_path=None,
-                    yt_client_secret_json_path=None,
-                )
-            ]
-
-            with mock.patch.object(uploader_worker, "load_channels", return_value=channels):
+            with mock.patch.object(
+                uploader_worker,
+                "resolve_youtube_channel_credentials",
+                side_effect=YouTubeCredentialResolutionError("YouTube credentials not configured for channel channel-d"),
+            ):
                 uploader_worker.uploader_cycle(env=env, worker_id="wu")
 
             conn = dbm.connect(env)
             try:
                 job = dbm.get_job(conn, job_id)
                 self.assertEqual(str(job["state"]), "UPLOAD_FAILED")
-                self.assertIn("youtube credentials misconfigured", str(job["error_reason"]))
+                self.assertIn("youtube credentials not configured", str(job["error_reason"]))
                 row = conn.execute("SELECT locked_by FROM jobs WHERE id = ?", (job_id,)).fetchone()
                 self.assertIsNone(row["locked_by"])
             finally:
