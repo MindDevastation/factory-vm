@@ -29,6 +29,10 @@ Dashboard: http://<VM_IP>:8080/
 
 Worker heartbeat: http://<VM_IP>:8080/v1/workers
 
+VPS API-only mode (without importer):
+- `python scripts/run_stack.py --profile prod --with-bot 1 --no-importer`
+- You can also disable importer via env override: `IMPORTER_ENABLED=0 python scripts/run_stack.py --profile prod --with-bot 1`
+
 Tests:
 - Unit tests: `PYTHONPATH=. python -m unittest discover -s tests -v`
 - Smoke QA test: `PYTHONPATH=. FACTORY_BASIC_AUTH_PASS=... python scripts/selftest_smoke.py`

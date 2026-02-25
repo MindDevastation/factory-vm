@@ -16,10 +16,25 @@ def _popen(args: List[str]) -> subprocess.Popen:
     return subprocess.Popen(args, stdout=None, stderr=None)
 
 
+def _importer_enabled(no_importer_flag: bool) -> bool:
+    env_value = os.getenv("IMPORTER_ENABLED")
+    if env_value is not None:
+        return env_value.strip().lower() not in {"0", "false", "no", "off"}
+    return not no_importer_flag
+
+
+def _worker_roles(no_importer_flag: bool) -> List[str]:
+    roles = ["importer", "orchestrator", "qa", "uploader", "cleanup"]
+    if not _importer_enabled(no_importer_flag):
+        roles.remove("importer")
+    return roles
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", default="local", choices=["local", "prod"])
     parser.add_argument("--with-bot", type=int, default=0)
+    parser.add_argument("--no-importer", action="store_true")
     args = parser.parse_args()
 
     os.environ["FACTORY_PROFILE"] = args.profile
@@ -51,7 +66,7 @@ def main() -> None:
     procs.append(_popen([py, "-m", "services.factory_api"]))
     time.sleep(0.8)
 
-    for role in ["importer", "orchestrator", "qa", "uploader", "cleanup"]:
+    for role in _worker_roles(args.no_importer):
         procs.append(_popen([py, "-m", "services.workers", "--role", role]))
 
     if args.with_bot == 1:
