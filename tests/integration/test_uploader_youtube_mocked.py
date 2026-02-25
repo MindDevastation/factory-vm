@@ -5,8 +5,6 @@ import unittest
 from dataclasses import dataclass
 from unittest import mock
 
-from services.common.config import ChannelCfg
-
 from services.common import db as dbm
 from services.common.env import Env
 from services.common.paths import outbox_dir
@@ -94,24 +92,21 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
 
             old = upl.YouTubeClient
             upl.YouTubeClient = _FakeYT  # type: ignore[assignment]
-            channels = [
-                ChannelCfg(
-                    slug="channel-b",
-                    display_name="Channel B",
-                    kind="LONG",
-                    weight=1.0,
-                    render_profile="long_1080p24",
-                    autopublish_enabled=False,
-                    yt_token_json_path="/per-channel/token-b.json",
-                    yt_client_secret_json_path="/per-channel/client-b.json",
-                )
-            ]
-            with mock.patch.object(upl, "load_channels", return_value=channels):
+            with mock.patch.object(
+                upl,
+                "resolve_youtube_channel_credentials",
+                return_value=("/per-channel/client-b.json", "/per-channel/token-b.json", "channel"),
+            ) as resolver_mock:
                 try:
                     uploader_cycle(env=env, worker_id="t-upl")
                 finally:
                     upl.YouTubeClient = old  # type: ignore[assignment]
 
+            resolver_mock.assert_called_once_with(
+                "channel-b",
+                global_client_secret_path="/env/client_secret.json",
+                global_token_path="/env/token.json",
+            )
             self.assertEqual(_FakeYT.last_init, ("/per-channel/client-b.json", "/per-channel/token-b.json"))
 
     def test_channel_credentials_fallback_to_env(self) -> None:
@@ -132,24 +127,21 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
 
             old = upl.YouTubeClient
             upl.YouTubeClient = _FakeYT  # type: ignore[assignment]
-            channels = [
-                ChannelCfg(
-                    slug="channel-c",
-                    display_name="Channel C",
-                    kind="LONG",
-                    weight=1.0,
-                    render_profile="long_1080p24",
-                    autopublish_enabled=False,
-                    yt_token_json_path=None,
-                    yt_client_secret_json_path=None,
-                )
-            ]
-            with mock.patch.object(upl, "load_channels", return_value=channels):
+            with mock.patch.object(
+                upl,
+                "resolve_youtube_channel_credentials",
+                return_value=("/env/client_secret.json", "/env/token.json", "global"),
+            ) as resolver_mock:
                 try:
                     uploader_cycle(env=env, worker_id="t-upl")
                 finally:
                     upl.YouTubeClient = old  # type: ignore[assignment]
 
+            resolver_mock.assert_called_once_with(
+                "channel-c",
+                global_client_secret_path="/env/client_secret.json",
+                global_token_path="/env/token.json",
+            )
             self.assertEqual(_FakeYT.last_init, ("/env/client_secret.json", "/env/token.json"))
 
 
