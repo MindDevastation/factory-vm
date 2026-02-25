@@ -44,6 +44,17 @@ class TestUiPagesSlice4(unittest.TestCase):
             r = client.get("/ui/jobs/create", headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Create Job", r.text)
+            self.assertIn("<form", r.text)
+            self.assertIn('name="channel_id"', r.text)
+            self.assertIn('name="title"', r.text)
+            self.assertIn('name="audio_ids_text"', r.text)
+            self.assertIn('name="background_name"', r.text)
+            self.assertIn('name="background_ext"', r.text)
+
+            r = client.get("/", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn('action="/ui/jobs/render_all"', r.text)
+            self.assertIn('method="post"', r.text)
 
             r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
             self.assertEqual(r.status_code, 200)
