@@ -90,6 +90,25 @@ class TestUiGdrivePreflight(unittest.TestCase):
                 ],
             )
 
+    def test_preflight_missing_root_sets_error_reason(self) -> None:
+        with temp_env() as (_, _):
+            os.environ.pop("GDRIVE_ROOT_ID", None)
+            env = Env.load()
+            seed_minimal_db(env)
+            job_id = self._seed_job(env)
+
+            conn = dbm.connect(env)
+            try:
+                res = run_preflight_for_job(conn, env, job_id, drive=FakeDrive({}))
+                job = dbm.get_job(conn, job_id)
+            finally:
+                conn.close()
+
+            self.assertFalse(res.ok)
+            self.assertIn("GDRIVE_ROOT_ID is not configured", res.field_errors["project"])
+            self.assertIsNotNone(job)
+            self.assertEqual(str(job.get("error_reason") or ""), "GDRIVE_ROOT_ID is not configured")
+
     def test_preflight_audio_match_errors(self) -> None:
         with temp_env() as (_, _):
             os.environ["GDRIVE_ROOT_ID"] = "root"

@@ -532,6 +532,22 @@ async def ui_jobs_create_submit(
                 status_code=422,
             )
 
+        channel = dbm.get_channel_by_id(conn, payload.channel_id)
+        if not channel:
+            return templates.TemplateResponse(
+                "ui_job_form.html",
+                {
+                    "request": request,
+                    "mode": "create",
+                    "channels": channels,
+                    "field_errors": {"project": ["project is invalid"]},
+                    "form": payload.model_dump(),
+                    "job_id": None,
+                    "locked": False,
+                },
+                status_code=422,
+            )
+
         job_id = dbm.create_ui_job_draft(
             conn,
             channel_id=payload.channel_id,
@@ -641,6 +657,22 @@ async def ui_jobs_edit_submit(
                     "mode": "edit",
                     "channels": channels,
                     "field_errors": errors,
+                    "form": payload.model_dump(),
+                    "job_id": job_id,
+                    "locked": False,
+                },
+                status_code=422,
+            )
+
+        channel = dbm.get_channel_by_id(conn, payload.channel_id)
+        if not channel:
+            return templates.TemplateResponse(
+                "ui_job_form.html",
+                {
+                    "request": request,
+                    "mode": "edit",
+                    "channels": channels,
+                    "field_errors": {"project": ["project is invalid"]},
                     "form": payload.model_dump(),
                     "job_id": job_id,
                     "locked": False,
