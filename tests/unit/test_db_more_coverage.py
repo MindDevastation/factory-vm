@@ -116,6 +116,18 @@ class TestDbMoreCoverage(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_get_job_includes_channel_identifiers(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD")
+            conn = dbm.connect(env)
+            try:
+                row = dbm.get_job(conn, job_id)
+                self.assertEqual(str(row["channel_slug"]), "darkwood-reverie")
+                self.assertIsInstance(int(row["channel_id"]), int)
+            finally:
+                conn.close()
+
     def test_migration_adds_retry_at_for_older_db(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "old.sqlite3"
