@@ -24,6 +24,15 @@ class _YTStub:
         raise RuntimeError("thumb fail")
 
 
+class _YTNoThumb(_YTStub):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.thumbnail_calls = 0
+
+    def set_thumbnail(self, *, video_id: str, image_path: Path) -> None:
+        self.thumbnail_calls += 1
+
+
 class TestUploaderBranchesMore(unittest.TestCase):
     def test_missing_mp4_terminal_when_max_attempts_exceeded(self) -> None:
         with temp_env() as (_, _env0):
@@ -105,6 +114,30 @@ class TestUploaderBranchesMore(unittest.TestCase):
             try:
                 row = conn.execute("SELECT locked_by FROM jobs WHERE id = ?", (job_id,)).fetchone()
                 self.assertIsNone(row["locked_by"])
+            finally:
+                conn.close()
+
+    def test_real_youtube_upload_without_cover_skips_thumbnail(self) -> None:
+        with temp_env() as (_, _env0):
+            env0 = Env.load()
+            env = replace(env0, upload_backend="youtube")
+            seed_minimal_db(env)
+            job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD")
+
+            mp4 = outbox_dir(env, job_id) / "render.mp4"
+            mp4.parent.mkdir(parents=True, exist_ok=True)
+            mp4.write_bytes(b"x")
+
+            yt_inst = _YTNoThumb()
+
+            with mock.patch.object(uploader_worker, "YouTubeClient", lambda *a, **k: yt_inst):
+                uploader_worker.uploader_cycle(env=env, worker_id="wu")
+
+            conn = dbm.connect(env)
+            try:
+                job = dbm.get_job(conn, job_id)
+                self.assertEqual(str(job["state"]), "WAIT_APPROVAL")
+                self.assertEqual(yt_inst.thumbnail_calls, 0)
             finally:
                 conn.close()
 

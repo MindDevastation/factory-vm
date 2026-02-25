@@ -2,6 +2,12 @@
 {% block body %}
 <h1>Factory VM</h1>
 <p class="muted">Последние 200 jobs</p>
+<p>
+  <form method="post" action="/ui/jobs/render_all" style="display:inline-block;margin-right:12px;">
+    <button type="submit">Render All</button>
+  </form>
+  <a href="/ui/jobs/create">Create Job</a>
+</p>
 
 <table>
   <thead>
@@ -13,6 +19,7 @@
       <th>Stage</th>
       <th>Progress</th>
       <th>Updated</th>
+      <th>Actions</th>
     </tr>
   </thead>
   <tbody>
@@ -20,7 +27,8 @@
     <tr>
       <td><a href="/jobs/{{ j.id }}">{{ j.id }}</a></td>
       <td>{{ j.channel_name }}<div class="muted">{{ j.channel_slug }}</div></td>
-      <td>{{ j.release_title }}</td>
+      <td><a href="/jobs/{{ j.id }}">{{ j.channel_name }} - {{ j.release_title }}</a>
+      {% if j.error_reason %}<div style="color:#b91c1c">{{ j.error_reason }}</div>{% endif %}</td>
       <td><span class="pill">{{ j.state }}</span></td>
       <td>{{ j.stage }}</td>
       <td>
@@ -28,6 +36,11 @@
         <div class="muted">{{ "%.1f"|format(j.progress_pct) }}% {{ j.progress_text or "" }}</div>
       </td>
       <td class="muted">{{ j.updated_at }}</td>
+      <td>
+        {% if j.state == 'DRAFT' and j.job_type == 'UI' %}
+        <a href="/ui/jobs/{{ j.id }}/edit">Edit</a>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </tbody>
