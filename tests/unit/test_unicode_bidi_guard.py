@@ -9,6 +9,17 @@ class TestNoBidiOrFormatUnicode(unittest.TestCase):
         tracked_files = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
         target_files = [f for f in tracked_files if f.endswith((".py", ".html"))]
 
+        forbidden_codepoints = {
+            0x00A0,
+            *range(0x2000, 0x200C),
+            0x202F,
+            0x205F,
+            0x3000,
+            0xFEFF,
+            *range(0x202A, 0x202F),
+            *range(0x2066, 0x206A),
+        }
+
         issues = []
         for rel_path in target_files:
             path = Path(rel_path)
@@ -23,7 +34,7 @@ class TestNoBidiOrFormatUnicode(unittest.TestCase):
                     {
                         f"U+{ord(ch):04X}({unicodedata.name(ch, 'UNKNOWN')})"
                         for ch in line
-                        if unicodedata.category(ch) == "Cf"
+                        if unicodedata.category(ch) == "Cf" or ord(ch) in forbidden_codepoints
                     }
                 )
                 if cps:
