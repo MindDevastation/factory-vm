@@ -15,7 +15,6 @@ from services.common import db as dbm
 from services.common.config import load_policies
 from services.common.logging_setup import append_job_log, get_logger, safe_path_basename
 from services.common.paths import workspace_dir, outbox_dir, preview_path, cancel_flag_path
-from services.common.utils import safe_slug
 from services.common.ffmpeg import make_preview_60s
 from services.integrations.gdrive import DriveClient
 
@@ -72,6 +71,22 @@ def _fetch_asset_to(*, env: Env, drive: DriveClient | None, asset: dict, dest: P
         return drive
 
     raise RuntimeError(f"Unsupported asset origin: {origin}")
+
+
+def _workspace_audio_stem(*, queue_idx: int, original_filename_stem: str) -> str:
+    """Build workspace-safe audio stem as `YYY_<Title_Case_Words>`."""
+    tid = f"{queue_idx:03d}"
+
+    stem = str(original_filename_stem or "").strip()
+    stem = re.sub(r"^\d{3}_", "", stem, count=1)
+    stem = stem.replace("_", " ")
+    stem = re.sub(r"[<>:\"/\\|?*\x00-\x1f]", " ", stem)
+    stem = re.sub(r"\s+", " ", stem).strip()
+
+    title = stem.title() if stem else "Track"
+    safe = re.sub(r"\s+", "_", title)
+    safe = re.sub(r"_+", "_", safe).strip("_") or "Track"
+    return f"{tid}_{safe}"
 
 
 def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
@@ -192,7 +207,7 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
 
             tid = f"{idx:03d}"
             track_ids.append(tid)
-            new_name = f"{tid}_{safe_slug(Path(orig_name).stem)}.wav"
+            new_name = f"{_workspace_audio_stem(queue_idx=idx, original_filename_stem=Path(orig_name).stem)}.wav"
             dst = audio_dir / new_name
             drive = _fetch_asset_to(env=env, drive=drive, asset=t, dest=dst)
 
