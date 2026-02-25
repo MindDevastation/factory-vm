@@ -454,7 +454,11 @@ async def ui_jobs_create_submit(
     raw = urllib.parse.parse_qs(raw_body)
     getv = lambda k: (raw.get(k, [""])[0] if raw.get(k) else "")
 
-    channel_id = int(getv("channel_id") or "0")
+    raw_channel_id = getv("channel_id")
+    try:
+        channel_id = int(raw_channel_id or "0")
+    except (TypeError, ValueError):
+        channel_id = 0
     title = getv("title")
     description = getv("description")
     tags_csv = getv("tags_csv")
@@ -561,7 +565,11 @@ async def ui_jobs_edit_submit(
     raw_body = (await request.body()).decode("utf-8")
     raw = urllib.parse.parse_qs(raw_body)
     getv = lambda k: (raw.get(k, [""])[0] if raw.get(k) else "")
-    channel_id = int(getv("channel_id") or "0")
+    raw_channel_id = getv("channel_id")
+    try:
+        channel_id = int(raw_channel_id or "0")
+    except (TypeError, ValueError):
+        channel_id = 0
     title = getv("title")
     description = getv("description")
     tags_csv = getv("tags_csv")
@@ -590,9 +598,6 @@ async def ui_jobs_edit_submit(
             raise HTTPException(404)
         if str(job.get("state") or "") != "DRAFT":
             raise HTTPException(409, "only DRAFT jobs can be edited")
-        if int(draft["channel_id"]) != payload.channel_id:
-            raise HTTPException(409, "project/channel_id is immutable")
-
         errors = _ui_validate(payload)
         if errors:
             return templates.TemplateResponse(
@@ -608,6 +613,9 @@ async def ui_jobs_edit_submit(
                 },
                 status_code=422,
             )
+
+        if int(draft["channel_id"]) != payload.channel_id:
+            raise HTTPException(409, "project/channel_id is immutable")
 
         dbm.update_ui_job_draft(
             conn,

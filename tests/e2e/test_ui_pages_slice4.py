@@ -68,6 +68,25 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("title is required", r.text)
             self.assertIn("audio ids are required", r.text)
 
+            r = client.post(
+                "/ui/jobs/create",
+                headers=h,
+                data={
+                    "channel_id": "not-a-number",
+                    "title": "Valid title",
+                    "description": "",
+                    "tags_csv": "",
+                    "cover_name": "",
+                    "cover_ext": "",
+                    "background_name": "bg",
+                    "background_ext": "jpg",
+                    "audio_ids_text": "001",
+                },
+            )
+            self.assertNotEqual(r.status_code, 500)
+            self.assertEqual(r.status_code, 422)
+            self.assertIn("project is required", r.text)
+
             conn2 = dbm.connect(env)
             try:
                 dbm.update_job_state(conn2, job_id, state="READY_FOR_RENDER", stage="FETCH")
