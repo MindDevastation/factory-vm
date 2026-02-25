@@ -183,6 +183,23 @@ def migrate(conn: sqlite3.Connection) -> None:
         );
 
         CREATE INDEX IF NOT EXISTS idx_worker_heartbeats_last_seen ON worker_heartbeats(last_seen);
+
+        CREATE TABLE IF NOT EXISTS ui_job_drafts (
+            job_id INTEGER PRIMARY KEY,
+            channel_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            tags_csv TEXT NOT NULL,
+            cover_name TEXT,
+            cover_ext TEXT,
+            background_name TEXT NOT NULL,
+            background_ext TEXT NOT NULL,
+            audio_ids_text TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY(job_id) REFERENCES jobs(id),
+            FOREIGN KEY(channel_id) REFERENCES channels(id)
+        );
         """
     )
 
@@ -250,6 +267,11 @@ def get_channel_by_slug(conn: sqlite3.Connection, slug: str) -> Optional[Dict[st
     return cur.fetchone()
 
 
+def get_channel_by_id(conn: sqlite3.Connection, channel_id: int) -> Optional[Dict[str, Any]]:
+    cur = conn.execute("SELECT * FROM channels WHERE id = ?", (channel_id,))
+    return cur.fetchone()
+
+
 def list_jobs(conn: sqlite3.Connection, state: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
     if state:
         cur = conn.execute(
@@ -292,6 +314,111 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> Optional[Dict[str, Any]]:
         (job_id,),
     )
     return cur.fetchone()
+
+
+def get_ui_job_draft(conn: sqlite3.Connection, job_id: int) -> Optional[Dict[str, Any]]:
+    cur = conn.execute(
+        """
+        SELECT d.*, c.display_name AS channel_name
+        FROM ui_job_drafts d
+        JOIN channels c ON c.id = d.channel_id
+        WHERE d.job_id = ?
+        """,
+        (job_id,),
+    )
+    return cur.fetchone()
+
+
+def create_ui_job_draft(
+    conn: sqlite3.Connection,
+    *,
+    channel_id: int,
+    title: str,
+    description: str,
+    tags_csv: str,
+    cover_name: Optional[str],
+    cover_ext: Optional[str],
+    background_name: str,
+    background_ext: str,
+    audio_ids_text: str,
+    job_type: str = "UI",
+) -> int:
+    ts = now_ts()
+    tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
+    cur = conn.execute(
+        """
+        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+        VALUES(?, ?, ?, ?, NULL, NULL, NULL, ?)
+        """,
+        (channel_id, title, description, json_dumps(tags), ts),
+    )
+    release_id = int(cur.lastrowid)
+    cur2 = conn.execute(
+        """
+        INSERT INTO jobs(release_id, job_type, state, stage, priority, attempt, created_at, updated_at)
+        VALUES(?, ?, 'DRAFT', 'DRAFT', 0, 0, ?, ?)
+        """,
+        (release_id, job_type, ts, ts),
+    )
+    job_id = int(cur2.lastrowid)
+    conn.execute(
+        """
+        INSERT INTO ui_job_drafts(
+            job_id, channel_id, title, description, tags_csv,
+            cover_name, cover_ext, background_name, background_ext,
+            audio_ids_text, created_at, updated_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            job_id,
+            channel_id,
+            title,
+            description,
+            tags_csv,
+            cover_name,
+            cover_ext,
+            background_name,
+            background_ext,
+            audio_ids_text,
+            ts,
+            ts,
+        ),
+    )
+    return job_id
+
+
+def update_ui_job_draft(
+    conn: sqlite3.Connection,
+    *,
+    job_id: int,
+    title: str,
+    description: str,
+    tags_csv: str,
+    cover_name: Optional[str],
+    cover_ext: Optional[str],
+    background_name: str,
+    background_ext: str,
+    audio_ids_text: str,
+) -> None:
+    ts = now_ts()
+    tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
+    conn.execute(
+        """
+        UPDATE ui_job_drafts
+        SET title=?, description=?, tags_csv=?, cover_name=?, cover_ext=?,
+            background_name=?, background_ext=?, audio_ids_text=?, updated_at=?
+        WHERE job_id = ?
+        """,
+        (title, description, tags_csv, cover_name, cover_ext, background_name, background_ext, audio_ids_text, ts, job_id),
+    )
+    conn.execute(
+        """
+        UPDATE releases
+        SET title=?, description=?, tags_json=?
+        WHERE id = (SELECT release_id FROM jobs WHERE id = ?)
+        """,
+        (title, description, json_dumps(tags), job_id),
+    )
 
 
 def claim_job(

@@ -126,13 +126,16 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
         conn.close()
 
     tracks = [i for i in inputs if i["role"] == "TRACK"]
+    backgrounds = [i for i in inputs if i["role"] == "BACKGROUND"]
     covers = [i for i in inputs if i["role"] == "COVER"]
 
-    if not tracks or not covers:
+    render_bg = backgrounds[0] if backgrounds else (covers[0] if covers else None)
+
+    if not tracks or not render_bg:
         conn = dbm.connect(env)
         try:
             attempt = dbm.increment_attempt(conn, job_id)
-            reason = "missing inputs (tracks/cover)"
+            reason = "missing inputs (tracks/background)"
             if attempt < env.max_render_attempts:
                 dbm.schedule_retry(conn, job_id, next_state="READY_FOR_RENDER", stage="FETCH", error_reason=reason, backoff_sec=env.retry_backoff_sec)
             else:
@@ -175,11 +178,10 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
         for d in (audio_dir, images_dir, release_dir):
             d.mkdir(parents=True, exist_ok=True)
 
-        # download cover
-        cover = covers[0]
-        cover_name = safe_path_basename(str(cover.get("name") or "cover.png"), fallback="cover.png")
-        cover_dst = images_dir / cover_name
-        drive = _fetch_asset_to(env=env, drive=drive, asset=cover, dest=cover_dst)
+        # download background image (fallback: cover for legacy jobs)
+        bg_name = safe_path_basename(str(render_bg.get("name") or "background.png"), fallback="background.png")
+        bg_dst = images_dir / bg_name
+        drive = _fetch_asset_to(env=env, drive=drive, asset=render_bg, dest=bg_dst)
 
         # download tracks
         track_ids: List[str] = []
@@ -199,7 +201,7 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
         title = " ".join(str(job["release_title"]).split()).replace(":", " -")
         block = [
             f"{title}: " + " ".join(track_ids),
-            f"Image: {cover_name}",
+            f"Image: {bg_name}",
             "Status: Not done",
             "",
         ]
@@ -309,10 +311,18 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
         mp4_dst = ob / "render.mp4"
         shutil.move(str(mp4_src), str(mp4_dst))
 
-        # cover for thumbnail
-        cover_out = ob / "cover" / cover_name
-        cover_out.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(cover_dst, cover_out)
+        # optional cover for thumbnail upload only
+        if covers:
+            cover = covers[0]
+            cover_name = safe_path_basename(str(cover.get("name") or "cover.png"), fallback="cover.png")
+            cover_dst = ob / "cover" / cover_name
+            cover_dst.parent.mkdir(parents=True, exist_ok=True)
+            if cover is render_bg:
+                shutil.copyfile(bg_dst, cover_dst)
+            else:
+                tmp_cover = ws / "tmp_cover" / cover_name
+                drive = _fetch_asset_to(env=env, drive=drive, asset=cover, dest=tmp_cover)
+                shutil.copyfile(tmp_cover, cover_dst)
 
         # preview
         preview_dst = preview_path(env, job_id)

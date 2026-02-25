@@ -144,6 +144,55 @@ class TestOrchestratorMockRender(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_orchestrator_uses_background_role_and_skips_cover_output_when_missing(self) -> None:
+        with temp_env() as (_, _env0):
+            os.environ["ORIGIN_BACKEND"] = "local"
+            env = Env.load()
+            seed_minimal_db(env)
+
+            job_id = insert_release_and_job(env, state="READY_FOR_RENDER", stage="FETCH")
+
+            conn = dbm.connect(env)
+            try:
+                job = dbm.get_job(conn, job_id)
+                assert job is not None
+                ch = dbm.get_channel_by_slug(conn, str(job["channel_slug"]))
+                assert ch is not None
+
+                base = Path(env.storage_root) / "test_inputs" / f"job_{job_id}_bg"
+                base.mkdir(parents=True, exist_ok=True)
+                wav = base / "track_1.wav"
+                wav.write_bytes(b"RIFF0000WAVEfmt ")
+                bg = base / "bg.png"
+                bg.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+                aid = dbm.create_asset(conn, channel_id=int(ch["id"]), kind="AUDIO", origin="LOCAL", origin_id=str(wav), name=wav.name, path=str(wav))
+                dbm.link_job_input(conn, job_id, aid, "TRACK", 0)
+                bid = dbm.create_asset(conn, channel_id=int(ch["id"]), kind="IMAGE", origin="LOCAL", origin_id=str(bg), name=bg.name, path=str(bg))
+                dbm.link_job_input(conn, job_id, bid, "BACKGROUND", 0)
+            finally:
+                conn.close()
+
+            def _fake_preview(*, src_mp4: Path, dst_mp4: Path, seconds: int, width: int, height: int, fps: int, v_bitrate: str, a_bitrate: str):
+                dst_mp4.parent.mkdir(parents=True, exist_ok=True)
+                dst_mp4.write_bytes(b"preview")
+
+            release_dir = Path(env.storage_root) / "workspace" / f"job_{job_id}" / "YouTubeRoot" / "Darkwood Reverie" / "Release"
+
+            with patch("services.workers.orchestrator.subprocess.Popen", lambda *a, **k: _FakeProc(release_dir=release_dir)), patch(
+                "services.workers.orchestrator.make_preview_60s", _fake_preview
+            ):
+                orchestrator_cycle(env=env, worker_id="t-orch")
+
+            conn2 = dbm.connect(env)
+            try:
+                job2 = dbm.get_job(conn2, job_id)
+                assert job2 is not None
+                self.assertEqual(job2["state"], "QA_RUNNING")
+                self.assertFalse((outbox_dir(env, job_id) / "cover").exists())
+            finally:
+                conn2.close()
+
 
 if __name__ == "__main__":
     unittest.main()

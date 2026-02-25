@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block body %}
+<p><a href="/">← назад</a></p>
+<h1>{% if mode == 'create' %}Create Job{% else %}Edit Job #{{ job_id }}{% endif %}</h1>
+
+{% if locked %}<p style="color:#b91c1c"><b>Editing is disabled: job is not in DRAFT.</b></p>{% endif %}
+
+<form method="post" action="{% if mode == 'create' %}/ui/jobs/create{% else %}/ui/jobs/{{ job_id }}/edit{% endif %}">
+  <h3>A) YouTube metadata</h3>
+  <p>
+    <label>Project* </label>
+    <select name="channel_id" {% if mode == 'edit' %}disabled{% endif %}>
+      {% for c in channels %}
+      <option value="{{ c.id }}" {% if (form.channel_id|default(0)|int) == c.id %}selected{% endif %}>{{ c.display_name }}</option>
+      {% endfor %}
+    </select>
+  </p>
+  {% if field_errors.project %}<p style="color:#b91c1c">{{ field_errors.project|join('; ') }}</p>{% endif %}
+
+  <p><label>Title* <input name="title" value="{{ form.title|default('') }}" {% if locked %}readonly{% endif %}></label></p>
+  {% if field_errors.title %}<p style="color:#b91c1c">{{ field_errors.title|join('; ') }}</p>{% endif %}
+
+  <p><label>Description <textarea name="description" {% if locked %}readonly{% endif %}>{{ form.description|default('') }}</textarea></label></p>
+  <p><label>Tags (comma-separated, no #) <input name="tags_csv" value="{{ form.tags_csv|default('') }}" {% if locked %}readonly{% endif %}></label></p>
+  {% if field_errors.tags %}<p style="color:#b91c1c">{{ field_errors.tags|join('; ') }}</p>{% endif %}
+
+  <p><label>Cover name <input name="cover_name" value="{{ form.cover_name|default('') }}" {% if locked %}readonly{% endif %}></label>
+     <label>ext <input name="cover_ext" value="{{ form.cover_ext|default('') }}" {% if locked %}readonly{% endif %}></label></p>
+  {% if field_errors.cover %}<p style="color:#b91c1c">{{ field_errors.cover|join('; ') }}</p>{% endif %}
+
+  <h3>B) Render inputs</h3>
+  <p><label>Audio IDs* (space-separated) <input name="audio_ids_text" value="{{ form.audio_ids_text|default('') }}" {% if locked %}readonly{% endif %}></label></p>
+  {% if field_errors.audio %}<p style="color:#b91c1c">{{ field_errors.audio|join('; ') }}</p>{% endif %}
+
+  <p><label>Background name* <input name="background_name" value="{{ form.background_name|default('') }}" {% if locked %}readonly{% endif %}></label>
+     <label>ext* <input name="background_ext" value="{{ form.background_ext|default('') }}" {% if locked %}readonly{% endif %}></label></p>
+  {% if field_errors.background %}<p style="color:#b91c1c">{{ field_errors.background|join('; ') }}</p>{% endif %}
+
+  <p><button type="submit" {% if locked %}disabled{% endif %}>Save DRAFT</button></p>
+</form>
+{% endblock %}
