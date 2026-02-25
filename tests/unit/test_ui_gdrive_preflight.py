@@ -78,8 +78,17 @@ class TestUiGdrivePreflight(unittest.TestCase):
             self.assertEqual(set(res.field_errors.keys()), EXPECTED_ERROR_KEYS)
             self.assertTrue(all(res.field_errors[k] == [] for k in EXPECTED_ERROR_KEYS))
             self.assertEqual(res.resolved["background_file_id"], "bgf")
+            self.assertEqual(res.resolved["background_filename"], "BG.jpg")
             self.assertEqual(res.resolved["cover_file_id"], "covf")
+            self.assertEqual(res.resolved["cover_filename"], "cover.png")
             self.assertEqual(res.resolved["track_file_ids"], ["a1", "a2"])
+            self.assertEqual(
+                res.resolved["tracks"],
+                [
+                    {"file_id": "a1", "filename": "001_Title.wav"},
+                    {"file_id": "a2", "filename": "015_Title.wav"},
+                ],
+            )
 
     def test_preflight_audio_match_errors(self) -> None:
         with temp_env() as (_, _):
