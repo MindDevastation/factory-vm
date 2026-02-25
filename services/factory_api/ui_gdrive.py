@@ -103,7 +103,14 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
     draft = dbm.get_ui_job_draft(conn, job_id)
     job = dbm.get_job(conn, job_id)
     errors: Dict[str, List[str]] = {"project": [], "title": [], "audio": [], "background": [], "cover": [], "tags": []}
-    resolved: Dict[str, object] = {"background_file_id": None, "cover_file_id": None, "track_file_ids": []}
+    resolved: Dict[str, object] = {
+        "background_file_id": None,
+        "background_filename": None,
+        "cover_file_id": None,
+        "cover_filename": None,
+        "track_file_ids": [],
+        "tracks": [],
+    }
 
     if not draft or not job:
         errors["project"].append("job draft not found")
@@ -129,6 +136,7 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
     try:
         bg = resolve_background(drive, ids["image_id"], str(draft["background_name"]), str(draft["background_ext"]))
         resolved["background_file_id"] = bg.id
+        resolved["background_filename"] = bg.name
     except Exception as e:
         errors["background"].append(str(e))
 
@@ -141,6 +149,7 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
             try:
                 cov = resolve_cover(drive, ids["covers_id"], cover_name, cover_ext)
                 resolved["cover_file_id"] = cov.id
+                resolved["cover_filename"] = cov.name
             except Exception as e:
                 errors["cover"].append(str(e))
 
@@ -161,6 +170,7 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
         try:
             tracks = resolve_audio_tracks(drive, ids["audio_id"], normalized)
             resolved["track_file_ids"] = [t.id for t in tracks]
+            resolved["tracks"] = [{"file_id": t.id, "filename": t.name} for t in tracks]
         except Exception as e:
             errors["audio"].append(str(e))
 

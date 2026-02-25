@@ -336,18 +336,22 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
                 failed += 1
                 continue
             channel_id = int(draft["channel_id"])
-            track_ids = list(result.resolved.get("track_file_ids") or [])
-            for idx, fid in enumerate(track_ids):
-                aid = dbm.create_asset(conn, channel_id=channel_id, kind="AUDIO", origin="GDRIVE", origin_id=str(fid), name=f"{fid}.wav", path=f"gdrive:{fid}")
+            tracks = list(result.resolved.get("tracks") or [])
+            for idx, track in enumerate(tracks):
+                fid = str(track.get("file_id") or "")
+                fname = str(track.get("filename") or "")
+                aid = dbm.create_asset(conn, channel_id=channel_id, kind="AUDIO", origin="GDRIVE", origin_id=fid, name=fname, path=f"gdrive:{fid}")
                 dbm.link_job_input(conn, job_id, aid, "TRACK", idx)
 
             bg_id = str(result.resolved.get("background_file_id") or "")
-            bg_aid = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="GDRIVE", origin_id=bg_id, name=f"{bg_id}.img", path=f"gdrive:{bg_id}")
+            bg_name = str(result.resolved.get("background_filename") or "")
+            bg_aid = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="GDRIVE", origin_id=bg_id, name=bg_name, path=f"gdrive:{bg_id}")
             dbm.link_job_input(conn, job_id, bg_aid, "BACKGROUND", 0)
 
             cover_id = str(result.resolved.get("cover_file_id") or "")
+            cover_name = str(result.resolved.get("cover_filename") or "")
             if cover_id:
-                c_aid = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="GDRIVE", origin_id=cover_id, name=f"{cover_id}.img", path=f"gdrive:{cover_id}")
+                c_aid = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="GDRIVE", origin_id=cover_id, name=cover_name, path=f"gdrive:{cover_id}")
                 dbm.link_job_input(conn, job_id, c_aid, "COVER", 0)
 
             dbm.update_job_state(conn, job_id, state="READY_FOR_RENDER", stage="FETCH", error_reason="")

@@ -99,6 +99,45 @@ class TestUiJobsRenderAllSlice3(unittest.TestCase):
                 self.assertIn("TRACK", roles)
                 self.assertIn("COVER", roles)
 
+                track_names = [
+                    r["name"]
+                    for r in conn2.execute(
+                        """
+                        SELECT a.name
+                        FROM job_inputs ji
+                        JOIN assets a ON a.id=ji.asset_id
+                        WHERE ji.job_id=? AND ji.role='TRACK'
+                        ORDER BY ji.order_index ASC
+                        """,
+                        (ok_job,),
+                    ).fetchall()
+                ]
+                self.assertEqual(track_names, ["001_Title.wav", "015_Title.wav"])
+
+                background_name = conn2.execute(
+                    """
+                    SELECT a.name
+                    FROM job_inputs ji
+                    JOIN assets a ON a.id=ji.asset_id
+                    WHERE ji.job_id=? AND ji.role='BACKGROUND'
+                    """,
+                    (ok_job,),
+                ).fetchone()["name"]
+                self.assertEqual(background_name, "bg.jpg")
+                self.assertFalse(background_name.endswith(".img"))
+
+                cover_name = conn2.execute(
+                    """
+                    SELECT a.name
+                    FROM job_inputs ji
+                    JOIN assets a ON a.id=ji.asset_id
+                    WHERE ji.job_id=? AND ji.role='COVER'
+                    """,
+                    (ok_job,),
+                ).fetchone()["name"]
+                self.assertEqual(cover_name, "cover.png")
+                self.assertFalse(cover_name.endswith(".img"))
+
                 self.assertEqual(bad["state"], "DRAFT")
                 self.assertTrue(str(bad.get("error_reason") or ""))
             finally:
