@@ -107,11 +107,11 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
 
     if not draft or not job:
         errors["project"].append("job draft not found")
-        return PreflightResult(ok=False, field_errors={k: v for k, v in errors.items() if v}, resolved=resolved)
+        return PreflightResult(ok=False, field_errors=errors, resolved=resolved)
 
     if not env.gdrive_root_id:
         errors["project"].append("GDRIVE_ROOT_ID is not configured")
-        return PreflightResult(ok=False, field_errors={k: v for k, v in errors.items() if v}, resolved=resolved)
+        return PreflightResult(ok=False, field_errors=errors, resolved=resolved)
 
     if drive is None:
         drive = DriveClient(
@@ -124,7 +124,7 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
         ids = resolve_project_folder_ids(drive, env.gdrive_root_id, str(job["channel_name"]))
     except Exception as e:
         errors["project"].append(str(e))
-        return PreflightResult(ok=False, field_errors={k: v for k, v in errors.items() if v}, resolved=resolved)
+        return PreflightResult(ok=False, field_errors=errors, resolved=resolved)
 
     try:
         bg = resolve_background(drive, ids["image_id"], str(draft["background_name"]), str(draft["background_ext"]))
@@ -164,7 +164,7 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
         except Exception as e:
             errors["audio"].append(str(e))
 
-    ferrors = {k: v for k, v in errors.items() if v}
-    ok = len(ferrors) == 0
-    dbm.update_job_state(conn, job_id, state=str(job["state"]), stage=str(job["stage"]), error_reason=None if ok else "; ".join(next(iter(ferrors.values()))))
-    return PreflightResult(ok=ok, field_errors=ferrors, resolved=resolved)
+    ok = not any(errors.values())
+    first_error = next((messages for messages in errors.values() if messages), None)
+    dbm.update_job_state(conn, job_id, state=str(job["state"]), stage=str(job["stage"]), error_reason=None if ok else "; ".join(first_error or []))
+    return PreflightResult(ok=ok, field_errors=errors, resolved=resolved)

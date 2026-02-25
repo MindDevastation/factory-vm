@@ -11,6 +11,9 @@ from services.integrations.gdrive import DriveItem
 from tests._helpers import seed_minimal_db, temp_env
 
 
+EXPECTED_ERROR_KEYS = {"project", "title", "audio", "background", "cover", "tags"}
+
+
 class FakeDrive:
     def __init__(self, tree: dict[str, list[DriveItem]]):
         self.tree = tree
@@ -72,6 +75,8 @@ class TestUiGdrivePreflight(unittest.TestCase):
                 conn.close()
 
             self.assertTrue(res.ok)
+            self.assertEqual(set(res.field_errors.keys()), EXPECTED_ERROR_KEYS)
+            self.assertTrue(all(res.field_errors[k] == [] for k in EXPECTED_ERROR_KEYS))
             self.assertEqual(res.resolved["background_file_id"], "bgf")
             self.assertEqual(res.resolved["cover_file_id"], "covf")
             self.assertEqual(res.resolved["track_file_ids"], ["a1", "a2"])
@@ -106,8 +111,9 @@ class TestUiGdrivePreflight(unittest.TestCase):
                 conn.close()
 
             self.assertFalse(res.ok)
-            self.assertIn("audio", res.field_errors)
+            self.assertEqual(set(res.field_errors.keys()), EXPECTED_ERROR_KEYS)
             self.assertIn("matches=2", res.field_errors["audio"][0])
+            self.assertTrue(all(res.field_errors[k] == [] for k in EXPECTED_ERROR_KEYS if k != "audio"))
 
     def test_preflight_audio_missing_match_error(self) -> None:
         with temp_env() as (_, _):
@@ -136,8 +142,9 @@ class TestUiGdrivePreflight(unittest.TestCase):
                 conn.close()
 
             self.assertFalse(res.ok)
-            self.assertIn("audio", res.field_errors)
+            self.assertEqual(set(res.field_errors.keys()), EXPECTED_ERROR_KEYS)
             self.assertIn("matches=0", res.field_errors["audio"][0])
+            self.assertTrue(all(res.field_errors[k] == [] for k in EXPECTED_ERROR_KEYS if k != "audio"))
 
 
 if __name__ == "__main__":
