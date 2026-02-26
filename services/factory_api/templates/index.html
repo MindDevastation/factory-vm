@@ -9,6 +9,27 @@
   <a href="/ui/jobs/create">Create Job</a>
 </p>
 
+<h2>OAuth Tokens</h2>
+<p>
+  <button type="button" id="oauth-refresh-btn">Refresh status</button>
+  <span class="muted" id="oauth-refresh-note"></span>
+</p>
+<table id="oauth-status-table">
+  <thead>
+    <tr>
+      <th>Channel</th>
+      <th>Drive Token</th>
+      <th>YouTube Token</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td colspan="4" class="muted">Loading token status...</td>
+    </tr>
+  </tbody>
+</table>
+
 <table>
   <thead>
     <tr>
@@ -45,4 +66,119 @@
     {% endfor %}
   </tbody>
 </table>
+
+<script>
+(function () {
+  const refreshBtn = document.getElementById('oauth-refresh-btn');
+  const refreshNote = document.getElementById('oauth-refresh-note');
+  const tableBody = document.querySelector('#oauth-status-table tbody');
+  let pollCount = 0;
+
+  function fmtStatus(isPresent, mtime) {
+    if (!isPresent) {
+      return 'Missing';
+    }
+    if (!mtime) {
+      return 'Present';
+    }
+    const dt = new Date(Number(mtime) * 1000);
+    if (Number.isNaN(dt.getTime())) {
+      return 'Present';
+    }
+    return 'Present (' + dt.toLocaleString() + ')';
+  }
+
+  async function startOauth(kind, slug) {
+    const res = await fetch('/v1/oauth/' + kind + '/' + encodeURIComponent(slug) + '/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error('Failed to start OAuth: ' + body);
+    }
+    const data = await res.json();
+    if (!data.auth_url) {
+      throw new Error('Missing auth_url in response');
+    }
+    window.open(data.auth_url, '_blank', 'noopener');
+  }
+
+  function esc(value) {
+    return String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('\"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  function renderRows(channels) {
+    if (!channels.length) {
+      tableBody.innerHTML = '<tr><td colspan="4" class="muted">No channels found.</td></tr>';
+      return;
+    }
+
+    tableBody.innerHTML = channels.map((ch) => {
+      return '<tr>' +
+        '<td>' + esc(ch.display_name) + '<div class="muted">' + esc(ch.slug) + '</div></td>' +
+        '<td>' + fmtStatus(ch.drive_token_present, ch.drive_token_mtime) + '</td>' +
+        '<td>' + fmtStatus(ch.yt_token_present, ch.yt_token_mtime) + '</td>' +
+        '<td>' +
+          '<button type="button" data-kind="gdrive" data-slug="' + esc(ch.slug) + '">Generate Drive Token</button> ' +
+          '<button type="button" data-kind="youtube" data-slug="' + esc(ch.slug) + '">Generate YouTube Token</button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+
+    tableBody.querySelectorAll('button[data-kind]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        try {
+          refreshNote.textContent = 'Starting OAuth flow...';
+          await startOauth(btn.getAttribute('data-kind'), btn.getAttribute('data-slug'));
+          refreshNote.textContent = 'OAuth window opened. Complete consent, then wait for auto-refresh or click Refresh status.';
+          pollCount = 0;
+          pollStatus();
+        } catch (err) {
+          refreshNote.textContent = err.message;
+        }
+      });
+    });
+  }
+
+  async function fetchStatus() {
+    const res = await fetch('/v1/oauth/status');
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error('Failed to load OAuth status: ' + body);
+    }
+    const data = await res.json();
+    return data.channels || [];
+  }
+
+  async function refreshStatus() {
+    try {
+      const channels = await fetchStatus();
+      renderRows(channels);
+      refreshNote.textContent = 'Updated at ' + new Date().toLocaleTimeString();
+    } catch (err) {
+      refreshNote.textContent = err.message;
+    }
+  }
+
+  function pollStatus() {
+    if (pollCount >= 20) {
+      return;
+    }
+    pollCount += 1;
+    setTimeout(async () => {
+      await refreshStatus();
+      pollStatus();
+    }, 3000);
+  }
+
+  refreshBtn.addEventListener('click', refreshStatus);
+  refreshStatus();
+})();
+</script>
 {% endblock %}

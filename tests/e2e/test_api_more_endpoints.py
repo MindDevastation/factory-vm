@@ -303,6 +303,39 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertTrue(yt_token.is_file())
             self.assertIn("yt-token", yt_token.read_text(encoding="utf-8"))
 
+    def test_oauth_status_reports_presence_without_reading_contents(self) -> None:
+        with temp_env() as (td, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            import os
+            os.environ["OAUTH_REDIRECT_BASE_URL"] = "http://localhost:8080"
+            os.environ["OAUTH_STATE_SECRET"] = "state-secret"
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = str(Path(td.name) / "gdrive_client.json")
+            os.environ["GDRIVE_TOKENS_DIR"] = str(Path(td.name) / "gdrive_tokens")
+            os.environ["YT_CLIENT_SECRET_JSON"] = str(Path(td.name) / "yt_client.json")
+            os.environ["YT_TOKENS_DIR"] = str(Path(td.name) / "yt_tokens")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            gdrive_token = Path(td.name) / "gdrive_tokens" / "darkwood-reverie" / "token.json"
+            gdrive_token.parent.mkdir(parents=True, exist_ok=True)
+            gdrive_token.write_text('{"access_token":"x"}', encoding="utf-8")
+
+            res = client.get("/v1/oauth/status", headers=h)
+            self.assertEqual(res.status_code, 200)
+            channels = res.json().get("channels", [])
+            item = next((row for row in channels if row.get("slug") == "darkwood-reverie"), None)
+            self.assertIsNotNone(item)
+            assert item is not None
+            self.assertEqual(item["drive_token_present"], True)
+            self.assertIsNotNone(item["drive_token_mtime"])
+            self.assertEqual(item["yt_token_present"], False)
+            self.assertIsNone(item["yt_token_mtime"])
+
 
 if __name__ == "__main__":
     unittest.main()

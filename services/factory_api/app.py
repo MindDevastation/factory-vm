@@ -95,7 +95,8 @@ def _require_channel(channel_slug: str) -> None:
 
 def _oauth_start(kind: str, channel_slug: str) -> dict:
     _require_channel(channel_slug)
-    client_secret_path, _, scope = validate_oauth_config(env, kind=kind)
+    client_secret_path, tokens_dir, scope = validate_oauth_config(env, kind=kind)
+    ensure_token_dir(oauth_token_path(base_dir=tokens_dir, channel_slug=channel_slug))
     state = sign_state(secret=env.oauth_state_secret, kind=kind, channel_slug=channel_slug)
     url = build_authorization_url(
         client_secret_path=client_secret_path,
@@ -131,6 +132,13 @@ def _oauth_callback(kind: str, code: str, state: str) -> HTMLResponse:
     )
 
 
+def _token_status_for(channel_slug: str, base_dir: str) -> tuple[bool, str | None]:
+    token_path = oauth_token_path(base_dir=base_dir, channel_slug=channel_slug)
+    if not token_path.is_file():
+        return False, None
+    return True, str(token_path.stat().st_mtime)
+
+
 @app.post("/v1/oauth/gdrive/{channel_slug}/start")
 def api_oauth_gdrive_start(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
     return _oauth_start("gdrive", channel_slug)
@@ -149,6 +157,37 @@ def api_oauth_youtube_start(channel_slug: str, _: bool = Depends(require_basic_a
 @app.get("/v1/oauth/youtube/callback", response_class=HTMLResponse)
 def api_oauth_youtube_callback(code: str, state: str, _: bool = Depends(require_basic_auth(env))):
     return _oauth_callback("youtube", code, state)
+
+
+@app.get("/v1/oauth/status")
+def api_oauth_status(_: bool = Depends(require_basic_auth(env))):
+    _, gdrive_tokens_dir, _ = validate_oauth_config(env, kind="gdrive")
+    _, yt_tokens_dir, _ = validate_oauth_config(env, kind="youtube")
+
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute(
+            "SELECT slug, display_name FROM channels ORDER BY display_name ASC, slug ASC"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    payload = []
+    for row in rows:
+        slug = str(row["slug"])
+        drive_present, drive_mtime = _token_status_for(slug, gdrive_tokens_dir)
+        yt_present, yt_mtime = _token_status_for(slug, yt_tokens_dir)
+        payload.append(
+            {
+                "slug": slug,
+                "display_name": str(row["display_name"]),
+                "drive_token_present": drive_present,
+                "drive_token_mtime": drive_mtime,
+                "yt_token_present": yt_present,
+                "yt_token_mtime": yt_mtime,
+            }
+        )
+    return {"channels": payload}
 
 
 @app.get("/v1/channels/export/yaml", response_class=PlainTextResponse)

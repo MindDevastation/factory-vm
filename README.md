@@ -43,15 +43,19 @@ Channels config source of truth:
 - After deploy, runtime components (API/workers/importer/uploader) read channel data from the DB (`channels` table), not from YAML.
 - Do not edit `configs/channels.yaml` expecting live runtime behavior changes; reseed DB instead.
 
-YouTube credentials:
-- Set `YT_CLIENT_SECRET_JSON` (global OAuth client secret).
-- Set `YT_TOKENS_DIR` and store each channel token at `${YT_TOKENS_DIR}/${channel_slug}/token.json`.
-- Example:
+OAuth credentials and token storage:
+- Configure redirect/signing settings:
+  - `OAUTH_REDIRECT_BASE_URL=http://localhost:8080` (or your HTTPS domain)
+  - `OAUTH_STATE_SECRET=<random-long-secret>`
+- YouTube:
+  - `YT_CLIENT_SECRET_JSON=/secure/youtube/client_secret.json`
   - `YT_TOKENS_DIR=/secure/youtube/channels`
-  - `channel_slug=titanwave-sonic`
-  - `token=/secure/youtube/channels/titanwave-sonic/token.json`
-- Generate a token:
-  - `python scripts/youtube_auth.py --channel-slug titanwave-sonic`
+  - Per-channel token path: `${YT_TOKENS_DIR}/${channel_slug}/token.json`
+- Google Drive:
+  - `GDRIVE_CLIENT_SECRET_JSON=/secure/gdrive/client_secret.json`
+  - `GDRIVE_TOKENS_DIR=/secure/gdrive/channels`
+  - Per-channel token path: `${GDRIVE_TOKENS_DIR}/${channel_slug}/token.json`
+- Use the dashboard OAuth Tokens section to start consent for each channel (Generate/Regenerate actions). The UI shows only token presence + last update time and never exposes token contents.
 
 Publish flow:
 - Bot sends YouTube private link + 60s preview.
