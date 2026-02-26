@@ -9,6 +9,37 @@
   <a href="/ui/jobs/create">Create Job</a>
 </p>
 
+<h2>Channels</h2>
+<p>
+  <button type="button" id="channel-add-btn">Add Channel</button>
+  <span class="muted" id="channel-note"></span>
+</p>
+<div id="channel-form-wrap" style="display:none; margin-bottom:12px; border:1px solid #ddd; padding:12px;">
+  <h3 style="margin-top:0;" id="channel-form-title">Add Channel</h3>
+  <form id="channel-form">
+    <label for="channel-slug">Slug</label>
+    <input id="channel-slug" name="slug" type="text" required placeholder="my-channel" pattern="[a-z0-9-]{3,64}" />
+    <label for="channel-display-name">Display name</label>
+    <input id="channel-display-name" name="display_name" type="text" required placeholder="My Channel" />
+    <button type="submit" id="channel-submit-btn">Create</button>
+    <button type="button" id="channel-cancel-btn">Cancel</button>
+  </form>
+</div>
+<table id="channels-table">
+  <thead>
+    <tr>
+      <th>Display name</th>
+      <th>Slug</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td colspan="3" class="muted">Loading channels...</td>
+    </tr>
+  </tbody>
+</table>
+
 <h2>OAuth Tokens</h2>
 <p>
   <button type="button" id="oauth-refresh-btn">Refresh status</button>
@@ -69,10 +100,22 @@
 
 <script>
 (function () {
+  const addBtn = document.getElementById('channel-add-btn');
+  const formWrap = document.getElementById('channel-form-wrap');
+  const channelForm = document.getElementById('channel-form');
+  const formTitle = document.getElementById('channel-form-title');
+  const slugInput = document.getElementById('channel-slug');
+  const displayInput = document.getElementById('channel-display-name');
+  const submitBtn = document.getElementById('channel-submit-btn');
+  const cancelBtn = document.getElementById('channel-cancel-btn');
+  const channelsTableBody = document.querySelector('#channels-table tbody');
+  const channelNote = document.getElementById('channel-note');
   const refreshBtn = document.getElementById('oauth-refresh-btn');
   const refreshNote = document.getElementById('oauth-refresh-note');
-  const tableBody = document.querySelector('#oauth-status-table tbody');
+  const oauthTableBody = document.querySelector('#oauth-status-table tbody');
   let pollCount = 0;
+  let mode = 'create';
+  let currentSlug = null;
 
   function fmtStatus(isPresent, mtime) {
     if (!isPresent) {
@@ -115,11 +158,11 @@
 
   function renderRows(channels) {
     if (!channels.length) {
-      tableBody.innerHTML = '<tr><td colspan="4" class="muted">No channels found.</td></tr>';
+      oauthTableBody.innerHTML = '<tr><td colspan="4" class="muted">No channels found.</td></tr>';
       return;
     }
 
-    tableBody.innerHTML = channels.map((ch) => {
+    oauthTableBody.innerHTML = channels.map((ch) => {
       return '<tr>' +
         '<td>' + esc(ch.display_name) + '<div class="muted">' + esc(ch.slug) + '</div></td>' +
         '<td>' + fmtStatus(ch.drive_token_present, ch.drive_token_mtime) + '</td>' +
@@ -131,7 +174,7 @@
       '</tr>';
     }).join('');
 
-    tableBody.querySelectorAll('button[data-kind]').forEach((btn) => {
+    oauthTableBody.querySelectorAll('button[data-kind]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         try {
           refreshNote.textContent = 'Starting OAuth flow...';
@@ -166,6 +209,160 @@
     }
   }
 
+  function showForm(editMode, slug, displayName) {
+    mode = editMode;
+    currentSlug = slug || null;
+    formWrap.style.display = 'block';
+    formTitle.textContent = mode === 'rename' ? 'Rename Channel' : 'Add Channel';
+    submitBtn.textContent = mode === 'rename' ? 'Rename' : 'Create';
+    slugInput.value = slug || '';
+    slugInput.disabled = mode === 'rename';
+    displayInput.value = displayName || '';
+    channelNote.textContent = '';
+    displayInput.focus();
+  }
+
+  function hideForm() {
+    formWrap.style.display = 'none';
+    mode = 'create';
+    currentSlug = null;
+    channelForm.reset();
+    slugInput.disabled = false;
+  }
+
+  async function fetchChannels() {
+    const res = await fetch('/v1/channels');
+    if (!res.ok) {
+      if (res.status === 401) {
+        throw new Error('Not authorized');
+      }
+      throw new Error('Failed to load channels');
+    }
+    return await res.json();
+  }
+
+  function renderChannels(channels) {
+    if (!channels.length) {
+      channelsTableBody.innerHTML = '<tr><td colspan="3" class="muted">No channels found.</td></tr>';
+      return;
+    }
+    channelsTableBody.innerHTML = channels.map((ch) => {
+      return '<tr>' +
+        '<td>' + esc(ch.display_name) + '</td>' +
+        '<td><code>' + esc(ch.slug) + '</code></td>' +
+        '<td>' +
+          '<button type="button" data-action="rename" data-slug="' + esc(ch.slug) + '" data-display-name="' + esc(ch.display_name) + '">Rename</button> ' +
+          '<button type="button" data-action="delete" data-slug="' + esc(ch.slug) + '">Delete</button>' +
+        '</td>' +
+      '</tr>';
+    }).join('');
+
+    channelsTableBody.querySelectorAll('button[data-action="rename"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        showForm('rename', btn.getAttribute('data-slug'), btn.getAttribute('data-display-name'));
+      });
+    });
+
+    channelsTableBody.querySelectorAll('button[data-action="delete"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const slug = btn.getAttribute('data-slug');
+        if (!window.confirm('Delete channel "' + slug + '"?')) {
+          return;
+        }
+        channelNote.textContent = '';
+        try {
+          const res = await fetch('/v1/channels/' + encodeURIComponent(slug), { method: 'DELETE' });
+          if (!res.ok) {
+            if (res.status === 401) {
+              throw new Error('Not authorized');
+            }
+            if (res.status === 409) {
+              throw new Error('Cannot delete channel: channel has jobs');
+            }
+            const body = await res.text();
+            throw new Error('Failed to delete channel: ' + body);
+          }
+          channelNote.textContent = 'Channel deleted';
+          await refreshAll();
+        } catch (err) {
+          channelNote.textContent = err.message;
+        }
+      });
+    });
+  }
+
+  function validatePayload(slug, displayName) {
+    if (!displayName.trim()) {
+      return 'Display name is required';
+    }
+    if (mode === 'create') {
+      if (!/^[a-z0-9-]{3,64}$/.test(slug)) {
+        return 'Slug must match ^[a-z0-9-]{3,64}$';
+      }
+    }
+    return '';
+  }
+
+  async function saveChannel() {
+    const slug = slugInput.value.trim();
+    const displayName = displayInput.value.trim();
+    const validationError = validatePayload(slug, displayName);
+    if (validationError) {
+      channelNote.textContent = validationError;
+      return;
+    }
+
+    channelNote.textContent = '';
+    if (mode === 'create') {
+      const res = await fetch('/v1/channels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: slug, display_name: displayName }),
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          throw new Error('Not authorized');
+        }
+        if (res.status === 409) {
+          throw new Error('Channel slug already exists');
+        }
+        if (res.status === 422) {
+          throw new Error('Invalid channel data. Check slug and display name.');
+        }
+        throw new Error('Failed to create channel');
+      }
+      channelNote.textContent = 'Channel created';
+    } else {
+      const res = await fetch('/v1/channels/' + encodeURIComponent(currentSlug), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ display_name: displayName }),
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          throw new Error('Not authorized');
+        }
+        if (res.status === 422) {
+          throw new Error('Invalid display name');
+        }
+        throw new Error('Failed to rename channel');
+      }
+      channelNote.textContent = 'Channel renamed';
+    }
+    hideForm();
+    await refreshAll();
+  }
+
+  async function refreshAll() {
+    try {
+      const channels = await fetchChannels();
+      renderChannels(channels);
+    } catch (err) {
+      channelsTableBody.innerHTML = '<tr><td colspan="3" class="muted">' + esc(err.message) + '</td></tr>';
+    }
+    await refreshStatus();
+  }
+
   function pollStatus() {
     if (pollCount >= 20) {
       return;
@@ -177,8 +374,18 @@
     }, 3000);
   }
 
-  refreshBtn.addEventListener('click', refreshStatus);
-  refreshStatus();
+  addBtn.addEventListener('click', () => showForm('create'));
+  cancelBtn.addEventListener('click', hideForm);
+  channelForm.addEventListener('submit', async (evt) => {
+    evt.preventDefault();
+    try {
+      await saveChannel();
+    } catch (err) {
+      channelNote.textContent = err.message;
+    }
+  });
+  refreshBtn.addEventListener('click', refreshAll);
+  refreshAll();
 })();
 </script>
 {% endblock %}
