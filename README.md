@@ -58,3 +58,6 @@ Publish flow:
 - Approve in bot.
 - Publish manually in YouTube Studio.
 - Press "Mark Published" in bot.
+
+Scaling runbook:
+- For onboarding a new channel and enabling YouTube uploads, see `docs/scaling_channels.md`.
