@@ -112,6 +112,35 @@
     return 'Present (' + dt.toLocaleString() + ')';
   }
 
+  function extractApiErrorMessage(bodyText) {
+    if (!bodyText) {
+      return '';
+    }
+    try {
+      const parsed = JSON.parse(bodyText);
+      if (parsed && typeof parsed.detail === 'string') {
+        return parsed.detail;
+      }
+    } catch (_) {
+      // no-op: keep raw body text fallback
+    }
+    return bodyText;
+  }
+
+  function oauthStartError(status, detail, kind, slug) {
+    const prefix = kind === 'gdrive' ? 'Drive OAuth' : 'YouTube OAuth';
+    if (status === 404) {
+      return 'Channel "' + slug + '" was not found. Refresh channels and try again.';
+    }
+    if (status === 500 && detail && detail.includes('is not configured')) {
+      return prefix + ' is not configured on the server: ' + detail;
+    }
+    if (detail) {
+      return prefix + ' failed: ' + detail;
+    }
+    return prefix + ' failed with status ' + status + '.';
+  }
+
   async function startOauth(kind, slug) {
     const res = await fetch('/v1/oauth/' + kind + '/' + encodeURIComponent(slug) + '/start', {
       method: 'POST',
@@ -119,7 +148,8 @@
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error('Failed to start OAuth: ' + body);
+      const detail = extractApiErrorMessage(body);
+      throw new Error(oauthStartError(res.status, detail, kind, slug));
     }
     const data = await res.json();
     if (!data.auth_url) {
@@ -165,7 +195,9 @@
         '<td>' + fmtStatus(ch.drive_token_present, ch.drive_token_mtime) + '</td>' +
         '<td>' + fmtStatus(ch.yt_token_present, ch.yt_token_mtime) + '</td>' +
         '<td>' +
-          '<button type="button" data-kind="gdrive" data-slug="' + esc(ch.slug) + '">Generate Drive Token</button> ' +
+          '<button type="button" data-kind="gdrive" data-slug="' + esc(ch.slug) + '">' +
+            (ch.drive_token_present ? 'Regenerate Drive Token' : 'Generate Drive Token') +
+          '</button> ' +
           '<button type="button" data-kind="youtube" data-slug="' + esc(ch.slug) + '">Generate YouTube Token</button>' +
         '</td>' +
       '</tr>';
