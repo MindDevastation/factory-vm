@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from typing import Optional, Tuple
-
-from services.common.config import load_channels
 
 
 class YouTubeCredentialResolutionError(RuntimeError):
@@ -13,17 +12,18 @@ class YouTubeCredentialResolutionError(RuntimeError):
 def resolve_youtube_channel_credentials(
     channel_slug: str,
     *,
+    conn: sqlite3.Connection,
     global_client_secret_path: Optional[str] = None,
     global_token_path: Optional[str] = None,
 ) -> Tuple[str, str, str]:
     """Resolve YouTube credential paths for a channel.
 
     Resolution order for token path:
-      1) channel yt_token_json_path in configs/channels.yaml
+      1) channel yt_token_json_path in DB channels table
       2) YT_TOKEN_JSON from environment
 
     Client secret path selection:
-      - channel yt_client_secret_json_path if present
+      - channel yt_client_secret_json_path from DB if present
       - otherwise YT_CLIENT_SECRET_JSON from environment
 
     Validation policy intentionally checks only for non-empty paths.
@@ -38,19 +38,25 @@ def resolve_youtube_channel_credentials(
     ).strip()
     source_label = "global"
 
-    channels = load_channels("configs/channels.yaml")
-    for channel in channels:
-        if channel.slug != channel_slug:
-            continue
+    channel = conn.execute(
+        """
+        SELECT yt_token_json_path, yt_client_secret_json_path
+        FROM channels
+        WHERE slug = ?
+        LIMIT 1
+        """,
+        (channel_slug,),
+    ).fetchone()
 
-        if channel.yt_token_json_path:
-            token_path = str(channel.yt_token_json_path).strip()
+    if channel:
+        token_override = channel["yt_token_json_path"]
+        if token_override:
+            token_path = str(token_override).strip()
             source_label = "channel"
 
-        if channel.yt_client_secret_json_path:
-            client_secret_path = str(channel.yt_client_secret_json_path).strip()
-
-        break
+        client_secret_override = channel["yt_client_secret_json_path"]
+        if client_secret_override:
+            client_secret_path = str(client_secret_override).strip()
 
     if not token_path or not client_secret_path:
         raise YouTubeCredentialResolutionError(

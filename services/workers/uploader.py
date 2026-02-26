@@ -103,6 +103,7 @@ def uploader_cycle(*, env: Env, worker_id: str) -> None:
         try:
             client_secret_json, token_json, source_label = resolve_youtube_channel_credentials(
                 channel_slug,
+                conn=conn,
                 global_client_secret_path=env.yt_client_secret_json,
                 global_token_path=env.yt_token_json,
             )

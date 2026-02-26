@@ -8,7 +8,6 @@ from typing import Any, Dict
 
 from services.common.env import Env
 from services.common import db as dbm
-from services.common.config import load_channels
 from services.common.logging_setup import get_logger
 from services.integrations.gdrive import DriveClient
 from services.integrations.local_fs import list_release_folders, load_meta, resolve_asset_path
@@ -30,10 +29,12 @@ def importer_cycle(*, env: Env, worker_id: str) -> None:
             details={"origin_backend": env.origin_backend},
         )
 
-        channels_cfg = load_channels("configs/channels.yaml")
+        channels = conn.execute(
+            "SELECT id, slug, kind, weight FROM channels ORDER BY id ASC"
+        ).fetchall()
 
         if env.origin_backend == "local":
-            _import_from_local(env, conn, channels_cfg)
+            _import_from_local(env, conn, channels)
             return
 
         # gdrive mode
@@ -51,12 +52,8 @@ def importer_cycle(*, env: Env, worker_id: str) -> None:
             log.warning("Drive: missing /channels under root")
             return
 
-        for c in channels_cfg:
-            ch = dbm.get_channel_by_slug(conn, c.slug)
-            if not ch:
-                continue
-
-            ch_folder = drive.find_child_folder(channels_root.id, c.slug)
+        for channel in channels:
+            ch_folder = drive.find_child_folder(channels_root.id, channel["slug"])
             if not ch_folder:
                 continue
 
@@ -86,7 +83,7 @@ def importer_cycle(*, env: Env, worker_id: str) -> None:
                         (release_id,),
                     ).fetchone()
                     if wjob and wjob["state"] == "WAITING_INPUTS":
-                        _gdrive_try_promote_waiting(conn, drive, ch, c, int(wjob["id"]), release_folder_id, meta.id)
+                        _gdrive_try_promote_waiting(conn, drive, channel, int(wjob["id"]), release_folder_id, meta.id)
                     continue
 
                 # new release
@@ -110,7 +107,7 @@ def importer_cycle(*, env: Env, worker_id: str) -> None:
                     VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        int(ch["id"]),
+                        int(channel["id"]),
                         title,
                         description,
                         dbm.json_dumps(tags),
@@ -122,7 +119,7 @@ def importer_cycle(*, env: Env, worker_id: str) -> None:
                 )
                 release_id = int(cur.lastrowid)
 
-                job_type = "RENDER_TITANWAVE" if c.kind == "TITANWAVE" else "RENDER_LONG"
+                job_type = "RENDER_TITANWAVE" if channel["kind"] == "TITANWAVE" else "RENDER_LONG"
 
                 audio_dir = drive.find_child_folder(release_folder_id, "audio")
                 images_dir = drive.find_child_folder(release_folder_id, "images")
@@ -132,7 +129,7 @@ def importer_cycle(*, env: Env, worker_id: str) -> None:
                         INSERT INTO jobs(release_id, job_type, state, stage, priority, created_at, updated_at)
                         VALUES(?, ?, 'WAITING_INPUTS', 'FETCH', ?, ?, ?)
                         """,
-                        (release_id, job_type, int(100 * c.weight), ts, ts),
+                        (release_id, job_type, int(100 * channel["weight"]), ts, ts),
                     )
                     continue
 
@@ -141,17 +138,17 @@ def importer_cycle(*, env: Env, worker_id: str) -> None:
                     INSERT INTO jobs(release_id, job_type, state, stage, priority, created_at, updated_at)
                     VALUES(?, ?, 'READY_FOR_RENDER', 'FETCH', ?, ?, ?)
                     """,
-                    (release_id, job_type, int(100 * c.weight), ts, ts),
+                    (release_id, job_type, int(100 * channel["weight"]), ts, ts),
                 )
                 job_id = int(cur2.lastrowid)
 
-                _gdrive_attach_assets(conn, drive, ch, job_id, release_folder_id, meta_obj)
+                _gdrive_attach_assets(conn, drive, channel, job_id, release_folder_id, meta_obj)
 
     finally:
         conn.close()
 
 
-def _gdrive_try_promote_waiting(conn, drive: DriveClient, ch: Dict[str, Any], c_cfg, job_id: int, release_folder_id: str, meta_id: str) -> None:
+def _gdrive_try_promote_waiting(conn, drive: DriveClient, ch: Dict[str, Any], job_id: int, release_folder_id: str, meta_id: str) -> None:
     audio_dir = drive.find_child_folder(release_folder_id, "audio")
     images_dir = drive.find_child_folder(release_folder_id, "images")
     if not audio_dir or not images_dir:
@@ -210,18 +207,14 @@ def _gdrive_attach_assets(conn, drive: DriveClient, ch: Dict[str, Any], job_id: 
         dbm.link_job_input(conn, job_id, cover_asset_id, "COVER", 0)
 
 
-def _import_from_local(env: Env, conn, channels_cfg) -> None:
+def _import_from_local(env: Env, conn, channels) -> None:
     origin_root = Path(env.origin_local_root).resolve()
     if not origin_root.exists():
         log.warning("Local origin root does not exist: %s", origin_root)
         return
 
-    for c in channels_cfg:
-        ch = dbm.get_channel_by_slug(conn, c.slug)
-        if not ch:
-            continue
-
-        for folder in list_release_folders(origin_root, c.slug):
+    for channel in channels:
+        for folder in list_release_folders(origin_root, channel["slug"]):
             rel = load_meta(folder)
             if not rel:
                 continue
@@ -233,7 +226,7 @@ def _import_from_local(env: Env, conn, channels_cfg) -> None:
                 release_id = int(existing["id"])
                 wjob = conn.execute("SELECT id, state FROM jobs WHERE release_id = ? ORDER BY id DESC LIMIT 1", (release_id,)).fetchone()
                 if wjob and wjob["state"] == "WAITING_INPUTS":
-                    _local_try_promote_waiting(conn, ch, c, int(wjob["id"]), rel)
+                    _local_try_promote_waiting(conn, channel, int(wjob["id"]), rel)
                 continue
 
             title = str(rel.meta.get("title", "")).strip()
@@ -249,11 +242,11 @@ def _import_from_local(env: Env, conn, channels_cfg) -> None:
                                     origin_release_folder_id, origin_meta_file_id, created_at)
                 VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (int(ch["id"]), title, description, dbm.json_dumps(tags), rel.meta.get("planned_at"), str(rel.folder), meta_id, ts),
+                (int(channel["id"]), title, description, dbm.json_dumps(tags), rel.meta.get("planned_at"), str(rel.folder), meta_id, ts),
             )
             release_id = int(cur.lastrowid)
 
-            job_type = "RENDER_TITANWAVE" if c.kind == "TITANWAVE" else "RENDER_LONG"
+            job_type = "RENDER_TITANWAVE" if channel["kind"] == "TITANWAVE" else "RENDER_LONG"
 
             if not (rel.folder/"audio").exists() or not (rel.folder/"images").exists():
                 conn.execute(
@@ -261,7 +254,7 @@ def _import_from_local(env: Env, conn, channels_cfg) -> None:
                     INSERT INTO jobs(release_id, job_type, state, stage, priority, created_at, updated_at)
                     VALUES(?, ?, 'WAITING_INPUTS', 'FETCH', ?, ?, ?)
                     """,
-                    (release_id, job_type, int(100 * c.weight), ts, ts),
+                    (release_id, job_type, int(100 * channel["weight"]), ts, ts),
                 )
                 continue
 
@@ -270,14 +263,14 @@ def _import_from_local(env: Env, conn, channels_cfg) -> None:
                 INSERT INTO jobs(release_id, job_type, state, stage, priority, created_at, updated_at)
                 VALUES(?, ?, 'READY_FOR_RENDER', 'FETCH', ?, ?, ?)
                 """,
-                (release_id, job_type, int(100 * c.weight), ts, ts),
+                (release_id, job_type, int(100 * channel["weight"]), ts, ts),
             )
             job_id = int(cur2.lastrowid)
 
-            _local_attach_assets(conn, ch, job_id, rel)
+            _local_attach_assets(conn, channel, job_id, rel)
 
 
-def _local_try_promote_waiting(conn, ch: Dict[str, Any], c_cfg, job_id: int, rel) -> None:
+def _local_try_promote_waiting(conn, ch: Dict[str, Any], job_id: int, rel) -> None:
     if not (rel.folder/"audio").exists() or not (rel.folder/"images").exists():
         return
     n = conn.execute("SELECT COUNT(1) AS n FROM job_inputs WHERE job_id = ?", (job_id,)).fetchone()

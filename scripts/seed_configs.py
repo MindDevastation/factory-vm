@@ -20,16 +20,36 @@ def main() -> None:
         for c in channels:
             conn.execute(
                 """
-                INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled)
-                VALUES(?, ?, ?, ?, ?, ?)
+                INSERT INTO channels(
+                    slug,
+                    display_name,
+                    kind,
+                    weight,
+                    render_profile,
+                    autopublish_enabled,
+                    yt_token_json_path,
+                    yt_client_secret_json_path
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(slug) DO UPDATE SET
                     display_name=excluded.display_name,
                     kind=excluded.kind,
                     weight=excluded.weight,
                     render_profile=excluded.render_profile,
-                    autopublish_enabled=excluded.autopublish_enabled
+                    autopublish_enabled=excluded.autopublish_enabled,
+                    yt_token_json_path=excluded.yt_token_json_path,
+                    yt_client_secret_json_path=excluded.yt_client_secret_json_path
                 """,
-                (c.slug, c.display_name, c.kind, c.weight, c.render_profile, 1 if c.autopublish_enabled else 0),
+                (
+                    c.slug,
+                    c.display_name,
+                    c.kind,
+                    c.weight,
+                    c.render_profile,
+                    1 if c.autopublish_enabled else 0,
+                    c.yt_token_json_path,
+                    c.yt_client_secret_json_path,
+                ),
             )
 
         # render profiles

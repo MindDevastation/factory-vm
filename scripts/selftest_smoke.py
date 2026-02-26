@@ -6,7 +6,6 @@ from pathlib import Path
 
 from services.common.env import Env
 from services.common import db as dbm
-from services.common.config import load_channels, load_render_profiles
 from services.common.paths import outbox_dir
 from services.workers.qa import qa_cycle
 
@@ -21,40 +20,8 @@ def _ensure_ffmpeg() -> None:
     _run(["ffmpeg", "-version"])
 
 
-def _seed(conn) -> None:
-    # channels
-    for c in load_channels("configs/channels.yaml"):
-        conn.execute(
-            """
-            INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled)
-            VALUES(?, ?, ?, ?, ?, ?)
-            ON CONFLICT(slug) DO UPDATE SET
-                display_name=excluded.display_name,
-                kind=excluded.kind,
-                weight=excluded.weight,
-                render_profile=excluded.render_profile,
-                autopublish_enabled=excluded.autopublish_enabled
-            """,
-            (c.slug, c.display_name, c.kind, c.weight, c.render_profile, 1 if c.autopublish_enabled else 0),
-        )
-
-    # render profiles
-    for p in load_render_profiles("configs/render_profiles.yaml"):
-        conn.execute(
-            """
-            INSERT INTO render_profiles(name, video_w, video_h, fps, vcodec_required, audio_sr, audio_ch, acodec_required)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                video_w=excluded.video_w,
-                video_h=excluded.video_h,
-                fps=excluded.fps,
-                vcodec_required=excluded.vcodec_required,
-                audio_sr=excluded.audio_sr,
-                audio_ch=excluded.audio_ch,
-                acodec_required=excluded.acodec_required
-            """,
-            (p.name, p.video_w, p.video_h, p.fps, p.vcodec_required, p.audio_sr, p.audio_ch, p.acodec_required),
-        )
+def _seed() -> None:
+    _run(["python", "scripts/seed_configs.py"])
 
 
 def main() -> None:
@@ -68,7 +35,7 @@ def main() -> None:
     conn = dbm.connect(env)
     try:
         dbm.migrate(conn)
-        _seed(conn)
+        _seed()
 
         ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
         if not ch:

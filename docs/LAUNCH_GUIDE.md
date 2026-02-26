@@ -77,10 +77,10 @@ Fill all required fields:
 - BASIC AUTH user/pass for dashboard
 
 Per-channel YouTube credential overrides (paths only):
-- Optional in `configs/channels.yaml` per channel:
+- Optional in `configs/channels.yaml` per channel (seed-only):
   - `yt_token_json_path`
   - `yt_client_secret_json_path`
-- When channel fields are set, they override global `YT_*` for that channel.
+- Run `python scripts/seed_configs.py` after YAML changes; runtime uses DB `channels.yt_*` values to override global `YT_*`.
 - Recommended VPS layout:
   - `/secure/youtube/client_secret.json`
   - `/secure/youtube/global/token.json`

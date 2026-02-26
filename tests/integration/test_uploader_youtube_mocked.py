@@ -4,6 +4,7 @@ import os
 import unittest
 from dataclasses import dataclass
 from unittest import mock
+from unittest.mock import ANY
 
 from services.common import db as dbm
 from services.common.env import Env
@@ -104,6 +105,7 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
 
             resolver_mock.assert_called_once_with(
                 "channel-b",
+                conn=ANY,
                 global_client_secret_path="/env/client_secret.json",
                 global_token_path="/env/token.json",
             )
@@ -139,6 +141,7 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
 
             resolver_mock.assert_called_once_with(
                 "channel-c",
+                conn=ANY,
                 global_client_secret_path="/env/client_secret.json",
                 global_token_path="/env/token.json",
             )

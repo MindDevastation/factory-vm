@@ -35,7 +35,9 @@ def migrate(conn: sqlite3.Connection) -> None:
             kind TEXT NOT NULL,
             weight REAL NOT NULL DEFAULT 1.0,
             render_profile TEXT NOT NULL,
-            autopublish_enabled INTEGER NOT NULL DEFAULT 0
+            autopublish_enabled INTEGER NOT NULL DEFAULT 0,
+            yt_token_json_path TEXT,
+            yt_client_secret_json_path TEXT
         );
 
         CREATE TABLE IF NOT EXISTS render_profiles (
@@ -204,6 +206,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     )
 
     # Backward-compatible additive migrations for older DBs (SQLite doesn't support IF NOT EXISTS for ADD COLUMN).
+    _ensure_channels_columns(conn)
     _ensure_jobs_columns(conn)
 
 
@@ -245,6 +248,16 @@ def _ensure_jobs_columns(conn: sqlite3.Connection) -> None:
     # Create index only after ensuring the column exists.
     with suppress(Exception):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state_retry ON jobs(state, retry_at, priority, created_at);")
+
+
+def _ensure_channels_columns(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "channels")
+    if "yt_token_json_path" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE channels ADD COLUMN yt_token_json_path TEXT;")
+    if "yt_client_secret_json_path" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE channels ADD COLUMN yt_client_secret_json_path TEXT;")
 
 
 def now_ts() -> float:

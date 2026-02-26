@@ -40,12 +40,12 @@ Tests:
 
 YouTube credential config (paths only):
 - Global env `YT_CLIENT_SECRET_JSON` + `YT_TOKEN_JSON` remain the default fallback for all channels.
-- `configs/channels.yaml` may override per channel via optional `yt_token_json_path` and `yt_client_secret_json_path`.
+- `configs/channels.yaml` is seed-only: run `python scripts/seed_configs.py` to sync per-channel overrides into DB (`channels.yt_*` columns).
 - Recommended VPS layout:
   - `/secure/youtube/client_secret.json`
   - `/secure/youtube/global/token.json`
   - `/secure/youtube/channels/<channel_slug>/token.json`
-- Never store OAuth JSON content in repo or DB; store only filesystem paths in config/env.
+- Never store OAuth JSON content in repo or DB; store only filesystem paths in YAML seed/env, persisted as paths in DB.
 
 Manual verification: multi-channel YouTube upload (local)
 1) Generate two different OAuth token files (one per YouTube account/channel):
@@ -60,7 +60,7 @@ Manual verification: multi-channel YouTube upload (local)
    export YT_TOKEN_JSON=/secure/youtube/channels/channel-b/token.json
    python scripts/youtube_auth.py  # sign in with Channel B Google account
    ```
-2) Reference token paths in `configs/channels.yaml`:
+2) Put token paths into `configs/channels.yaml` and seed DB:
    ```yaml
    channels:
      - slug: "channel-a"
@@ -71,8 +71,9 @@ Manual verification: multi-channel YouTube upload (local)
        yt_token_json_path: "/secure/youtube/channels/channel-b/token.json"
        yt_client_secret_json_path: "/secure/youtube/client_secret.json"
    ```
-3) Run with real uploader backend:
+3) Seed channel config into DB and run with real uploader backend:
    ```bash
+   python scripts/seed_configs.py
    export UPLOAD_BACKEND=youtube
    python -m services.workers --role uploader
    ```
