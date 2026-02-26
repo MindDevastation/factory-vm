@@ -46,5 +46,12 @@ class TestOauthTokens(unittest.TestCase):
             self.assertTrue(token_path.parent.is_dir())
 
 
+    def test_sign_verify_without_channel_slug_for_add_channel_state(self) -> None:
+        state = sign_state(secret="secret", kind="youtube_add_channel", channel_slug=None)
+        payload = verify_state(secret="secret", expected_kind="youtube_add_channel", state=state, require_channel_slug=False)
+        self.assertEqual(payload["kind"], "youtube_add_channel")
+        self.assertNotIn("channel_slug", payload)
+
+
 if __name__ == "__main__":
     unittest.main()

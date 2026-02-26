@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -258,7 +259,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
             unauthorized = client.post("/v1/oauth/gdrive/darkwood-reverie/start")
             self.assertIn(unauthorized.status_code, (401, 403))
 
-            with unittest.mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/auth"):
+            with mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/auth"):
                 authorized = client.post("/v1/oauth/gdrive/darkwood-reverie/start", headers=h)
             self.assertEqual(authorized.status_code, 200)
             self.assertEqual(authorized.json()["auth_url"], "https://accounts.google.com/auth")
@@ -288,7 +289,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
             state_gdrive = mod.sign_state(secret="state-secret", kind="gdrive", channel_slug="darkwood-reverie")
-            with unittest.mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"gdrive-token"}'):
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"gdrive-token"}'):
                 rg = client.get(f"/v1/oauth/gdrive/callback?code=fake-code&state={state_gdrive}", headers=h)
             self.assertEqual(rg.status_code, 200)
             gdrive_token = Path(td.name) / "gdrive_tokens" / "darkwood-reverie" / "token.json"
@@ -296,7 +297,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertIn("gdrive-token", gdrive_token.read_text(encoding="utf-8"))
 
             state_yt = mod.sign_state(secret="state-secret", kind="youtube", channel_slug="darkwood-reverie")
-            with unittest.mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}'):
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}'):
                 ry = client.get(f"/v1/oauth/youtube/callback?code=fake-code&state={state_yt}", headers=h)
             self.assertEqual(ry.status_code, 200)
             yt_token = Path(td.name) / "yt_tokens" / "darkwood-reverie" / "token.json"
@@ -335,6 +336,110 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertIsNotNone(item["drive_token_mtime"])
             self.assertEqual(item["yt_token_present"], False)
             self.assertIsNone(item["yt_token_mtime"])
+
+
+    def test_youtube_add_channel_oauth_multi_select_and_confirm_deletes_temp_token(self) -> None:
+        with temp_env() as (td, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            import os
+            os.environ["OAUTH_REDIRECT_BASE_URL"] = "http://localhost:8080"
+            os.environ["OAUTH_STATE_SECRET"] = "state-secret"
+            os.environ["YT_CLIENT_SECRET_JSON"] = str(Path(td.name) / "yt_client.json")
+            os.environ["YT_TOKENS_DIR"] = str(Path(td.name) / "yt_tokens")
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = str(Path(td.name) / "gdrive_client.json")
+            os.environ["GDRIVE_TOKENS_DIR"] = str(Path(td.name) / "gdrive_tokens")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            with mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/auth"):
+                start = client.post("/v1/oauth/youtube/add_channel/start", headers=h)
+            self.assertEqual(start.status_code, 200)
+            self.assertIn("auth_url", start.json())
+
+            state = mod.sign_state(secret="state-secret", kind="youtube_add_channel")
+            channels = [
+                {"id": "UC111", "title": "Brand Channel One"},
+                {"id": "UC222", "title": "Brand Channel Two"},
+            ]
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}'):
+                with mock.patch("services.factory_api.app._youtube_channels_from_token_json", return_value=channels):
+                    cb = client.get(f"/v1/oauth/youtube/add_channel/callback?code=fake-code&state={state}", headers=h)
+            self.assertEqual(cb.status_code, 200)
+            self.assertIn("Select YouTube Channel", cb.text)
+
+            m = __import__("re").search(r"name='state' value='([^']+)'", cb.text)
+            self.assertIsNotNone(m)
+            confirm_state = m.group(1)
+
+            payload = mod.verify_state(secret="state-secret", expected_kind="youtube_add_channel_confirm", state=confirm_state, require_channel_slug=False)
+            nonce = str(payload["nonce"])
+            tmp_token = Path(env.storage_root) / "tmp" / "oauth" / f"{nonce}.json"
+            self.assertTrue(tmp_token.is_file())
+
+            with mock.patch("services.factory_api.app._youtube_channels_from_token_json", return_value=channels):
+                confirm = client.post(
+                    "/v1/oauth/youtube/add_channel/confirm",
+                    params={"state": confirm_state, "youtube_channel_id": "UC222"},
+                    headers=h,
+                )
+            self.assertEqual(confirm.status_code, 200)
+            self.assertIn("Channel connected", confirm.text)
+            self.assertFalse(tmp_token.exists())
+
+            conn = dbm.connect(env)
+            try:
+                row = dbm.get_channel_by_youtube_channel_id(conn, "UC222")
+                self.assertIsNotNone(row)
+                slug = str(row["slug"])
+            finally:
+                conn.close()
+
+            token_path = Path(td.name) / "yt_tokens" / slug / "token.json"
+            self.assertTrue(token_path.is_file())
+
+    def test_youtube_add_channel_dedup_and_slug_suffix(self) -> None:
+        with temp_env() as (td, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            import os
+            os.environ["OAUTH_REDIRECT_BASE_URL"] = "http://localhost:8080"
+            os.environ["OAUTH_STATE_SECRET"] = "state-secret"
+            os.environ["YT_CLIENT_SECRET_JSON"] = str(Path(td.name) / "yt_client.json")
+            os.environ["YT_TOKENS_DIR"] = str(Path(td.name) / "yt_tokens")
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = str(Path(td.name) / "gdrive_client.json")
+            os.environ["GDRIVE_TOKENS_DIR"] = str(Path(td.name) / "gdrive_tokens")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            conn = dbm.connect(env)
+            try:
+                dbm.create_channel(conn, slug="brand-channel", display_name="Brand Channel")
+            finally:
+                conn.close()
+
+            state = mod.sign_state(secret="state-secret", kind="youtube_add_channel")
+            channels = [{"id": "UCX", "title": "Brand Channel"}]
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}'):
+                with mock.patch("services.factory_api.app._youtube_channels_from_token_json", return_value=channels):
+                    first = client.get(f"/v1/oauth/youtube/add_channel/callback?code=fake-code&state={state}", headers=h)
+            self.assertEqual(first.status_code, 200)
+            self.assertIn("brand-channel-2", first.text)
+
+            state2 = mod.sign_state(secret="state-secret", kind="youtube_add_channel")
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token-2"}'):
+                with mock.patch("services.factory_api.app._youtube_channels_from_token_json", return_value=channels):
+                    second = client.get(f"/v1/oauth/youtube/add_channel/callback?code=fake-code&state={state2}", headers=h)
+            self.assertEqual(second.status_code, 200)
+            self.assertIn("already connected", second.text.lower())
 
 
 if __name__ == "__main__":

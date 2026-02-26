@@ -29,20 +29,37 @@ def _b64url_decode(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + padding)
 
 
-def sign_state(*, secret: str, kind: str, channel_slug: str, now_ts: int | None = None) -> str:
+def sign_state(
+    *,
+    secret: str,
+    kind: str,
+    channel_slug: str | None = None,
+    now_ts: int | None = None,
+    extra: dict[str, Any] | None = None,
+) -> str:
     ts = int(time.time() if now_ts is None else now_ts)
-    payload = {
+    payload: dict[str, Any] = {
         "kind": kind,
-        "channel_slug": channel_slug,
         "ts": ts,
         "nonce": secrets.token_urlsafe(12),
     }
+    if channel_slug is not None:
+        payload["channel_slug"] = channel_slug
+    if extra:
+        payload.update(extra)
     payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     signature = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).digest()
     return f"{_b64url_encode(payload_bytes)}.{_b64url_encode(signature)}"
 
 
-def verify_state(*, secret: str, expected_kind: str, state: str, now_ts: int | None = None) -> dict[str, Any]:
+def verify_state(
+    *,
+    secret: str,
+    expected_kind: str,
+    state: str,
+    now_ts: int | None = None,
+    require_channel_slug: bool = True,
+) -> dict[str, Any]:
     if not state or "." not in state:
         raise HTTPException(400, "invalid oauth state")
 
@@ -70,10 +87,11 @@ def verify_state(*, secret: str, expected_kind: str, state: str, now_ts: int | N
     if ts <= 0 or now - ts > _STATE_TTL_SECONDS:
         raise HTTPException(400, "expired oauth state")
 
-    slug = str(payload.get("channel_slug") or "").strip()
-    if not slug:
-        raise HTTPException(400, "invalid oauth state channel")
-    payload["channel_slug"] = slug
+    if require_channel_slug:
+        slug = str(payload.get("channel_slug") or "").strip()
+        if not slug:
+            raise HTTPException(400, "invalid oauth state channel")
+        payload["channel_slug"] = slug
     return payload
 
 

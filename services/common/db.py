@@ -32,6 +32,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             slug TEXT NOT NULL UNIQUE,
             display_name TEXT NOT NULL,
+            youtube_channel_id TEXT UNIQUE,
             kind TEXT NOT NULL,
             weight REAL NOT NULL DEFAULT 1.0,
             render_profile TEXT NOT NULL,
@@ -205,6 +206,7 @@ def migrate(conn: sqlite3.Connection) -> None:
 
     # Backward-compatible additive migrations for older DBs (SQLite doesn't support IF NOT EXISTS for ADD COLUMN).
     _ensure_jobs_columns(conn)
+    _ensure_channels_columns(conn)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -247,6 +249,22 @@ def _ensure_jobs_columns(conn: sqlite3.Connection) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state_retry ON jobs(state, retry_at, priority, created_at);")
 
 
+def _ensure_channels_columns(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "channels")
+    if "youtube_channel_id" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE channels ADD COLUMN youtube_channel_id TEXT;")
+
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_youtube_channel_id_unique
+            ON channels(youtube_channel_id)
+            WHERE youtube_channel_id IS NOT NULL;
+            """
+        )
+
+
 def now_ts() -> float:
     return time.time()
 
@@ -272,6 +290,11 @@ def get_channel_by_id(conn: sqlite3.Connection, channel_id: int) -> Optional[Dic
     return cur.fetchone()
 
 
+def get_channel_by_youtube_channel_id(conn: sqlite3.Connection, youtube_channel_id: str) -> Optional[Dict[str, Any]]:
+    cur = conn.execute("SELECT * FROM channels WHERE youtube_channel_id = ?", (youtube_channel_id,))
+    return cur.fetchone()
+
+
 def create_channel(
     conn: sqlite3.Connection,
     *,
@@ -281,17 +304,18 @@ def create_channel(
     weight: float = 1.0,
     render_profile: str = "long_1080p24",
     autopublish_enabled: int = 0,
+    youtube_channel_id: str | None = None,
 ) -> Dict[str, Any]:
     cur = conn.execute(
         """
-        INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled)
-        VALUES(?,?,?,?,?,?)
+        INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled, youtube_channel_id)
+        VALUES(?,?,?,?,?,?,?)
         """,
-        (slug, display_name, kind, weight, render_profile, autopublish_enabled),
+        (slug, display_name, kind, weight, render_profile, autopublish_enabled, youtube_channel_id),
     )
     channel_id = int(cur.lastrowid)
     row = conn.execute(
-        "SELECT id, slug, display_name FROM channels WHERE id = ?",
+        "SELECT id, slug, display_name, youtube_channel_id FROM channels WHERE id = ?",
         (channel_id,),
     ).fetchone()
     assert row is not None

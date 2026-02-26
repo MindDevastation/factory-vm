@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import html
 import json
-from pathlib import Path
-from typing import Dict, List, Optional
 import re
+import secrets
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
@@ -132,6 +135,88 @@ def _oauth_callback(kind: str, code: str, state: str) -> HTMLResponse:
     )
 
 
+
+
+def _storage_tmp_oauth_dir() -> Path:
+    root = Path(env.storage_root).expanduser()
+    return root / "tmp" / "oauth"
+
+
+def _write_temp_oauth_token(nonce: str, token_json: str) -> Path:
+    tmp_dir = _storage_tmp_oauth_dir()
+    tmp_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    token_path = tmp_dir / f"{nonce}.json"
+    token_path.write_text(token_json, encoding="utf-8")
+    token_path.chmod(0o600)
+    return token_path
+
+
+def _read_temp_oauth_token(nonce: str) -> str:
+    token_path = _storage_tmp_oauth_dir() / f"{nonce}.json"
+    if not token_path.is_file():
+        raise HTTPException(400, "oauth session expired")
+    return token_path.read_text(encoding="utf-8")
+
+
+def _delete_temp_oauth_token(nonce: str) -> None:
+    token_path = _storage_tmp_oauth_dir() / f"{nonce}.json"
+    if token_path.is_file():
+        token_path.unlink()
+
+
+def _youtube_channels_from_token_json(token_json: str) -> list[dict[str, str]]:
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    creds = Credentials.from_authorized_user_info(json.loads(token_json), ["https://www.googleapis.com/auth/youtube.upload"])
+    service = build("youtube", "v3", credentials=creds, cache_discovery=False)
+    resp = service.channels().list(part="snippet", mine=True).execute()
+    channels = []
+    for item in resp.get("items", []):
+        cid = str(item.get("id") or "").strip()
+        title = str(((item.get("snippet") or {}).get("title")) or "").strip()
+        if cid and title:
+            channels.append({"id": cid, "title": title})
+    if not channels:
+        raise HTTPException(400, "no youtube channels found for this account")
+    return channels
+
+
+def _slugify_channel_name(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug or "channel"
+
+
+def _next_available_slug(conn, base_slug: str) -> str:
+    if dbm.get_channel_by_slug(conn, base_slug) is None:
+        return base_slug
+    idx = 2
+    while True:
+        candidate = f"{base_slug}-{idx}"
+        if dbm.get_channel_by_slug(conn, candidate) is None:
+            return candidate
+        idx += 1
+
+
+def _connect_youtube_channel(*, youtube_channel_id: str, display_name: str, token_json: str) -> tuple[bool, str]:
+    conn = dbm.connect(env)
+    try:
+        existing = dbm.get_channel_by_youtube_channel_id(conn, youtube_channel_id)
+        if existing:
+            return False, str(existing["slug"])
+
+        base_slug = _slugify_channel_name(display_name)
+        slug = _next_available_slug(conn, base_slug)
+        token_path = oauth_token_path(base_dir=env.yt_tokens_dir, channel_slug=slug)
+        ensure_token_dir(token_path)
+        token_path.write_text(token_json, encoding="utf-8")
+        token_path.chmod(0o600)
+        dbm.create_channel(conn, slug=slug, display_name=display_name, youtube_channel_id=youtube_channel_id)
+        return True, slug
+    finally:
+        conn.close()
+
 def _token_status_for(channel_slug: str, base_dir: str) -> tuple[bool, str | None]:
     token_path = oauth_token_path(base_dir=base_dir, channel_slug=channel_slug)
     if not token_path.is_file():
@@ -151,7 +236,95 @@ def api_oauth_gdrive_callback(code: str, state: str, _: bool = Depends(require_b
 
 @app.post("/v1/oauth/youtube/{channel_slug}/start")
 def api_oauth_youtube_start(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    if channel_slug == "add_channel":
+        return api_oauth_youtube_add_channel_start(_)
     return _oauth_start("youtube", channel_slug)
+
+
+@app.post("/v1/oauth/youtube/add_channel/start")
+def api_oauth_youtube_add_channel_start(_: bool = Depends(require_basic_auth(env))):
+    client_secret_path, _tokens_dir, scope = validate_oauth_config(env, kind="youtube")
+    state = sign_state(secret=env.oauth_state_secret, kind="youtube_add_channel")
+    url = build_authorization_url(
+        client_secret_path=client_secret_path,
+        scope=scope,
+        redirect_uri=redirect_uri(env, "youtube/add_channel"),
+        state=state,
+    )
+    return {"auth_url": url}
+
+
+@app.get("/v1/oauth/youtube/add_channel/callback", response_class=HTMLResponse)
+def api_oauth_youtube_add_channel_callback(code: str, state: str, _: bool = Depends(require_basic_auth(env))):
+    client_secret_path, _tokens_dir, scope = validate_oauth_config(env, kind="youtube")
+    payload = verify_state(secret=env.oauth_state_secret, expected_kind="youtube_add_channel", state=state, require_channel_slug=False)
+    token_json = exchange_code_for_token_json(
+        client_secret_path=client_secret_path,
+        scope=scope,
+        redirect_uri=redirect_uri(env, "youtube/add_channel"),
+        code=code,
+    )
+    channels = _youtube_channels_from_token_json(token_json)
+    nonce = str(payload.get("nonce") or "")
+    if not nonce:
+        raise HTTPException(400, "invalid oauth state")
+    _write_temp_oauth_token(nonce, token_json)
+    if len(channels) == 1:
+        only = channels[0]
+        created, slug = _connect_youtube_channel(youtube_channel_id=only["id"], display_name=only["title"], token_json=token_json)
+        _delete_temp_oauth_token(nonce)
+        if not created:
+            return HTMLResponse(content="<html><body><h3>Channel already connected</h3><p>This YouTube channel is already connected.</p><p>You can close this tab and refresh dashboard.</p></body></html>")
+        return HTMLResponse(content=f"<html><body><h3>Channel connected</h3><p>Connected: {html.escape(only['title'])} ({html.escape(slug)})</p><p>You can close this tab and refresh dashboard.</p></body></html>")
+
+    options = "".join(
+        f'<label><input type="radio" name="youtube_channel_id" value="{html.escape(c["id"])}" required> {html.escape(c["title"])} ({html.escape(c["id"])})</label><br/>'
+        for c in channels
+    )
+    confirm_state = sign_state(secret=env.oauth_state_secret, kind="youtube_add_channel_confirm", extra={"nonce": nonce})
+    page = (
+        "<html><body><h3>Select YouTube Channel</h3>"
+        "<form method='post' action='/v1/oauth/youtube/add_channel/confirm'>"
+        f"<input type='hidden' name='state' value='{html.escape(confirm_state)}'>"
+        f"{options}<button type='submit'>Connect channel</button></form>"
+        "</body></html>"
+    )
+    return HTMLResponse(content=page)
+
+
+@app.post("/v1/oauth/youtube/add_channel/confirm", response_class=HTMLResponse)
+async def api_oauth_youtube_add_channel_confirm(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from urllib.parse import parse_qs
+
+    raw = request.scope.get("query_string", b"").decode("utf-8")
+    values = parse_qs(raw, keep_blank_values=False)
+    if not values:
+        body = await request.body()
+        values = parse_qs(body.decode("utf-8"), keep_blank_values=False)
+
+    state = (values.get("state") or [""])[0]
+    youtube_channel_id = (values.get("youtube_channel_id") or [""])[0]
+    if not state or not youtube_channel_id:
+        raise HTTPException(422, "state and youtube_channel_id are required")
+    payload = verify_state(secret=env.oauth_state_secret, expected_kind="youtube_add_channel_confirm", state=state, require_channel_slug=False)
+    nonce = str(payload.get("nonce") or "").strip()
+    if not nonce:
+        raise HTTPException(400, "invalid oauth state")
+    token_json = _read_temp_oauth_token(nonce)
+    channels = _youtube_channels_from_token_json(token_json)
+    selected = None
+    for c in channels:
+        if c["id"] == youtube_channel_id:
+            selected = c
+            break
+    if not selected:
+        raise HTTPException(400, "invalid youtube channel selection")
+
+    created, slug = _connect_youtube_channel(youtube_channel_id=selected["id"], display_name=selected["title"], token_json=token_json)
+    _delete_temp_oauth_token(nonce)
+    if not created:
+        return HTMLResponse(content="<html><body><h3>Channel already connected</h3><p>This YouTube channel is already connected.</p><p>You can close this tab and refresh dashboard.</p></body></html>")
+    return HTMLResponse(content=f"<html><body><h3>Channel connected</h3><p>Connected: {html.escape(selected['title'])} ({html.escape(slug)})</p><p>You can close this tab and refresh dashboard.</p></body></html>")
 
 
 @app.get("/v1/oauth/youtube/callback", response_class=HTMLResponse)

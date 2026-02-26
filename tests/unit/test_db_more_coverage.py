@@ -174,3 +174,18 @@ class TestDbMoreCoverage(unittest.TestCase):
             finally:
                 os.environ.clear()
                 os.environ.update(old)
+
+
+    def test_channels_unique_youtube_channel_id(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                dbm.create_channel(conn, slug="yt-a", display_name="YT A", youtube_channel_id="UC_DUP")
+                with self.assertRaises(sqlite3.IntegrityError):
+                    dbm.create_channel(conn, slug="yt-b", display_name="YT B", youtube_channel_id="UC_DUP")
+                row = dbm.get_channel_by_youtube_channel_id(conn, "UC_DUP")
+                self.assertIsNotNone(row)
+                self.assertEqual(str(row["slug"]), "yt-a")
+            finally:
+                conn.close()
