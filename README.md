@@ -44,7 +44,8 @@ Channels config source of truth:
 - Do not edit `configs/channels.yaml` expecting live runtime behavior changes; reseed DB instead.
 
 YouTube credential config (paths only):
-- Configure global env `YT_CLIENT_SECRET_JSON` + `YT_TOKEN_JSON` for uploader runtime.
+- Configure per-channel YouTube token convention via `YT_TOKEN_BASE_DIR` (`<base>/<channel_slug>/token.json`).
+- Client secret is resolved from `YT_CLIENT_SECRET_JSON` (preferred) or optional `<YT_CLIENT_SECRET_BASE_DIR>/client_secret.json`; global fallback remains `YT_TOKEN_JSON` + `YT_CLIENT_SECRET_JSON`.
 - Never store OAuth JSON content in repo or DB; store only filesystem paths in env.
 
 Publish flow:
