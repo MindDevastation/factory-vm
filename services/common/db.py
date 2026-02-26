@@ -298,6 +298,29 @@ def create_channel(
     return row
 
 
+def update_channel_display_name(
+    conn: sqlite3.Connection,
+    *,
+    slug: str,
+    display_name: str,
+) -> Optional[Dict[str, Any]]:
+    cols = _table_columns(conn, "channels")
+    if "updated_at" in cols:
+        conn.execute(
+            "UPDATE channels SET display_name = ?, updated_at = ? WHERE slug = ?",
+            (display_name, now_ts(), slug),
+        )
+    else:
+        conn.execute(
+            "UPDATE channels SET display_name = ? WHERE slug = ?",
+            (display_name, slug),
+        )
+    return conn.execute(
+        "SELECT id, slug, display_name FROM channels WHERE slug = ?",
+        (slug,),
+    ).fetchone()
+
+
 def list_jobs(conn: sqlite3.Connection, state: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
     if state:
         cur = conn.execute(

@@ -137,6 +137,46 @@ class TestApiMoreEndpoints(unittest.TestCase):
             )
             self.assertEqual(duplicate.status_code, 409)
 
+    def test_update_channel_endpoint(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            unauthorized = client.patch(
+                "/v1/channels/darkwood-reverie",
+                json={"display_name": "Darkwood Updated"},
+            )
+            self.assertIn(unauthorized.status_code, (401, 403))
+
+            invalid_display_name = client.patch(
+                "/v1/channels/darkwood-reverie",
+                headers=h,
+                json={"display_name": "   "},
+            )
+            self.assertEqual(invalid_display_name.status_code, 422)
+
+            not_found = client.patch(
+                "/v1/channels/missing-channel",
+                headers=h,
+                json={"display_name": "Darkwood Updated"},
+            )
+            self.assertEqual(not_found.status_code, 404)
+
+            updated = client.patch(
+                "/v1/channels/darkwood-reverie",
+                headers=h,
+                json={"display_name": "Darkwood Updated"},
+            )
+            self.assertEqual(updated.status_code, 200)
+            body = updated.json()
+            self.assertEqual(body.get("slug"), "darkwood-reverie")
+            self.assertEqual(body.get("display_name"), "Darkwood Updated")
+
 
 if __name__ == "__main__":
     unittest.main()
