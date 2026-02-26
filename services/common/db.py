@@ -272,6 +272,32 @@ def get_channel_by_id(conn: sqlite3.Connection, channel_id: int) -> Optional[Dic
     return cur.fetchone()
 
 
+def create_channel(
+    conn: sqlite3.Connection,
+    *,
+    slug: str,
+    display_name: str,
+    kind: str = "LONG",
+    weight: float = 1.0,
+    render_profile: str = "long_1080p24",
+    autopublish_enabled: int = 0,
+) -> Dict[str, Any]:
+    cur = conn.execute(
+        """
+        INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled)
+        VALUES(?,?,?,?,?,?)
+        """,
+        (slug, display_name, kind, weight, render_profile, autopublish_enabled),
+    )
+    channel_id = int(cur.lastrowid)
+    row = conn.execute(
+        "SELECT id, slug, display_name FROM channels WHERE id = ?",
+        (channel_id,),
+    ).fetchone()
+    assert row is not None
+    return row
+
+
 def list_jobs(conn: sqlite3.Connection, state: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
     if state:
         cur = conn.execute(

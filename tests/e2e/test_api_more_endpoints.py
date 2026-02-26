@@ -89,5 +89,54 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(display_names, sorted(display_names))
 
 
+    def test_create_channel_endpoint(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            unauthorized = client.post(
+                "/v1/channels",
+                json={"slug": "new-channel", "display_name": "New Channel"},
+            )
+            self.assertIn(unauthorized.status_code, (401, 403))
+
+            invalid_slug = client.post(
+                "/v1/channels",
+                headers=h,
+                json={"slug": "bad_slug", "display_name": "Valid Name"},
+            )
+            self.assertEqual(invalid_slug.status_code, 422)
+
+            invalid_display_name = client.post(
+                "/v1/channels",
+                headers=h,
+                json={"slug": "good-slug", "display_name": "   "},
+            )
+            self.assertEqual(invalid_display_name.status_code, 422)
+
+            created = client.post(
+                "/v1/channels",
+                headers=h,
+                json={"slug": "new-channel", "display_name": "New Channel"},
+            )
+            self.assertEqual(created.status_code, 200)
+            body = created.json()
+            self.assertIsInstance(body.get("id"), int)
+            self.assertEqual(body.get("slug"), "new-channel")
+            self.assertEqual(body.get("display_name"), "New Channel")
+
+            duplicate = client.post(
+                "/v1/channels",
+                headers=h,
+                json={"slug": "new-channel", "display_name": "Another Name"},
+            )
+            self.assertEqual(duplicate.status_code, 409)
+
+
 if __name__ == "__main__":
     unittest.main()
