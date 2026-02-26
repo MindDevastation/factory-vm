@@ -321,6 +321,25 @@ def update_channel_display_name(
     ).fetchone()
 
 
+def channel_has_jobs(conn: sqlite3.Connection, channel_id: int) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM jobs j
+        JOIN releases r ON r.id = j.release_id
+        WHERE r.channel_id = ?
+        LIMIT 1
+        """,
+        (channel_id,),
+    ).fetchone()
+    return row is not None
+
+
+def delete_channel_by_slug(conn: sqlite3.Connection, slug: str) -> int:
+    cur = conn.execute("DELETE FROM channels WHERE slug = ?", (slug,))
+    return int(cur.rowcount or 0)
+
+
 def list_jobs(conn: sqlite3.Connection, state: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
     if state:
         cur = conn.execute(
