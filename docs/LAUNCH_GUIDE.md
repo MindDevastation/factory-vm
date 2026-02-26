@@ -60,8 +60,8 @@ Recommended for MVP: Service Account.
 5) Create token on server:
 ```bash
 export YT_CLIENT_SECRET_JSON=/secure/youtube/client_secret.json
-export YT_TOKEN_JSON=/secure/youtube/global/token.json
-python scripts/youtube_auth.py
+export YT_TOKENS_DIR=/secure/youtube/channels
+python scripts/youtube_auth.py --channel-slug titanwave-sonic
 ```
 
 ## 7) Create deploy/env
@@ -72,7 +72,8 @@ nano deploy/env
 Fill all required fields:
 - FACTORY_DB_PATH, FACTORY_STORAGE_ROOT
 - GDRIVE_ROOT_ID, GDRIVE_SERVICE_ACCOUNT_JSON
-- YT_CLIENT_SECRET_JSON, YT_TOKEN_JSON (global fallback)
+- YT_CLIENT_SECRET_JSON (global OAuth client secret)
+- YT_TOKENS_DIR (per-channel token root; `${YT_TOKENS_DIR}/${channel_slug}/token.json`)
 - TG_BOT_TOKEN, TG_ADMIN_CHAT_ID
 - BASIC AUTH user/pass for dashboard
 
@@ -81,7 +82,11 @@ Channels config source of truth:
 - Runtime reads channels from DB (`channels` table); after deploy do not edit YAML expecting live changes.
 
 YouTube credentials:
-- Runtime uses env vars `YT_CLIENT_SECRET_JSON` and `YT_TOKEN_JSON`.
+- Runtime uses env vars `YT_CLIENT_SECRET_JSON` and `YT_TOKENS_DIR`.
+- Example values:
+  - `YT_TOKENS_DIR=/secure/youtube/channels`
+  - `channel_slug=titanwave-sonic`
+  - `token=/secure/youtube/channels/titanwave-sonic/token.json`
 
 ## 8) Init DB + seed configs
 ```bash

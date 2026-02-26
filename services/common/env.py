@@ -26,9 +26,7 @@ class Env:
 
     # youtube oauth
     yt_client_secret_json: str
-    yt_token_json: str
-    yt_token_base_dir: str
-    yt_client_secret_base_dir: str
+    yt_tokens_dir: str
 
     # telegram
     tg_bot_token: str
@@ -65,9 +63,7 @@ class Env:
             gdrive_oauth_token_json=os.environ.get("GDRIVE_OAUTH_TOKEN_JSON", ""),
 
             yt_client_secret_json=os.environ.get("YT_CLIENT_SECRET_JSON", ""),
-            yt_token_json=os.environ.get("YT_TOKEN_JSON", ""),
-            yt_token_base_dir=os.environ.get("YT_TOKEN_BASE_DIR", ""),
-            yt_client_secret_base_dir=os.environ.get("YT_CLIENT_SECRET_BASE_DIR", ""),
+            yt_tokens_dir=os.environ.get("YT_TOKENS_DIR", ""),
 
             tg_bot_token=os.environ.get("TG_BOT_TOKEN", ""),
             tg_admin_chat_id=int(os.environ.get("TG_ADMIN_CHAT_ID", "0")),

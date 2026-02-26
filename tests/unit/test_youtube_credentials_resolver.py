@@ -1,68 +1,67 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from services.common.youtube_credentials import (
-    YouTubeCredentialResolutionError,
-    resolve_youtube_channel_credentials,
+from services.common.youtube_token_resolver import (
+    YouTubeTokenResolutionError,
+    resolve_channel_token_path,
 )
 
 
-class TestYouTubeCredentialsResolver(unittest.TestCase):
-    def test_uses_convention_paths_for_channel_slug(self):
-        with patch.dict(
-            "os.environ",
-            {
-                "YT_TOKEN_BASE_DIR": "/secure/youtube",
-                "YT_CLIENT_SECRET_JSON": "/secrets/global-client.json",
-            },
-            clear=True,
-        ):
-            client_secret, token_path, source = resolve_youtube_channel_credentials("music-a")
+class TestYouTubeTokenResolver(unittest.TestCase):
+    def test_builds_channel_token_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            token_file = Path(td) / "titanwave-sonic" / "token.json"
+            token_file.parent.mkdir(parents=True, exist_ok=True)
+            token_file.write_text("{}", encoding="utf-8")
 
-        self.assertEqual(client_secret, "/secrets/global-client.json")
-        self.assertEqual(token_path, "/secure/youtube/music-a/token.json")
-        self.assertEqual(source, "convention")
+            token_path = resolve_channel_token_path(
+                channel_slug="titanwave-sonic",
+                tokens_dir=td,
+            )
 
-    def test_global_env_fallback_when_base_dir_missing(self):
-        with patch.dict(
-            "os.environ",
-            {
-                "YT_TOKEN_JSON": "/secrets/global-token.json",
-                "YT_CLIENT_SECRET_JSON": "/secrets/global-client.json",
-                "YT_TOKEN_BASE_DIR": "",
-            },
-            clear=True,
-        ):
-            client_secret, token_path, source = resolve_youtube_channel_credentials("music-a")
+        self.assertEqual(token_path, str(token_file))
 
-        self.assertEqual(client_secret, "/secrets/global-client.json")
-        self.assertEqual(token_path, "/secrets/global-token.json")
-        self.assertEqual(source, "global_env")
-
-    def test_uses_convention_client_secret_base_dir_if_global_missing(self):
-        with patch.dict(
-            "os.environ",
-            {
-                "YT_TOKEN_BASE_DIR": "/secure/youtube",
-                "YT_CLIENT_SECRET_BASE_DIR": "/secure/client",
-            },
-            clear=True,
-        ):
-            client_secret, token_path, source = resolve_youtube_channel_credentials("music-a")
-
-        self.assertEqual(client_secret, "/secure/client/client_secret.json")
-        self.assertEqual(token_path, "/secure/youtube/music-a/token.json")
-        self.assertEqual(source, "convention")
-
-    def test_error_when_both_convention_and_global_missing(self):
+    def test_error_when_tokens_dir_missing(self):
         with patch.dict("os.environ", {}, clear=True):
-            with self.assertRaises(YouTubeCredentialResolutionError) as ctx:
-                resolve_youtube_channel_credentials("music-a")
+            with self.assertRaises(YouTubeTokenResolutionError) as ctx:
+                resolve_channel_token_path(channel_slug="music-a")
 
-        self.assertIn("YT_TOKEN_BASE_DIR", str(ctx.exception))
-        self.assertIn("YT_TOKEN_JSON", str(ctx.exception))
+        self.assertIn("YT_TOKENS_DIR is required", str(ctx.exception))
+
+    def test_error_when_token_file_missing_exact_message(self):
+        with tempfile.TemporaryDirectory() as td:
+            expected = str(Path(td) / "music-a" / "token.json")
+            with self.assertRaises(YouTubeTokenResolutionError) as ctx:
+                resolve_channel_token_path(channel_slug="music-a", tokens_dir=td)
+
+        self.assertEqual(str(ctx.exception), f"YouTube token missing for channel music-a at {expected}")
+
+    def test_error_when_token_file_unreadable_exact_message(self):
+        with tempfile.TemporaryDirectory() as td:
+            token_file = Path(td) / "music-a" / "token.json"
+            token_file.parent.mkdir(parents=True, exist_ok=True)
+            token_file.write_text("{}", encoding="utf-8")
+
+            original_access = os.access
+
+            def _deny_token(path, mode):
+                if str(path) == str(token_file):
+                    return False
+                return original_access(path, mode)
+
+            with patch("os.access", side_effect=_deny_token):
+                with self.assertRaises(YouTubeTokenResolutionError) as ctx:
+                    resolve_channel_token_path(channel_slug="music-a", tokens_dir=td)
+
+            self.assertEqual(
+                str(ctx.exception),
+                f"YouTube token missing for channel music-a at {token_file}",
+            )
 
 
 if __name__ == "__main__":

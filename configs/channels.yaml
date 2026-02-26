@@ -1,8 +1,3 @@
-# Optional per-channel YouTube credential path overrides (paths only, no secret content):
-# - yt_token_json_path: path to OAuth token JSON for this channel
-# - yt_client_secret_json_path: optional path to client secret JSON for this channel
-# If omitted, uploader falls back to env vars YT_TOKEN_JSON and YT_CLIENT_SECRET_JSON.
-
 channels:
   - slug: "darkwood-reverie"
     display_name: "Darkwood Reverie"
@@ -10,8 +5,6 @@ channels:
     weight: 1.0
     render_profile: "long_1080p24"
     autopublish_enabled: false
-    yt_token_json_path: "/secure/youtube/channels/darkwood-reverie/token.json"
-    yt_client_secret_json_path: "/secure/youtube/client_secret.json"
 
   - slug: "channel-b"
     display_name: "Channel B"

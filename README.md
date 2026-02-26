@@ -44,8 +44,14 @@ Channels config source of truth:
 - Do not edit `configs/channels.yaml` expecting live runtime behavior changes; reseed DB instead.
 
 YouTube credentials:
-- Preferred: set `YT_TOKEN_BASE_DIR` and store per-channel token as `<base>/<channel_slug>/token.json`; keep `YT_CLIENT_SECRET_JSON` global (or optional `YT_CLIENT_SECRET_BASE_DIR` fallback).
-- Backward-compatible fallback remains `YT_TOKEN_JSON` + `YT_CLIENT_SECRET_JSON`.
+- Set `YT_CLIENT_SECRET_JSON` (global OAuth client secret).
+- Set `YT_TOKENS_DIR` and store each channel token at `${YT_TOKENS_DIR}/${channel_slug}/token.json`.
+- Example:
+  - `YT_TOKENS_DIR=/secure/youtube/channels`
+  - `channel_slug=titanwave-sonic`
+  - `token=/secure/youtube/channels/titanwave-sonic/token.json`
+- Generate a token:
+  - `python scripts/youtube_auth.py --channel-slug titanwave-sonic`
 
 Publish flow:
 - Bot sends YouTube private link + 60s preview.
