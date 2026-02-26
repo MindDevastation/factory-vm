@@ -17,6 +17,7 @@ from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, qa_path
 from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.integrations.gdrive import DriveClient
+import yaml
 
 
 env = Env.load()
@@ -70,6 +71,28 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
     finally:
         conn.close()
     return rows
+
+
+@app.get("/v1/channels/export/yaml", response_class=PlainTextResponse)
+def api_export_channels_yaml(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute(
+            "SELECT slug, display_name FROM channels ORDER BY display_name ASC, slug ASC"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    payload = {
+        "channels": [
+            {
+                "slug": str(row["slug"]),
+                "display_name": str(row["display_name"]),
+            }
+            for row in rows
+        ]
+    }
+    return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 
 
 
