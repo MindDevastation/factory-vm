@@ -24,6 +24,13 @@ class Env:
     gdrive_oauth_client_json: str
     gdrive_oauth_token_json: str
 
+    # oauth
+    oauth_redirect_base_url: str
+    oauth_state_secret: str
+
+    gdrive_client_secret_json: str
+    gdrive_tokens_dir: str
+
     # youtube oauth
     yt_client_secret_json: str
     yt_tokens_dir: str
@@ -61,6 +68,12 @@ class Env:
             gdrive_sa_json=os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON", ""),
             gdrive_oauth_client_json=os.environ.get("GDRIVE_OAUTH_CLIENT_JSON", ""),
             gdrive_oauth_token_json=os.environ.get("GDRIVE_OAUTH_TOKEN_JSON", ""),
+
+            oauth_redirect_base_url=os.environ.get("OAUTH_REDIRECT_BASE_URL", ""),
+            oauth_state_secret=os.environ.get("OAUTH_STATE_SECRET", ""),
+
+            gdrive_client_secret_json=os.environ.get("GDRIVE_CLIENT_SECRET_JSON", ""),
+            gdrive_tokens_dir=os.environ.get("GDRIVE_TOKENS_DIR", ""),
 
             yt_client_secret_json=os.environ.get("YT_CLIENT_SECRET_JSON", ""),
             yt_tokens_dir=os.environ.get("YT_TOKENS_DIR", ""),

@@ -237,6 +237,72 @@ class TestApiMoreEndpoints(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_oauth_endpoints_require_auth_and_validate_channel(self) -> None:
+        with temp_env() as (td, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            import os
+            os.environ["OAUTH_REDIRECT_BASE_URL"] = "http://localhost:8080"
+            os.environ["OAUTH_STATE_SECRET"] = "state-secret"
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = str(Path(td.name) / "gdrive_client.json")
+            os.environ["GDRIVE_TOKENS_DIR"] = str(Path(td.name) / "gdrive_tokens")
+            os.environ["YT_CLIENT_SECRET_JSON"] = str(Path(td.name) / "yt_client.json")
+            os.environ["YT_TOKENS_DIR"] = str(Path(td.name) / "yt_tokens")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            unauthorized = client.post("/v1/oauth/gdrive/darkwood-reverie/start")
+            self.assertIn(unauthorized.status_code, (401, 403))
+
+            with unittest.mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/auth"):
+                authorized = client.post("/v1/oauth/gdrive/darkwood-reverie/start", headers=h)
+            self.assertEqual(authorized.status_code, 200)
+            self.assertEqual(authorized.json()["auth_url"], "https://accounts.google.com/auth")
+
+            missing = client.post("/v1/oauth/gdrive/missing-channel/start", headers=h)
+            self.assertEqual(missing.status_code, 404)
+
+            callback_unauthorized = client.get("/v1/oauth/gdrive/callback?code=fake&state=fake")
+            self.assertIn(callback_unauthorized.status_code, (401, 403))
+
+    def test_oauth_callback_writes_channel_tokens_with_mocked_exchange(self) -> None:
+        with temp_env() as (td, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            import os
+            os.environ["OAUTH_REDIRECT_BASE_URL"] = "http://localhost:8080"
+            os.environ["OAUTH_STATE_SECRET"] = "state-secret"
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = str(Path(td.name) / "gdrive_client.json")
+            os.environ["GDRIVE_TOKENS_DIR"] = str(Path(td.name) / "gdrive_tokens")
+            os.environ["YT_CLIENT_SECRET_JSON"] = str(Path(td.name) / "yt_client.json")
+            os.environ["YT_TOKENS_DIR"] = str(Path(td.name) / "yt_tokens")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            state_gdrive = mod.sign_state(secret="state-secret", kind="gdrive", channel_slug="darkwood-reverie")
+            with unittest.mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"gdrive-token"}'):
+                rg = client.get(f"/v1/oauth/gdrive/callback?code=fake-code&state={state_gdrive}", headers=h)
+            self.assertEqual(rg.status_code, 200)
+            gdrive_token = Path(td.name) / "gdrive_tokens" / "darkwood-reverie" / "token.json"
+            self.assertTrue(gdrive_token.is_file())
+            self.assertIn("gdrive-token", gdrive_token.read_text(encoding="utf-8"))
+
+            state_yt = mod.sign_state(secret="state-secret", kind="youtube", channel_slug="darkwood-reverie")
+            with unittest.mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}'):
+                ry = client.get(f"/v1/oauth/youtube/callback?code=fake-code&state={state_yt}", headers=h)
+            self.assertEqual(ry.status_code, 200)
+            yt_token = Path(td.name) / "yt_tokens" / "darkwood-reverie" / "token.json"
+            self.assertTrue(yt_token.is_file())
+            self.assertIn("yt-token", yt_token.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
