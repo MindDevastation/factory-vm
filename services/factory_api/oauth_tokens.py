@@ -61,7 +61,8 @@ def verify_state(
     require_channel_slug: bool = True,
 ) -> dict[str, Any]:
     if not state or "." not in state:
-        raise HTTPException(400, "invalid oauth state")
+        raise HTTPException(400,
+                            "invalid oauth state")
 
     payload_part, sig_part = state.split(".", 1)
     try:
