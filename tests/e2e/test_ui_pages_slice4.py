@@ -55,6 +55,8 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertEqual(r.status_code, 200)
             self.assertIn('action="/ui/jobs/render_all"', r.text)
             self.assertIn('method="post"', r.text)
+            self.assertIn('id="channel-add-btn"', r.text)
+            self.assertIn('id="channels-table"', r.text)
 
             r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
             self.assertEqual(r.status_code, 200)
