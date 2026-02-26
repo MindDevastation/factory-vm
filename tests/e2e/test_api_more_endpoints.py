@@ -65,6 +65,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
         with temp_env() as (_, _env0):
             env = Env.load()
             seed_minimal_db(env)
+            insert_release_and_job(env, channel_slug="darkwood-reverie")
 
             mod = importlib.import_module("services.factory_api.app")
             importlib.reload(mod)
@@ -176,6 +177,40 @@ class TestApiMoreEndpoints(unittest.TestCase):
             body = updated.json()
             self.assertEqual(body.get("slug"), "darkwood-reverie")
             self.assertEqual(body.get("display_name"), "Darkwood Updated")
+
+
+    def test_delete_channel_endpoint(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            insert_release_and_job(env, channel_slug="darkwood-reverie")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            unauthorized = client.delete("/v1/channels/channel-c")
+            self.assertIn(unauthorized.status_code, (401, 403))
+
+            not_found = client.delete("/v1/channels/missing-channel", headers=h)
+            self.assertEqual(not_found.status_code, 404)
+
+            with_job = client.delete("/v1/channels/darkwood-reverie", headers=h)
+            self.assertEqual(with_job.status_code, 409)
+            self.assertIn("jobs exist", with_job.json().get("detail", ""))
+
+            no_jobs = client.delete("/v1/channels/channel-c", headers=h)
+            self.assertEqual(no_jobs.status_code, 200)
+            body = no_jobs.json()
+            self.assertEqual(body.get("ok"), True)
+            self.assertEqual(body.get("slug"), "channel-c")
+
+            conn = dbm.connect(env)
+            try:
+                self.assertIsNone(dbm.get_channel_by_slug(conn, "channel-c"))
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":

@@ -131,6 +131,27 @@ def api_update_channel(slug: str, payload: UpdateChannelPayload, _: bool = Depen
     return updated
 
 
+@app.delete("/v1/channels/{slug}")
+def api_delete_channel(slug: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        existing = dbm.get_channel_by_slug(conn, slug)
+        if not existing:
+            raise HTTPException(404, "channel not found")
+
+        channel_id = int(existing["id"])
+        if dbm.channel_has_jobs(conn, channel_id):
+            raise HTTPException(409, "cannot delete channel: jobs exist for this channel")
+
+        deleted = dbm.delete_channel_by_slug(conn, slug)
+        if deleted == 0:
+            raise HTTPException(404, "channel not found")
+    finally:
+        conn.close()
+
+    return {"ok": True, "slug": slug}
+
+
 class ApprovePayload(BaseModel):
     comment: str = Field(default="approved", max_length=500)
 
