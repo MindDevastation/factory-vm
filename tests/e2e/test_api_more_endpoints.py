@@ -90,6 +90,31 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(display_names, sorted(display_names))
 
 
+    def test_channels_export_yaml_requires_auth_and_contains_slug_display_name(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            unauthorized = client.get("/v1/channels/export/yaml")
+            self.assertIn(unauthorized.status_code, (401, 403))
+
+            authorized = client.get("/v1/channels/export/yaml", headers=h)
+            self.assertEqual(authorized.status_code, 200)
+            self.assertIn("text/plain", authorized.headers.get("content-type", ""))
+            body = authorized.text
+
+            self.assertIn("channels:", body)
+            self.assertIn('slug: darkwood-reverie', body)
+            self.assertIn('display_name: Darkwood Reverie', body)
+            self.assertNotIn('yt_token_json_path', body)
+            self.assertNotIn('yt_client_secret_json_path', body)
+
+
     def test_create_channel_endpoint(self) -> None:
         with temp_env() as (_, _env0):
             env = Env.load()
