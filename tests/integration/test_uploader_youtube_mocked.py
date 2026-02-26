@@ -106,6 +106,8 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
                 "channel-b",
                 global_client_secret_path="/env/client_secret.json",
                 global_token_path="/env/token.json",
+                token_base_dir="",
+                client_secret_base_dir="",
             )
             self.assertEqual(_FakeYT.last_init, ("/per-channel/client-b.json", "/per-channel/token-b.json"))
 
@@ -130,7 +132,7 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
             with mock.patch.object(
                 upl,
                 "resolve_youtube_channel_credentials",
-                return_value=("/env/client_secret.json", "/env/token.json", "global"),
+                return_value=("/env/client_secret.json", "/env/token.json", "global_env"),
             ) as resolver_mock:
                 try:
                     uploader_cycle(env=env, worker_id="t-upl")
@@ -141,6 +143,8 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
                 "channel-c",
                 global_client_secret_path="/env/client_secret.json",
                 global_token_path="/env/token.json",
+                token_base_dir="",
+                client_secret_base_dir="",
             )
             self.assertEqual(_FakeYT.last_init, ("/env/client_secret.json", "/env/token.json"))
 

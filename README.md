@@ -44,7 +44,8 @@ Channels config source of truth:
 - Do not edit `configs/channels.yaml` expecting live runtime behavior changes; reseed DB instead.
 
 YouTube credentials:
-- Configure uploader credentials via env (`YT_CLIENT_SECRET_JSON`, `YT_TOKEN_JSON`).
+- Preferred: set `YT_TOKEN_BASE_DIR` and store per-channel token as `<base>/<channel_slug>/token.json`; keep `YT_CLIENT_SECRET_JSON` global (or optional `YT_CLIENT_SECRET_BASE_DIR` fallback).
+- Backward-compatible fallback remains `YT_TOKEN_JSON` + `YT_CLIENT_SECRET_JSON`.
 
 Publish flow:
 - Bot sends YouTube private link + 60s preview.
