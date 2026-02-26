@@ -76,6 +76,37 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
                 self.assertEqual(yt["video_id"], "vid123")
                 self.assertEqual(_FakeYT.last_init, ("/env/client_secret.json", str(token_path)))
 
+    def test_youtube_backend_missing_channel_token_is_terminal_upload_failed(self) -> None:
+        with temp_env() as (_, _env0):
+            os.environ["UPLOAD_BACKEND"] = "youtube"
+            os.environ["YT_CLIENT_SECRET_JSON"] = "/env/client_secret.json"
+            with tempfile.TemporaryDirectory() as tokens_dir:
+                os.environ["YT_TOKENS_DIR"] = tokens_dir
+                env = Env.load()
+                seed_minimal_db(env)
+
+                job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD", channel_slug="channel-b")
+                ob = outbox_dir(env, job_id)
+                mp4 = ob / "render.mp4"
+                mp4.parent.mkdir(parents=True, exist_ok=True)
+                mp4.write_bytes(b"mp4")
+
+                uploader_cycle(env=env, worker_id="t-upl")
+
+                conn = dbm.connect(env)
+                try:
+                    job = dbm.get_job(conn, job_id)
+                finally:
+                    conn.close()
+
+                assert job is not None
+                expected_path = str(Path(tokens_dir) / "channel-b" / "token.json")
+                self.assertEqual(str(job["state"]), "UPLOAD_FAILED")
+                self.assertEqual(
+                    str(job["error_reason"]),
+                    f"YouTube token missing for channel channel-b at {expected_path}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
