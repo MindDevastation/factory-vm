@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
+import re
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
@@ -69,6 +70,42 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
     finally:
         conn.close()
     return rows
+
+
+
+
+_SLUG_RE = re.compile(r"^[a-z0-9-]{3,64}$")
+
+
+class CreateChannelPayload(BaseModel):
+    slug: str = Field(min_length=3, max_length=64)
+    display_name: str = Field(min_length=1, max_length=200)
+
+
+def _normalize_display_name(value: str) -> str:
+    return value.strip()
+
+
+
+@app.post("/v1/channels")
+def api_create_channel(payload: CreateChannelPayload, _: bool = Depends(require_basic_auth(env))):
+    slug = payload.slug.strip()
+    if not _SLUG_RE.fullmatch(slug):
+        raise HTTPException(422, "slug must match ^[a-z0-9-]{3,64}$")
+
+    display_name = _normalize_display_name(payload.display_name)
+    if not display_name:
+        raise HTTPException(422, "display_name must be between 1 and 200 characters")
+
+    conn = dbm.connect(env)
+    try:
+        existing = dbm.get_channel_by_slug(conn, slug)
+        if existing:
+            raise HTTPException(409, "channel slug already exists")
+        created = dbm.create_channel(conn, slug=slug, display_name=display_name)
+    finally:
+        conn.close()
+    return created
 
 
 class ApprovePayload(BaseModel):
