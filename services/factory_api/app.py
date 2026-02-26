@@ -17,6 +17,16 @@ from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, qa_path
 from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.integrations.gdrive import DriveClient
+from services.factory_api.oauth_tokens import (
+    build_authorization_url,
+    ensure_token_dir,
+    exchange_code_for_token_json,
+    oauth_token_path,
+    redirect_uri,
+    sign_state,
+    validate_oauth_config,
+    verify_state,
+)
 import yaml
 
 
@@ -71,6 +81,74 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
     finally:
         conn.close()
     return rows
+
+
+def _require_channel(channel_slug: str) -> None:
+    conn = dbm.connect(env)
+    try:
+        existing = dbm.get_channel_by_slug(conn, channel_slug)
+    finally:
+        conn.close()
+    if not existing:
+        raise HTTPException(404, "channel not found")
+
+
+def _oauth_start(kind: str, channel_slug: str) -> dict:
+    _require_channel(channel_slug)
+    client_secret_path, _, scope = validate_oauth_config(env, kind=kind)
+    state = sign_state(secret=env.oauth_state_secret, kind=kind, channel_slug=channel_slug)
+    url = build_authorization_url(
+        client_secret_path=client_secret_path,
+        scope=scope,
+        redirect_uri=redirect_uri(env, kind),
+        state=state,
+    )
+    return {"auth_url": url}
+
+
+def _oauth_callback(kind: str, code: str, state: str) -> HTMLResponse:
+    client_secret_path, tokens_dir, scope = validate_oauth_config(env, kind=kind)
+    payload = verify_state(secret=env.oauth_state_secret, expected_kind=kind, state=state)
+    channel_slug = str(payload["channel_slug"])
+    _require_channel(channel_slug)
+
+    token_json = exchange_code_for_token_json(
+        client_secret_path=client_secret_path,
+        scope=scope,
+        redirect_uri=redirect_uri(env, kind),
+        code=code,
+    )
+    token_path = oauth_token_path(base_dir=tokens_dir, channel_slug=channel_slug)
+    ensure_token_dir(token_path)
+    token_path.write_text(token_json, encoding="utf-8")
+    token_path.chmod(0o600)
+    return HTMLResponse(
+        content=(
+            "<html><body><h3>OAuth token saved</h3>"
+            f"<p>kind={kind}, channel={channel_slug}</p>"
+            "<p>You can close this tab.</p></body></html>"
+        )
+    )
+
+
+@app.post("/v1/oauth/gdrive/{channel_slug}/start")
+def api_oauth_gdrive_start(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    return _oauth_start("gdrive", channel_slug)
+
+
+@app.get("/v1/oauth/gdrive/callback", response_class=HTMLResponse)
+def api_oauth_gdrive_callback(code: str, state: str, _: bool = Depends(require_basic_auth(env))):
+    return _oauth_callback("gdrive", code, state)
+
+
+@app.post("/v1/oauth/youtube/{channel_slug}/start")
+def api_oauth_youtube_start(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    return _oauth_start("youtube", channel_slug)
+
+
+@app.get("/v1/oauth/youtube/callback", response_class=HTMLResponse)
+def api_oauth_youtube_callback(code: str, state: str, _: bool = Depends(require_basic_auth(env))):
+    return _oauth_callback("youtube", code, state)
 
 
 @app.get("/v1/channels/export/yaml", response_class=PlainTextResponse)
