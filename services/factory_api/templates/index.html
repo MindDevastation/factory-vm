@@ -11,20 +11,10 @@
 
 <h2>Channels</h2>
 <p>
-  <button type="button" id="channel-add-btn">Add Channel</button>
+  <button type="button" id="channel-add-btn">Add Channel (YouTube OAuth)</button>
+  <button type="button" id="channels-refresh-btn">Refresh channels</button>
   <span class="muted" id="channel-note"></span>
 </p>
-<div id="channel-form-wrap" style="display:none; margin-bottom:12px; border:1px solid #ddd; padding:12px;">
-  <h3 style="margin-top:0;" id="channel-form-title">Add Channel</h3>
-  <form id="channel-form">
-    <label for="channel-slug">Slug</label>
-    <input id="channel-slug" name="slug" type="text" required placeholder="my-channel" pattern="[a-z0-9-]{3,64}" />
-    <label for="channel-display-name">Display name</label>
-    <input id="channel-display-name" name="display_name" type="text" required placeholder="My Channel" />
-    <button type="submit" id="channel-submit-btn">Create</button>
-    <button type="button" id="channel-cancel-btn">Cancel</button>
-  </form>
-</div>
 <table id="channels-table">
   <thead>
     <tr>
@@ -101,22 +91,13 @@
 <script>
 (function () {
   const addBtn = document.getElementById('channel-add-btn');
-  const formWrap = document.getElementById('channel-form-wrap');
-  const channelForm = document.getElementById('channel-form');
-  const formTitle = document.getElementById('channel-form-title');
-  const slugInput = document.getElementById('channel-slug');
-  const displayInput = document.getElementById('channel-display-name');
-  const submitBtn = document.getElementById('channel-submit-btn');
-  const cancelBtn = document.getElementById('channel-cancel-btn');
+  const channelsRefreshBtn = document.getElementById('channels-refresh-btn');
   const channelsTableBody = document.querySelector('#channels-table tbody');
   const channelNote = document.getElementById('channel-note');
   const refreshBtn = document.getElementById('oauth-refresh-btn');
   const refreshNote = document.getElementById('oauth-refresh-note');
   const oauthTableBody = document.querySelector('#oauth-status-table tbody');
   let pollCount = 0;
-  let mode = 'create';
-  let currentSlug = null;
-
   function fmtStatus(isPresent, mtime) {
     if (!isPresent) {
       return 'Missing';
@@ -139,6 +120,22 @@
     if (!res.ok) {
       const body = await res.text();
       throw new Error('Failed to start OAuth: ' + body);
+    }
+    const data = await res.json();
+    if (!data.auth_url) {
+      throw new Error('Missing auth_url in response');
+    }
+    window.open(data.auth_url, '_blank', 'noopener');
+  }
+
+  async function startChannelAddOauth() {
+    const res = await fetch('/v1/oauth/youtube/add_channel/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error('Failed to start Add Channel OAuth: ' + body);
     }
     const data = await res.json();
     if (!data.auth_url) {
@@ -209,27 +206,6 @@
     }
   }
 
-  function showForm(editMode, slug, displayName) {
-    mode = editMode;
-    currentSlug = slug || null;
-    formWrap.style.display = 'block';
-    formTitle.textContent = mode === 'rename' ? 'Rename Channel' : 'Add Channel';
-    submitBtn.textContent = mode === 'rename' ? 'Rename' : 'Create';
-    slugInput.value = slug || '';
-    slugInput.disabled = mode === 'rename';
-    displayInput.value = displayName || '';
-    channelNote.textContent = '';
-    displayInput.focus();
-  }
-
-  function hideForm() {
-    formWrap.style.display = 'none';
-    mode = 'create';
-    currentSlug = null;
-    channelForm.reset();
-    slugInput.disabled = false;
-  }
-
   async function fetchChannels() {
     const res = await fetch('/v1/channels');
     if (!res.ok) {
@@ -258,8 +234,40 @@
     }).join('');
 
     channelsTableBody.querySelectorAll('button[data-action="rename"]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        showForm('rename', btn.getAttribute('data-slug'), btn.getAttribute('data-display-name'));
+      btn.addEventListener('click', async () => {
+        const slug = btn.getAttribute('data-slug');
+        const currentName = btn.getAttribute('data-display-name') || '';
+        const nextName = window.prompt('Rename channel "' + slug + '"', currentName);
+        if (nextName === null) {
+          return;
+        }
+        const trimmedName = nextName.trim();
+        if (!trimmedName) {
+          channelNote.textContent = 'Display name is required';
+          return;
+        }
+        channelNote.textContent = '';
+        try {
+          const res = await fetch('/v1/channels/' + encodeURIComponent(slug), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ display_name: trimmedName }),
+          });
+          if (!res.ok) {
+            if (res.status === 401) {
+              throw new Error('Not authorized');
+            }
+            if (res.status === 422) {
+              throw new Error('Invalid display name');
+            }
+            const body = await res.text();
+            throw new Error('Failed to rename channel: ' + body);
+          }
+          channelNote.textContent = 'Channel renamed';
+          await refreshAll();
+        } catch (err) {
+          channelNote.textContent = err.message;
+        }
       });
     });
 
@@ -291,68 +299,6 @@
     });
   }
 
-  function validatePayload(slug, displayName) {
-    if (!displayName.trim()) {
-      return 'Display name is required';
-    }
-    if (mode === 'create') {
-      if (!/^[a-z0-9-]{3,64}$/.test(slug)) {
-        return 'Slug must match ^[a-z0-9-]{3,64}$';
-      }
-    }
-    return '';
-  }
-
-  async function saveChannel() {
-    const slug = slugInput.value.trim();
-    const displayName = displayInput.value.trim();
-    const validationError = validatePayload(slug, displayName);
-    if (validationError) {
-      channelNote.textContent = validationError;
-      return;
-    }
-
-    channelNote.textContent = '';
-    if (mode === 'create') {
-      const res = await fetch('/v1/channels', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: slug, display_name: displayName }),
-      });
-      if (!res.ok) {
-        if (res.status === 401) {
-          throw new Error('Not authorized');
-        }
-        if (res.status === 409) {
-          throw new Error('Channel slug already exists');
-        }
-        if (res.status === 422) {
-          throw new Error('Invalid channel data. Check slug and display name.');
-        }
-        throw new Error('Failed to create channel');
-      }
-      channelNote.textContent = 'Channel created';
-    } else {
-      const res = await fetch('/v1/channels/' + encodeURIComponent(currentSlug), {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ display_name: displayName }),
-      });
-      if (!res.ok) {
-        if (res.status === 401) {
-          throw new Error('Not authorized');
-        }
-        if (res.status === 422) {
-          throw new Error('Invalid display name');
-        }
-        throw new Error('Failed to rename channel');
-      }
-      channelNote.textContent = 'Channel renamed';
-    }
-    hideForm();
-    await refreshAll();
-  }
-
   async function refreshAll() {
     try {
       const channels = await fetchChannels();
@@ -374,15 +320,20 @@
     }, 3000);
   }
 
-  addBtn.addEventListener('click', () => showForm('create'));
-  cancelBtn.addEventListener('click', hideForm);
-  channelForm.addEventListener('submit', async (evt) => {
-    evt.preventDefault();
+  addBtn.addEventListener('click', async () => {
     try {
-      await saveChannel();
+      channelNote.textContent = 'Starting YouTube OAuth flow...';
+      await startChannelAddOauth();
+      channelNote.textContent = 'OAuth window opened. Complete consent, then return and refresh channels.';
+      pollCount = 0;
+      pollStatus();
     } catch (err) {
       channelNote.textContent = err.message;
     }
+  });
+  channelsRefreshBtn.addEventListener('click', refreshAll);
+  window.addEventListener('focus', () => {
+    refreshAll();
   });
   refreshBtn.addEventListener('click', refreshAll);
   refreshAll();
