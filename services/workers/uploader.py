@@ -105,6 +105,8 @@ def uploader_cycle(*, env: Env, worker_id: str) -> None:
                 channel_slug,
                 global_client_secret_path=env.yt_client_secret_json,
                 global_token_path=env.yt_token_json,
+                token_base_dir=env.yt_token_base_dir,
+                client_secret_base_dir=env.yt_client_secret_base_dir,
             )
             log.info(
                 "resolved youtube credentials",
