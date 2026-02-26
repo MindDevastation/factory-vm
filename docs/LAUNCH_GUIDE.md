@@ -80,11 +80,8 @@ Channels config source of truth:
 - `configs/channels.yaml` is seed-only for `python scripts/seed_configs.py`.
 - Runtime reads channels from DB (`channels` table); after deploy do not edit YAML expecting live changes.
 
-YouTube credentials (paths only):
-- Runtime uses global env vars `YT_CLIENT_SECRET_JSON` and `YT_TOKEN_JSON`.
-- Recommended VPS layout:
-  - `/secure/youtube/client_secret.json`
-  - `/secure/youtube/global/token.json`
+YouTube credentials:
+- Runtime uses env vars `YT_CLIENT_SECRET_JSON` and `YT_TOKEN_JSON`.
 
 ## 8) Init DB + seed configs
 ```bash

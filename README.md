@@ -43,9 +43,8 @@ Channels config source of truth:
 - After deploy, runtime components (API/workers/importer/uploader) read channel data from the DB (`channels` table), not from YAML.
 - Do not edit `configs/channels.yaml` expecting live runtime behavior changes; reseed DB instead.
 
-YouTube credential config (paths only):
-- Configure global env `YT_CLIENT_SECRET_JSON` + `YT_TOKEN_JSON` for uploader runtime.
-- Never store OAuth JSON content in repo or DB; store only filesystem paths in env.
+YouTube credentials:
+- Configure uploader credentials via env (`YT_CLIENT_SECRET_JSON`, `YT_TOKEN_JSON`).
 
 Publish flow:
 - Bot sends YouTube private link + 60s preview.
