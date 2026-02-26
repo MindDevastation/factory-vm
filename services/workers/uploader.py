@@ -8,9 +8,9 @@ from services.common.env import Env
 from services.common import db as dbm
 from services.common.paths import outbox_dir, cancel_flag_path
 from services.common.logging_setup import get_logger
-from services.common.youtube_credentials import (
-    YouTubeCredentialResolutionError,
-    resolve_youtube_channel_credentials,
+from services.common.youtube_token_resolver import (
+    YouTubeTokenResolutionError,
+    resolve_channel_token_path,
 )
 from services.integrations.youtube import YouTubeClient
 
@@ -99,22 +99,18 @@ def uploader_cycle(*, env: Env, worker_id: str) -> None:
             return
 
         # Real YouTube upload
-        channel_slug = str(job.get("channel_slug") or "")
+        channel_slug = str(job.get("channel_slug") or "").strip()
         try:
-            client_secret_json, token_json, source_label = resolve_youtube_channel_credentials(
-                channel_slug,
-                global_client_secret_path=env.yt_client_secret_json,
-                global_token_path=env.yt_token_json,
-                token_base_dir=env.yt_token_base_dir,
-                client_secret_base_dir=env.yt_client_secret_base_dir,
-            )
+            token_json = resolve_channel_token_path(channel_slug=channel_slug, tokens_dir=env.yt_tokens_dir)
+            if not env.yt_client_secret_json:
+                raise YouTubeTokenResolutionError("YT_CLIENT_SECRET_JSON is required for YouTube uploads")
             log.info(
                 "resolved youtube credentials",
-                extra={"job_id": int(job_id), "channel_slug": channel_slug, "source_label": source_label},
+                extra={"job_id": int(job_id), "channel_slug": channel_slug, "token_path": token_json},
             )
-            yt = YouTubeClient(client_secret_json=client_secret_json, token_json=token_json)
-        except YouTubeCredentialResolutionError as e:
-            msg = f"youtube credentials not configured for channel={channel_slug}: {e}"
+            yt = YouTubeClient(client_secret_json=env.yt_client_secret_json, token_json=token_json)
+        except YouTubeTokenResolutionError as e:
+            msg = str(e)
             dbm.increment_attempt(conn, job_id)
             dbm.set_youtube_error(conn, job_id, msg)
             dbm.update_job_state(conn, job_id, state="UPLOAD_FAILED", stage="UPLOAD", error_reason=msg)

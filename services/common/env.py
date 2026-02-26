@@ -27,6 +27,7 @@ class Env:
     # youtube oauth
     yt_client_secret_json: str
     yt_token_json: str
+    yt_tokens_dir: str
     yt_token_base_dir: str
     yt_client_secret_base_dir: str
 
@@ -66,6 +67,7 @@ class Env:
 
             yt_client_secret_json=os.environ.get("YT_CLIENT_SECRET_JSON", ""),
             yt_token_json=os.environ.get("YT_TOKEN_JSON", ""),
+            yt_tokens_dir=os.environ.get("YT_TOKENS_DIR", ""),
             yt_token_base_dir=os.environ.get("YT_TOKEN_BASE_DIR", ""),
             yt_client_secret_base_dir=os.environ.get("YT_CLIENT_SECRET_BASE_DIR", ""),
 

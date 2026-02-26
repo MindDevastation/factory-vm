@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from dataclasses import dataclass
-from unittest import mock
+from pathlib import Path
 
 from services.common import db as dbm
 from services.common.env import Env
@@ -33,120 +34,47 @@ class _FakeYT:
 
 
 class TestUploaderYoutubeMocked(unittest.TestCase):
-    def test_youtube_backend_path(self) -> None:
+    def test_youtube_backend_uses_channel_token_convention(self) -> None:
         with temp_env() as (_, _env0):
             os.environ["UPLOAD_BACKEND"] = "youtube"
             os.environ["YT_CLIENT_SECRET_JSON"] = "/env/client_secret.json"
-            os.environ["YT_TOKEN_JSON"] = "/env/token.json"
-            env = Env.load()
-            seed_minimal_db(env)
+            with tempfile.TemporaryDirectory() as tokens_dir:
+                os.environ["YT_TOKENS_DIR"] = tokens_dir
+                env = Env.load()
+                seed_minimal_db(env)
 
-            job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD")
-            ob = outbox_dir(env, job_id)
-            mp4 = ob / "render.mp4"
-            mp4.parent.mkdir(parents=True, exist_ok=True)
-            mp4.write_bytes(b"mp4")
+                job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD", channel_slug="channel-b")
+                ob = outbox_dir(env, job_id)
+                mp4 = ob / "render.mp4"
+                mp4.parent.mkdir(parents=True, exist_ok=True)
+                mp4.write_bytes(b"mp4")
 
-            cover = ob / "cover" / "cover.png"
-            cover.parent.mkdir(parents=True, exist_ok=True)
-            cover.write_bytes(b"png")
+                token_path = Path(tokens_dir) / "channel-b" / "token.json"
+                token_path.parent.mkdir(parents=True, exist_ok=True)
+                token_path.write_text("{}", encoding="utf-8")
 
-            # Patch YouTubeClient used by uploader
-            import services.workers.uploader as upl
+                import services.workers.uploader as upl
 
-            old = upl.YouTubeClient
-            upl.YouTubeClient = _FakeYT  # type: ignore[assignment]
-            try:
-                uploader_cycle(env=env, worker_id="t-upl")
-            finally:
-                upl.YouTubeClient = old  # type: ignore[assignment]
-
-            conn = dbm.connect(env)
-            try:
-                job = dbm.get_job(conn, job_id)
-                yt = conn.execute("SELECT * FROM youtube_uploads WHERE job_id=?", (job_id,)).fetchone()
-            finally:
-                conn.close()
-
-            assert job is not None
-            self.assertEqual(job["state"], "WAIT_APPROVAL")
-            self.assertIsNotNone(yt)
-            assert yt is not None
-            self.assertEqual(yt["video_id"], "vid123")
-
-    def test_channel_specific_youtube_credentials_override_env(self) -> None:
-        with temp_env() as (_, _env0):
-            os.environ["UPLOAD_BACKEND"] = "youtube"
-            os.environ["YT_CLIENT_SECRET_JSON"] = "/env/client_secret.json"
-            os.environ["YT_TOKEN_JSON"] = "/env/token.json"
-            env = Env.load()
-            seed_minimal_db(env)
-
-            job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD", channel_slug="channel-b")
-            ob = outbox_dir(env, job_id)
-            mp4 = ob / "render.mp4"
-            mp4.parent.mkdir(parents=True, exist_ok=True)
-            mp4.write_bytes(b"mp4")
-
-            import services.workers.uploader as upl
-
-            old = upl.YouTubeClient
-            upl.YouTubeClient = _FakeYT  # type: ignore[assignment]
-            with mock.patch.object(
-                upl,
-                "resolve_youtube_channel_credentials",
-                return_value=("/per-channel/client-b.json", "/per-channel/token-b.json", "channel"),
-            ) as resolver_mock:
+                old = upl.YouTubeClient
+                upl.YouTubeClient = _FakeYT  # type: ignore[assignment]
                 try:
                     uploader_cycle(env=env, worker_id="t-upl")
                 finally:
                     upl.YouTubeClient = old  # type: ignore[assignment]
 
-            resolver_mock.assert_called_once_with(
-                "channel-b",
-                global_client_secret_path="/env/client_secret.json",
-                global_token_path="/env/token.json",
-                token_base_dir="",
-                client_secret_base_dir="",
-            )
-            self.assertEqual(_FakeYT.last_init, ("/per-channel/client-b.json", "/per-channel/token-b.json"))
-
-    def test_channel_credentials_fallback_to_env(self) -> None:
-        with temp_env() as (_, _env0):
-            os.environ["UPLOAD_BACKEND"] = "youtube"
-            os.environ["YT_CLIENT_SECRET_JSON"] = "/env/client_secret.json"
-            os.environ["YT_TOKEN_JSON"] = "/env/token.json"
-            env = Env.load()
-            seed_minimal_db(env)
-
-            job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD", channel_slug="channel-c")
-            ob = outbox_dir(env, job_id)
-            mp4 = ob / "render.mp4"
-            mp4.parent.mkdir(parents=True, exist_ok=True)
-            mp4.write_bytes(b"mp4")
-
-            import services.workers.uploader as upl
-
-            old = upl.YouTubeClient
-            upl.YouTubeClient = _FakeYT  # type: ignore[assignment]
-            with mock.patch.object(
-                upl,
-                "resolve_youtube_channel_credentials",
-                return_value=("/env/client_secret.json", "/env/token.json", "global_env"),
-            ) as resolver_mock:
+                conn = dbm.connect(env)
                 try:
-                    uploader_cycle(env=env, worker_id="t-upl")
+                    job = dbm.get_job(conn, job_id)
+                    yt = conn.execute("SELECT * FROM youtube_uploads WHERE job_id=?", (job_id,)).fetchone()
                 finally:
-                    upl.YouTubeClient = old  # type: ignore[assignment]
+                    conn.close()
 
-            resolver_mock.assert_called_once_with(
-                "channel-c",
-                global_client_secret_path="/env/client_secret.json",
-                global_token_path="/env/token.json",
-                token_base_dir="",
-                client_secret_base_dir="",
-            )
-            self.assertEqual(_FakeYT.last_init, ("/env/client_secret.json", "/env/token.json"))
+                assert job is not None
+                self.assertEqual(job["state"], "WAIT_APPROVAL")
+                self.assertIsNotNone(yt)
+                assert yt is not None
+                self.assertEqual(yt["video_id"], "vid123")
+                self.assertEqual(_FakeYT.last_init, ("/env/client_secret.json", str(token_path)))
 
 
 if __name__ == "__main__":
