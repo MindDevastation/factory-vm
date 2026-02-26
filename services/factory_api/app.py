@@ -82,6 +82,10 @@ class CreateChannelPayload(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
 
 
+class UpdateChannelPayload(BaseModel):
+    display_name: str = Field(min_length=1, max_length=200)
+
+
 def _normalize_display_name(value: str) -> str:
     return value.strip()
 
@@ -106,6 +110,25 @@ def api_create_channel(payload: CreateChannelPayload, _: bool = Depends(require_
     finally:
         conn.close()
     return created
+
+
+@app.patch("/v1/channels/{slug}")
+def api_update_channel(slug: str, payload: UpdateChannelPayload, _: bool = Depends(require_basic_auth(env))):
+    display_name = _normalize_display_name(payload.display_name)
+    if not display_name:
+        raise HTTPException(422, "display_name must be between 1 and 200 characters")
+
+    conn = dbm.connect(env)
+    try:
+        existing = dbm.get_channel_by_slug(conn, slug)
+        if not existing:
+            raise HTTPException(404, "channel not found")
+        updated = dbm.update_channel_display_name(conn, slug=slug, display_name=display_name)
+    finally:
+        conn.close()
+
+    assert updated is not None
+    return updated
 
 
 class ApprovePayload(BaseModel):
