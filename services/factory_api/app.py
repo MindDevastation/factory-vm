@@ -118,7 +118,28 @@ def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
 
 
 def _all_channels(conn) -> list:
-    return conn.execute("SELECT id, slug, display_name FROM channels ORDER BY display_name ASC").fetchall()
+    cols = {
+        str(r.get("name"))
+        for r in conn.execute("PRAGMA table_info(channels);").fetchall()
+        if isinstance(r, dict) and r.get("name")
+    }
+    select_cols = ["id", "slug", "display_name"]
+    if "created_at" in cols:
+        select_cols.append("created_at")
+    if "updated_at" in cols:
+        select_cols.append("updated_at")
+    sql = f"SELECT {', '.join(select_cols)} FROM channels ORDER BY display_name ASC, slug ASC, id ASC"
+    return conn.execute(sql).fetchall()
+
+
+@app.get("/v1/channels")
+def api_channels(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        channels = _all_channels(conn)
+    finally:
+        conn.close()
+    return channels
 
 
 def _build_ui_payload(
