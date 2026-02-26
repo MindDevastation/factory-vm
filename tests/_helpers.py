@@ -10,7 +10,7 @@ from typing import Iterator, Tuple
 
 from services.common.env import Env
 from services.common import db as dbm
-from services.common.config import load_channels, load_render_profiles
+from services.common.config import load_render_profiles
 
 
 def basic_auth_header(user: str, pwd: str) -> dict:
@@ -60,11 +60,18 @@ def seed_minimal_db(env: Env) -> None:
                 (rp.name, rp.video_w, rp.video_h, rp.fps, rp.vcodec_required, rp.audio_sr, rp.audio_ch, rp.acodec_required),
             )
 
-        # seed channels
-        for ch in load_channels("configs/channels.yaml"):
+        # seed channels (runtime source of truth is DB; channels.yaml stays seed-only)
+        channels_seed = [
+            ("darkwood-reverie", "Darkwood Reverie", "LONG", 1.0, "long_1080p24", 0),
+            ("channel-b", "Channel B", "LONG", 1.0, "long_1080p24", 0),
+            ("channel-c", "Channel C", "LONG", 1.0, "long_1080p24", 0),
+            ("channel-d", "Channel D", "LONG", 1.0, "long_1080p24", 0),
+            ("titanwave-sonic", "TitanWave Sonic", "TITANWAVE", 0.0, "titanwave_1080p24", 0),
+        ]
+        for ch in channels_seed:
             conn.execute(
                 "INSERT OR IGNORE INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled) VALUES(?,?,?,?,?,?)",
-                (ch.slug, ch.display_name, ch.kind, ch.weight, ch.render_profile, 1 if ch.autopublish_enabled else 0),
+                ch,
             )
     finally:
         conn.close()

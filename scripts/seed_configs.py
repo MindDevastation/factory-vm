@@ -9,6 +9,7 @@ from services.common.config import load_channels, load_render_profiles
 
 
 def main() -> None:
+    # configs/channels.yaml is seed-only. Runtime workers read channels from DB.
     load_profile_env()
     env = Env.load()
     conn = dbm.connect(env)

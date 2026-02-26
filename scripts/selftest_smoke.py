@@ -6,7 +6,7 @@ from pathlib import Path
 
 from services.common.env import Env
 from services.common import db as dbm
-from services.common.config import load_channels, load_render_profiles
+from services.common.config import load_render_profiles
 from services.common.paths import outbox_dir
 from services.workers.qa import qa_cycle
 
@@ -22,21 +22,20 @@ def _ensure_ffmpeg() -> None:
 
 
 def _seed(conn) -> None:
-    # channels
-    for c in load_channels("configs/channels.yaml"):
-        conn.execute(
-            """
-            INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled)
-            VALUES(?, ?, ?, ?, ?, ?)
-            ON CONFLICT(slug) DO UPDATE SET
-                display_name=excluded.display_name,
-                kind=excluded.kind,
-                weight=excluded.weight,
-                render_profile=excluded.render_profile,
-                autopublish_enabled=excluded.autopublish_enabled
-            """,
-            (c.slug, c.display_name, c.kind, c.weight, c.render_profile, 1 if c.autopublish_enabled else 0),
-        )
+    # channels (runtime source of truth is DB)
+    conn.execute(
+        """
+        INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled)
+        VALUES(?, ?, ?, ?, ?, ?)
+        ON CONFLICT(slug) DO UPDATE SET
+            display_name=excluded.display_name,
+            kind=excluded.kind,
+            weight=excluded.weight,
+            render_profile=excluded.render_profile,
+            autopublish_enabled=excluded.autopublish_enabled
+        """,
+        ("darkwood-reverie", "Darkwood Reverie", "LONG", 1.0, "long_1080p24", 0),
+    )
 
     # render profiles
     for p in load_render_profiles("configs/render_profiles.yaml"):

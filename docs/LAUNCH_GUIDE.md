@@ -76,15 +76,12 @@ Fill all required fields:
 - TG_BOT_TOKEN, TG_ADMIN_CHAT_ID
 - BASIC AUTH user/pass for dashboard
 
-Per-channel YouTube credential overrides (paths only):
-- Optional in `configs/channels.yaml` per channel:
-  - `yt_token_json_path`
-  - `yt_client_secret_json_path`
-- When channel fields are set, they override global `YT_*` for that channel.
-- Recommended VPS layout:
-  - `/secure/youtube/client_secret.json`
-  - `/secure/youtube/global/token.json`
-  - `/secure/youtube/channels/<channel_slug>/token.json`
+Channels config source of truth:
+- `configs/channels.yaml` is seed-only for `python scripts/seed_configs.py`.
+- Runtime reads channels from DB (`channels` table); after deploy do not edit YAML expecting live changes.
+
+YouTube credentials:
+- Runtime uses env vars `YT_CLIENT_SECRET_JSON` and `YT_TOKEN_JSON`.
 
 ## 8) Init DB + seed configs
 ```bash
