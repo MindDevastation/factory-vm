@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from services.common import db as dbm
@@ -38,7 +39,8 @@ class TestImporterLocal(unittest.TestCase):
             }
             (rel_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
-            importer_cycle(env=env, worker_id="t-imp")
+            with patch("services.common.config.load_channels", side_effect=RuntimeError("yaml runtime read forbidden")):
+                importer_cycle(env=env, worker_id="t-imp")
 
             conn = dbm.connect(env)
             try:
