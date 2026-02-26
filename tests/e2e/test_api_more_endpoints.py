@@ -61,6 +61,33 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(rj.status_code, 200)
             self.assertEqual(int(rj.json()["job"]["id"]), job_id)
 
+    def test_channels_requires_auth_and_returns_schema(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            unauthorized = client.get("/v1/channels")
+            self.assertIn(unauthorized.status_code, (401, 403))
+
+            authorized = client.get("/v1/channels", headers=h)
+            self.assertEqual(authorized.status_code, 200)
+            channels = authorized.json()
+            self.assertIsInstance(channels, list)
+            self.assertGreater(len(channels), 0)
+            for item in channels:
+                self.assertIsInstance(item, dict)
+                self.assertIn("id", item)
+                self.assertIn("slug", item)
+                self.assertIn("display_name", item)
+
+            display_names = [str(item["display_name"]) for item in channels]
+            self.assertEqual(display_names, sorted(display_names))
+
 
 if __name__ == "__main__":
     unittest.main()

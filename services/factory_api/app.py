@@ -59,6 +59,18 @@ def api_workers(limit: int = 200, _: bool = Depends(require_basic_auth(env))):
     return {"workers": rows}
 
 
+@app.get("/v1/channels")
+def api_channels(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute(
+            "SELECT id, slug, display_name FROM channels ORDER BY display_name ASC, slug ASC"
+        ).fetchall()
+    finally:
+        conn.close()
+    return rows
+
+
 class ApprovePayload(BaseModel):
     comment: str = Field(default="approved", max_length=500)
 
