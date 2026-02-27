@@ -264,6 +264,34 @@ def migrate(conn: sqlite3.Connection) -> None:
             computed_at REAL NOT NULL,
             FOREIGN KEY(track_pk) REFERENCES tracks(id)
         );
+
+        CREATE TABLE IF NOT EXISTS track_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_type TEXT NOT NULL,
+            channel_slug TEXT,
+            status TEXT NOT NULL,
+            payload_json TEXT,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_track_jobs_type_status
+            ON track_jobs(job_type, status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_track_jobs_channel
+            ON track_jobs(job_type, channel_slug, status, created_at);
+
+        CREATE TABLE IF NOT EXISTS track_job_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            level TEXT,
+            message TEXT NOT NULL,
+            ts REAL NOT NULL,
+            FOREIGN KEY(job_id) REFERENCES track_jobs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_track_job_logs
+            ON track_job_logs(job_id, ts);
         """
     )
 
