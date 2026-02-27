@@ -16,7 +16,7 @@ from google_auth_oauthlib.flow import Flow
 from services.common.env import Env
 
 GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
-YOUTUBE_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
+YOUTUBE_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
 _STATE_TTL_SECONDS = 600
 
 
@@ -61,7 +61,8 @@ def verify_state(
     require_channel_slug: bool = True,
 ) -> dict[str, Any]:
     if not state or "." not in state:
-        raise HTTPException(400, "invalid oauth state")
+        raise HTTPException(400,
+                            "invalid oauth state")
 
     payload_part, sig_part = state.split(".", 1)
     try:
@@ -109,7 +110,7 @@ def ensure_token_dir(token_path: Path) -> None:
 
 def build_authorization_url(*, client_secret_path: str, scope: str, redirect_uri: str, state: str) -> str:
     flow = Flow.from_client_secrets_file(client_secret_path, scopes=[scope], redirect_uri=redirect_uri)
-    auth_url, _ = flow.authorization_url(access_type="offline", include_granted_scopes="true", state=state, prompt="consent")
+    auth_url, _ = flow.authorization_url(access_type="offline", include_granted_scopes="false", state=state, prompt="consent")
     return auth_url
 
 
