@@ -20,6 +20,7 @@ class Env:
 
     # gdrive origin
     gdrive_root_id: str
+    gdrive_library_root_id: str
     gdrive_sa_json: str
     gdrive_oauth_client_json: str
     gdrive_oauth_token_json: str
@@ -65,6 +66,7 @@ class Env:
             telegram_enabled=int(os.environ.get("TELEGRAM_ENABLED", "1")),
 
             gdrive_root_id=os.environ.get("GDRIVE_ROOT_ID", ""),
+            gdrive_library_root_id=os.environ.get("GDRIVE_LIBRARY_ROOT_ID", ""),
             gdrive_sa_json=os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON", ""),
             gdrive_oauth_client_json=os.environ.get("GDRIVE_OAUTH_CLIENT_JSON", ""),
             gdrive_oauth_token_json=os.environ.get("GDRIVE_OAUTH_TOKEN_JSON", ""),
