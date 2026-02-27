@@ -18,6 +18,11 @@ from services.track_analyzer.canon import (
     deterministic_hash_suffix,
     sanitize_title,
 )
+from services.track_analyzer.analyze import (
+    AnalyzeError,
+    AnalyzeStats,
+    analyze_tracks,
+)
 
 __all__ = [
     "DiscoverError",
@@ -34,4 +39,7 @@ __all__ = [
     "canonicalize_track_filename",
     "deterministic_hash_suffix",
     "sanitize_title",
+    "AnalyzeError",
+    "AnalyzeStats",
+    "analyze_tracks",
 ]
