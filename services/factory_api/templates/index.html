@@ -97,6 +97,8 @@
   const refreshBtn = document.getElementById('oauth-refresh-btn');
   const refreshNote = document.getElementById('oauth-refresh-note');
   const oauthTableBody = document.querySelector('#oauth-status-table tbody');
+  const trackJobStatusBySlug = {};
+  const trackJobPollTimers = {};
   let pollCount = 0;
   function fmtStatus(isPresent, mtime) {
     if (!isPresent) {
@@ -249,6 +251,64 @@
     return await res.json();
   }
 
+  function scheduleTrackJobPoll(slug, jobId) {
+    if (trackJobPollTimers[slug]) {
+      clearTimeout(trackJobPollTimers[slug]);
+    }
+    trackJobPollTimers[slug] = setTimeout(async () => {
+      try {
+        const res = await fetch('/v1/track_jobs/' + encodeURIComponent(jobId));
+        if (!res.ok) {
+          throw new Error('Status check failed (' + res.status + ')');
+        }
+        const data = await res.json();
+        const status = data && data.job && data.job.status ? String(data.job.status) : 'UNKNOWN';
+        trackJobStatusBySlug[slug] = 'Track job ' + jobId + ': ' + status;
+        renderTrackJobStatus(slug);
+        if (status === 'QUEUED' || status === 'RUNNING') {
+          scheduleTrackJobPoll(slug, jobId);
+          return;
+        }
+      } catch (err) {
+        trackJobStatusBySlug[slug] = 'Track job ' + jobId + ': ' + err.message;
+        renderTrackJobStatus(slug);
+      }
+      delete trackJobPollTimers[slug];
+    }, 2000);
+  }
+
+  function renderTrackJobStatus(slug) {
+    const el = channelsTableBody.querySelector('span[data-track-status="' + slug + '"]');
+    if (el) {
+      el.textContent = trackJobStatusBySlug[slug] || '';
+    }
+  }
+
+  async function triggerTrackJob(action, slug) {
+    const endpoint = action === 'discover' ? '/v1/track_jobs/discover' : '/v1/track_jobs/analyze';
+    const payload = action === 'discover'
+      ? { channel_slug: slug }
+      : { channel_slug: slug, scope: 'pending', max_tracks: 0, force: false };
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error('Failed to launch track job: ' + extractApiErrorMessage(body));
+    }
+    const data = await res.json();
+    const jobId = data && data.job_id ? String(data.job_id) : '';
+    const status = data && data.status ? String(data.status) : 'QUEUED';
+    if (!jobId) {
+      throw new Error('Missing job_id in response');
+    }
+    trackJobStatusBySlug[slug] = 'Track job ' + jobId + ': ' + status;
+    renderTrackJobStatus(slug);
+    scheduleTrackJobPoll(slug, jobId);
+  }
+
   function renderChannels(channels) {
     if (!channels.length) {
       channelsTableBody.innerHTML = '<tr><td colspan="3" class="muted">No channels found.</td></tr>';
@@ -260,7 +320,10 @@
         '<td><code>' + esc(ch.slug) + '</code></td>' +
         '<td>' +
           '<button type="button" data-action="rename" data-slug="' + esc(ch.slug) + '" data-display-name="' + esc(ch.display_name) + '">Rename</button> ' +
-          '<button type="button" data-action="delete" data-slug="' + esc(ch.slug) + '">Delete</button>' +
+          '<button type="button" data-action="delete" data-slug="' + esc(ch.slug) + '">Delete</button> ' +
+          '<button type="button" data-action="discover-tracks" data-slug="' + esc(ch.slug) + '">Discover Tracks</button> ' +
+          '<button type="button" data-action="analyze-tracks" data-slug="' + esc(ch.slug) + '">Analyze Tracks</button>' +
+          '<div class="muted"><span data-track-status="' + esc(ch.slug) + '">' + esc(trackJobStatusBySlug[ch.slug] || '') + '</span></div>' +
         '</td>' +
       '</tr>';
     }).join('');
@@ -326,6 +389,29 @@
           await refreshAll();
         } catch (err) {
           channelNote.textContent = err.message;
+        }
+      });
+    });
+
+    channelsTableBody.querySelectorAll('button[data-action="discover-tracks"], button[data-action="analyze-tracks"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const slug = btn.getAttribute('data-slug');
+        const action = btn.getAttribute('data-action') === 'discover-tracks' ? 'discover' : 'analyze';
+        const originalLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = action === 'discover' ? 'Starting discover...' : 'Starting analyze...';
+        try {
+          await triggerTrackJob(action, slug);
+          channelNote.textContent = 'Track job queued for "' + slug + '".';
+        } catch (err) {
+          const message = err && err.message ? err.message : 'Failed to launch track job';
+          trackJobStatusBySlug[slug] = message;
+          renderTrackJobStatus(slug);
+          channelNote.textContent = message;
+          window.alert(message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = originalLabel;
         }
       });
     });
