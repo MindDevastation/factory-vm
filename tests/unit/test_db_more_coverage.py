@@ -210,6 +210,8 @@ class TestDbMoreCoverage(unittest.TestCase):
                         "track_features",
                         "track_tags",
                         "track_scores",
+                        "track_jobs",
+                        "track_job_logs",
                     }.issubset(names)
                 )
             finally:
