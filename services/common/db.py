@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+import re
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,8 @@ def connect(env: Env) -> sqlite3.Connection:
 
 
 def migrate(conn: sqlite3.Connection) -> None:
+    _ensure_track_analyzer_schema_tables(conn)
+
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS channels (
@@ -303,6 +306,49 @@ def migrate(conn: sqlite3.Connection) -> None:
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
     return {str(r.get("name")) for r in rows if isinstance(r, dict) and r.get("name")}
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _next_legacy_table_name(conn: sqlite3.Connection, table: str) -> str:
+    base = f"{table}__legacy"
+    if not _table_exists(conn, base):
+        return base
+
+    ts = int(time.time())
+    name = f"{base}_{ts}"
+    while _table_exists(conn, name):
+        ts += 1
+        name = f"{base}_{ts}"
+    return name
+
+
+def _rename_table_to_legacy(conn: sqlite3.Connection, table: str) -> None:
+    new_name = _next_legacy_table_name(conn, table)
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
+        raise ValueError(f"invalid table name: {table}")
+    conn.execute(f"ALTER TABLE {table} RENAME TO {new_name}")
+
+
+def _ensure_track_analyzer_schema_tables(conn: sqlite3.Connection) -> None:
+    expected = {
+        "canon_channels": {"id", "value"},
+        "canon_tags": {"id", "value"},
+        "canon_forbidden": {"id", "value"},
+        "canon_palettes": {"id", "value"},
+        "canon_thresholds": {"id", "value"},
+    }
+    for table, expected_cols in expected.items():
+        if not _table_exists(conn, table):
+            continue
+        if _table_columns(conn, table) != expected_cols:
+            _rename_table_to_legacy(conn, table)
 
 
 def _ensure_jobs_columns(conn: sqlite3.Connection) -> None:

@@ -190,6 +190,26 @@ class TestDbMoreCoverage(unittest.TestCase):
             finally:
                 conn.close()
 
+
+    def test_migrate_renames_legacy_track_tables_non_destructively(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                conn.execute("CREATE TABLE canon_channels (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT NOT NULL UNIQUE, legacy_col TEXT)")
+                dbm.migrate(conn)
+
+                names = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("canon_channels", names)
+                self.assertTrue(any(n == "canon_channels__legacy" or n.startswith("canon_channels__legacy_") for n in names))
+
+                canon_cols = {r["name"] for r in conn.execute("PRAGMA table_info(canon_channels)").fetchall()}
+                self.assertEqual(canon_cols, {"id", "value"})
+
+            finally:
+                conn.close()
     def test_migrate_creates_canon_tables(self):
         with temp_env() as (_td, env):
             conn = dbm.connect(env)
