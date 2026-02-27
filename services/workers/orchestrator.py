@@ -63,11 +63,20 @@ def _fetch_asset_to(*, env: Env, drive: DriveClient | None, asset: dict, dest: P
 
     if origin == "GDRIVE":
         if drive is None:
-            token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)
+            oauth_token_json = env.gdrive_oauth_token_json
+            if not env.gdrive_sa_json and env.gdrive_tokens_dir and channel_slug:
+                token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)
+                if not token_path.exists():
+                    raise RuntimeError(
+                        f"GDrive token missing for channel '{channel_slug}'. "
+                        "Generate/Regenerate Drive Token in dashboard."
+                    )
+                oauth_token_json = str(token_path)
+
             drive = DriveClient(
                 service_account_json=env.gdrive_sa_json,
                 oauth_client_json=env.gdrive_oauth_client_json,
-                oauth_token_json=env.gdrive_oauth_token_json,
+                oauth_token_json=oauth_token_json,
             )
         drive.download_to_path(str(asset["origin_id"]), dest)
         return drive
