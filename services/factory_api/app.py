@@ -5,6 +5,7 @@ import json
 import re
 import secrets
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -35,16 +36,21 @@ import yaml
 
 env = Env.load()
 app = FastAPI(title="Factory VM API", version="0.0.1")
+_render_all_channel_slug: ContextVar[Optional[str]] = ContextVar("render_all_channel_slug", default=None)
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 
 def _create_drive_client(_env: Env) -> DriveClient:
+    channel_slug = _render_all_channel_slug.get()
+    token_path = _env.gdrive_oauth_token_json
+    if channel_slug and _env.gdrive_tokens_dir:
+        token_path = str(oauth_token_path(base_dir=_env.gdrive_tokens_dir, channel_slug=channel_slug))
     return DriveClient(
         service_account_json=_env.gdrive_sa_json,
         oauth_client_json=_env.gdrive_oauth_client_json,
-        oauth_token_json=_env.gdrive_oauth_token_json,
+        oauth_token_json=token_path,
     )
 
 
@@ -733,7 +739,14 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
         for r in rows:
             job_id = int(r["id"])
             try:
-                result = run_preflight_for_job(conn, env, job_id)
+                job = dbm.get_job(conn, job_id)
+                token = _render_all_channel_slug.set(str(job.get("channel_slug") or "") if job else "")
+                try:
+                    drive = _create_drive_client(env)
+                finally:
+                    _render_all_channel_slug.reset(token)
+
+                result = run_preflight_for_job(conn, env, job_id, drive=drive)
                 if not result.ok:
                     failed += 1
                     continue
