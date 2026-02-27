@@ -23,7 +23,7 @@ except Exception as e:  # ImportError in most cases
     Request = None  # type: ignore[assignment]
     Credentials = None  # type: ignore[assignment]
 
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
 @dataclass(frozen=True)
@@ -96,6 +96,9 @@ class DriveClient:
         while not done:
             _, done = downloader.next_chunk()
         return fh.getvalue().decode("utf-8")
+
+    def update_name(self, file_id: str, new_name: str) -> None:
+        self._svc.files().update(fileId=file_id, body={"name": new_name}).execute()
 
     def download_to_path(self, file_id: str, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
