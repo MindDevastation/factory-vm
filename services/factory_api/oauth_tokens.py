@@ -16,7 +16,10 @@ from google_auth_oauthlib.flow import Flow
 from services.common.env import Env
 
 GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
-YOUTUBE_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
+YOUTUBE_SCOPE = [
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/youtube.upload",
+]
 _STATE_TTL_SECONDS = 600
 
 
@@ -109,7 +112,7 @@ def ensure_token_dir(token_path: Path) -> None:
 
 
 def build_authorization_url(*, client_secret_path: str, scope: str, redirect_uri: str, state: str) -> str:
-    flow = Flow.from_client_secrets_file(client_secret_path, scopes=[scope], redirect_uri=redirect_uri)
+    flow = Flow.from_client_secrets_file(client_secret_path, scopes=scope, redirect_uri=redirect_uri)
     auth_url, _ = flow.authorization_url(access_type="offline", include_granted_scopes="false", state=state, prompt="consent")
     return auth_url
 
@@ -117,7 +120,7 @@ def build_authorization_url(*, client_secret_path: str, scope: str, redirect_uri
 def exchange_code_for_token_json(
     *, client_secret_path: str, scope: str, redirect_uri: str, code: str
 ) -> str:
-    flow = Flow.from_client_secrets_file(client_secret_path, scopes=[scope], redirect_uri=redirect_uri)
+    flow = Flow.from_client_secrets_file(client_secret_path, scopes=scope, redirect_uri=redirect_uri)
     flow.fetch_token(code=code)
     credentials = flow.credentials
     if credentials is None:

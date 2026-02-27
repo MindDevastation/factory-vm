@@ -16,6 +16,7 @@ from services.common.config import load_policies
 from services.common.logging_setup import append_job_log, get_logger, safe_path_basename
 from services.common.paths import workspace_dir, outbox_dir, preview_path, cancel_flag_path
 from services.common.ffmpeg import make_preview_60s
+from services.factory_api.oauth_tokens import oauth_token_path
 from services.integrations.gdrive import DriveClient
 
 
@@ -48,7 +49,7 @@ def _parse_progress_pct(line: str) -> Optional[float]:
     return v if 0.0 <= v <= 100.0 else None
 
 
-def _fetch_asset_to(*, env: Env, drive: DriveClient | None, asset: dict, dest: Path) -> DriveClient | None:
+def _fetch_asset_to(*, env: Env, drive: DriveClient | None, asset: dict, dest: Path, channel_slug: str) -> DriveClient | None:
     """Copy/download asset into dest. Returns DriveClient if instantiated."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     origin = (asset.get("origin") or "").upper()
@@ -62,6 +63,7 @@ def _fetch_asset_to(*, env: Env, drive: DriveClient | None, asset: dict, dest: P
 
     if origin == "GDRIVE":
         if drive is None:
+            token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)
             drive = DriveClient(
                 service_account_json=env.gdrive_sa_json,
                 oauth_client_json=env.gdrive_oauth_client_json,
@@ -196,7 +198,7 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
         # download background image (fallback: cover for legacy jobs)
         bg_name = safe_path_basename(str(render_bg.get("name") or "background.png"), fallback="background.png")
         bg_dst = images_dir / bg_name
-        drive = _fetch_asset_to(env=env, drive=drive, asset=render_bg, dest=bg_dst)
+        drive = _fetch_asset_to(env=env, drive=drive, asset=render_bg, dest=bg_dst, channel_slug=str(job["channel_slug"]))
 
         # download tracks
         track_ids: List[str] = []
@@ -209,7 +211,7 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
             track_ids.append(tid)
             new_name = f"{_workspace_audio_stem(queue_idx=idx, original_filename_stem=Path(orig_name).stem)}.wav"
             dst = audio_dir / new_name
-            drive = _fetch_asset_to(env=env, drive=drive, asset=t, dest=dst)
+            drive = _fetch_asset_to(env=env, drive=drive, asset=t, dest=dst, channel_slug=str(job["channel_slug"]))
 
         # PlayLists.txt
         playlists = project_dir / "PlayLists.txt"
@@ -336,7 +338,7 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
                 shutil.copyfile(bg_dst, cover_dst)
             else:
                 tmp_cover = ws / "tmp_cover" / cover_name
-                drive = _fetch_asset_to(env=env, drive=drive, asset=cover, dest=tmp_cover)
+                drive = _fetch_asset_to(env=env, drive=drive, asset=cover, dest=tmp_cover, channel_slug=str(job["channel_slug"]))
                 shutil.copyfile(tmp_cover, cover_dst)
 
         # preview
