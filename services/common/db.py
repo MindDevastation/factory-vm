@@ -226,6 +226,44 @@ def migrate(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             value TEXT NOT NULL UNIQUE
         );
+
+        CREATE TABLE IF NOT EXISTS tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_slug TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            gdrive_file_id TEXT NOT NULL UNIQUE,
+            source TEXT,
+            filename TEXT,
+            title TEXT,
+            artist TEXT,
+            duration_sec REAL,
+            discovered_at REAL NOT NULL,
+            analyzed_at REAL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tracks_channel_slug_track_id
+            ON tracks(channel_slug, track_id);
+
+        CREATE TABLE IF NOT EXISTS track_features (
+            track_pk INTEGER PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            computed_at REAL NOT NULL,
+            FOREIGN KEY(track_pk) REFERENCES tracks(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS track_tags (
+            track_pk INTEGER PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            computed_at REAL NOT NULL,
+            FOREIGN KEY(track_pk) REFERENCES tracks(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS track_scores (
+            track_pk INTEGER PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            computed_at REAL NOT NULL,
+            FOREIGN KEY(track_pk) REFERENCES tracks(id)
+        );
         """
     )
 

@@ -206,6 +206,10 @@ class TestDbMoreCoverage(unittest.TestCase):
                         "canon_forbidden",
                         "canon_palettes",
                         "canon_thresholds",
+                        "tracks",
+                        "track_features",
+                        "track_tags",
+                        "track_scores",
                     }.issubset(names)
                 )
             finally:
