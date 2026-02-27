@@ -20,6 +20,7 @@ from services.common import db as dbm
 from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, qa_path
 from services.factory_api.ui_gdrive import run_preflight_for_job
+from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
@@ -405,8 +406,34 @@ class UpdateChannelPayload(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
 
 
+class DiscoverTrackJobPayload(BaseModel):
+    channel_slug: str = Field(min_length=1, max_length=200)
+
+
+class AnalyzeTrackJobPayload(BaseModel):
+    channel_slug: str = Field(min_length=1, max_length=200)
+    scope: str = Field(default="pending", min_length=1, max_length=50)
+    max_tracks: int = 0
+    force: bool = False
+
+
 def _normalize_display_name(value: str) -> str:
     return value.strip()
+
+
+def _require_track_channel_and_canon(conn, channel_slug: str) -> None:
+    existing = dbm.get_channel_by_slug(conn, channel_slug)
+    if not existing:
+        raise HTTPException(404, "channel not found")
+
+    in_canon_channels = conn.execute(
+        "SELECT 1 FROM canon_channels WHERE value = ? LIMIT 1", (channel_slug,)
+    ).fetchone()
+    in_canon_thresholds = conn.execute(
+        "SELECT 1 FROM canon_thresholds WHERE value = ? LIMIT 1", (channel_slug,)
+    ).fetchone()
+    if in_canon_channels is None or in_canon_thresholds is None:
+        raise HTTPException(404, "CHANNEL_NOT_IN_CANON")
 
 
 
@@ -469,6 +496,97 @@ def api_delete_channel(slug: str, _: bool = Depends(require_basic_auth(env))):
         conn.close()
 
     return {"ok": True, "slug": slug}
+
+
+@app.post("/v1/track_jobs/discover", status_code=202)
+def api_track_jobs_discover(payload: DiscoverTrackJobPayload, _: bool = Depends(require_basic_auth(env))):
+    channel_slug = payload.channel_slug.strip()
+    conn = dbm.connect(env)
+    try:
+        _require_track_channel_and_canon(conn, channel_slug)
+        if track_jobs_db.has_already_running(conn, job_type="SCAN_TRACKS", channel_slug=channel_slug):
+            raise HTTPException(409, "TRACK_JOB_ALREADY_RUNNING")
+        job_id = track_jobs_db.enqueue_job(conn, job_type="SCAN_TRACKS", channel_slug=channel_slug, payload={})
+    finally:
+        conn.close()
+    return {"job_id": str(job_id), "status": "QUEUED"}
+
+
+@app.post("/v1/track_jobs/analyze", status_code=202)
+def api_track_jobs_analyze(payload: AnalyzeTrackJobPayload, _: bool = Depends(require_basic_auth(env))):
+    channel_slug = payload.channel_slug.strip()
+    conn = dbm.connect(env)
+    try:
+        _require_track_channel_and_canon(conn, channel_slug)
+        if track_jobs_db.has_already_running(conn, job_type="ANALYZE_TRACKS", channel_slug=channel_slug):
+            raise HTTPException(409, "TRACK_JOB_ALREADY_RUNNING")
+        job_id = track_jobs_db.enqueue_job(
+            conn,
+            job_type="ANALYZE_TRACKS",
+            channel_slug=channel_slug,
+            payload={
+                "scope": payload.scope,
+                "max_tracks": int(payload.max_tracks),
+                "force": bool(payload.force),
+            },
+        )
+    finally:
+        conn.close()
+    return {"job_id": str(job_id), "status": "QUEUED"}
+
+
+@app.get("/v1/track_jobs/{job_id}")
+def api_track_job_get(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        job = track_jobs_db.get_job(conn, job_id)
+    finally:
+        conn.close()
+
+    if not job:
+        raise HTTPException(404)
+
+    payload_json = str(job.get("payload_json") or "")
+    try:
+        payload = json.loads(payload_json) if payload_json else {}
+    except Exception:
+        payload = {}
+    return {
+        "job": {
+            "id": int(job["id"]),
+            "job_type": str(job["job_type"]),
+            "channel_slug": job.get("channel_slug"),
+            "status": str(job["status"]),
+            "payload": payload,
+            "created_at": job.get("created_at"),
+            "updated_at": job.get("updated_at"),
+        }
+    }
+
+
+@app.get("/v1/track_jobs/{job_id}/logs")
+def api_track_job_logs(job_id: int, tail: int = 200, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        job = track_jobs_db.get_job(conn, job_id)
+        if not job:
+            raise HTTPException(404)
+        logs = track_jobs_db.list_logs(conn, job_id=job_id, tail=tail)
+    finally:
+        conn.close()
+
+    return {
+        "job_id": job_id,
+        "logs": [
+            {
+                "id": int(row["id"]),
+                "level": row.get("level"),
+                "message": str(row["message"]),
+                "ts": row.get("ts"),
+            }
+            for row in logs
+        ],
+    }
 
 
 class ApprovePayload(BaseModel):
