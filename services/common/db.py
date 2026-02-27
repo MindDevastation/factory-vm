@@ -201,6 +201,31 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(job_id) REFERENCES jobs(id),
             FOREIGN KEY(channel_id) REFERENCES channels(id)
         );
+
+        CREATE TABLE IF NOT EXISTS canon_channels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS canon_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS canon_forbidden (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS canon_palettes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS canon_thresholds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL UNIQUE
+        );
         """
     )
 
