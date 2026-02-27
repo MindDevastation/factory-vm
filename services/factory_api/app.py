@@ -727,13 +727,13 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
             ORDER BY j.created_at ASC
             """
         ).fetchall()
-        drive = _create_drive_client(env)
+        # drive = _create_drive_client(env)
         enqueued = 0
         failed = 0
         for r in rows:
             job_id = int(r["id"])
             try:
-                result = run_preflight_for_job(conn, env, job_id, drive=drive)
+                result = run_preflight_for_job(conn, env, job_id)
                 if not result.ok:
                     failed += 1
                     continue
@@ -851,7 +851,7 @@ def api_update_ui_job(job_id: int, payload: UiJobDraftPayload, _: bool = Depends
 def api_ui_job_preflight(job_id: int, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
-        result = run_preflight_for_job(conn, env, job_id, drive=_create_drive_client(env))
+        result = run_preflight_for_job(conn, env, job_id)
     finally:
         conn.close()
     return {
@@ -966,7 +966,7 @@ async def ui_jobs_create_submit(
             background_ext=payload.background_ext.strip(),
             audio_ids_text=payload.audio_ids_text.strip(),
         )
-        preflight = run_preflight_for_job(conn, env, job_id, drive=_create_drive_client(env))
+        preflight = run_preflight_for_job(conn, env, job_id)
     finally:
         conn.close()
 
@@ -1101,7 +1101,7 @@ async def ui_jobs_edit_submit(
             background_ext=payload.background_ext.strip(),
             audio_ids_text=payload.audio_ids_text.strip(),
         )
-        preflight = run_preflight_for_job(conn, env, job_id, drive=_create_drive_client(env))
+        preflight = run_preflight_for_job(conn, env, job_id)
     finally:
         conn.close()
 
