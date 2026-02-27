@@ -201,6 +201,97 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(job_id) REFERENCES jobs(id),
             FOREIGN KEY(channel_id) REFERENCES channels(id)
         );
+
+        CREATE TABLE IF NOT EXISTS canon_channels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS canon_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS canon_forbidden (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS canon_palettes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS canon_thresholds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT NOT NULL UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_slug TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            gdrive_file_id TEXT NOT NULL UNIQUE,
+            source TEXT,
+            filename TEXT,
+            title TEXT,
+            artist TEXT,
+            duration_sec REAL,
+            discovered_at REAL NOT NULL,
+            analyzed_at REAL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tracks_channel_slug_track_id
+            ON tracks(channel_slug, track_id);
+
+        CREATE TABLE IF NOT EXISTS track_features (
+            track_pk INTEGER PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            computed_at REAL NOT NULL,
+            FOREIGN KEY(track_pk) REFERENCES tracks(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS track_tags (
+            track_pk INTEGER PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            computed_at REAL NOT NULL,
+            FOREIGN KEY(track_pk) REFERENCES tracks(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS track_scores (
+            track_pk INTEGER PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            computed_at REAL NOT NULL,
+            FOREIGN KEY(track_pk) REFERENCES tracks(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS track_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_type TEXT NOT NULL,
+            channel_slug TEXT,
+            status TEXT NOT NULL,
+            payload_json TEXT,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_track_jobs_type_status
+            ON track_jobs(job_type, status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_track_jobs_channel
+            ON track_jobs(job_type, channel_slug, status, created_at);
+
+        CREATE TABLE IF NOT EXISTS track_job_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            level TEXT,
+            message TEXT NOT NULL,
+            ts REAL NOT NULL,
+            FOREIGN KEY(job_id) REFERENCES track_jobs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_track_job_logs
+            ON track_job_logs(job_id, ts);
         """
     )
 

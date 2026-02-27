@@ -15,7 +15,7 @@ from google_auth_oauthlib.flow import Flow
 
 from services.common.env import Env
 
-GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 YOUTUBE_SCOPE = [
     "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/youtube.upload",

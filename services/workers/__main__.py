@@ -15,6 +15,7 @@ from services.workers.orchestrator import orchestrator_cycle
 from services.workers.qa import qa_cycle
 from services.workers.uploader import uploader_cycle
 from services.workers.cleanup import cleanup_cycle
+from services.workers.track_jobs import track_jobs_cycle
 
 
 ROLE_FUNCS = {
@@ -23,6 +24,7 @@ ROLE_FUNCS = {
     "qa": qa_cycle,
     "uploader": uploader_cycle,
     "cleanup": cleanup_cycle,
+    "track_jobs": track_jobs_cycle,
 }
 
 

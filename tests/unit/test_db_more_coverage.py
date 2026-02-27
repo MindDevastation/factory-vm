@@ -189,3 +189,30 @@ class TestDbMoreCoverage(unittest.TestCase):
                 self.assertEqual(str(row["slug"]), "yt-a")
             finally:
                 conn.close()
+
+    def test_migrate_creates_canon_tables(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                names = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertTrue(
+                    {
+                        "canon_channels",
+                        "canon_tags",
+                        "canon_forbidden",
+                        "canon_palettes",
+                        "canon_thresholds",
+                        "tracks",
+                        "track_features",
+                        "track_tags",
+                        "track_scores",
+                        "track_jobs",
+                        "track_job_logs",
+                    }.issubset(names)
+                )
+            finally:
+                conn.close()

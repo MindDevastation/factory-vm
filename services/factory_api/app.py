@@ -20,6 +20,7 @@ from services.common import db as dbm
 from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, qa_path
 from services.factory_api.ui_gdrive import run_preflight_for_job
+from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
@@ -405,8 +406,239 @@ class UpdateChannelPayload(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
 
 
+class DiscoverTrackJobPayload(BaseModel):
+    channel_slug: str = Field(min_length=1, max_length=200)
+
+
+class AnalyzeTrackJobPayload(BaseModel):
+    channel_slug: str = Field(min_length=1, max_length=200)
+    scope: str = Field(default="pending", min_length=1, max_length=50)
+    max_tracks: int = 0
+    force: bool = False
+
+
 def _normalize_display_name(value: str) -> str:
     return value.strip()
+
+
+def _require_track_channel_and_canon(conn, channel_slug: str) -> None:
+    existing = dbm.get_channel_by_slug(conn, channel_slug)
+    if not existing:
+        raise HTTPException(404, "channel not found")
+
+    in_canon_channels = conn.execute(
+        "SELECT 1 FROM canon_channels WHERE value = ? LIMIT 1", (channel_slug,)
+    ).fetchone()
+    in_canon_thresholds = conn.execute(
+        "SELECT 1 FROM canon_thresholds WHERE value = ? LIMIT 1", (channel_slug,)
+    ).fetchone()
+    if in_canon_channels is None or in_canon_thresholds is None:
+        raise HTTPException(404, "CHANNEL_NOT_IN_CANON")
+
+
+def _safe_json_loads(raw: Any) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    if isinstance(parsed, dict):
+        return parsed
+    return {}
+
+
+def _track_catalog_row_to_item(row: dict[str, Any]) -> dict[str, Any]:
+    feature_payload = _safe_json_loads(row.get("features_payload_json"))
+    tag_payload = _safe_json_loads(row.get("tags_payload_json"))
+    score_payload = _safe_json_loads(row.get("scores_payload_json"))
+    return {
+        "track_pk": int(row["track_pk"]),
+        "channel_slug": str(row["channel_slug"]),
+        "track_id": str(row.get("track_id") or ""),
+        "status": "ANALYZED" if row.get("analyzed_at") is not None else "DISCOVERED",
+        "title": row.get("title"),
+        "artist": row.get("artist"),
+        "filename": row.get("filename"),
+        "duration_sec": row.get("duration_sec"),
+        "discovered_at": row.get("discovered_at"),
+        "analyzed_at": row.get("analyzed_at"),
+        "features": {
+            "scene": feature_payload.get("scene"),
+            "mood": feature_payload.get("mood"),
+            "raw": feature_payload,
+        },
+        "tags": {
+            "scene": tag_payload.get("scene"),
+            "mood": tag_payload.get("mood"),
+            "raw": tag_payload,
+        },
+        "scores": {
+            "safety": score_payload.get("safety"),
+            "scene_match": score_payload.get("scene_match"),
+            "raw": score_payload,
+        },
+    }
+
+
+def _passes_track_catalog_filters(
+    item: dict[str, Any],
+    *,
+    status: str,
+    scene: str,
+    mood: str,
+    min_safety: float | None,
+    min_scene_match: float | None,
+) -> bool:
+    item_status = str(item.get("status") or "").strip().upper()
+    if status and item_status != status:
+        return False
+
+    if scene:
+        feature_scene = str((item.get("features") or {}).get("scene") or "").strip().lower()
+        tag_scene = str((item.get("tags") or {}).get("scene") or "").strip().lower()
+        if feature_scene != scene and tag_scene != scene:
+            return False
+
+    if mood:
+        feature_mood = str((item.get("features") or {}).get("mood") or "").strip().lower()
+        tag_mood = str((item.get("tags") or {}).get("mood") or "").strip().lower()
+        if feature_mood != mood and tag_mood != mood:
+            return False
+
+    if min_safety is not None:
+        safety = (item.get("scores") or {}).get("safety")
+        if not isinstance(safety, (int, float)) or float(safety) < min_safety:
+            return False
+
+    if min_scene_match is not None:
+        scene_match = (item.get("scores") or {}).get("scene_match")
+        if not isinstance(scene_match, (int, float)) or float(scene_match) < min_scene_match:
+            return False
+
+    return True
+
+
+@app.get("/v1/track_catalog/channels")
+def api_track_catalog_channels(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute(
+            """
+            SELECT c.slug, c.display_name
+            FROM channels c
+            JOIN canon_channels cc ON cc.value = c.slug
+            JOIN canon_thresholds ct ON ct.value = c.slug
+            ORDER BY c.slug ASC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "channels": [
+            {
+                "slug": str(row["slug"]),
+                "display_name": str(row.get("display_name") or ""),
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.get("/v1/track_catalog/{channel_slug}/tracks")
+def api_track_catalog_tracks(
+    channel_slug: str,
+    status: str = "",
+    scene: str = "",
+    mood: str = "",
+    min_safety: float | None = None,
+    min_scene_match: float | None = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    normalized_status = status.strip().upper()
+    normalized_scene = scene.strip().lower()
+    normalized_mood = mood.strip().lower()
+
+    conn = dbm.connect(env)
+    try:
+        _require_track_channel_and_canon(conn, channel_slug)
+        rows = conn.execute(
+            """
+            SELECT
+                t.id AS track_pk,
+                t.channel_slug,
+                t.track_id,
+                t.filename,
+                t.title,
+                t.artist,
+                t.duration_sec,
+                t.discovered_at,
+                t.analyzed_at,
+                tf.payload_json AS features_payload_json,
+                tt.payload_json AS tags_payload_json,
+                ts.payload_json AS scores_payload_json
+            FROM tracks t
+            LEFT JOIN track_features tf ON tf.track_pk = t.id
+            LEFT JOIN track_tags tt ON tt.track_pk = t.id
+            LEFT JOIN track_scores ts ON ts.track_pk = t.id
+            WHERE t.channel_slug = ?
+            ORDER BY t.id ASC
+            """,
+            (channel_slug,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    tracks = []
+    for row in rows:
+        item = _track_catalog_row_to_item(row)
+        if _passes_track_catalog_filters(
+            item,
+            status=normalized_status,
+            scene=normalized_scene,
+            mood=normalized_mood,
+            min_safety=min_safety,
+            min_scene_match=min_scene_match,
+        ):
+            tracks.append(item)
+    return {"channel_slug": channel_slug, "tracks": tracks}
+
+
+@app.get("/v1/track_catalog/tracks/{track_pk}")
+def api_track_catalog_track_detail(track_pk: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                t.id AS track_pk,
+                t.channel_slug,
+                t.track_id,
+                t.filename,
+                t.title,
+                t.artist,
+                t.duration_sec,
+                t.discovered_at,
+                t.analyzed_at,
+                tf.payload_json AS features_payload_json,
+                tt.payload_json AS tags_payload_json,
+                ts.payload_json AS scores_payload_json
+            FROM tracks t
+            LEFT JOIN track_features tf ON tf.track_pk = t.id
+            LEFT JOIN track_tags tt ON tt.track_pk = t.id
+            LEFT JOIN track_scores ts ON ts.track_pk = t.id
+            WHERE t.id = ?
+            LIMIT 1
+            """,
+            (track_pk,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        raise HTTPException(404, "track not found")
+    return {"track": _track_catalog_row_to_item(row)}
 
 
 
@@ -469,6 +701,97 @@ def api_delete_channel(slug: str, _: bool = Depends(require_basic_auth(env))):
         conn.close()
 
     return {"ok": True, "slug": slug}
+
+
+@app.post("/v1/track_jobs/discover", status_code=202)
+def api_track_jobs_discover(payload: DiscoverTrackJobPayload, _: bool = Depends(require_basic_auth(env))):
+    channel_slug = payload.channel_slug.strip()
+    conn = dbm.connect(env)
+    try:
+        _require_track_channel_and_canon(conn, channel_slug)
+        if track_jobs_db.has_already_running(conn, job_type="SCAN_TRACKS", channel_slug=channel_slug):
+            raise HTTPException(409, "TRACK_JOB_ALREADY_RUNNING")
+        job_id = track_jobs_db.enqueue_job(conn, job_type="SCAN_TRACKS", channel_slug=channel_slug, payload={})
+    finally:
+        conn.close()
+    return {"job_id": str(job_id), "status": "QUEUED"}
+
+
+@app.post("/v1/track_jobs/analyze", status_code=202)
+def api_track_jobs_analyze(payload: AnalyzeTrackJobPayload, _: bool = Depends(require_basic_auth(env))):
+    channel_slug = payload.channel_slug.strip()
+    conn = dbm.connect(env)
+    try:
+        _require_track_channel_and_canon(conn, channel_slug)
+        if track_jobs_db.has_already_running(conn, job_type="ANALYZE_TRACKS", channel_slug=channel_slug):
+            raise HTTPException(409, "TRACK_JOB_ALREADY_RUNNING")
+        job_id = track_jobs_db.enqueue_job(
+            conn,
+            job_type="ANALYZE_TRACKS",
+            channel_slug=channel_slug,
+            payload={
+                "scope": payload.scope,
+                "max_tracks": int(payload.max_tracks),
+                "force": bool(payload.force),
+            },
+        )
+    finally:
+        conn.close()
+    return {"job_id": str(job_id), "status": "QUEUED"}
+
+
+@app.get("/v1/track_jobs/{job_id}")
+def api_track_job_get(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        job = track_jobs_db.get_job(conn, job_id)
+    finally:
+        conn.close()
+
+    if not job:
+        raise HTTPException(404)
+
+    payload_json = str(job.get("payload_json") or "")
+    try:
+        payload = json.loads(payload_json) if payload_json else {}
+    except Exception:
+        payload = {}
+    return {
+        "job": {
+            "id": int(job["id"]),
+            "job_type": str(job["job_type"]),
+            "channel_slug": job.get("channel_slug"),
+            "status": str(job["status"]),
+            "payload": payload,
+            "created_at": job.get("created_at"),
+            "updated_at": job.get("updated_at"),
+        }
+    }
+
+
+@app.get("/v1/track_jobs/{job_id}/logs")
+def api_track_job_logs(job_id: int, tail: int = 200, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        job = track_jobs_db.get_job(conn, job_id)
+        if not job:
+            raise HTTPException(404)
+        logs = track_jobs_db.list_logs(conn, job_id=job_id, tail=tail)
+    finally:
+        conn.close()
+
+    return {
+        "job_id": job_id,
+        "logs": [
+            {
+                "id": int(row["id"]),
+                "level": row.get("level"),
+                "message": str(row["message"]),
+                "ts": row.get("ts"),
+            }
+            for row in logs
+        ],
+    }
 
 
 class ApprovePayload(BaseModel):
