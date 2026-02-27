@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from services.common import db as dbm
@@ -135,7 +136,15 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
         return PreflightResult(ok=False, field_errors=errors, resolved=resolved)
 
     if drive is None:
-        token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=str(job["channel_slug"]))
+        token_path = Path(str(env.gdrive_oauth_token_json or "")).expanduser()
+        channel_slug = str(job.get("channel_slug") or "").strip()
+        if env.gdrive_tokens_dir and channel_slug:
+            token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)
+        if not token_path.is_file():
+            msg = f"google drive token not found for channel '{channel_slug or 'default'}'"
+            errors["project"].append(msg)
+            _set_job_error_reason(msg)
+            return PreflightResult(ok=False, field_errors=errors, resolved=resolved)
         drive = DriveClient(
             service_account_json=env.gdrive_sa_json,
             oauth_client_json=env.gdrive_oauth_client_json,
