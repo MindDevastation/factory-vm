@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from services.common import db as dbm
 from services.common.env import Env
 from services.integrations.gdrive import DriveClient, DriveItem
+from services.factory_api.oauth_tokens import oauth_token_path
 
 
 @dataclass
@@ -134,10 +135,11 @@ def run_preflight_for_job(conn, env: Env, job_id: int, drive: Optional[DriveClie
         return PreflightResult(ok=False, field_errors=errors, resolved=resolved)
 
     if drive is None:
+        token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=str(job["channel_slug"]))
         drive = DriveClient(
             service_account_json=env.gdrive_sa_json,
             oauth_client_json=env.gdrive_oauth_client_json,
-            oauth_token_json=env.gdrive_oauth_token_json,
+            oauth_token_json=str(token_path),
         )
 
     try:
