@@ -1059,11 +1059,26 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
         # drive = _create_drive_client(env)
         enqueued = 0
         failed = 0
+        skipped_jobs: list[dict[str, Any]] = []
         for r in rows:
             job_id = int(r["id"])
             try:
                 job = dbm.get_job(conn, job_id)
-                token = _render_all_channel_slug.set(str(job.get("channel_slug") or "") if job else "")
+                channel_slug = str(job.get("channel_slug") or "") if job else ""
+                token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)
+                if (not channel_slug) or (not token_path.is_file()):
+                    skipped_jobs.append(
+                        {
+                            "job_id": job_id,
+                            "channel_slug": channel_slug,
+                            "reason": (
+                                f"GDrive token missing for channel '{channel_slug}'. "
+                                "Generate/Regenerate Drive Token in dashboard."
+                            ),
+                        }
+                    )
+                    continue
+                token = _render_all_channel_slug.set(channel_slug)
                 try:
                     drive = _create_drive_client(env)
                 finally:
@@ -1130,7 +1145,12 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
                 dbm.update_job_state(conn, job_id, state="DRAFT", stage="DRAFT", error_reason=error_reason)
     finally:
         conn.close()
-    return {"enqueued_count": enqueued, "failed_count": failed}
+    return {
+        "enqueued_count": enqueued,
+        "failed_count": failed,
+        "skipped_count": len(skipped_jobs),
+        "skipped_jobs": skipped_jobs,
+    }
 
 
 @app.get("/v1/ui/jobs/{job_id}")
