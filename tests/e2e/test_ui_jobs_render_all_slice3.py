@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from services.common import db as dbm
 from services.common.env import Env
+from services.factory_api.oauth_tokens import oauth_token_path
 from services.integrations.gdrive import DriveItem
 
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
@@ -25,8 +26,13 @@ class TestUiJobsRenderAllSlice3(unittest.TestCase):
     def test_render_all_enqueues_ui_drafts_and_creates_inputs(self) -> None:
         with temp_env() as (_, _):
             os.environ["GDRIVE_ROOT_ID"] = "root"
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
             env = Env.load()
             seed_minimal_db(env)
+
+            token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug="darkwood-reverie")
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
 
             conn = dbm.connect(env)
             try:
@@ -158,6 +164,64 @@ class TestUiJobsRenderAllSlice3(unittest.TestCase):
 
                 self.assertEqual(bad["state"], "DRAFT")
                 self.assertTrue(str(bad.get("error_reason") or ""))
+            finally:
+                conn2.close()
+
+    def test_render_all_skips_job_when_channel_token_missing(self) -> None:
+        with temp_env() as (_, _):
+            os.environ["GDRIVE_ROOT_ID"] = "root"
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="No Token Job",
+                    description="",
+                    tags_csv="one,two",
+                    cover_name="cover",
+                    cover_ext="png",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001 015",
+                )
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+
+            def _raise_if_called(_env):
+                raise AssertionError("_create_drive_client should not be called when token is missing")
+
+            mod._create_drive_client = _raise_if_called
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            rr = client.post("/v1/ui/jobs/render_all", headers=h)
+            self.assertEqual(rr.status_code, 200)
+            body = rr.json()
+            self.assertEqual(body["enqueued_count"], 0)
+            self.assertEqual(body["failed_count"], 0)
+            self.assertEqual(body["skipped_count"], 1)
+            self.assertEqual(len(body["skipped_jobs"]), 1)
+            self.assertEqual(body["skipped_jobs"][0]["job_id"], job_id)
+            self.assertEqual(body["skipped_jobs"][0]["channel_slug"], "darkwood-reverie")
+            self.assertEqual(
+                body["skipped_jobs"][0]["reason"],
+                "GDrive token missing for channel 'darkwood-reverie'. Generate/Regenerate Drive Token in dashboard.",
+            )
+
+            conn2 = dbm.connect(env)
+            try:
+                job = dbm.get_job(conn2, job_id)
+                self.assertEqual(job["state"], "DRAFT")
+                self.assertFalse(conn2.execute("SELECT 1 FROM job_inputs WHERE job_id=?", (job_id,)).fetchone())
             finally:
                 conn2.close()
 
