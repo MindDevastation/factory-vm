@@ -8,6 +8,12 @@ from scripts.run_stack import _worker_roles
 
 
 class TestRunStack(unittest.TestCase):
+    def test_worker_roles_includes_track_jobs_by_default(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("IMPORTER_ENABLED", None)
+            roles = _worker_roles(no_importer_flag=False)
+        self.assertIn("track_jobs", roles)
+
     def test_worker_roles_excludes_importer_when_no_importer_flag(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("IMPORTER_ENABLED", None)
