@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import socket
+from pathlib import Path
 
 from services.common import db as dbm
 from services.common.env import Env
 from services.common.logging_setup import get_logger
+from services.factory_api.oauth_tokens import oauth_token_path
 from services.integrations.gdrive import DriveClient
 from services.track_analyzer.analyze import analyze_tracks
 from services.track_analyzer.discover import discover_channel_tracks
@@ -68,11 +70,7 @@ def track_jobs_cycle(*, env: Env, worker_id: str) -> None:
 def _run_track_discover(conn, *, env: Env, job_id: int, channel_slug: str) -> None:
     tjdb.append_log(conn, job_id=job_id, level="INFO", message=f"discover started channel={channel_slug}")
 
-    drive = DriveClient(
-        service_account_json=env.gdrive_sa_json,
-        oauth_client_json=env.gdrive_oauth_client_json,
-        oauth_token_json=env.gdrive_oauth_token_json,
-    )
+    drive = _build_track_catalog_drive_client(env=env, channel_slug=channel_slug)
 
     stats = discover_channel_tracks(
         conn,
@@ -113,11 +111,7 @@ def _run_track_analyze(conn, *, env: Env, job: dict, job_id: int, channel_slug: 
         message=f"analyze started channel={channel_slug} scope={scope} force={force} max_tracks={max_tracks}",
     )
 
-    drive = DriveClient(
-        service_account_json=env.gdrive_sa_json,
-        oauth_client_json=env.gdrive_oauth_client_json,
-        oauth_token_json=env.gdrive_oauth_token_json,
-    )
+    drive = _build_track_catalog_drive_client(env=env, channel_slug=channel_slug)
     stats = analyze_tracks(
         conn,
         drive,
@@ -169,6 +163,30 @@ def _count_analyze_candidates(conn, *, channel_slug: str, scope: str, force: boo
         tuple(args),
     ).fetchone()
     return int((row or {}).get("cnt") or 0)
+
+
+def _track_catalog_token_path(*, env: Env, channel_slug: str) -> Path:
+    if not env.gdrive_tokens_dir:
+        raise RuntimeError("GDRIVE_TOKENS_DIR is not configured for Track Catalog jobs")
+    return oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)
+
+
+def _build_track_catalog_drive_client(*, env: Env, channel_slug: str) -> DriveClient:
+    if not env.gdrive_client_secret_json:
+        raise RuntimeError("GDRIVE_CLIENT_SECRET_JSON is not configured for Track Catalog jobs")
+
+    token_path = _track_catalog_token_path(env=env, channel_slug=channel_slug)
+    if not token_path.exists() or not token_path.is_file() or not os.access(token_path, os.R_OK):
+        raise RuntimeError(
+            f"GDrive token missing or unreadable for channel '{channel_slug}'. "
+            "Generate/Regenerate Drive Token in dashboard."
+        )
+
+    return DriveClient(
+        service_account_json="",
+        oauth_client_json=env.gdrive_client_secret_json,
+        oauth_token_json=str(token_path),
+    )
 
 
 def _sanitize_error_message(env: Env, err: Exception) -> str:
