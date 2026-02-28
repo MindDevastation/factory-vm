@@ -19,6 +19,7 @@ A runnable MVP scaffold that:
 7) Run workers:
    - `python -m services.workers --role importer`
    - `python -m services.workers --role orchestrator`
+   - `python -m services.workers --role track_jobs`
    - `python -m services.workers --role qa`
    - `python -m services.workers --role uploader`
    - `python -m services.workers --role cleanup`
@@ -61,6 +62,9 @@ Track Catalog per-channel enablement:
 - Discover/Analyze track jobs require the channel to be enabled in Track Catalog canon tables.
 - Enable via Dashboard "Enable Track Catalog" button in Channels, or via API: `POST /v1/track_catalog/{channel_slug}/enable`.
 - Disable via API: `DELETE /v1/track_catalog/{channel_slug}/enable`.
+- Discover/Analyze enqueues jobs with status `QUEUED`; the `track_jobs` worker consumes this queue.
+- `scripts/run_stack.py` now starts `track_jobs` by default with the other workers so queued jobs auto-start on VPS.
+- Troubleshooting one-shot run: `python -m services.workers --role track_jobs --once`.
 
 Publish flow:
 - Bot sends YouTube private link + 60s preview.

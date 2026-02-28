@@ -24,7 +24,7 @@ def _importer_enabled(no_importer_flag: bool) -> bool:
 
 
 def _worker_roles(no_importer_flag: bool) -> List[str]:
-    roles = ["importer", "orchestrator", "qa", "uploader", "cleanup"]
+    roles = ["importer", "orchestrator", "track_jobs", "qa", "uploader", "cleanup"]
     if not _importer_enabled(no_importer_flag):
         roles.remove("importer")
     return roles
