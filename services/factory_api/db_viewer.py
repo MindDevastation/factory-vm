@@ -240,7 +240,12 @@ def create_db_viewer_router(env: Env) -> APIRouter:
 
                 if not visible_columns:
                     total = int(conn.execute(f"SELECT COUNT(*) AS total FROM {_quote_ident(table_name)}").fetchone()["total"])
-                    return {"columns": [], "rows": [], "total": total, "page": page, "page_size": page_size}
+                    return {
+                        "table_name": table_name,
+                        "columns": [],
+                        "rows": [],
+                        "pagination": {"page": page, "page_size": page_size, "total": total},
+                    }
 
                 if sort_by:
                     if not is_safe_identifier(sort_by) or sort_by not in visible_columns:
@@ -267,7 +272,8 @@ def create_db_viewer_router(env: Env) -> APIRouter:
                     f"SELECT {select_cols} FROM {_quote_ident(table_name)}{where_sql} "
                     f"ORDER BY {_quote_ident(sort_by)} {sort_dir.upper()} LIMIT ? OFFSET ?"
                 )
-                rows = conn.execute(row_sql, params + [page_size, offset]).fetchall()
+                result_rows = conn.execute(row_sql, params + [page_size, offset]).fetchall()
+                rows = [[row[col] for col in visible_columns] for row in result_rows]
             finally:
                 conn.close()
         except Exception:
@@ -275,6 +281,11 @@ def create_db_viewer_router(env: Env) -> APIRouter:
             return _error(request, code="DBV_INTERNAL", message="db viewer internal error", status_code=500)
 
         logger.info("db_viewer_rows table=%s user=%s request_id=%s", table_name, username, _request_id(request))
-        return {"columns": visible_columns, "rows": rows, "total": total, "page": page, "page_size": page_size}
+        return {
+            "table_name": table_name,
+            "columns": visible_columns,
+            "rows": rows,
+            "pagination": {"page": page, "page_size": page_size, "total": total},
+        }
 
     return router

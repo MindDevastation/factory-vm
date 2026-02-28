@@ -129,7 +129,7 @@
     }
 
     bodyNode.innerHTML = rows.map((row) => {
-      const tds = state.columns.map((col) => '<td>' + esc(row[col] == null ? '' : row[col]) + '</td>').join('');
+      const tds = state.columns.map((_, idx) => '<td>' + esc(row[idx] == null ? '' : row[idx]) + '</td>').join('');
       return '<tr>' + tds + '</tr>';
     }).join('');
   }
@@ -183,7 +183,8 @@
       if (!state.sortBy && state.columns.length) {
         state.sortBy = state.columns[0];
       }
-      state.total = Number(data.total || 0);
+      const pagination = data && typeof data.pagination === 'object' && data.pagination ? data.pagination : {};
+      state.total = Number(pagination.total || 0);
       renderHeader();
       renderRows(Array.isArray(data.rows) ? data.rows : []);
       renderPager();
