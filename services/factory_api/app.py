@@ -548,6 +548,33 @@ def api_track_catalog_channels(_: bool = Depends(require_basic_auth(env))):
     }
 
 
+
+@app.post("/v1/track_catalog/{channel_slug}/enable")
+def api_track_catalog_enable(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        existing = dbm.get_channel_by_slug(conn, channel_slug)
+        if not existing:
+            raise HTTPException(404, "channel not found")
+        dbm.enable_track_catalog_for_channel(conn, channel_slug)
+    finally:
+        conn.close()
+    return {"ok": True, "channel_slug": channel_slug, "track_catalog_enabled": True}
+
+
+@app.delete("/v1/track_catalog/{channel_slug}/enable")
+def api_track_catalog_disable(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        existing = dbm.get_channel_by_slug(conn, channel_slug)
+        if not existing:
+            raise HTTPException(404, "channel not found")
+        dbm.disable_track_catalog_for_channel(conn, channel_slug)
+    finally:
+        conn.close()
+    return {"ok": True, "channel_slug": channel_slug, "track_catalog_enabled": False}
+
+
 @app.get("/v1/track_catalog/{channel_slug}/tracks")
 def api_track_catalog_tracks(
     channel_slug: str,

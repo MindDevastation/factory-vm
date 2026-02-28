@@ -501,6 +501,16 @@ def delete_channel_by_slug(conn: sqlite3.Connection, slug: str) -> int:
     return int(cur.rowcount or 0)
 
 
+def enable_track_catalog_for_channel(conn: sqlite3.Connection, channel_slug: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO canon_channels(value) VALUES(?)", (channel_slug,))
+    conn.execute("INSERT OR IGNORE INTO canon_thresholds(value) VALUES(?)", (channel_slug,))
+
+
+def disable_track_catalog_for_channel(conn: sqlite3.Connection, channel_slug: str) -> None:
+    conn.execute("DELETE FROM canon_channels WHERE value = ?", (channel_slug,))
+    conn.execute("DELETE FROM canon_thresholds WHERE value = ?", (channel_slug,))
+
+
 def list_jobs(conn: sqlite3.Connection, state: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
     if state:
         cur = conn.execute(
