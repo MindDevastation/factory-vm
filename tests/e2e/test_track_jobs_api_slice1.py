@@ -142,6 +142,44 @@ class TestTrackJobsApiSlice1(unittest.TestCase):
             self.assertEqual(r.status_code, 409)
             self.assertEqual(r.json().get("detail"), "TRACK_JOB_ALREADY_RUNNING")
 
+    def test_enable_then_discover_then_disable_flow(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            before = client.post("/v1/track_jobs/discover", headers=h, json={"channel_slug": "darkwood-reverie"})
+            self.assertEqual(before.status_code, 404)
+            self.assertEqual(before.json().get("detail"), "CHANNEL_NOT_IN_CANON")
+
+            enable = client.post("/v1/track_catalog/darkwood-reverie/enable", headers=h)
+            self.assertEqual(enable.status_code, 200)
+            self.assertEqual(
+                enable.json(),
+                {"ok": True, "channel_slug": "darkwood-reverie", "track_catalog_enabled": True},
+            )
+
+            discover = client.post("/v1/track_jobs/discover", headers=h, json={"channel_slug": "darkwood-reverie"})
+            self.assertEqual(discover.status_code, 202)
+            discover_body = discover.json()
+            self.assertEqual(discover_body.get("status"), "QUEUED")
+            self.assertTrue(str(discover_body.get("job_id") or "").strip())
+
+            disable = client.delete("/v1/track_catalog/darkwood-reverie/enable", headers=h)
+            self.assertEqual(disable.status_code, 200)
+            self.assertEqual(
+                disable.json(),
+                {"ok": True, "channel_slug": "darkwood-reverie", "track_catalog_enabled": False},
+            )
+
+            after = client.post("/v1/track_jobs/discover", headers=h, json={"channel_slug": "darkwood-reverie"})
+            self.assertEqual(after.status_code, 404)
+            self.assertEqual(after.json().get("detail"), "CHANNEL_NOT_IN_CANON")
+
 
 if __name__ == "__main__":
     unittest.main()

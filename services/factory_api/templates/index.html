@@ -253,6 +253,29 @@
     return await res.json();
   }
 
+  async function fetchTrackCatalogChannels() {
+    const res = await fetch('/v1/track_catalog/channels');
+    if (!res.ok) {
+      if (res.status === 401) {
+        throw new Error('Not authorized');
+      }
+      throw new Error('Failed to load track catalog channels');
+    }
+    const data = await res.json();
+    return (data && data.channels) || [];
+  }
+
+  async function triggerEnableTrackCatalog(slug) {
+    const res = await fetch('/v1/track_catalog/' + encodeURIComponent(slug) + '/enable', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error('Failed to enable Track Catalog: ' + extractApiErrorMessage(body));
+    }
+  }
+
   function scheduleTrackJobPoll(slug, jobId) {
     if (trackJobPollTimers[slug]) {
       clearTimeout(trackJobPollTimers[slug]);
@@ -298,7 +321,11 @@
     });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error('Failed to launch track job: ' + extractApiErrorMessage(body));
+      const detail = extractApiErrorMessage(body);
+      if (detail === 'CHANNEL_NOT_IN_CANON') {
+        throw new Error('Channel is not enabled for Track Catalog. Click Enable Track Catalog.');
+      }
+      throw new Error('Failed to launch track job: ' + detail);
     }
     const data = await res.json();
     const jobId = data && data.job_id ? String(data.job_id) : '';
@@ -311,24 +338,48 @@
     scheduleTrackJobPoll(slug, jobId);
   }
 
-  function renderChannels(channels) {
+  function renderChannels(channels, enabledSlugs) {
     if (!channels.length) {
       channelsTableBody.innerHTML = '<tr><td colspan="3" class="muted">No channels found.</td></tr>';
       return;
     }
     channelsTableBody.innerHTML = channels.map((ch) => {
+      const enabled = enabledSlugs.has(ch.slug);
+      const trackControls = enabled
+        ? '<button type="button" data-action="discover-tracks" data-slug="' + esc(ch.slug) + '">Discover Tracks</button> ' +
+          '<button type="button" data-action="analyze-tracks" data-slug="' + esc(ch.slug) + '">Analyze Tracks</button>'
+        : '<button type="button" data-action="enable-track-catalog" data-slug="' + esc(ch.slug) + '">Enable Track Catalog</button>' +
+          '<div class="muted">Enable Track Catalog to use Discover/Analyze.</div>';
       return '<tr>' +
         '<td>' + esc(ch.display_name) + '</td>' +
         '<td><code>' + esc(ch.slug) + '</code></td>' +
         '<td>' +
           '<button type="button" data-action="rename" data-slug="' + esc(ch.slug) + '" data-display-name="' + esc(ch.display_name) + '">Rename</button> ' +
           '<button type="button" data-action="delete" data-slug="' + esc(ch.slug) + '">Delete</button> ' +
-          '<button type="button" data-action="discover-tracks" data-slug="' + esc(ch.slug) + '">Discover Tracks</button> ' +
-          '<button type="button" data-action="analyze-tracks" data-slug="' + esc(ch.slug) + '">Analyze Tracks</button>' +
+          trackControls +
           '<div class="muted"><span data-track-status="' + esc(ch.slug) + '">' + esc(trackJobStatusBySlug[ch.slug] || '') + '</span></div>' +
         '</td>' +
       '</tr>';
     }).join('');
+
+    channelsTableBody.querySelectorAll('button[data-action="enable-track-catalog"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const slug = btn.getAttribute('data-slug');
+        const originalLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Enabling...';
+        try {
+          await triggerEnableTrackCatalog(slug);
+          channelNote.textContent = 'Track Catalog enabled for "' + slug + '".';
+          await refreshAll();
+        } catch (err) {
+          channelNote.textContent = err.message;
+        } finally {
+          btn.disabled = false;
+          btn.textContent = originalLabel;
+        }
+      });
+    });
 
     channelsTableBody.querySelectorAll('button[data-action="rename"]').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -422,7 +473,9 @@
   async function refreshAll() {
     try {
       const channels = await fetchChannels();
-      renderChannels(channels);
+      const catalogChannels = await fetchTrackCatalogChannels();
+      const enabledSlugs = new Set(catalogChannels.map((ch) => ch.slug));
+      renderChannels(channels, enabledSlugs);
     } catch (err) {
       channelsTableBody.innerHTML = '<tr><td colspan="3" class="muted">' + esc(err.message) + '</td></tr>';
     }
