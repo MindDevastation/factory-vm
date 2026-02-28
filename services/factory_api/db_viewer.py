@@ -189,7 +189,10 @@ def create_db_viewer_router(env: Env) -> APIRouter:
         allowed = filter_allowed_tables(existing_tables, policy["denylist_tables"])
         return {
             "tables": [
-                {"name": table_name, "human_name": make_human_table_name(table_name, policy["human_name_overrides"])}
+                {
+                    "table_name": table_name,
+                    "human_name": make_human_table_name(table_name, policy["human_name_overrides"]),
+                }
                 for table_name in allowed
             ]
         }

@@ -152,8 +152,9 @@
       return;
     }
     tableSelect.innerHTML = tables.map((item) => {
-      const label = (item.human_name || item.name) + ' (' + item.name + ')';
-      return '<option value="' + esc(item.name) + '">' + esc(label) + '</option>';
+      const tableName = item.table_name;
+      const label = (item.human_name || tableName) + ' (' + tableName + ')';
+      return '<option value="' + esc(tableName) + '">' + esc(label) + '</option>';
     }).join('');
     state.page = 1;
     await loadRows();
