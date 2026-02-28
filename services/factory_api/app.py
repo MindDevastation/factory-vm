@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import re
 import secrets
+import subprocess
+import sys
 import time
 from contextvars import ContextVar
 from pathlib import Path
@@ -38,6 +41,7 @@ import yaml
 
 env = Env.load()
 app = FastAPI(title="Factory VM API", version="0.0.1")
+logger = logging.getLogger(__name__)
 _render_all_channel_slug: ContextVar[Optional[str]] = ContextVar("render_all_channel_slug", default=None)
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -231,6 +235,48 @@ def _token_status_for(channel_slug: str, base_dir: str) -> tuple[bool, str | Non
     if not token_path.is_file():
         return False, None
     return True, str(token_path.stat().st_mtime)
+
+
+def _yamnet_is_installed() -> bool:
+    try:
+        import tensorflow  # noqa: F401
+        import tensorflow_hub  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def _run_yamnet_installer() -> tuple[bool, str]:
+    repo_root = Path(__file__).resolve().parents[2]
+    installer_path = repo_root / "scripts" / "install_yamnet.py"
+    cmd = [sys.executable, str(installer_path)]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "installer failed").strip()
+        return False, detail[:400]
+    detail = (proc.stdout or "").strip() or "yamnet dependencies installed"
+    return True, detail[:400]
+
+
+@app.post("/v1/admin/yamnet/install")
+def api_admin_install_yamnet(_: bool = Depends(require_basic_auth(env))):
+    if _yamnet_is_installed():
+        return {"ok": True, "status": "already_installed"}
+
+    try:
+        ok, message = _run_yamnet_installer()
+    except subprocess.TimeoutExpired:
+        logger.warning("yamnet_install timed_out")
+        return {"ok": False, "message": "installer timed out"}
+    except Exception:
+        logger.exception("yamnet_install failed")
+        return {"ok": False, "message": "installer failed"}
+
+    if not ok:
+        logger.warning("yamnet_install failed detail=%s", message)
+        return {"ok": False, "message": message or "installer failed"}
+
+    return {"ok": True, "status": "installed", "message": message}
 
 
 @app.post("/v1/oauth/gdrive/{channel_slug}/start")

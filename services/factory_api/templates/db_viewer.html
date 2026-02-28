@@ -26,6 +26,12 @@
 
 <p id="dbv-error" style="color: #b91c1c;"></p>
 
+
+<div style="display: flex; gap: 8px; align-items: center; margin-bottom: 12px;">
+  <button type="button" id="yamnet-install-btn">Install Yamnet</button>
+  <span class="muted" id="yamnet-install-status"></span>
+</div>
+
 <table id="dbv-table">
   <thead>
     <tr id="dbv-header-row">
@@ -54,6 +60,8 @@
   const prevBtn = document.getElementById('dbv-prev-btn');
   const nextBtn = document.getElementById('dbv-next-btn');
   const pageNote = document.getElementById('dbv-page-note');
+  const installBtn = document.getElementById('yamnet-install-btn');
+  const installStatusNode = document.getElementById('yamnet-install-status');
 
   const state = {
     page: 1,
@@ -92,6 +100,24 @@
       // use fallback below
     }
     return text;
+  }
+
+  function extractApiErrorMessage(bodyText) {
+    if (!bodyText) {
+      return '';
+    }
+    try {
+      const parsed = JSON.parse(bodyText);
+      if (parsed && parsed.error && typeof parsed.error.message === 'string') {
+        return parsed.error.message;
+      }
+      if (parsed && typeof parsed.detail === 'string') {
+        return parsed.detail;
+      }
+    } catch (_) {
+      // fallback below
+    }
+    return bodyText;
   }
 
   async function apiGet(url) {
@@ -254,6 +280,33 @@
     }
     state.page = 1;
     await loadRows();
+  });
+
+
+  installBtn.addEventListener('click', async function () {
+    installBtn.disabled = true;
+    installStatusNode.textContent = 'Installing...';
+    try {
+      const resp = await fetch('/v1/admin/yamnet/install', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' },
+      });
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw new Error(extractApiErrorMessage(body) || ('request failed: ' + resp.status));
+      }
+      const payload = await resp.json();
+      if (payload && payload.ok) {
+        installStatusNode.textContent = payload.status === 'already_installed' ? 'Yamnet is already installed.' : 'Yamnet installed.';
+      } else {
+        installStatusNode.textContent = payload && payload.message ? payload.message : 'Yamnet install failed.';
+      }
+    } catch (err) {
+      installStatusNode.textContent = err instanceof Error ? err.message : 'Yamnet install failed.';
+    } finally {
+      installBtn.disabled = false;
+    }
   });
 
   loadTables().catch((err) => {
