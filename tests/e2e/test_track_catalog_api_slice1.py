@@ -123,6 +123,44 @@ class TestTrackCatalogApiSlice1(unittest.TestCase):
             self.assertEqual(track["track_pk"], t1)
             self.assertEqual(track["scores"]["safety"], 0.92)
 
+    def test_enable_disable_endpoints_and_channels_listing(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            initially = client.get("/v1/track_catalog/channels", headers=h)
+            self.assertEqual(initially.status_code, 200)
+            self.assertEqual(initially.json().get("channels"), [])
+
+            missing = client.post("/v1/track_catalog/missing-channel/enable", headers=h)
+            self.assertEqual(missing.status_code, 404)
+            self.assertEqual(missing.json().get("detail"), "channel not found")
+
+            enable = client.post("/v1/track_catalog/darkwood-reverie/enable", headers=h)
+            self.assertEqual(enable.status_code, 200)
+            self.assertEqual(enable.json().get("track_catalog_enabled"), True)
+
+            enable_again = client.post("/v1/track_catalog/darkwood-reverie/enable", headers=h)
+            self.assertEqual(enable_again.status_code, 200)
+            self.assertEqual(enable_again.json().get("track_catalog_enabled"), True)
+
+            listed = client.get("/v1/track_catalog/channels", headers=h)
+            self.assertEqual(listed.status_code, 200)
+            self.assertEqual([c["slug"] for c in listed.json().get("channels", [])], ["darkwood-reverie"])
+
+            disable = client.delete("/v1/track_catalog/darkwood-reverie/enable", headers=h)
+            self.assertEqual(disable.status_code, 200)
+            self.assertEqual(disable.json().get("track_catalog_enabled"), False)
+
+            after_disable = client.get("/v1/track_catalog/channels", headers=h)
+            self.assertEqual(after_disable.status_code, 200)
+            self.assertEqual(after_disable.json().get("channels"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

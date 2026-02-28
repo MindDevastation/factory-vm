@@ -57,6 +57,11 @@ OAuth credentials and token storage:
   - Per-channel token path: `${GDRIVE_TOKENS_DIR}/${channel_slug}/token.json`
 - Use the dashboard OAuth Tokens section to start consent for each channel (Generate/Regenerate actions). The UI shows only token presence + last update time and never exposes token contents.
 
+Track Catalog per-channel enablement:
+- Discover/Analyze track jobs require the channel to be enabled in Track Catalog canon tables.
+- Enable via Dashboard "Enable Track Catalog" button in Channels, or via API: `POST /v1/track_catalog/{channel_slug}/enable`.
+- Disable via API: `DELETE /v1/track_catalog/{channel_slug}/enable`.
+
 Publish flow:
 - Bot sends YouTube private link + 60s preview.
 - Approve in bot.
