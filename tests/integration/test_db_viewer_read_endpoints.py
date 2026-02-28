@@ -67,6 +67,26 @@ class TestDbViewerReadEndpoints(unittest.TestCase):
             self.assertEqual(err["request_id"], "req-123")
             self.assertEqual(err["code"], "DBV_INVALID_PARAMS")
 
+
+    def test_rows_missing_sort_by_ignores_sort_dir_and_defaults_to_first_column_asc(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            self._seed_db(env)
+            os.environ["DB_VIEWER_POLICY_PATH"] = ""
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            rows = client.get(
+                "/v1/db-viewer/tables/visible_table/rows?page=1&page_size=10&sort_dir=desc",
+                headers=auth,
+            )
+            self.assertEqual(rows.status_code, 200)
+            body = rows.json()
+            self.assertEqual([row["id"] for row in body["rows"]], [1, 2])
+
     def test_forbidden_vs_not_found_privileged_and_non_privileged(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
