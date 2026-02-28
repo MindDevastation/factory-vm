@@ -854,6 +854,11 @@ def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs})
 
 
+@app.get("/ui/db-viewer", response_class=HTMLResponse)
+def ui_db_viewer_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("db_viewer.html", {"request": request})
+
+
 def _all_channels(conn) -> list:
     return conn.execute("SELECT id, slug, display_name FROM channels ORDER BY display_name ASC").fetchall()
 

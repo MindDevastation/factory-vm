@@ -57,6 +57,14 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('method="post"', r.text)
             self.assertIn('id="channel-add-btn"', r.text)
             self.assertIn('id="channels-table"', r.text)
+            self.assertIn('href="/ui/db-viewer"', r.text)
+
+            r = client.get("/ui/db-viewer", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("Database Viewer", r.text)
+            self.assertIn('id="table-select"', r.text)
+            self.assertIn('id="search-input"', r.text)
+            self.assertIn('id="page-size-select"', r.text)
 
             r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
             self.assertEqual(r.status_code, 200)
