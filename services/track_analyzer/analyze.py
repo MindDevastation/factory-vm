@@ -8,6 +8,7 @@ from typing import Any
 
 from services.common import db as dbm
 from services.common import ffmpeg
+import services.track_analyzer.yamnet as yamnet
 
 
 class AnalyzeError(RuntimeError):
@@ -52,6 +53,10 @@ def analyze_tracks(
             duration_sec = _extract_duration_sec(local_path)
             true_peak_dbfs = _extract_true_peak_dbfs(local_path)
             spikes_found = _detect_spikes(true_peak_dbfs)
+            try:
+                yamnet_payload = yamnet.analyze_with_yamnet(local_path)
+            except yamnet.YAMNetUnavailableError as exc:
+                raise AnalyzeError("YAMNET_NOT_INSTALLED: install via UI button and retry") from exc
 
             dominant_texture = "unknown texture"
             prohibited_cues_notes = "No prohibited cues detected by fallback analyzer."
@@ -72,11 +77,14 @@ def analyze_tracks(
                 "duration_sec": duration_sec,
                 "true_peak_dbfs": true_peak_dbfs,
                 "spikes_found": spikes_found,
+                "yamnet_top_classes": yamnet_payload.get("top_classes") or [],
+                "yamnet_probabilities": yamnet_payload.get("probabilities") or {},
                 "dominant_texture": dominant_texture,
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
             }
             tags_payload = {
+                "yamnet_tags": [entry.get("label") for entry in (yamnet_payload.get("top_classes") or []) if entry.get("label")],
                 "prohibited_cues_notes": prohibited_cues_notes,
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
