@@ -41,6 +41,37 @@ class FakeDrive:
 
 
 class TestTrackDiscover(unittest.TestCase):
+    def test_discover_renames_canonical_with_trailing_numeric_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
+            try:
+                dbm.migrate(conn)
+                conn.execute(
+                    "INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled) VALUES(?,?,?,?,?,?)",
+                    ("darkwood-reverie", "Darkwood Reverie", "LONG", 1.0, "long_1080p24", 0),
+                )
+                conn.execute("INSERT INTO canon_channels(value) VALUES(?)", ("darkwood-reverie",))
+                conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
+
+                drive = FakeDrive()
+                drive.add_child("lib", FakeItem("ch", "Darkwood Reverie", _FOLDER))
+                drive.add_child("ch", FakeItem("audio", "Audio", _FOLDER))
+                drive.add_child("audio", FakeItem("m202501", "202501", _FOLDER))
+                drive.add_child("m202501", FakeItem("fid-1", "001_Title (1).wav", _FILE))
+
+                stats = discover_channel_tracks(
+                    conn,
+                    drive,
+                    gdrive_library_root_id="lib",
+                    channel_slug="darkwood-reverie",
+                )
+
+                self.assertEqual(stats.seen_wav, 1)
+                self.assertEqual(stats.renamed, 1)
+                self.assertIn(("fid-1", "001_Title.wav"), drive.rename_calls)
+            finally:
+                conn.close()
+
     def test_discover_wav_rename_upsert_and_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
@@ -61,7 +92,7 @@ class TestTrackDiscover(unittest.TestCase):
                 )
 
                 drive = FakeDrive()
-                drive.add_child("lib", FakeItem("ch", "darkwood-reverie", _FOLDER))
+                drive.add_child("lib", FakeItem("ch", "Darkwood Reverie", _FOLDER))
                 drive.add_child("ch", FakeItem("audio", "Audio", _FOLDER))
                 drive.add_child("audio", FakeItem("m202501", "202501", _FOLDER))
                 drive.add_child("m202501", FakeItem("fid-existing", "001_Title.wav", _FILE))
@@ -108,6 +139,26 @@ class TestTrackDiscover(unittest.TestCase):
                     conn.execute("SELECT COUNT(*) AS n FROM tracks WHERE channel_slug=?", ("darkwood-reverie",)).fetchone()["n"],
                     3,
                 )
+            finally:
+                conn.close()
+
+
+    def test_discover_fails_when_channel_display_name_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
+            try:
+                dbm.migrate(conn)
+                conn.execute(
+                    "INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled) VALUES(?,?,?,?,?,?)",
+                    ("darkwood-reverie", "", "LONG", 1.0, "long_1080p24", 0),
+                )
+                conn.execute("INSERT INTO canon_channels(value) VALUES(?)", ("darkwood-reverie",))
+                conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
+
+                drive = FakeDrive()
+                with self.assertRaises(DiscoverError) as ctx:
+                    discover_channel_tracks(conn, drive, gdrive_library_root_id="lib", channel_slug="darkwood-reverie")
+                self.assertEqual(str(ctx.exception), "channel display_name is empty: darkwood-reverie")
             finally:
                 conn.close()
 
