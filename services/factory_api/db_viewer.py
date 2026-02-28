@@ -17,8 +17,8 @@ from services.db_viewer.filtering import (
     make_human_table_name,
 )
 from services.db_viewer.meta import is_safe_identifier, list_existing_tables, list_table_columns
-from services.db_viewer.policy import DbViewerPolicyError, is_privileged, load_policy
-from services.db_viewer.rate_limit import GROUP_READ, InMemoryRateLimiter
+from services.db_viewer.policy import DbViewerPolicyError, is_privileged, load_policy, save_policy
+from services.db_viewer.rate_limit import GROUP_POLICY, GROUP_READ, InMemoryRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,63 @@ def _table_access(table_name: str, username: str, env: Env) -> tuple[str, dict[s
 
 def create_db_viewer_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/db-viewer", tags=["db-viewer"])
+
+    @router.get("/policy")
+    def db_viewer_get_policy(request: Request, username: str = Depends(_require_db_viewer_auth(env))):
+        if not username:
+            return _error(request, code="DBV_UNAUTHORIZED", message="Unauthorized", status_code=401)
+        if _limiter.is_limited(username, GROUP_POLICY):
+            return _error(request, code="DBV_RATE_LIMITED", message="rate limit exceeded", status_code=429)
+        if not is_privileged(username, env):
+            return _error(request, code="DBV_POLICY_FORBIDDEN", message="policy access forbidden", status_code=403)
+        if not env.db_viewer_policy_path:
+            return _error(
+                request,
+                code="DBV_POLICY_ERROR",
+                message="Policy storage is not configured",
+                status_code=500,
+            )
+
+        try:
+            return load_policy(env)
+        except DbViewerPolicyError as exc:
+            logger.exception("db_viewer_get_policy policy_error request_id=%s", _request_id(request))
+            return _error(request, code="DBV_POLICY_ERROR", message=str(exc), status_code=500)
+        except Exception:
+            logger.exception("db_viewer_get_policy failed request_id=%s", _request_id(request))
+            return _error(request, code="DBV_INTERNAL", message="db viewer internal error", status_code=500)
+
+    @router.put("/policy")
+    async def db_viewer_put_policy(request: Request, username: str = Depends(_require_db_viewer_auth(env))):
+        if not username:
+            return _error(request, code="DBV_UNAUTHORIZED", message="Unauthorized", status_code=401)
+        if _limiter.is_limited(username, GROUP_POLICY):
+            return _error(request, code="DBV_RATE_LIMITED", message="rate limit exceeded", status_code=429)
+        if not is_privileged(username, env):
+            return _error(request, code="DBV_POLICY_FORBIDDEN", message="policy access forbidden", status_code=403)
+        if not env.db_viewer_policy_path:
+            return _error(
+                request,
+                code="DBV_POLICY_ERROR",
+                message="Policy storage is not configured",
+                status_code=500,
+            )
+
+        try:
+            payload = await request.json()
+        except Exception:
+            return _error(request, code="DBV_POLICY_INVALID", message="invalid json payload", status_code=400)
+
+        try:
+            return save_policy(env, payload)
+        except ValueError as exc:
+            return _error(request, code="DBV_POLICY_INVALID", message=str(exc), status_code=400)
+        except DbViewerPolicyError as exc:
+            logger.exception("db_viewer_put_policy policy_error request_id=%s", _request_id(request))
+            return _error(request, code="DBV_POLICY_ERROR", message=str(exc), status_code=500)
+        except Exception:
+            logger.exception("db_viewer_put_policy failed request_id=%s", _request_id(request))
+            return _error(request, code="DBV_INTERNAL", message="db viewer internal error", status_code=500)
 
     @router.get("/tables")
     def db_viewer_tables(request: Request, username: str = Depends(_require_db_viewer_auth(env))):
