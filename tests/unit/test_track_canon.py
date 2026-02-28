@@ -21,6 +21,10 @@ class TestSanitizeTitle(unittest.TestCase):
         title = 'A' * 120
         self.assertEqual(len(sanitize_title(title)), 90)
 
+    def test_strips_trailing_numeric_suffix(self):
+        self.assertEqual(sanitize_title('Title (1)'), 'Title')
+        self.assertEqual(sanitize_title('Title   (12)   '), 'Title')
+
 
 class TestCanonicalizeTrackFilename(unittest.TestCase):
     def test_keeps_second_id_for_double_prefix_pattern(self):
@@ -36,6 +40,12 @@ class TestCanonicalizeTrackFilename(unittest.TestCase):
 
     def test_preserves_already_canonical_form(self):
         self.assertEqual(canonicalize_track_filename('001_Title.ext'), '001_Title.ext')
+
+    def test_strips_numeric_suffix_before_extension(self):
+        self.assertEqual(
+            canonicalize_track_filename('001_Title (2).wav'),
+            '001_Title.wav',
+        )
 
     def test_non_matching_filename_is_unchanged(self):
         self.assertEqual(canonicalize_track_filename('Title.ext'), 'Title.ext')
