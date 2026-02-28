@@ -12,6 +12,7 @@ from typing import Optional
 
 _FORBIDDEN_TITLE_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
 _WHITESPACE_RE = re.compile(r"\s+")
+_TRAILING_NUMERIC_SUFFIX_RE = re.compile(r"\s+\(\d+\)\s*$")
 
 
 def sanitize_title(title: str, track_id: Optional[str] = None, max_len: int = 90) -> str:
@@ -28,6 +29,7 @@ def sanitize_title(title: str, track_id: Optional[str] = None, max_len: int = 90
     cleaned = _FORBIDDEN_TITLE_CHARS_RE.sub(" ", title)
     if track_id:
         cleaned = cleaned.replace(str(track_id), " ")
+    cleaned = _TRAILING_NUMERIC_SUFFIX_RE.sub("", cleaned)
 
     cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
     return cleaned[:max_len].rstrip()
