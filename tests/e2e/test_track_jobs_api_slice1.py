@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import unittest
 
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 from services.common import db as dbm
 from services.common.env import Env
 from services.track_analyzer import track_jobs_db
+from services.workers.track_jobs import track_jobs_cycle
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
@@ -179,6 +181,33 @@ class TestTrackJobsApiSlice1(unittest.TestCase):
             after = client.post("/v1/track_jobs/discover", headers=h, json={"channel_slug": "darkwood-reverie"})
             self.assertEqual(after.status_code, 404)
             self.assertEqual(after.json().get("detail"), "CHANNEL_NOT_IN_CANON")
+
+    def test_discover_job_fails_when_per_channel_token_missing(self) -> None:
+        with temp_env() as (_, _env0):
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = "/secure/gdrive/client_secret.json"
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_canon(env, slug="darkwood-reverie")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            discover = client.post("/v1/track_jobs/discover", headers=h, json={"channel_slug": "darkwood-reverie"})
+            self.assertEqual(discover.status_code, 202)
+            job_id = int(discover.json()["job_id"])
+
+            track_jobs_cycle(env=env, worker_id="t-track-jobs-discover-missing-token")
+
+            get_job = client.get(f"/v1/track_jobs/{job_id}", headers=h)
+            self.assertEqual(get_job.status_code, 200)
+            job = get_job.json()["job"]
+            self.assertEqual(job["status"], "FAILED")
+            payload = job.get("payload") or {}
+            self.assertIn("GDrive token missing or unreadable for channel 'darkwood-reverie'", str(payload.get("last_message") or ""))
+            self.assertIn("Generate/Regenerate Drive Token in dashboard.", str(payload.get("last_message") or ""))
 
 
 if __name__ == "__main__":

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from services.common import db as dbm
+from services.common.env import Env
 from services.track_analyzer import track_jobs_db as tjdb
 from services.workers.track_jobs import track_jobs_cycle
 from tests._helpers import seed_minimal_db, temp_env
@@ -12,7 +15,13 @@ from tests._helpers import seed_minimal_db, temp_env
 class TestTrackJobsWorkerAnalyze(unittest.TestCase):
     def test_track_analyze_job_runs_to_done_and_updates_progress(self) -> None:
         with temp_env() as (_, env):
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = "/secure/gdrive/client_secret.json"
+            os.environ["GDRIVE_TOKENS_DIR"] = str(Path(env.storage_root) / "gdrive_tokens")
+            env = Env.load()
             seed_minimal_db(env)
+            token_path = Path(env.gdrive_tokens_dir) / "darkwood-reverie" / "token.json"
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
             conn = dbm.connect(env)
             try:
                 conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
@@ -58,7 +67,13 @@ class TestTrackJobsWorkerAnalyze(unittest.TestCase):
 
     def test_track_analyze_failure_is_sanitized_and_marks_failed(self) -> None:
         with temp_env() as (_, env):
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = "/secure/gdrive/client_secret.json"
+            os.environ["GDRIVE_TOKENS_DIR"] = str(Path(env.storage_root) / "gdrive_tokens")
+            env = Env.load()
             seed_minimal_db(env)
+            token_path = Path(env.gdrive_tokens_dir) / "darkwood-reverie" / "token.json"
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
             conn = dbm.connect(env)
             try:
                 conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
