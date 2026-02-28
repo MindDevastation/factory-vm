@@ -52,7 +52,7 @@ class TestDbViewerPolicyEndpoints(unittest.TestCase):
 
                 tables = client.get("/v1/db-viewer/tables", headers=auth)
                 self.assertEqual(tables.status_code, 200)
-                names = [row["name"] for row in tables.json()["tables"]]
+                names = [row["table_name"] for row in tables.json()["tables"]]
                 self.assertIn("visible_table", names)
                 self.assertNotIn("channels", names)
 

@@ -39,24 +39,26 @@ class TestDbViewerReadEndpoints(unittest.TestCase):
 
             tables = client.get("/v1/db-viewer/tables", headers=auth)
             self.assertEqual(tables.status_code, 200)
-            names = [t["name"] for t in tables.json()["tables"]]
+            names = [t["table_name"] for t in tables.json()["tables"]]
             self.assertIn("visible_table", names)
             self.assertNotIn("token_store", names)
 
             rows = client.get("/v1/db-viewer/tables/visible_table/rows?page=1&page_size=10&search=alp", headers=auth)
             self.assertEqual(rows.status_code, 200)
             body = rows.json()
+            self.assertEqual(body["table_name"], "visible_table")
             self.assertEqual(body["columns"], ["id", "name"])
-            self.assertEqual(body["total"], 1)
+            self.assertEqual(body["pagination"], {"page": 1, "page_size": 10, "total": 1})
             self.assertEqual(len(body["rows"]), 1)
-            self.assertEqual(body["rows"][0]["name"], "Alpha")
+            self.assertEqual(body["rows"][0], [1, "Alpha"])
 
             only_secret = client.get("/v1/db-viewer/tables/vault_data/rows?page=1&page_size=10&search=q", headers=auth)
             self.assertEqual(only_secret.status_code, 200)
             only_secret_body = only_secret.json()
+            self.assertEqual(only_secret_body["table_name"], "vault_data")
             self.assertEqual(only_secret_body["columns"], [])
             self.assertEqual(only_secret_body["rows"], [])
-            self.assertEqual(only_secret_body["total"], 1)
+            self.assertEqual(only_secret_body["pagination"], {"page": 1, "page_size": 10, "total": 1})
 
             invalid = client.get(
                 "/v1/db-viewer/tables/visible_table/rows?page=0&page_size=11",
@@ -85,7 +87,7 @@ class TestDbViewerReadEndpoints(unittest.TestCase):
             )
             self.assertEqual(rows.status_code, 200)
             body = rows.json()
-            self.assertEqual([row["id"] for row in body["rows"]], [1, 2])
+            self.assertEqual(body["rows"], [[1, "Alpha"], [2, "Beta"]])
 
     def test_forbidden_vs_not_found_privileged_and_non_privileged(self) -> None:
         with temp_env() as (_, _):
