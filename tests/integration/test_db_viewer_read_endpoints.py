@@ -39,7 +39,7 @@ class TestDbViewerReadEndpoints(unittest.TestCase):
 
             tables = client.get("/v1/db-viewer/tables", headers=auth)
             self.assertEqual(tables.status_code, 200)
-            names = [t["name"] for t in tables.json()["tables"]]
+            names = [t["table_name"] for t in tables.json()["tables"]]
             self.assertIn("visible_table", names)
             self.assertNotIn("token_store", names)
 
