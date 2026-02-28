@@ -20,6 +20,7 @@ from services.common import db as dbm
 from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, qa_path
 from services.factory_api.ui_gdrive import run_preflight_for_job
+from services.factory_api.db_viewer import create_db_viewer_router
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.factory_api.oauth_tokens import (
@@ -41,6 +42,7 @@ _render_all_channel_slug: ContextVar[Optional[str]] = ContextVar("render_all_cha
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+app.include_router(create_db_viewer_router(env))
 
 
 def _create_drive_client(_env: Env) -> DriveClient:
