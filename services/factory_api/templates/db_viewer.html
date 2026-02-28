@@ -95,7 +95,11 @@
   }
 
   async function apiGet(url) {
-    const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const full = new URL(url, window.location.origin).toString();
+    const resp = await fetch(full, {
+      credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' },
+    });
     if (!resp.ok) {
       const safeMsg = await readEnvelope(resp);
       throw new Error(safeMsg || ('request failed: ' + resp.status));
