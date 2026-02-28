@@ -187,6 +187,7 @@ def create_db_viewer_router(env: Env) -> APIRouter:
                         return _error(request, code="DBV_INVALID_PARAMS", message="sort_by must be a visible column", status_code=422)
                 else:
                     sort_by = visible_columns[0]
+                    sort_dir = "asc"
 
                 where_parts: list[str] = []
                 params: list[Any] = []
