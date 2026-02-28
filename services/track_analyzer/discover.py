@@ -32,11 +32,14 @@ class DiscoverStats:
 
 
 def discover_channel_tracks(conn: Any, drive: Any, *, gdrive_library_root_id: str, channel_slug: str) -> DiscoverStats:
-    _require_channel_and_canon(conn, channel_slug)
+    channel = _require_channel_and_canon(conn, channel_slug)
+    channel_display_name = str(channel.get("display_name") or "").strip()
+    if not channel_display_name:
+        raise DiscoverError(f"channel display_name is empty: {channel_slug}")
 
-    channel_folder = _find_child_folder(drive, gdrive_library_root_id, channel_slug)
+    channel_folder = _find_child_folder(drive, gdrive_library_root_id, channel_display_name)
     if channel_folder is None:
-        raise DiscoverError(f"channel folder not found: {channel_slug}")
+        raise DiscoverError(f"channel folder not found: {channel_display_name}")
 
     audio_folder = _find_child_folder(drive, channel_folder.id, "Audio")
     if audio_folder is None:
@@ -203,9 +206,12 @@ def _parse_canon_wav_opt(name: str) -> tuple[str, str] | None:
     return m.group(1), sanitize_title(m.group(2), track_id=m.group(1)) or "Track"
 
 
-def _require_channel_and_canon(conn: Any, channel_slug: str) -> None:
-    existing = conn.execute("SELECT 1 FROM channels WHERE slug = ? LIMIT 1", (channel_slug,)).fetchone()
-    if existing is None:
+def _require_channel_and_canon(conn: Any, channel_slug: str) -> dict[str, Any]:
+    channel = conn.execute(
+        "SELECT slug, display_name FROM channels WHERE slug = ? LIMIT 1",
+        (channel_slug,),
+    ).fetchone()
+    if channel is None:
         raise DiscoverError("channel not found")
 
     in_canon_channels = conn.execute(
@@ -216,6 +222,8 @@ def _require_channel_and_canon(conn: Any, channel_slug: str) -> None:
     ).fetchone()
     if in_canon_channels is None or in_canon_thresholds is None:
         raise DiscoverError("CHANNEL_NOT_IN_CANON")
+
+    return dict(channel)
 
 
 def _find_child_folder(drive: Any, parent_id: str, name: str) -> Any | None:
