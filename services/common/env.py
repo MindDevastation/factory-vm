@@ -48,11 +48,15 @@ class Env:
     max_upload_attempts: int
 
     worker_sleep_sec: int
+    db_viewer_policy_path: str = ""
+    db_viewer_privileged_users: str = ""
 
     @staticmethod
     def load() -> "Env":
         return Env(
             db_path=os.environ.get("FACTORY_DB_PATH", "data/factory.sqlite3"),
+            db_viewer_policy_path=os.environ.get("DB_VIEWER_POLICY_PATH", ""),
+            db_viewer_privileged_users=os.environ.get("DB_VIEWER_PRIVILEGED_USERS", ""),
             storage_root=os.environ.get("FACTORY_STORAGE_ROOT", "storage"),
             bind=os.environ.get("FACTORY_BIND", "0.0.0.0"),
             port=int(os.environ.get("FACTORY_PORT", "8080")),

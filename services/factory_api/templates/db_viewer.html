@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Database Viewer</h1>
+<p><a href="/">← Back to Dashboard</a></p>
+
+<div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+  <div style="grid-column: 1 / -1;">
+    <label for="table-select">Table</label>
+    <select id="table-select" style="width: 100%; margin-top: 4px;">
+      <option value="">Loading tables...</option>
+    </select>
+  </div>
+  <div>
+    <label for="search-input">Search</label>
+    <input id="search-input" type="text" maxlength="50" placeholder="Search text columns" style="width: 100%; margin-top: 4px;" />
+  </div>
+  <div>
+    <label for="page-size-select">Page size</label>
+    <select id="page-size-select" style="width: 100%; margin-top: 4px;">
+      <option value="10">10</option>
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+    </select>
+  </div>
+</div>
+
+<p id="dbv-error" style="color: #b91c1c;"></p>
+
+<table id="dbv-table">
+  <thead>
+    <tr id="dbv-header-row">
+      <th class="muted">Select a table</th>
+    </tr>
+  </thead>
+  <tbody id="dbv-body">
+    <tr><td class="muted">No data</td></tr>
+  </tbody>
+</table>
+
+<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px; gap: 12px;">
+  <button type="button" id="dbv-prev-btn">Prev</button>
+  <span class="muted" id="dbv-page-note">Page 1</span>
+  <button type="button" id="dbv-next-btn">Next</button>
+</div>
+
+<script>
+(function () {
+  const tableSelect = document.getElementById('table-select');
+  const searchInput = document.getElementById('search-input');
+  const pageSizeSelect = document.getElementById('page-size-select');
+  const errorNode = document.getElementById('dbv-error');
+  const headerRow = document.getElementById('dbv-header-row');
+  const bodyNode = document.getElementById('dbv-body');
+  const prevBtn = document.getElementById('dbv-prev-btn');
+  const nextBtn = document.getElementById('dbv-next-btn');
+  const pageNote = document.getElementById('dbv-page-note');
+
+  const state = {
+    page: 1,
+    pageSize: 50,
+    search: '',
+    sortBy: '',
+    sortDir: 'asc',
+    total: 0,
+    columns: [],
+  };
+
+  function esc(value) {
+    return String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  function setError(msg) {
+    errorNode.textContent = msg || '';
+  }
+
+  async function readEnvelope(resp) {
+    const text = await resp.text();
+    if (!text) {
+      return '';
+    }
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && parsed.error && typeof parsed.error.message === 'string') {
+        return parsed.error.message;
+      }
+    } catch (_) {
+      // use fallback below
+    }
+    return text;
+  }
+
+  async function apiGet(url) {
+    const full = new URL(url, window.location.origin).toString();
+    const resp = await fetch(full, {
+      credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' },
+    });
+    if (!resp.ok) {
+      const safeMsg = await readEnvelope(resp);
+      throw new Error(safeMsg || ('request failed: ' + resp.status));
+    }
+    return resp.json();
+  }
+
+  function renderHeader() {
+    if (!state.columns.length) {
+      headerRow.innerHTML = '<th class="muted">No visible columns</th>';
+      return;
+    }
+
+    headerRow.innerHTML = state.columns.map((col) => {
+      let marker = '';
+      if (state.sortBy === col) {
+        marker = state.sortDir === 'asc' ? ' ▲' : ' ▼';
+      }
+      return '<th><button type="button" data-col="' + esc(col) + '" style="all: unset; cursor: pointer; color: #1d4ed8;">' + esc(col + marker) + '</button></th>';
+    }).join('');
+  }
+
+  function renderRows(rows) {
+    if (!rows.length) {
+      bodyNode.innerHTML = '<tr><td colspan="' + Math.max(1, state.columns.length) + '" class="muted">No rows found.</td></tr>';
+      return;
+    }
+
+    bodyNode.innerHTML = rows.map((row) => {
+      const tds = state.columns.map((col) => '<td>' + esc(row[col] == null ? '' : row[col]) + '</td>').join('');
+      return '<tr>' + tds + '</tr>';
+    }).join('');
+  }
+
+  function renderPager() {
+    const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+    pageNote.textContent = 'Page ' + state.page + ' / ' + totalPages + ' · Total ' + state.total;
+    prevBtn.disabled = state.page <= 1;
+    nextBtn.disabled = state.page >= totalPages;
+  }
+
+  async function loadTables() {
+    setError('');
+    const data = await apiGet('/v1/db-viewer/tables');
+    const tables = Array.isArray(data.tables) ? data.tables : [];
+    if (!tables.length) {
+      tableSelect.innerHTML = '<option value="">No visible tables</option>';
+      bodyNode.innerHTML = '<tr><td class="muted">No tables available.</td></tr>';
+      headerRow.innerHTML = '<th class="muted">No visible columns</th>';
+      return;
+    }
+    tableSelect.innerHTML = tables.map((item) => {
+      const label = (item.human_name || item.name) + ' (' + item.name + ')';
+      return '<option value="' + esc(item.name) + '">' + esc(label) + '</option>';
+    }).join('');
+    state.page = 1;
+    await loadRows();
+  }
+
+  async function loadRows() {
+    const table = tableSelect.value;
+    if (!table) {
+      return;
+    }
+    setError('');
+    const params = new URLSearchParams();
+    params.set('page', String(state.page));
+    params.set('page_size', String(state.pageSize));
+    params.set('sort_dir', state.sortDir);
+    if (state.search) {
+      params.set('search', state.search);
+    }
+    if (state.sortBy) {
+      params.set('sort_by', state.sortBy);
+    }
+
+    try {
+      const data = await apiGet('/v1/db-viewer/tables/' + encodeURIComponent(table) + '/rows?' + params.toString());
+      state.columns = Array.isArray(data.columns) ? data.columns : [];
+      if (!state.sortBy && state.columns.length) {
+        state.sortBy = state.columns[0];
+      }
+      state.total = Number(data.total || 0);
+      renderHeader();
+      renderRows(Array.isArray(data.rows) ? data.rows : []);
+      renderPager();
+    } catch (err) {
+      headerRow.innerHTML = '<th class="muted">Error</th>';
+      bodyNode.innerHTML = '<tr><td class="muted">Unable to load rows.</td></tr>';
+      state.total = 0;
+      renderPager();
+      setError(err instanceof Error ? err.message : 'Unable to load data');
+    }
+  }
+
+  tableSelect.addEventListener('change', async function () {
+    state.page = 1;
+    state.sortBy = '';
+    state.sortDir = 'asc';
+    await loadRows();
+  });
+
+  searchInput.addEventListener('change', async function () {
+    state.search = searchInput.value.trim();
+    state.page = 1;
+    await loadRows();
+  });
+
+  pageSizeSelect.addEventListener('change', async function () {
+    const nextSize = Number(pageSizeSelect.value);
+    if (![10, 50, 100].includes(nextSize)) {
+      return;
+    }
+    state.pageSize = nextSize;
+    state.page = 1;
+    await loadRows();
+  });
+
+  prevBtn.addEventListener('click', async function () {
+    if (state.page <= 1) {
+      return;
+    }
+    state.page -= 1;
+    await loadRows();
+  });
+
+  nextBtn.addEventListener('click', async function () {
+    const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+    if (state.page >= totalPages) {
+      return;
+    }
+    state.page += 1;
+    await loadRows();
+  });
+
+  headerRow.addEventListener('click', async function (event) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const col = target.getAttribute('data-col');
+    if (!col) {
+      return;
+    }
+    if (state.sortBy === col) {
+      state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sortBy = col;
+      state.sortDir = 'asc';
+    }
+    state.page = 1;
+    await loadRows();
+  });
+
+  loadTables().catch((err) => {
+    setError(err instanceof Error ? err.message : 'Unable to load tables');
+    tableSelect.innerHTML = '<option value="">Failed to load</option>';
+  });
+})();
+</script>
+{% endblock %}
