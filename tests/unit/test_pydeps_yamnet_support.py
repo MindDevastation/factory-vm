@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from services.common.pydeps import ensure_py_deps_on_sys_path, get_py_deps_dir
+from tests._pydeps_helpers import make_persistent_pydeps_dir, write_dummy_tf_modules
 from services.workers.yamnet_support import assert_yamnet_available
 from tests._helpers import temp_env
 
@@ -17,20 +18,18 @@ class TestPydepsYamnetSupport(unittest.TestCase):
         self.assertEqual(out, str(Path("data") / "pydeps"))
 
     def test_assert_yamnet_available_with_dummy_modules(self) -> None:
+        pydeps = make_persistent_pydeps_dir()
+        write_dummy_tf_modules(pydeps)
+
         with temp_env() as (_, env):
-            pydeps = Path(env.storage_root) / "shared_pydeps"
-            os.environ["FACTORY_PY_DEPS_DIR"] = str(pydeps)
-            (pydeps / "tensorflow").mkdir(parents=True, exist_ok=True)
-            (pydeps / "tensorflow_hub").mkdir(parents=True, exist_ok=True)
-            (pydeps / "tensorflow" / "__init__.py").write_text('__version__ = "0.0-test"\n', encoding="utf-8")
-            (pydeps / "tensorflow_hub" / "__init__.py").write_text("", encoding="utf-8")
+            os.environ["FACTORY_PY_DEPS_DIR"] = pydeps
             ensure_py_deps_on_sys_path(os.environ)
             importlib.invalidate_caches()
             sys.modules.pop("tensorflow", None)
             sys.modules.pop("tensorflow_hub", None)
 
             target = assert_yamnet_available(env)
-            self.assertEqual(target, str(pydeps))
+            self.assertEqual(target, pydeps)
 
 
 if __name__ == "__main__":
