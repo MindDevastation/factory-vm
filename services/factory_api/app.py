@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import os
 import json
 import logging
 import re
@@ -20,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from services.common.env import Env
 from services.common import db as dbm
+from services.common.pydeps import ensure_py_deps_on_sys_path
 from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, qa_path
 from services.factory_api.ui_gdrive import run_preflight_for_job
@@ -40,6 +42,7 @@ import yaml
 
 
 env = Env.load()
+ensure_py_deps_on_sys_path(os.environ)
 app = FastAPI(title="Factory VM API", version="0.0.1")
 logger = logging.getLogger(__name__)
 _render_all_channel_slug: ContextVar[Optional[str]] = ContextVar("render_all_channel_slug", default=None)
@@ -237,46 +240,79 @@ def _token_status_for(channel_slug: str, base_dir: str) -> tuple[bool, str | Non
     return True, str(token_path.stat().st_mtime)
 
 
-def _yamnet_is_installed() -> bool:
+def _yamnet_import_status() -> dict[str, Any]:
+    target_dir = ensure_py_deps_on_sys_path(os.environ)
+    import_tf = False
+    import_hub = False
+    error: str | None = None
     try:
         import tensorflow  # noqa: F401
+
+        import_tf = True
+    except Exception as exc:
+        error = str(exc)
+    try:
         import tensorflow_hub  # noqa: F401
-    except Exception:
-        return False
-    return True
+
+        import_hub = True
+    except Exception as exc:
+        if not error:
+            error = str(exc)
+    return {
+        "installed": import_tf and import_hub,
+        "target_dir": target_dir,
+        "import_tf": import_tf,
+        "import_hub": import_hub,
+        "error": error,
+    }
 
 
-def _run_yamnet_installer() -> tuple[bool, str]:
+def _run_yamnet_installer(*, target_dir: str) -> tuple[bool, str]:
     repo_root = Path(__file__).resolve().parents[2]
     installer_path = repo_root / "scripts" / "install_yamnet.py"
-    cmd = [sys.executable, str(installer_path)]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    cmd = [sys.executable, str(installer_path), "--target", target_dir]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
+    combined = "\n".join(filter(None, [proc.stdout, proc.stderr])).strip()
+    output = combined or "yamnet dependencies installed"
+    tail_lines = output.splitlines()[-40:]
+    tail = "\n".join(tail_lines)
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "installer failed").strip()
-        return False, detail[:400]
-    detail = (proc.stdout or "").strip() or "yamnet dependencies installed"
-    return True, detail[:400]
+        return False, tail[:4000]
+    return True, tail[:4000]
+
+
+@app.get("/v1/admin/yamnet/status")
+def api_admin_yamnet_status(_: bool = Depends(require_basic_auth(env))):
+    return _yamnet_import_status()
 
 
 @app.post("/v1/admin/yamnet/install")
 def api_admin_install_yamnet(_: bool = Depends(require_basic_auth(env))):
-    if _yamnet_is_installed():
-        return {"ok": True, "status": "already_installed"}
+    status = _yamnet_import_status()
+    if status["installed"]:
+        return {"ok": True, "target_dir": status["target_dir"], "installed": True, "output_tail": "already installed"}
 
+    target_dir = str(status["target_dir"])
     try:
-        ok, message = _run_yamnet_installer()
+        ok, output_tail = _run_yamnet_installer(target_dir=target_dir)
     except subprocess.TimeoutExpired:
-        logger.warning("yamnet_install timed_out")
-        return {"ok": False, "message": "installer timed out"}
+        logger.warning("yamnet_install timed_out target_dir=%s", target_dir)
+        return {"ok": False, "target_dir": target_dir, "installed": False, "output_tail": "installer timed out"}
     except Exception:
-        logger.exception("yamnet_install failed")
-        return {"ok": False, "message": "installer failed"}
+        logger.exception("yamnet_install failed target_dir=%s", target_dir)
+        return {"ok": False, "target_dir": target_dir, "installed": False, "output_tail": "installer failed"}
 
     if not ok:
-        logger.warning("yamnet_install failed detail=%s", message)
-        return {"ok": False, "message": message or "installer failed"}
+        logger.warning("yamnet_install failed target_dir=%s detail=%s", target_dir, output_tail)
+        return {"ok": False, "target_dir": target_dir, "installed": False, "output_tail": output_tail or "installer failed"}
 
-    return {"ok": True, "status": "installed", "message": message}
+    status = _yamnet_import_status()
+    return {
+        "ok": True,
+        "target_dir": target_dir,
+        "installed": bool(status["installed"]),
+        "output_tail": output_tail,
+    }
 
 
 @app.post("/v1/oauth/gdrive/{channel_slug}/start")
