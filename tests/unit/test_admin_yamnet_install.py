@@ -4,7 +4,6 @@ import importlib
 import os
 import sys
 import unittest
-from pathlib import Path
 from unittest import mock
 
 from fastapi.testclient import TestClient
@@ -12,6 +11,7 @@ from fastapi.testclient import TestClient
 from services.common.env import Env
 from services.common.pydeps import ensure_py_deps_on_sys_path
 from tests._helpers import basic_auth_header, temp_env
+from tests._pydeps_helpers import make_persistent_pydeps_dir, write_dummy_tf_modules
 
 
 class TestAdminYamnetInstall(unittest.TestCase):
@@ -54,13 +54,11 @@ class TestAdminYamnetInstall(unittest.TestCase):
             )
 
     def test_status_uses_shared_pydeps_with_dummy_modules(self) -> None:
+        pydeps = make_persistent_pydeps_dir()
+        write_dummy_tf_modules(pydeps)
+
         with temp_env() as (_, env):
-            pydeps = Path(env.storage_root) / "pydeps_test"
-            os.environ["FACTORY_PY_DEPS_DIR"] = str(pydeps)
-            (pydeps / "tensorflow").mkdir(parents=True, exist_ok=True)
-            (pydeps / "tensorflow_hub").mkdir(parents=True, exist_ok=True)
-            (pydeps / "tensorflow" / "__init__.py").write_text('__version__ = "0.0-test"\n', encoding="utf-8")
-            (pydeps / "tensorflow_hub" / "__init__.py").write_text("", encoding="utf-8")
+            os.environ["FACTORY_PY_DEPS_DIR"] = pydeps
             ensure_py_deps_on_sys_path(os.environ)
             importlib.invalidate_caches()
             sys.modules.pop("tensorflow", None)
@@ -78,7 +76,7 @@ class TestAdminYamnetInstall(unittest.TestCase):
             self.assertEqual(payload["installed"], True)
             self.assertEqual(payload["import_tf"], True)
             self.assertEqual(payload["import_hub"], True)
-            self.assertEqual(payload["target_dir"], str(pydeps))
+            self.assertEqual(payload["target_dir"], pydeps)
 
 
 if __name__ == "__main__":
