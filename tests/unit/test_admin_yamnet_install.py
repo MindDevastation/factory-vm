@@ -78,6 +78,18 @@ class TestAdminYamnetInstall(unittest.TestCase):
             self.assertEqual(payload["import_hub"], True)
             self.assertEqual(payload["target_dir"], pydeps)
 
+    def test_run_yamnet_installer_returns_stderr_tail_on_failure(self) -> None:
+        mod = importlib.import_module("services.factory_api.app")
+        mod = importlib.reload(mod)
+
+        with mock.patch("services.factory_api.app.subprocess.run", return_value=mock.Mock(returncode=1, stdout="line1", stderr="line2")):
+            ok, tail = mod._run_yamnet_installer(target_dir="data/pydeps")
+
+        self.assertFalse(ok)
+        self.assertIn("line1", tail)
+        self.assertIn("line2", tail)
+
+
 
 if __name__ == "__main__":
     unittest.main()
