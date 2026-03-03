@@ -7,12 +7,17 @@ from pathlib import Path
 from services.common import db as dbm
 from services.common.env import Env
 from services.common.logging_setup import get_logger
+from services.common.pydeps import ensure_py_deps_on_sys_path
 from services.factory_api.oauth_tokens import oauth_token_path
 from services.integrations.gdrive import DriveClient
+from services.track_analyzer import track_jobs_db as tjdb
+from services.workers.yamnet_support import assert_yamnet_available
+
+
+ensure_py_deps_on_sys_path(os.environ)
+
 from services.track_analyzer.analyze import analyze_tracks
 from services.track_analyzer.discover import discover_channel_tracks
-from services.track_analyzer import track_jobs_db as tjdb
-
 
 log = get_logger("track_jobs")
 
@@ -110,6 +115,7 @@ def _run_track_analyze(conn, *, env: Env, job: dict, job_id: int, channel_slug: 
         level="INFO",
         message=f"analyze started channel={channel_slug} scope={scope} force={force} max_tracks={max_tracks}",
     )
+    assert_yamnet_available(env)
 
     drive = _build_track_catalog_drive_client(env=env, channel_slug=channel_slug)
     stats = analyze_tracks(

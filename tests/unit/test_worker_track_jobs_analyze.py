@@ -42,7 +42,7 @@ class TestTrackJobsWorkerAnalyze(unittest.TestCase):
             finally:
                 conn.close()
 
-            with mock.patch("services.workers.track_jobs.DriveClient"), mock.patch(
+            with mock.patch("services.workers.track_jobs.assert_yamnet_available", return_value="data/pydeps"), mock.patch("services.workers.track_jobs.DriveClient"), mock.patch(
                 "services.workers.track_jobs.analyze_tracks",
                 return_value=type("S", (), {"selected": 2, "processed": 2, "failed": 0})(),
             ) as analyze_mock:
@@ -88,7 +88,7 @@ class TestTrackJobsWorkerAnalyze(unittest.TestCase):
             finally:
                 conn.close()
 
-            with mock.patch("services.workers.track_jobs.DriveClient"), mock.patch(
+            with mock.patch("services.workers.track_jobs.assert_yamnet_available", return_value="data/pydeps"), mock.patch("services.workers.track_jobs.DriveClient"), mock.patch(
                 "services.workers.track_jobs.analyze_tracks",
                 side_effect=RuntimeError(f"failed with token {env.basic_pass}"),
             ):
@@ -133,11 +133,14 @@ class TestTrackJobsWorkerAnalyze(unittest.TestCase):
             finally:
                 conn.close()
 
-            with mock.patch("services.workers.track_jobs.DriveClient"), mock.patch(
-                "services.workers.track_jobs.analyze_tracks",
+            with mock.patch(
+                "services.workers.track_jobs.assert_yamnet_available",
                 side_effect=RuntimeError("YAMNET_NOT_INSTALLED: install via UI button and retry"),
-            ):
+            ), mock.patch("services.workers.track_jobs.DriveClient"), mock.patch(
+                "services.workers.track_jobs.analyze_tracks",
+            ) as analyze_mock:
                 track_jobs_cycle(env=env, worker_id="t-track-jobs-analyze-yamnet-missing")
+                analyze_mock.assert_not_called()
 
             conn = dbm.connect(env)
             try:
