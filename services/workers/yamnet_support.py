@@ -30,7 +30,7 @@ def assert_yamnet_available(env) -> str:
             f"{pkg_resources_hint} "
             f"python_executable={sys.executable}; "
             f"python_version={sys.version}; "
-            "install_note=requirements-yamnet.txt includes tensorflow-io for TF 2.16.1 resampling; "
+            "install_note=requirements-yamnet.txt includes TF/Hub deps; resampling uses tf.signal, tensorflow-io if available, else numpy fallback; "
             "manual_fix=python -m pip install -r requirements-yamnet.txt --upgrade --target "
             f"{resolved_target}; then rerun Install Yamnet"
         ) from exc

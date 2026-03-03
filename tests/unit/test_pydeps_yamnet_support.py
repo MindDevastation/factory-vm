@@ -61,7 +61,7 @@ class TestPydepsYamnetSupport(unittest.TestCase):
             self.assertIn("python_executable=", msg)
 
 
-    def test_assert_yamnet_available_includes_tensorflow_io_guidance_when_tf_missing(self) -> None:
+    def test_assert_yamnet_available_includes_resample_guidance_when_tf_missing(self) -> None:
         pydeps = make_persistent_pydeps_dir()
 
         with temp_env() as (_, env):
@@ -83,7 +83,7 @@ class TestPydepsYamnetSupport(unittest.TestCase):
                     assert_yamnet_available(env)
 
             msg = str(ctx.exception)
-            self.assertIn("tensorflow-io", msg)
+            self.assertIn("resampling uses tf.signal, tensorflow-io if available, else numpy fallback", msg)
             self.assertIn("Install Yamnet", msg)
 
 

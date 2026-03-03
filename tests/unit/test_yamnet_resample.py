@@ -31,6 +31,10 @@ class _FakeTF(types.SimpleNamespace):
             return int(value)
         return value
 
+    @staticmethod
+    def convert_to_tensor(value):
+        return value
+
 
 class YamnetResampleTests(unittest.TestCase):
     def _load_module(self):
@@ -71,20 +75,31 @@ class YamnetResampleTests(unittest.TestCase):
         self.assertEqual(called["args"][1:], (48000, 16000))
         self.assertEqual(out, [9.0])
 
-    def test_raises_clear_error_when_no_resample_support(self) -> None:
+    def test_uses_numpy_fallback_when_tf_signal_and_tfio_missing(self) -> None:
+        fake_tf = _FakeTF(signal_resample=None, version="2.16.1")
+        with mock.patch.dict(sys.modules, {"tensorflow": fake_tf}, clear=False):
+            mod = self._load_module()
+            with self.assertLogs("services.track_analyzer.yamnet_resample", level="INFO") as logs:
+                with mock.patch.object(mod, "_tensorflow_io_audio_module", return_value=None):
+                    out = mod.resample_1d_tf([1.0, 2.0, 3.0, 4.0], 44100, 16000)
+
+        expected_len = round(4 * 16000 / 44100)
+        self.assertEqual(len(out), expected_len)
+        self.assertIn("using numpy resample fallback", "\n".join(logs.output))
+
+    def test_raises_clear_error_when_numpy_fallback_fails(self) -> None:
         fake_tf = _FakeTF(signal_resample=None, version="2.16.1")
         with mock.patch.dict(sys.modules, {"tensorflow": fake_tf}, clear=False):
             mod = self._load_module()
             with mock.patch.object(mod, "_tensorflow_io_audio_module", return_value=None):
-                with self.assertRaises(RuntimeError) as ctx:
-                    mod.resample_1d_tf([1.0, 2.0, 3.0, 4.0], 44100, 16000)
+                with mock.patch.object(mod.np, "interp", side_effect=RuntimeError("no numpy")):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        mod.resample_1d_tf([1.0, 2.0, 3.0, 4.0], 44100, 16000)
 
         msg = str(ctx.exception)
         self.assertIn("RESAMPLE_UNSUPPORTED_TF", msg)
         self.assertIn("tensorflow==2.16.1", msg)
-        self.assertIn("tensorflow-io", msg)
-        self.assertIn("requirements-yamnet.txt", msg)
-        self.assertIn("Install Yamnet button", msg)
+        self.assertIn("numpy fallback failed", msg)
 
 
 if __name__ == "__main__":
