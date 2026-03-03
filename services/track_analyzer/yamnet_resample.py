@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import logging
 from typing import Any
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 def _tensorflow_io_audio_module() -> Any | None:
@@ -46,10 +51,23 @@ def resample_1d_tf(x: Any, src_rate: int, dst_rate: int) -> Any:
     if tfio_audio is not None and hasattr(tfio_audio, "resample"):
         return tf.cast(tfio_audio.resample(x, rate_in=src, rate_out=dst), tf.float32)
 
-    raise RuntimeError(
-        "RESAMPLE_UNSUPPORTED_TF: tensorflow.signal.resample is unavailable in "
-        f"tensorflow=={getattr(tf, '__version__', 'unknown')}. "
-        "Install tensorflow-io via requirements-yamnet.txt (Install Yamnet button) "
-        "for tensorflow_io.audio.resample, or pin a TensorFlow build that includes "
-        "tf.signal.resample."
-    )
+    logger.info("using numpy resample fallback")
+    try:
+        x_np = np.asarray(x, dtype=np.float32).reshape(-1)
+        new_len = int(round(len(x_np) * float(dst) / float(src)))
+        if new_len <= 0:
+            new_len = 1
+        xp = np.arange(len(x_np), dtype=np.float32)
+        x_new = np.interp(
+            np.linspace(0, len(x_np) - 1, new_len, dtype=np.float32),
+            xp,
+            x_np,
+        ).astype(np.float32)
+    except Exception as exc:
+        raise RuntimeError(
+            "RESAMPLE_UNSUPPORTED_TF: tensorflow.signal.resample and tensorflow_io.audio.resample "
+            f"are unavailable in tensorflow=={getattr(tf, '__version__', 'unknown')}, and numpy fallback failed: "
+            f"{exc.__class__.__name__}: {exc}"
+        ) from exc
+
+    return tf.convert_to_tensor(x_new)
