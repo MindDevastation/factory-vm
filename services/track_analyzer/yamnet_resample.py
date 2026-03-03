@@ -49,6 +49,7 @@ def resample_1d_tf(x: Any, src_rate: int, dst_rate: int) -> Any:
     raise RuntimeError(
         "RESAMPLE_UNSUPPORTED_TF: tensorflow.signal.resample is unavailable in "
         f"tensorflow=={getattr(tf, '__version__', 'unknown')}. "
-        "Install tensorflow-io (for tensorflow_io.audio.resample) or pin a "
-        "TensorFlow build that includes tf.signal.resample."
+        "Install tensorflow-io via requirements-yamnet.txt (Install Yamnet button) "
+        "for tensorflow_io.audio.resample, or pin a TensorFlow build that includes "
+        "tf.signal.resample."
     )

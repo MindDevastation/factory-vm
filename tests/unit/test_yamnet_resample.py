@@ -83,6 +83,8 @@ class YamnetResampleTests(unittest.TestCase):
         self.assertIn("RESAMPLE_UNSUPPORTED_TF", msg)
         self.assertIn("tensorflow==2.16.1", msg)
         self.assertIn("tensorflow-io", msg)
+        self.assertIn("requirements-yamnet.txt", msg)
+        self.assertIn("Install Yamnet button", msg)
 
 
 if __name__ == "__main__":
