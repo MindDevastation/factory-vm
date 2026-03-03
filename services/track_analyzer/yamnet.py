@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from services.track_analyzer.yamnet_resample import resample_1d_tf
+
 _IMPORT_ERROR: Exception | None = None
 try:
     import tensorflow as tf  # type: ignore
@@ -63,10 +65,7 @@ def _resample_to_16k_mono(waveform: Any, sample_rate: Any) -> Any:
     if int(sample_rate) == 16000:
         return waveform
 
-    wav_len = tf.shape(waveform)[0]
-    target_len = tf.cast(tf.math.round(tf.cast(wav_len, tf.float32) * (16000.0 / tf.cast(sample_rate, tf.float32))), tf.int32)
-    resampled = tf.signal.resample(waveform, target_len)
-    return tf.cast(resampled, tf.float32)
+    return resample_1d_tf(waveform, int(sample_rate), 16000)
 
 
 def analyze_with_yamnet(wav_path: str | Path, *, top_k: int = 5) -> dict[str, Any]:
