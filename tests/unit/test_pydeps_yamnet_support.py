@@ -56,8 +56,35 @@ class TestPydepsYamnetSupport(unittest.TestCase):
 
             msg = str(ctx.exception)
             self.assertIn("setuptools<71", msg)
+            self.assertIn("now included in requirements-yamnet.txt", msg)
             self.assertIn("target_dir=", msg)
             self.assertIn("python_executable=", msg)
+
+
+    def test_assert_yamnet_available_includes_tensorflow_io_guidance_when_tf_missing(self) -> None:
+        pydeps = make_persistent_pydeps_dir()
+
+        with temp_env() as (_, env):
+            os.environ["FACTORY_PY_DEPS_DIR"] = pydeps
+            ensure_py_deps_on_sys_path(os.environ)
+            importlib.invalidate_caches()
+            sys.modules.pop("tensorflow", None)
+            sys.modules.pop("tensorflow_hub", None)
+
+            original_import = __import__
+
+            def side_effect(name, *args, **kwargs):
+                if name == "tensorflow":
+                    raise ModuleNotFoundError("tensorflow")
+                return original_import(name, *args, **kwargs)
+
+            with mock.patch("builtins.__import__", side_effect=side_effect):
+                with self.assertRaisesRegex(YamnetDepsUnavailableError, "requirements-yamnet.txt") as ctx:
+                    assert_yamnet_available(env)
+
+            msg = str(ctx.exception)
+            self.assertIn("tensorflow-io", msg)
+            self.assertIn("Install Yamnet", msg)
 
 
 
