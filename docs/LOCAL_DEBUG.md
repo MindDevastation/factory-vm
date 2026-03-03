@@ -52,6 +52,11 @@ Dashboard: http://127.0.0.1:8080/
 - Uploader uses mock backend (no YouTube upload). The "url" becomes file://... for debugging.
 - You approve/reject via Dashboard API.
 
+### Shared Yamnet deps in multi-process mode
+- Use `FACTORY_PY_DEPS_DIR` (default: `./data/pydeps`) so API and workers share optional Python deps.
+- The dashboard "Install Yamnet" action installs `requirements-yamnet.txt` into this shared directory (`pip --target ...`).
+- Keep the same `FACTORY_PY_DEPS_DIR` value in every process environment.
+
 
 ## Быстрые команды
 
