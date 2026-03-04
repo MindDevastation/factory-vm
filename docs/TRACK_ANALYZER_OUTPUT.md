@@ -44,16 +44,25 @@ If texture analysis raises an exception, payload becomes:
 - `yamnet_agg.singing_prob`: score for `Singing` class (or `0` when absent)
 - `yamnet_agg.voice_labels_used`: labels that contributed to `voice_prob`
 - `yamnet_agg.speech_labels_used`: labels that contributed to `speech_prob`
+- `yamnet_agg.source`: `full_vector` when full per-label scores are available, otherwise `top_classes`
+- `yamnet_agg.top_classes_count`: number of entries in `yamnet_top_classes` used for readability
+- `yamnet_agg.total_labels_count`: present when `source = full_vector`
+
+`yamnet_top_classes` remains backward compatible and now stores top `YAMNET_TOP_N = 20` labels by default.
+Legacy `yamnet_probabilities` and `yamnet_tags` are unchanged.
 
 Automation helpers:
 
 - `voice_flag` (`bool`)
 - `voice_flag_reason` (`str`) with explicit threshold explanation
+- `speech_flag` (`bool`)
+- `speech_flag_reason` (`str`) with explicit threshold explanation
 
 Current thresholds are constants in analyzer code:
 
 - `VOICE_MIN_PROB = 0.20`
 - `SINGING_MIN_PROB = 0.08`
+- `SPEECH_MIN_PROB = 0.10`
 
 ## Prohibited cues structured output
 
