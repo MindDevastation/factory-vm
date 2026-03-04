@@ -78,6 +78,37 @@ class TestAdminYamnetInstall(unittest.TestCase):
             self.assertEqual(payload["import_hub"], True)
             self.assertEqual(payload["target_dir"], pydeps)
 
+    def test_yamnet_error_guidance_mentions_numpy_pin_for_abi_mismatch(self) -> None:
+        mod = importlib.import_module("services.factory_api.app")
+        mod = importlib.reload(mod)
+
+        msg = "A module compiled using NumPy 1.x cannot be run in NumPy 2.4.2"
+        out = mod._yamnet_error_with_guidance(msg)
+        self.assertIsNotNone(out)
+        self.assertIn("numpy<2", out)
+
+    def test_status_includes_numpy_pin_guidance_when_tf_import_fails_with_umath_error(self) -> None:
+        with temp_env() as (_, env):
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            original_import = __import__
+
+            def side_effect(name, *args, **kwargs):
+                if name == "tensorflow":
+                    raise ImportError("numpy.core.umath failed to import")
+                return original_import(name, *args, **kwargs)
+
+            with mock.patch("builtins.__import__", side_effect=side_effect):
+                response = client.get("/v1/admin/yamnet/status", headers=auth)
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertFalse(payload["installed"])
+            self.assertIn("numpy<2", payload["error"])
+
     def test_run_yamnet_installer_returns_stderr_tail_on_failure(self) -> None:
         mod = importlib.import_module("services.factory_api.app")
         mod = importlib.reload(mod)

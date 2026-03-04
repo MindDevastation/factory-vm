@@ -17,3 +17,6 @@ storage/logs/
 # env secrets
 deploy/env
 .env
+# local QA artifacts (may include env-derived values)
+.qa_*
+
