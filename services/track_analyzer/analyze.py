@@ -35,6 +35,9 @@ _TRUE_PEAK_RE = re.compile(r"(?:true\s+peak|peak)\s*[:=]\s*(-?\d+(?:\.\d+)?)\s*d
 VOICE_MIN_PROB = 0.2
 SINGING_MIN_PROB = 0.08
 DSP_SCORE_VERSION = "v1"
+SILENCE_RMS_THRESHOLD = 0.01
+SILENCE_GAP_MIN_MS = 1000
+SILENCE_IGNORE_EDGE_MS = 2000
 
 
 def analyze_tracks(
@@ -291,6 +294,11 @@ def _analyze_prohibited_cues(
         "checks_run": checks_run,
         "flags": flags,
         "metrics": metrics,
+        "thresholds": {
+            "silence_rms_threshold": float(SILENCE_RMS_THRESHOLD),
+            "silence_gap_min_ms": float(SILENCE_GAP_MIN_MS),
+            "silence_ignore_edge_ms": float(SILENCE_IGNORE_EDGE_MS),
+        },
     }
 
 
@@ -327,6 +335,8 @@ def _aggregate_yamnet_probabilities(yamnet_payload: dict[str, Any]) -> dict[str,
         "singing_prob": singing_prob,
         "voice_labels_used": voice_labels_used,
         "speech_labels_used": speech_labels_used,
+        "source": "top_classes",
+        "top_classes_count": len(top_classes),
     }
 
 
@@ -355,7 +365,8 @@ def _derive_dsp_score(
     stability_component = float(np.clip(1.0 - (rms_std / 0.12), 0.0, 1.0))
     spikes_component = 0.4 if spikes_found else 1.0
     clipping_component = 0.2 if bool(flags.get("clipping_detected")) else 1.0
-    silence_component = 0.5 if bool(flags.get("silence_gaps")) else 1.0
+    silence_max_gap_ms = float(metrics.get("silence_max_gap_ms") or 0.0)
+    silence_component = _silence_component_from_gap(silence_max_gap_ms)
 
     components = {
         "headroom_component": headroom_component,
@@ -420,8 +431,15 @@ def _detect_silence_gap(waveform: np.ndarray, sample_rate: int) -> tuple[bool, f
     rms = _frame_rms(waveform, frame_size, hop_size)
     if rms.size == 0:
         return False, 0.0
-    silence_threshold = 0.01
+    silence_threshold = float(SILENCE_RMS_THRESHOLD)
     silent = rms < silence_threshold
+
+    edge_frames = int(SILENCE_IGNORE_EDGE_MS / 1000.0 / (hop_size / sample_rate))
+    if edge_frames > 0:
+        active = np.ones(silent.shape, dtype=bool)
+        active[: min(edge_frames, active.size)] = False
+        active[max(0, active.size - edge_frames) :] = False
+        silent = silent & active
     max_run = 0
     run = 0
     for flag in silent:
@@ -431,7 +449,22 @@ def _detect_silence_gap(waveform: np.ndarray, sample_rate: int) -> tuple[bool, f
         else:
             run = 0
     max_gap_ms = float(max_run * (hop_size / sample_rate) * 1000.0)
-    return max_gap_ms >= 300.0, max_gap_ms
+    return max_gap_ms >= float(SILENCE_GAP_MIN_MS), max_gap_ms
+
+
+def _silence_component_from_gap(silence_max_gap_ms: float) -> float:
+    gap = max(float(silence_max_gap_ms), 0.0)
+    min_gap = float(SILENCE_GAP_MIN_MS)
+    if gap < min_gap:
+        return 1.0
+    if gap <= 2000.0:
+        span = max(2000.0 - min_gap, 1e-9)
+        fraction = (gap - min_gap) / span
+        return float(np.clip(1.0 - (0.5 * fraction), 0.0, 1.0))
+    if gap >= 4000.0:
+        return 0.0
+    fraction = (gap - 2000.0) / 2000.0
+    return float(np.clip(0.5 * (1.0 - fraction), 0.0, 1.0))
 
 
 def _detect_abrupt_gain_jumps(waveform: np.ndarray, sample_rate: int) -> tuple[bool, float, float]:
