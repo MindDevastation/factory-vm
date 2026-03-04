@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import re
+import wave
 import shutil
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from services.common import db as dbm
 from services.common import ffmpeg
 import services.track_analyzer.yamnet as yamnet
+from services.track_analyzer.texture_heuristics import classify_texture
 
 
 class AnalyzeError(RuntimeError):
@@ -69,13 +73,13 @@ def analyze_tracks(
                     "texture analysis failed: job_id=%s track_pk=%s backend=%s error_class=%s error_message=%s",
                     job_id,
                     track_pk,
-                    "none",
+                    "heuristic",
                     exc.__class__.__name__,
                     str(exc),
                 )
                 texture_meta = {
                     "dominant_texture": "unknown texture",
-                    "texture_backend": "none",
+                    "texture_backend": "heuristic",
                     "texture_confidence": None,
                     "texture_reason": "exception",
                 }
@@ -251,16 +255,45 @@ def _derive_dsp_score(true_peak_dbfs: float | None, spikes_found: bool) -> float
     return 0.9
 
 
-def _analyze_texture(_path: Path) -> dict[str, str | float | None]:
-    """Texture classification placeholder.
+def _analyze_texture(path: Path) -> dict[str, str | float | None]:
+    """Classify dominant texture using lightweight waveform heuristics."""
 
-    missing_fields tracks required scalar metrics only, so texture metadata
-    explains unknown/absent texture classification status.
-    """
+    waveform, sample_rate = _load_wav_mono(path)
+    label, confidence, _debug = classify_texture(waveform, sample_rate)
+    reason = "ok"
+    if confidence < 0.35:
+        label = "mixed"
+        reason = "low_confidence"
 
     return {
-        "dominant_texture": "unknown texture",
-        "texture_backend": "none",
-        "texture_confidence": None,
-        "texture_reason": "not_implemented",
+        "dominant_texture": label,
+        "texture_backend": "heuristic",
+        "texture_confidence": confidence,
+        "texture_reason": reason,
     }
+
+
+def _load_wav_mono(path: Path) -> tuple[np.ndarray, int]:
+    with wave.open(str(path), "rb") as wav_file:
+        sample_rate = int(wav_file.getframerate())
+        sample_width = int(wav_file.getsampwidth())
+        channels = int(wav_file.getnchannels())
+        frames = wav_file.readframes(wav_file.getnframes())
+
+    if channels <= 0:
+        raise ValueError("invalid channel count")
+
+    if sample_width == 1:
+        data = np.frombuffer(frames, dtype=np.uint8).astype(np.float32)
+        data = (data - 128.0) / 128.0
+    elif sample_width == 2:
+        data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    elif sample_width == 4:
+        data = np.frombuffer(frames, dtype=np.int32).astype(np.float32) / 2147483648.0
+    else:
+        raise ValueError(f"unsupported sample width: {sample_width}")
+
+    if channels > 1:
+        data = data.reshape(-1, channels).mean(axis=1)
+
+    return data.astype(np.float32), sample_rate
