@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,9 @@ import services.track_analyzer.yamnet as yamnet
 
 class AnalyzeError(RuntimeError):
     pass
+
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -58,7 +62,25 @@ def analyze_tracks(
             except yamnet.YAMNetUnavailableError as exc:
                 raise AnalyzeError("YAMNET_NOT_INSTALLED: install via UI button and retry") from exc
 
-            dominant_texture = "unknown texture"
+            try:
+                texture_meta = _analyze_texture(local_path)
+            except Exception as exc:
+                log.exception(
+                    "texture analysis failed: job_id=%s track_pk=%s backend=%s error_class=%s error_message=%s",
+                    job_id,
+                    track_pk,
+                    "none",
+                    exc.__class__.__name__,
+                    str(exc),
+                )
+                texture_meta = {
+                    "dominant_texture": "unknown texture",
+                    "texture_backend": "none",
+                    "texture_confidence": None,
+                    "texture_reason": "exception",
+                }
+
+            dominant_texture = str(texture_meta["dominant_texture"])
             prohibited_cues_notes = "No prohibited cues detected by fallback analyzer."
             dsp_score = _derive_dsp_score(true_peak_dbfs, spikes_found)
 
@@ -80,6 +102,9 @@ def analyze_tracks(
                 "yamnet_top_classes": yamnet_payload.get("top_classes") or [],
                 "yamnet_probabilities": yamnet_payload.get("probabilities") or {},
                 "dominant_texture": dominant_texture,
+                "texture_backend": texture_meta["texture_backend"],
+                "texture_confidence": texture_meta["texture_confidence"],
+                "texture_reason": texture_meta["texture_reason"],
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
             }
@@ -224,3 +249,18 @@ def _derive_dsp_score(true_peak_dbfs: float | None, spikes_found: bool) -> float
     if spikes_found:
         return 0.4
     return 0.9
+
+
+def _analyze_texture(_path: Path) -> dict[str, str | float | None]:
+    """Texture classification placeholder.
+
+    missing_fields tracks required scalar metrics only, so texture metadata
+    explains unknown/absent texture classification status.
+    """
+
+    return {
+        "dominant_texture": "unknown texture",
+        "texture_backend": "none",
+        "texture_confidence": None,
+        "texture_reason": "not_implemented",
+    }
