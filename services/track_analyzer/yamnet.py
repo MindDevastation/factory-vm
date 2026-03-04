@@ -22,6 +22,7 @@ class YAMNetUnavailableError(RuntimeError):
 _YAMNET_HANDLE = "https://tfhub.dev/google/yamnet/1"
 _YAMNET_MODEL: Any | None = None
 _YAMNET_CLASS_NAMES: list[str] | None = None
+YAMNET_TOP_N = 20
 
 
 def is_available() -> bool:
@@ -68,7 +69,7 @@ def _resample_to_16k_mono(waveform: Any, sample_rate: Any) -> Any:
     return resample_1d_tf(waveform, int(sample_rate), 16000)
 
 
-def analyze_with_yamnet(wav_path: str | Path, *, top_k: int = 5) -> dict[str, Any]:
+def analyze_with_yamnet(wav_path: str | Path, *, top_k: int = YAMNET_TOP_N) -> dict[str, Any]:
     _require_available()
     model = _load_model()
     class_names = _load_class_names()
@@ -97,9 +98,11 @@ def analyze_with_yamnet(wav_path: str | Path, *, top_k: int = 5) -> dict[str, An
         "voice": 0.0,
         "music": 0.0,
     }
+    class_probabilities: dict[str, float] = {}
     for idx, label in enumerate(class_names):
         lowered = label.lower()
         score = float(mean_scores[idx])
+        class_probabilities[label] = score
         if "speech" in lowered:
             probs["speech"] = max(probs["speech"], score)
         if "voice" in lowered or "vocal" in lowered:
@@ -110,4 +113,5 @@ def analyze_with_yamnet(wav_path: str | Path, *, top_k: int = 5) -> dict[str, An
     return {
         "top_classes": top_classes,
         "probabilities": probs,
+        "class_probabilities": class_probabilities,
     }

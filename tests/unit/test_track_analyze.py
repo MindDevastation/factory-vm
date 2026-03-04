@@ -50,9 +50,9 @@ class TestTrackAnalyze(unittest.TestCase):
                 yamnet_payload = {
                     "top_classes": [
                         {"label": "Music", "score": 0.95},
-                        {"label": "Speech", "score": 0.33},
+                        {"label": "Speech", "score": 0.03},
                     ],
-                    "probabilities": {"speech": 0.33, "voice": 0.12, "music": 0.95},
+                    "probabilities": {"speech": 0.03, "voice": 0.12, "music": 0.95},
                 }
                 with mock.patch("services.track_analyzer.analyze.ffmpeg.ffprobe_json", return_value={"format": {"duration": "12.5"}}), mock.patch(
                     "services.track_analyzer.analyze.ffmpeg.run",
@@ -98,6 +98,9 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertIn("yamnet_agg", features)
                 self.assertIn("voice_flag", features)
                 self.assertIn("voice_flag_reason", features)
+                self.assertIn("speech_flag", features)
+                self.assertIn("speech_flag_reason", features)
+                self.assertFalse(features.get("speech_flag"))
                 self.assertIn("prohibited_cues", tags)
                 self.assertIn("dsp_score_version", scores)
                 self.assertIn("dsp_components", scores)
