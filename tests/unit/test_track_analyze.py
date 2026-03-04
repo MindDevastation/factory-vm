@@ -74,6 +74,10 @@ class TestTrackAnalyze(unittest.TestCase):
                 scores = dbm.json_loads(score_row["payload_json"])
 
                 self.assertTrue(str(features.get("dominant_texture") or "").strip())
+                self.assertEqual(features.get("texture_backend"), "none")
+                self.assertIsNone(features.get("texture_confidence"))
+                self.assertEqual(features.get("texture_reason"), "not_implemented")
+                self.assertEqual(features.get("missing_fields"), [])
                 self.assertTrue(str(tags.get("prohibited_cues_notes") or "").strip())
                 self.assertIsNotNone(scores.get("dsp_score"))
                 self.assertEqual(features.get("yamnet_probabilities", {}).get("music"), 0.95)
@@ -81,6 +85,61 @@ class TestTrackAnalyze(unittest.TestCase):
 
                 tmp_track_dir = Path(td) / "tmp" / "track_analyzer" / "99" / "1"
                 self.assertFalse(tmp_track_dir.exists())
+            finally:
+                conn.close()
+
+
+
+    def test_analyze_texture_exception_sets_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
+            try:
+                dbm.migrate(conn)
+                conn.execute(
+                    "INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled) VALUES(?,?,?,?,?,?)",
+                    ("darkwood-reverie", "Darkwood Reverie", "LONG", 1.0, "long_1080p24", 0),
+                )
+                conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
+                conn.execute(
+                    """
+                    INSERT INTO tracks(channel_slug, track_id, gdrive_file_id, source, filename, title, artist, duration_sec, discovered_at, analyzed_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    ("darkwood-reverie", "001", "fid-1", "GDRIVE", "001_A.wav", "A", None, None, dbm.now_ts(), None),
+                )
+
+                yamnet_payload = {
+                    "top_classes": [{"label": "Music", "score": 0.95}],
+                    "probabilities": {"music": 0.95},
+                }
+                with mock.patch("services.track_analyzer.analyze.ffmpeg.ffprobe_json", return_value={"format": {"duration": "12.5"}}), mock.patch(
+                    "services.track_analyzer.analyze.ffmpeg.run",
+                    return_value=(0, "", "[Parsed_ebur128_0] Peak: -2.1 dB"),
+                ), mock.patch("services.track_analyzer.analyze.yamnet.analyze_with_yamnet", return_value=yamnet_payload), mock.patch(
+                    "services.track_analyzer.analyze._analyze_texture",
+                    side_effect=RuntimeError("texture backend crash"),
+                ):
+                    stats = analyze_tracks(
+                        conn,
+                        FakeDrive(),
+                        channel_slug="darkwood-reverie",
+                        storage_root=td,
+                        job_id=102,
+                        scope="pending",
+                        force=False,
+                        max_tracks=10,
+                    )
+
+                self.assertEqual(stats.processed, 1)
+                feature_row = conn.execute("SELECT payload_json FROM track_features LIMIT 1").fetchone()
+                self.assertIsNotNone(feature_row)
+
+                features = dbm.json_loads(feature_row["payload_json"])
+                self.assertEqual(features.get("dominant_texture"), "unknown texture")
+                self.assertEqual(features.get("texture_backend"), "none")
+                self.assertIsNone(features.get("texture_confidence"))
+                self.assertEqual(features.get("texture_reason"), "exception")
+                self.assertEqual(features.get("missing_fields"), [])
             finally:
                 conn.close()
 
