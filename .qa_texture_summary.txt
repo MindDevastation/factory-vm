@@ -1,0 +1,8 @@
+DB: /workspace/factory-vm/data/factory.sqlite3
+TABLE: track_features
+COLUMNS_track_features: ['track_pk', 'payload_json', 'computed_at']
+SAMPLES: 0
+DIST_dominant_texture: {}
+DIST_texture_backend: {}
+DIST_texture_reason: {}
+CONF_count: 0 bad_count: 0 bad_vals: []

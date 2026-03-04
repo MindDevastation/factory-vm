@@ -1,0 +1,40 @@
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/core/ag_ctx.py", line 21, in <module>
+    from tensorflow.python.autograph.utils import ag_logging
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/utils/__init__.py", line 17, in <module>
+    from tensorflow.python.autograph.utils.context_managers import control_dependency_on_returns
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/utils/context_managers.py", line 19, in <module>
+    from tensorflow.python.framework import ops
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/framework/ops.py", line 50, in <module>
+    from tensorflow.python.eager import context
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/eager/context.py", line 37, in <module>
+    from tensorflow.python.eager import execute
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/eager/execute.py", line 21, in <module>
+    from tensorflow.python.framework import dtypes
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/framework/dtypes.py", line 21, in <module>
+    import ml_dtypes
+  File "/workspace/factory-vm/data/pydeps/ml_dtypes/__init__.py", line 32, in <module>
+    from ml_dtypes._finfo import finfo
+  File "/workspace/factory-vm/data/pydeps/ml_dtypes/_finfo.py", line 19, in <module>
+    from ml_dtypes._ml_dtypes_ext import bfloat16
+Traceback (most recent call last):
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/site-packages/numpy/core/_multiarray_umath.py", line 46, in __getattr__
+    raise ImportError(msg)
+ImportError: 
+A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.4.2 as it may crash. To support both 1.x and 2.x
+versions of NumPy, modules must be compiled with NumPy 2.0.
+Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+
+If you are a user of the module, the easiest solution will be to
+downgrade to 'numpy<2' or try to upgrade the affected module.
+We expect that some modules will need time to support NumPy 2.
+
+
+ImportError: numpy.core._multiarray_umath failed to import
+
+
+Failed to import tensorflow. Please note that tensorflow is not installed by default when you install tensorflow_hub. This is so that users can decide which tensorflow package to use. To use tensorflow_hub, please install a current version of tensorflow by following the instructions at https://tensorflow.org/install and https://tensorflow.org/hub/installation.
+
+
+INFO:     127.0.0.1:58230 - "GET /v1/admin/yamnet/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58234 - "POST /v1/track_jobs/analyze HTTP/1.1" 404 Not Found

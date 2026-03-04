@@ -1,0 +1,241 @@
+2026-03-04 08:13:17 | INFO | factory_api | starting api bind=0.0.0.0 port=8080
+INFO:     Started server process [10631]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+2026-03-04 08:13:28.036008: I external/local_tsl/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
+2026-03-04 08:13:28.054822: I external/local_tsl/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
+2026-03-04 08:13:28.098410: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:479] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+2026-03-04 08:13:28.171305: E external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:10575] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+2026-03-04 08:13:28.171467: E external/local_xla/xla/stream_executor/cuda/cuda_blas.cc:1442] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+2026-03-04 08:13:28.235776: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 AVX512F FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+
+A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.4.2 as it may crash. To support both 1.x and 2.x
+versions of NumPy, modules must be compiled with NumPy 2.0.
+Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+
+If you are a user of the module, the easiest solution will be to
+downgrade to 'numpy<2' or try to upgrade the affected module.
+We expect that some modules will need time to support NumPy 2.
+
+Traceback (most recent call last):  File "/root/.pyenv/versions/3.12.12/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 986, in run
+    result = context.run(func, *args)
+  File "/workspace/factory-vm/services/factory_api/app.py", line 286, in api_admin_yamnet_status
+    return _yamnet_import_status()
+  File "/workspace/factory-vm/services/factory_api/app.py", line 249, in _yamnet_import_status
+    import tensorflow  # noqa: F401
+  File "/workspace/factory-vm/data/pydeps/tensorflow/__init__.py", line 45, in <module>
+    from tensorflow._api.v2 import __internal__
+  File "/workspace/factory-vm/data/pydeps/tensorflow/_api/v2/__internal__/__init__.py", line 8, in <module>
+    from tensorflow._api.v2.__internal__ import autograph
+  File "/workspace/factory-vm/data/pydeps/tensorflow/_api/v2/__internal__/autograph/__init__.py", line 8, in <module>
+    from tensorflow.python.autograph.core.ag_ctx import control_status_ctx # line: 34
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/core/ag_ctx.py", line 21, in <module>
+    from tensorflow.python.autograph.utils import ag_logging
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/utils/__init__.py", line 17, in <module>
+    from tensorflow.python.autograph.utils.context_managers import control_dependency_on_returns
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/utils/context_managers.py", line 19, in <module>
+    from tensorflow.python.framework import ops
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/framework/ops.py", line 46, in <module>
+    from tensorflow.python import pywrap_tfe
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/pywrap_tfe.py", line 25, in <module>
+    from tensorflow.python._pywrap_tfe import *
+Traceback (most recent call last):
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/site-packages/numpy/core/_multiarray_umath.py", line 46, in __getattr__
+    raise ImportError(msg)
+ImportError: 
+A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.4.2 as it may crash. To support both 1.x and 2.x
+versions of NumPy, modules must be compiled with NumPy 2.0.
+Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+
+If you are a user of the module, the easiest solution will be to
+downgrade to 'numpy<2' or try to upgrade the affected module.
+We expect that some modules will need time to support NumPy 2.
+
+
+
+A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.4.2 as it may crash. To support both 1.x and 2.x
+versions of NumPy, modules must be compiled with NumPy 2.0.
+Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+
+If you are a user of the module, the easiest solution will be to
+downgrade to 'numpy<2' or try to upgrade the affected module.
+We expect that some modules will need time to support NumPy 2.
+
+Traceback (most recent call last):  File "/root/.pyenv/versions/3.12.12/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 986, in run
+    result = context.run(func, *args)
+  File "/workspace/factory-vm/services/factory_api/app.py", line 286, in api_admin_yamnet_status
+    return _yamnet_import_status()
+  File "/workspace/factory-vm/services/factory_api/app.py", line 249, in _yamnet_import_status
+    import tensorflow  # noqa: F401
+  File "/workspace/factory-vm/data/pydeps/tensorflow/__init__.py", line 45, in <module>
+    from tensorflow._api.v2 import __internal__
+  File "/workspace/factory-vm/data/pydeps/tensorflow/_api/v2/__internal__/__init__.py", line 8, in <module>
+    from tensorflow._api.v2.__internal__ import autograph
+  File "/workspace/factory-vm/data/pydeps/tensorflow/_api/v2/__internal__/autograph/__init__.py", line 8, in <module>
+    from tensorflow.python.autograph.core.ag_ctx import control_status_ctx # line: 34
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/core/ag_ctx.py", line 21, in <module>
+    from tensorflow.python.autograph.utils import ag_logging
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/utils/__init__.py", line 17, in <module>
+    from tensorflow.python.autograph.utils.context_managers import control_dependency_on_returns
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/utils/context_managers.py", line 19, in <module>
+    from tensorflow.python.framework import ops
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/framework/ops.py", line 49, in <module>
+    from tensorflow.python.client import pywrap_tf_session
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/client/pywrap_tf_session.py", line 19, in <module>
+    from tensorflow.python.client._pywrap_tf_session import *
+Traceback (most recent call last):
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/site-packages/numpy/core/_multiarray_umath.py", line 46, in __getattr__
+    raise ImportError(msg)
+ImportError: 
+A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.4.2 as it may crash. To support both 1.x and 2.x
+versions of NumPy, modules must be compiled with NumPy 2.0.
+Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+
+If you are a user of the module, the easiest solution will be to
+downgrade to 'numpy<2' or try to upgrade the affected module.
+We expect that some modules will need time to support NumPy 2.
+
+
+
+A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.4.2 as it may crash. To support both 1.x and 2.x
+versions of NumPy, modules must be compiled with NumPy 2.0.
+Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+
+If you are a user of the module, the easiest solution will be to
+downgrade to 'numpy<2' or try to upgrade the affected module.
+We expect that some modules will need time to support NumPy 2.
+
+Traceback (most recent call last):  File "/root/.pyenv/versions/3.12.12/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 986, in run
+    result = context.run(func, *args)
+  File "/workspace/factory-vm/services/factory_api/app.py", line 286, in api_admin_yamnet_status
+    return _yamnet_import_status()
+  File "/workspace/factory-vm/services/factory_api/app.py", line 249, in _yamnet_import_status
+    import tensorflow  # noqa: F401
+  File "/workspace/factory-vm/data/pydeps/tensorflow/__init__.py", line 45, in <module>
+    from tensorflow._api.v2 import __internal__
+  File "/workspace/factory-vm/data/pydeps/tensorflow/_api/v2/__internal__/__init__.py", line 8, in <module>
+    from tensorflow._api.v2.__internal__ import autograph
+  File "/workspace/factory-vm/data/pydeps/tensorflow/_api/v2/__internal__/autograph/__init__.py", line 8, in <module>
+    from tensorflow.python.autograph.core.ag_ctx import control_status_ctx # line: 34
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/core/ag_ctx.py", line 21, in <module>
+    from tensorflow.python.autograph.utils import ag_logging
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/utils/__init__.py", line 17, in <module>
+    from tensorflow.python.autograph.utils.context_managers import control_dependency_on_returns
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/utils/context_managers.py", line 19, in <module>
+    from tensorflow.python.framework import ops
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/framework/ops.py", line 50, in <module>
+    from tensorflow.python.eager import context
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/eager/context.py", line 37, in <module>
+    from tensorflow.python.eager import execute
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/eager/execute.py", line 21, in <module>
+    from tensorflow.python.framework import dtypes
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/framework/dtypes.py", line 21, in <module>
+    import ml_dtypes
+  File "/workspace/factory-vm/data/pydeps/ml_dtypes/__init__.py", line 32, in <module>
+    from ml_dtypes._finfo import finfo
+  File "/workspace/factory-vm/data/pydeps/ml_dtypes/_finfo.py", line 19, in <module>
+    from ml_dtypes._ml_dtypes_ext import bfloat16
+Traceback (most recent call last):
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/site-packages/numpy/core/_multiarray_umath.py", line 46, in __getattr__
+    raise ImportError(msg)
+ImportError: 
+A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.4.2 as it may crash. To support both 1.x and 2.x
+versions of NumPy, modules must be compiled with NumPy 2.0.
+Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+
+If you are a user of the module, the easiest solution will be to
+downgrade to 'numpy<2' or try to upgrade the affected module.
+We expect that some modules will need time to support NumPy 2.
+
+
+ImportError: numpy.core._multiarray_umath failed to import
+
+A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.4.2 as it may crash. To support both 1.x and 2.x
+versions of NumPy, modules must be compiled with NumPy 2.0.
+Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+
+If you are a user of the module, the easiest solution will be to
+downgrade to 'numpy<2' or try to upgrade the affected module.
+We expect that some modules will need time to support NumPy 2.
+
+Traceback (most recent call last):  File "/root/.pyenv/versions/3.12.12/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 986, in run
+    result = context.run(func, *args)
+  File "/workspace/factory-vm/services/factory_api/app.py", line 286, in api_admin_yamnet_status
+    return _yamnet_import_status()
+  File "/workspace/factory-vm/services/factory_api/app.py", line 255, in _yamnet_import_status
+    import tensorflow_hub  # noqa: F401
+  File "/workspace/factory-vm/data/pydeps/tensorflow_hub/__init__.py", line 85, in <module>
+    _ensure_tf_install()
+  File "/workspace/factory-vm/data/pydeps/tensorflow_hub/__init__.py", line 49, in _ensure_tf_install
+    import tensorflow as tf
+  File "/workspace/factory-vm/data/pydeps/tensorflow/__init__.py", line 45, in <module>
+    from tensorflow._api.v2 import __internal__
+  File "/workspace/factory-vm/data/pydeps/tensorflow/_api/v2/__internal__/__init__.py", line 8, in <module>
+    from tensorflow._api.v2.__internal__ import autograph
+  File "/workspace/factory-vm/data/pydeps/tensorflow/_api/v2/__internal__/autograph/__init__.py", line 8, in <module>
+    from tensorflow.python.autograph.core.ag_ctx import control_status_ctx # line: 34
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/core/ag_ctx.py", line 21, in <module>
+    from tensorflow.python.autograph.utils import ag_logging
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/utils/__init__.py", line 17, in <module>
+    from tensorflow.python.autograph.utils.context_managers import control_dependency_on_returns
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/autograph/utils/context_managers.py", line 19, in <module>
+    from tensorflow.python.framework import ops
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/framework/ops.py", line 50, in <module>
+    from tensorflow.python.eager import context
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/eager/context.py", line 37, in <module>
+    from tensorflow.python.eager import execute
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/eager/execute.py", line 21, in <module>
+    from tensorflow.python.framework import dtypes
+  File "/workspace/factory-vm/data/pydeps/tensorflow/python/framework/dtypes.py", line 21, in <module>
+    import ml_dtypes
+  File "/workspace/factory-vm/data/pydeps/ml_dtypes/__init__.py", line 32, in <module>
+    from ml_dtypes._finfo import finfo
+  File "/workspace/factory-vm/data/pydeps/ml_dtypes/_finfo.py", line 19, in <module>
+    from ml_dtypes._ml_dtypes_ext import bfloat16
+Traceback (most recent call last):
+  File "/root/.pyenv/versions/3.12.12/lib/python3.12/site-packages/numpy/core/_multiarray_umath.py", line 46, in __getattr__
+    raise ImportError(msg)
+ImportError: 
+A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.4.2 as it may crash. To support both 1.x and 2.x
+versions of NumPy, modules must be compiled with NumPy 2.0.
+Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+
+If you are a user of the module, the easiest solution will be to
+downgrade to 'numpy<2' or try to upgrade the affected module.
+We expect that some modules will need time to support NumPy 2.
+
+
+ImportError: numpy.core._multiarray_umath failed to import
+
+
+Failed to import tensorflow. Please note that tensorflow is not installed by default when you install tensorflow_hub. This is so that users can decide which tensorflow package to use. To use tensorflow_hub, please install a current version of tensorflow by following the instructions at https://tensorflow.org/install and https://tensorflow.org/hub/installation.
+
+
+INFO:     127.0.0.1:58230 - "GET /v1/admin/yamnet/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58234 - "POST /v1/track_jobs/analyze HTTP/1.1" 404 Not Found
