@@ -95,6 +95,12 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertIsNotNone(scores.get("dsp_score"))
                 self.assertEqual(features.get("yamnet_probabilities", {}).get("music"), 0.95)
                 self.assertEqual(tags.get("yamnet_tags"), ["Music", "Speech"])
+                self.assertIn("yamnet_agg", features)
+                self.assertIn("voice_flag", features)
+                self.assertIn("voice_flag_reason", features)
+                self.assertIn("prohibited_cues", tags)
+                self.assertIn("dsp_score_version", scores)
+                self.assertIn("dsp_components", scores)
 
                 tmp_track_dir = Path(td) / "tmp" / "track_analyzer" / "99" / "1"
                 self.assertFalse(tmp_track_dir.exists())
