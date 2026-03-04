@@ -99,3 +99,7 @@ These env vars help diagnose stuck renders and make logs more informative:
 
 When watchdog triggers, attempt 1 (NVENC) fails and the pipeline automatically retries with CPU encoder on attempt 2.
 
+## 5) QA artifact hygiene
+
+- Never commit `.qa_*` logs or reports that can capture environment values (for example auth/user/pass env vars).
+- If you need to share a QA report, redact values and use placeholders like `FACTORY_BASIC_AUTH_USER=<set via env>` and `FACTORY_BASIC_AUTH_PASS=<set via env>`.
