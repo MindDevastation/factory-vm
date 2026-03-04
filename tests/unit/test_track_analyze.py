@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import wave
+
+import numpy as np
 from pathlib import Path
 from unittest import mock
 
@@ -13,7 +16,16 @@ from services.track_analyzer.yamnet import YAMNetUnavailableError
 class FakeDrive:
     def download_to_path(self, file_id: str, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"fake wav bytes " + file_id.encode("utf-8"))
+        sample_rate = 16000
+        seconds = 2.0
+        t = np.linspace(0.0, seconds, int(sample_rate * seconds), endpoint=False, dtype=np.float32)
+        waveform = 0.3 * np.sin(2.0 * np.pi * 440.0 * t)
+        pcm = np.clip(waveform * 32767.0, -32768.0, 32767.0).astype(np.int16)
+        with wave.open(str(dest), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(pcm.tobytes())
 
 
 class TestTrackAnalyze(unittest.TestCase):
@@ -74,9 +86,10 @@ class TestTrackAnalyze(unittest.TestCase):
                 scores = dbm.json_loads(score_row["payload_json"])
 
                 self.assertTrue(str(features.get("dominant_texture") or "").strip())
-                self.assertEqual(features.get("texture_backend"), "none")
-                self.assertIsNone(features.get("texture_confidence"))
-                self.assertEqual(features.get("texture_reason"), "not_implemented")
+                self.assertEqual(features.get("texture_backend"), "heuristic")
+                self.assertGreaterEqual(float(features.get("texture_confidence")), 0.0)
+                self.assertLessEqual(float(features.get("texture_confidence")), 1.0)
+                self.assertIn(features.get("texture_reason"), {"ok", "low_confidence"})
                 self.assertEqual(features.get("missing_fields"), [])
                 self.assertTrue(str(tags.get("prohibited_cues_notes") or "").strip())
                 self.assertIsNotNone(scores.get("dsp_score"))
@@ -136,7 +149,7 @@ class TestTrackAnalyze(unittest.TestCase):
 
                 features = dbm.json_loads(feature_row["payload_json"])
                 self.assertEqual(features.get("dominant_texture"), "unknown texture")
-                self.assertEqual(features.get("texture_backend"), "none")
+                self.assertEqual(features.get("texture_backend"), "heuristic")
                 self.assertIsNone(features.get("texture_confidence"))
                 self.assertEqual(features.get("texture_reason"), "exception")
                 self.assertEqual(features.get("missing_fields"), [])
