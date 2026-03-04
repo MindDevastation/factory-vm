@@ -34,6 +34,7 @@ class AnalyzeStats:
 _TRUE_PEAK_RE = re.compile(r"(?:true\s+peak|peak)\s*[:=]\s*(-?\d+(?:\.\d+)?)\s*dB", re.IGNORECASE)
 VOICE_MIN_PROB = 0.2
 SINGING_MIN_PROB = 0.08
+SPEECH_MIN_PROB = 0.10
 DSP_SCORE_VERSION = "v1"
 SILENCE_RMS_THRESHOLD = 0.01
 SILENCE_GAP_MIN_MS = 1000
@@ -94,6 +95,7 @@ def analyze_tracks(
 
             yamnet_agg = _aggregate_yamnet_probabilities(yamnet_payload)
             voice_flag, voice_flag_reason = _derive_voice_flag(yamnet_agg)
+            speech_flag, speech_flag_reason = _derive_speech_flag(yamnet_agg)
             prohibited_cues = _analyze_prohibited_cues(
                 waveform,
                 sample_rate,
@@ -128,6 +130,8 @@ def analyze_tracks(
                 "yamnet_agg": yamnet_agg,
                 "voice_flag": voice_flag,
                 "voice_flag_reason": voice_flag_reason,
+                "speech_flag": speech_flag,
+                "speech_flag_reason": speech_flag_reason,
                 "dominant_texture": dominant_texture,
                 "texture_backend": texture_meta["texture_backend"],
                 "texture_confidence": texture_meta["texture_confidence"],
@@ -311,16 +315,31 @@ def _build_prohibited_cues_notes(prohibited_cues: dict[str, Any]) -> str:
 
 def _aggregate_yamnet_probabilities(yamnet_payload: dict[str, Any]) -> dict[str, Any]:
     top_classes = yamnet_payload.get("top_classes") or []
+    class_probabilities = yamnet_payload.get("class_probabilities") or {}
     label_scores: dict[str, float] = {}
-    for entry in top_classes:
-        label = entry.get("label")
-        score = entry.get("score")
-        if not isinstance(label, str):
-            continue
-        try:
-            label_scores[label] = float(score)
-        except Exception:
-            continue
+    source = "top_classes"
+    total_labels_count: int | None = None
+
+    if isinstance(class_probabilities, dict) and class_probabilities:
+        for label, score in class_probabilities.items():
+            if not isinstance(label, str):
+                continue
+            try:
+                label_scores[label] = float(score)
+            except Exception:
+                continue
+        source = "full_vector"
+        total_labels_count = len(label_scores)
+    else:
+        for entry in top_classes:
+            label = entry.get("label")
+            score = entry.get("score")
+            if not isinstance(label, str):
+                continue
+            try:
+                label_scores[label] = float(score)
+            except Exception:
+                continue
 
     voice_labels_used = sorted([label for label in VOICE_LABELS if label in label_scores])
     speech_labels_used = sorted([label for label in SPEECH_LABELS if label in label_scores])
@@ -329,15 +348,18 @@ def _aggregate_yamnet_probabilities(yamnet_payload: dict[str, Any]) -> dict[str,
     speech_prob = float(sum(label_scores[label] for label in speech_labels_used))
     singing_prob = float(label_scores.get("Singing", 0.0))
 
-    return {
+    out = {
         "voice_prob": voice_prob,
         "speech_prob": speech_prob,
         "singing_prob": singing_prob,
         "voice_labels_used": voice_labels_used,
         "speech_labels_used": speech_labels_used,
-        "source": "top_classes",
+        "source": source,
         "top_classes_count": len(top_classes),
     }
+    if total_labels_count is not None:
+        out["total_labels_count"] = total_labels_count
+    return out
 
 
 def _derive_voice_flag(yamnet_agg: dict[str, Any]) -> tuple[bool, str]:
@@ -348,6 +370,13 @@ def _derive_voice_flag(yamnet_agg: dict[str, Any]) -> tuple[bool, str]:
         f"voice_prob={voice_prob:.3f} (min={VOICE_MIN_PROB:.2f}), "
         f"singing_prob={singing_prob:.3f} (min={SINGING_MIN_PROB:.2f})"
     )
+    return flag, reason
+
+
+def _derive_speech_flag(yamnet_agg: dict[str, Any]) -> tuple[bool, str]:
+    speech_prob = float(yamnet_agg.get("speech_prob") or 0.0)
+    flag = speech_prob >= SPEECH_MIN_PROB
+    reason = f"speech_prob={speech_prob:.3f} (min={SPEECH_MIN_PROB:.2f})"
     return flag, reason
 
 

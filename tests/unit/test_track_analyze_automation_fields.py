@@ -6,12 +6,14 @@ import numpy as np
 
 from services.track_analyzer.analyze import (
     SINGING_MIN_PROB,
+    SPEECH_MIN_PROB,
     SILENCE_GAP_MIN_MS,
     SILENCE_IGNORE_EDGE_MS,
     VOICE_MIN_PROB,
     _aggregate_yamnet_probabilities,
     _analyze_prohibited_cues,
     _derive_dsp_score,
+    _derive_speech_flag,
     _derive_voice_flag,
 )
 
@@ -20,10 +22,15 @@ class TestTrackAnalyzeAutomationFields(unittest.TestCase):
     def test_yamnet_aggregation_includes_singing_and_labels_used(self) -> None:
         payload = {
             "top_classes": [
-                {"label": "Singing", "score": 0.12},
-                {"label": "Speech", "score": 0.21},
                 {"label": "Music", "score": 0.9},
-            ]
+                {"label": "Singing", "score": 0.12},
+                {"label": "Speech", "score": 0.02},
+            ],
+            "class_probabilities": {
+                "Singing": 0.12,
+                "Speech": 0.21,
+                "Music": 0.9,
+            },
         }
 
         agg = _aggregate_yamnet_probabilities(payload)
@@ -32,8 +39,9 @@ class TestTrackAnalyzeAutomationFields(unittest.TestCase):
         self.assertAlmostEqual(agg["speech_prob"], 0.21)
         self.assertIn("Singing", agg["voice_labels_used"])
         self.assertIn("Speech", agg["speech_labels_used"])
-        self.assertEqual(agg["source"], "top_classes")
+        self.assertEqual(agg["source"], "full_vector")
         self.assertEqual(agg["top_classes_count"], 3)
+        self.assertEqual(agg["total_labels_count"], 3)
 
         flag, reason = _derive_voice_flag(agg)
         self.assertTrue(flag)
@@ -53,6 +61,24 @@ class TestTrackAnalyzeAutomationFields(unittest.TestCase):
 
         self.assertAlmostEqual(agg["singing_prob"], 0.02)
         self.assertIn("Singing", agg["voice_labels_used"])
+
+    def test_speech_flag_false_when_below_threshold(self) -> None:
+        flag, reason = _derive_speech_flag({"speech_prob": SPEECH_MIN_PROB - 0.01})
+        self.assertFalse(flag)
+        self.assertIn(f"min={SPEECH_MIN_PROB:.2f}", reason)
+
+    def test_speech_flag_true_when_at_or_above_threshold(self) -> None:
+        flag, _ = _derive_speech_flag({"speech_prob": SPEECH_MIN_PROB + 0.01})
+        self.assertTrue(flag)
+
+    def test_voice_flag_unchanged_with_speech_fields_present(self) -> None:
+        agg = {
+            "voice_prob": VOICE_MIN_PROB + 0.01,
+            "singing_prob": 0.0,
+            "speech_prob": 0.0,
+        }
+        flag, _ = _derive_voice_flag(agg)
+        self.assertTrue(flag)
 
     def test_prohibited_cues_detects_clipping_and_middle_silence_gap(self) -> None:
         sr = 16000
