@@ -240,6 +240,21 @@ def _token_status_for(channel_slug: str, base_dir: str) -> tuple[bool, str | Non
     return True, str(token_path.stat().st_mtime)
 
 
+def _yamnet_error_with_guidance(raw_error: str | None) -> str | None:
+    if not raw_error:
+        return raw_error
+
+    lowered = raw_error.lower()
+    numpy_abi_mismatch = (
+        "compiled using numpy 1" in lowered
+        or "numpy 2" in lowered
+        or "numpy.core.umath failed to import" in lowered
+    )
+    if numpy_abi_mismatch and "numpy<2" not in lowered:
+        return f"{raw_error}; reinstall YamNet deps with numpy<2 (requirements-yamnet.txt)."
+    return raw_error
+
+
 def _yamnet_import_status() -> dict[str, Any]:
     target_dir = ensure_py_deps_on_sys_path(os.environ)
     import_tf = False
@@ -263,7 +278,7 @@ def _yamnet_import_status() -> dict[str, Any]:
         "target_dir": target_dir,
         "import_tf": import_tf,
         "import_hub": import_hub,
-        "error": error,
+        "error": _yamnet_error_with_guidance(error),
     }
 
 
