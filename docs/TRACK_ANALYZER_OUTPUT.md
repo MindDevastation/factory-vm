@@ -35,6 +35,62 @@ If texture analysis raises an exception, payload becomes:
 - `texture_confidence = null`
 - `texture_reason = "exception"`
 
+## Voice/speech aggregation (`yamnet_agg`)
+
+`track_features.payload_json` now includes a machine-readable YAMNet aggregation block:
+
+- `yamnet_agg.voice_prob`: sum of YAMNet class scores for configurable `VOICE_LABELS` (includes `Singing`)
+- `yamnet_agg.speech_prob`: sum of class scores for configurable `SPEECH_LABELS`
+- `yamnet_agg.singing_prob`: score for `Singing` class (or `0` when absent)
+- `yamnet_agg.voice_labels_used`: labels that contributed to `voice_prob`
+- `yamnet_agg.speech_labels_used`: labels that contributed to `speech_prob`
+
+Automation helpers:
+
+- `voice_flag` (`bool`)
+- `voice_flag_reason` (`str`) with explicit threshold explanation
+
+Current thresholds are constants in analyzer code:
+
+- `VOICE_MIN_PROB = 0.20`
+- `SINGING_MIN_PROB = 0.08`
+
+## Prohibited cues structured output
+
+`track_tags.payload_json` keeps `prohibited_cues_notes` and now also includes:
+
+- `prohibited_cues.backend`: `fallback` (or `primary` in future backends)
+- `prohibited_cues.checks_run`: ordered list of checks run
+- `prohibited_cues.flags`: boolean flags
+- `prohibited_cues.metrics`: numeric values for automation/debugging
+
+Current fallback checks include:
+
+- existing metrics: `true_peak_dbfs`, `spikes_found`
+- clipping detection (`clipping_detected`)
+- silence gap detection (`silence_gaps`)
+- abrupt frame-RMS jump detection (`abrupt_gain_jumps`)
+
+All checks are deterministic and frame-based with lightweight numpy math.
+
+## DSP score (`dsp_score`) v1
+
+`track_scores.payload_json` keeps legacy `dsp_score` and now includes:
+
+- `dsp_score_version = "v1"`
+- `dsp_components` (all normalized `0..1`)
+- `dsp_notes` (short explanation)
+
+`v1` components:
+
+- `headroom_component`: derived from `true_peak_dbfs` (more headroom -> higher)
+- `stability_component`: derived from frame RMS standard deviation (lower variance -> higher)
+- `spikes_component`: penalized when spikes are detected
+- `clipping_component`: penalized when clipping is detected
+- `silence_component`: penalized when silence gaps are detected
+
+`dsp_score` is a weighted sum of components, clamped to `[0,1]`.
+
 ## `missing_fields` semantics
 
 `missing_fields` tracks **required scalar metrics only**.
