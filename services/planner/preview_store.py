@@ -28,6 +28,10 @@ class PreviewUsernameMismatchError(PreviewStoreError):
     """Raised when preview does not belong to the username."""
 
 
+class PreviewAlreadyUsedError(PreviewStoreError):
+    """Raised when preview was already consumed."""
+
+
 @dataclass
 class _Entry:
     username: str
@@ -63,8 +67,10 @@ class PreviewStore:
 
     def get(self, username: str, preview_id: str) -> Any:
         entry = self._entries.get(preview_id)
-        if entry is None or entry.used:
+        if entry is None:
             raise PreviewNotFoundError("preview not found")
+        if entry.used:
+            raise PreviewAlreadyUsedError("preview already used")
         if self._is_expired(entry):
             self._entries.pop(preview_id, None)
             raise PreviewExpiredError("preview expired")
@@ -76,6 +82,8 @@ class PreviewStore:
         entry = self._entries.get(preview_id)
         if entry is None:
             raise PreviewNotFoundError("preview not found")
+        if entry.used:
+            raise PreviewAlreadyUsedError("preview already used")
         if self._is_expired(entry):
             self._entries.pop(preview_id, None)
             raise PreviewExpiredError("preview expired")

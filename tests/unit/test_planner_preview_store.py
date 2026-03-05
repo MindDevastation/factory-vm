@@ -6,6 +6,7 @@ from unittest.mock import patch
 from services.planner.preview_store import (
     MAX_PREVIEWS,
     PREVIEW_TTL_SECONDS,
+    PreviewAlreadyUsedError,
     PreviewExpiredError,
     PreviewNotFoundError,
     PreviewStore,
@@ -46,7 +47,7 @@ class TestPlannerPreviewStore(unittest.TestCase):
 
         store.mark_used(preview_id)
 
-        with self.assertRaises(PreviewNotFoundError):
+        with self.assertRaises(PreviewAlreadyUsedError):
             store.get("alice", preview_id)
 
     def test_store_capacity_is_bounded(self) -> None:

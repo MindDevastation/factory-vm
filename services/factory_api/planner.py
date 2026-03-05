@@ -23,11 +23,19 @@ from services.planner.planned_release_service import (
     PlannedReleaseService,
 )
 from services.planner.import_service import (
+    PlannerImportConfirmConflictError,
     PlannerImportParseError,
+    PlannerImportPreviewNotConfirmableError,
     PlannerImportPreviewService,
     PlannerImportTooManyRowsError,
 )
-from services.planner.preview_store import PreviewStore
+from services.planner.preview_store import (
+    PreviewAlreadyUsedError,
+    PreviewExpiredError,
+    PreviewNotFoundError,
+    PreviewStore,
+    PreviewUsernameMismatchError,
+)
 from services.planner.series import BulkSeriesInput, BulkSeriesValidationError, build_bulk_publish_ats
 from services.planner.time_normalization import PublishAtValidationError, normalize_publish_at
 
@@ -361,6 +369,101 @@ def create_planner_router(env: Env) -> APIRouter:
                 status_code=status_code,
                 request_id=request_id,
                 extra_fields={},
+            )
+
+    @router.post("/import/confirm")
+    async def planner_import_confirm(
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+
+        if not username:
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+
+        try:
+            payload = await request.json()
+        except Exception:
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "body must be object", status_code=status_code, request_id=request_id)
+
+        if not isinstance(payload, dict):
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "body must be object", status_code=status_code, request_id=request_id)
+
+        preview_id = payload.get("preview_id")
+        mode = payload.get("mode")
+        if not isinstance(preview_id, str) or not preview_id.strip():
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "preview_id is required", status_code=status_code, request_id=request_id)
+        if mode not in {"strict", "replace"}:
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "mode must be strict|replace", status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            try:
+                preview = _preview_store.get(username, preview_id)
+            except PreviewExpiredError:
+                status_code = 404
+                return planner_error("PLR_PREVIEW_EXPIRED", "preview expired", status_code=status_code, request_id=request_id)
+            except PreviewAlreadyUsedError:
+                status_code = 409
+                return planner_error(
+                    "PLR_PREVIEW_ALREADY_USED",
+                    "preview already used",
+                    status_code=status_code,
+                    request_id=request_id,
+                )
+            except (PreviewNotFoundError, PreviewUsernameMismatchError):
+                status_code = 404
+                return planner_error("PLR_PREVIEW_NOT_FOUND", "preview not found", status_code=status_code, request_id=request_id)
+
+            svc = PlannerImportPreviewService(conn)
+            result = svc.confirm_preview(preview=preview, mode=mode)
+            try:
+                _preview_store.mark_used(preview_id)
+            except (PreviewNotFoundError, PreviewAlreadyUsedError):
+                status_code = 409
+                return planner_error(
+                    "PLR_PREVIEW_ALREADY_USED",
+                    "preview already used",
+                    status_code=status_code,
+                    request_id=request_id,
+                )
+            except PreviewExpiredError:
+                status_code = 404
+                return planner_error("PLR_PREVIEW_EXPIRED", "preview expired", status_code=status_code, request_id=request_id)
+
+            return {"ok": True, "mode": mode, **result}
+        except PlannerImportPreviewNotConfirmableError:
+            status_code = 409
+            return planner_error(
+                "PLR_PREVIEW_NOT_CONFIRMABLE",
+                "preview not confirmable",
+                status_code=status_code,
+                request_id=request_id,
+            )
+        except (PlannerImportConfirmConflictError, sqlite3.IntegrityError):
+            status_code = 409
+            return planner_error("PLR_CONFLICT", "conflict", status_code=status_code, request_id=request_id)
+        except Exception:
+            logger.exception("planner_import_confirm_failed request_id=%s", request_id)
+            status_code = 500
+            return planner_error("PLR_INTERNAL", "planner internal error", status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_import_confirm",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={"mode": mode if isinstance(mode, str) else None},
             )
 
     @router.patch("/releases/{release_id}")
