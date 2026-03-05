@@ -406,7 +406,7 @@ def create_planner_router(env: Env) -> APIRouter:
         conn = dbm.connect(env)
         try:
             try:
-                preview = _preview_store.get(username, preview_id)
+                preview = _preview_store.reserve(username, preview_id)
             except PreviewExpiredError:
                 status_code = 404
                 return planner_error("PLR_PREVIEW_EXPIRED", "preview expired", status_code=status_code, request_id=request_id)
@@ -424,22 +424,9 @@ def create_planner_router(env: Env) -> APIRouter:
 
             svc = PlannerImportPreviewService(conn)
             result = svc.confirm_preview(preview=preview, mode=mode)
-            try:
-                _preview_store.mark_used(preview_id)
-            except (PreviewNotFoundError, PreviewAlreadyUsedError):
-                status_code = 409
-                return planner_error(
-                    "PLR_PREVIEW_ALREADY_USED",
-                    "preview already used",
-                    status_code=status_code,
-                    request_id=request_id,
-                )
-            except PreviewExpiredError:
-                status_code = 404
-                return planner_error("PLR_PREVIEW_EXPIRED", "preview expired", status_code=status_code, request_id=request_id)
-
             return {"ok": True, "mode": mode, **result}
         except PlannerImportPreviewNotConfirmableError:
+            _preview_store.release(preview_id)
             status_code = 409
             return planner_error(
                 "PLR_PREVIEW_NOT_CONFIRMABLE",
@@ -448,9 +435,11 @@ def create_planner_router(env: Env) -> APIRouter:
                 request_id=request_id,
             )
         except (PlannerImportConfirmConflictError, sqlite3.IntegrityError):
+            _preview_store.release(preview_id)
             status_code = 409
             return planner_error("PLR_CONFLICT", "conflict", status_code=status_code, request_id=request_id)
         except Exception:
+            _preview_store.release(preview_id)
             logger.exception("planner_import_confirm_failed request_id=%s", request_id)
             status_code = 500
             return planner_error("PLR_INTERNAL", "planner internal error", status_code=status_code, request_id=request_id)
