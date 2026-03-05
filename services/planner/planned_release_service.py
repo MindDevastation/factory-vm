@@ -218,34 +218,42 @@ class PlannedReleaseService:
 
         self._conn.execute("BEGIN IMMEDIATE")
         try:
-            existing_by_publish_at: dict[str, int] = {}
-            if seen_keys:
-                placeholders = ",".join("?" for _ in seen_keys)
-                rows = self._conn.execute(
-                    f"""
-                    SELECT id, publish_at
-                    FROM planned_releases
-                    WHERE channel_slug = ?
-                      AND publish_at IS NOT NULL
-                      AND publish_at IN ({placeholders})
-                    """,
-                    (channel_slug, *[k.split("\x1f", 1)[1] for k in seen_keys]),
-                ).fetchall()
-                existing_by_publish_at = {str(row["publish_at"]): int(row["id"]) for row in rows}
-
             if mode == "strict":
-                has_duplicate_non_null = len({p for p in publish_ats if p is not None}) != len(
-                    [p for p in publish_ats if p is not None]
-                )
-                if existing_by_publish_at or has_duplicate_non_null:
-                    raise PlannedReleaseConflictError("bulk strict mode conflict")
+                for publish_at in publish_ats:
+                    if publish_at is None:
+                        continue
+                    existing = self._conn.execute(
+                        """
+                        SELECT id
+                        FROM planned_releases
+                        WHERE channel_slug = ? AND publish_at = ?
+                        LIMIT 1
+                        """,
+                        (channel_slug, publish_at),
+                    ).fetchone()
+                    if existing is not None:
+                        raise PlannedReleaseConflictError("bulk strict mode conflict")
 
             created_ids: list[int] = []
             updated_ids: list[int] = []
 
             if mode == "replace":
+                existing_by_publish_at: dict[str, int] = {}
                 touched_existing: set[int] = set()
                 for publish_at in publish_ats:
+                    if publish_at is not None and publish_at not in existing_by_publish_at:
+                        existing = self._conn.execute(
+                            """
+                            SELECT id
+                            FROM planned_releases
+                            WHERE channel_slug = ? AND publish_at = ?
+                            LIMIT 1
+                            """,
+                            (channel_slug, publish_at),
+                        ).fetchone()
+                        if existing is not None:
+                            existing_by_publish_at[publish_at] = int(existing["id"])
+
                     if publish_at is not None and publish_at in existing_by_publish_at:
                         row_id = existing_by_publish_at[publish_at]
                         if row_id in touched_existing:

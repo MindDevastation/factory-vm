@@ -156,6 +156,108 @@ class TestPlannerApiBulkCreate(unittest.TestCase):
             self.assertEqual(resp.status_code, 400)
             self.assertEqual(resp.json()["error"]["code"], "PLR_INVALID_INPUT")
 
+    def test_bulk_create_start_publish_at_null_step_not_required(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.post(
+                "/v1/planner/releases/bulk-create",
+                headers=auth,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "content_type": "LONG",
+                    "count": 3,
+                    "start_publish_at": None,
+                    "mode": "strict",
+                },
+            )
+
+            self.assertEqual(resp.status_code, 201)
+            body = resp.json()
+            self.assertEqual(body["created_count"], 3)
+            self.assertEqual(body["updated_count"], 0)
+
+            rows = self._fetch_all(env)
+            self.assertEqual(len(rows), 3)
+            self.assertTrue(all(row["publish_at"] is None for row in rows))
+
+    def test_bulk_create_strict_large_count_works(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            count = 1200
+            start_publish_at = "2025-02-01T10:00:00"
+            resp = client.post(
+                "/v1/planner/releases/bulk-create",
+                headers=auth,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "content_type": "LONG",
+                    "title": "Big Batch",
+                    "count": count,
+                    "start_publish_at": start_publish_at,
+                    "step": "PT1M",
+                    "mode": "strict",
+                },
+            )
+
+            self.assertEqual(resp.status_code, 201)
+            body = resp.json()
+            self.assertEqual(body["created_count"], count)
+            self.assertEqual(body["updated_count"], 0)
+
+            conn = dbm.connect(env)
+            try:
+                total = conn.execute("SELECT COUNT(1) AS c FROM planned_releases").fetchone()["c"]
+                self.assertEqual(int(total), count)
+                first_row = conn.execute(
+                    "SELECT id FROM planned_releases WHERE channel_slug = ? AND publish_at = ?",
+                    ("darkwood-reverie", "2025-02-01T10:00:00+02:00"),
+                ).fetchone()
+                last_row = conn.execute(
+                    "SELECT id FROM planned_releases WHERE channel_slug = ? AND publish_at = ?",
+                    ("darkwood-reverie", "2025-02-02T05:59:00+02:00"),
+                ).fetchone()
+                self.assertIsNotNone(first_row)
+                self.assertIsNotNone(last_row)
+            finally:
+                conn.close()
+
+    def test_bulk_create_count_bounds_invalid(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            for invalid_count in (0, 5001):
+                resp = client.post(
+                    "/v1/planner/releases/bulk-create",
+                    headers=auth,
+                    json={
+                        "channel_slug": "darkwood-reverie",
+                        "content_type": "LONG",
+                        "count": invalid_count,
+                    },
+                )
+                self.assertEqual(resp.status_code, 400)
+                self.assertEqual(resp.json()["error"]["code"], "PLR_INVALID_INPUT")
+
     def test_bulk_create_rejects_week_duration_token(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
