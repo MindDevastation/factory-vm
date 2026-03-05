@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
+from services.planner.duration import DurationValidationError, parse_duration
 from services.planner.time_normalization import normalize_publish_at
 
 _KYIV_TZ = ZoneInfo("Europe/Kyiv")
@@ -16,6 +18,41 @@ class TimeNormalizationService(Protocol):
 class DefaultTimeNormalizationService:
     def normalize_publish_at(self, publish_at: str) -> str:
         return normalize_publish_at(publish_at)
+
+
+@dataclass(frozen=True)
+class BulkSeriesInput:
+    count: int
+    start_publish_at: str | None
+    step: str | None
+
+
+class BulkSeriesValidationError(ValueError):
+    """Raised when bulk planner series parameters are invalid."""
+
+
+def build_bulk_publish_ats(payload: BulkSeriesInput) -> list[str | None]:
+    if payload.count < 1 or payload.count > 5000:
+        raise BulkSeriesValidationError("count must be in range 1..5000")
+
+    if payload.start_publish_at is None:
+        return [None] * payload.count
+
+    step_delta: timedelta | None = None
+    if payload.step is not None:
+        try:
+            step_delta = parse_duration(payload.step)
+        except DurationValidationError as exc:
+            raise BulkSeriesValidationError("step must be a supported ISO8601 duration") from exc
+
+    try:
+        return generate_series_publish_at(
+            count=payload.count,
+            start_publish_at=payload.start_publish_at,
+            step=step_delta,
+        )
+    except ValueError as exc:
+        raise BulkSeriesValidationError(str(exc)) from exc
 
 
 def generate_series_publish_at(
