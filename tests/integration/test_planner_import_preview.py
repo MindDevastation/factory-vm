@@ -12,6 +12,15 @@ from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
 class TestPlannerImportPreview(unittest.TestCase):
+    @staticmethod
+    def _planned_releases_count(env: Env) -> int:
+        conn = dbm.connect(env)
+        try:
+            row = conn.execute("SELECT COUNT(*) AS cnt FROM planned_releases").fetchone()
+            return int(row["cnt"])
+        finally:
+            conn.close()
+
     def _insert_release(
         self,
         env: Env,
@@ -52,6 +61,8 @@ class TestPlannerImportPreview(unittest.TestCase):
             client = TestClient(mod.app)
             auth = basic_auth_header(env.basic_user, env.basic_pass)
 
+            before_count = self._planned_releases_count(env)
+
             csv_text = (
                 "channel_slug,content_type,title,publish_at,notes\n"
                 "darkwood-reverie,LONG,Title A,2025-02-01T10:00:00,Note A\n"
@@ -66,6 +77,8 @@ class TestPlannerImportPreview(unittest.TestCase):
             )
 
             self.assertEqual(resp.status_code, 200)
+            after_count = self._planned_releases_count(env)
+            self.assertEqual(after_count, before_count)
             body = resp.json()
             self.assertTrue(body["preview_id"])
             self.assertEqual(body["summary"]["total_rows"], 3)
@@ -85,6 +98,37 @@ class TestPlannerImportPreview(unittest.TestCase):
             self.assertEqual(row2["existing_release_id"], existing_id)
 
             self.assertIn("CHANNEL_NOT_FOUND", row3["errors"])
+
+
+    def test_import_preview_csv_header_whitespace_normalizes_row_keys(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            csv_text = (
+                "channel_slug ,content_type,title,publish_at,notes\n"
+                "  ,LONG,Title A,2025-02-01T10:00:00,Note A\n"
+            )
+
+            resp = client.post(
+                "/v1/planner/import/preview",
+                headers=auth,
+                files={"file": ("preview.csv", csv_text.encode("utf-8"), "text/csv")},
+            )
+
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["summary"]["total_rows"], 1)
+            self.assertEqual(body["summary"]["error_rows"], 1)
+            self.assertEqual(body["summary"]["conflict_rows"], 0)
+            self.assertFalse(body["can_confirm_strict"])
+            self.assertFalse(body["can_confirm_replace"])
+            self.assertIn("INVALID_VALUE:channel_slug", body["rows"][0]["errors"])
 
     def test_import_preview_json_success_can_confirm(self) -> None:
         with temp_env() as (_, _):

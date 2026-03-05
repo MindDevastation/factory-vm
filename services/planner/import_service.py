@@ -183,15 +183,21 @@ class PlannerImportPreviewService:
         if reader.fieldnames is None:
             raise PlannerImportParseError("csv header is required")
 
-        normalized_headers = {header.strip() if isinstance(header, str) else header for header in reader.fieldnames}
-        if not set(REQUIRED_FIELDS).issubset(normalized_headers):
+        normalized_headers: list[str | None] = [header.strip() if isinstance(header, str) else header for header in reader.fieldnames]
+        if len(set(normalized_headers)) != len(normalized_headers):
+            # Deterministic parse failure when multiple source headers normalize to the same key.
+            raise PlannerImportParseError("csv header contains duplicate normalized fields")
+
+        normalized_header_set = set(normalized_headers)
+        if not set(REQUIRED_FIELDS).issubset(normalized_header_set):
             raise PlannerImportParseError("csv header missing required fields")
 
         rows: list[dict[str, Any]] = []
         for row in reader:
+            row_norm = {(key.strip() if isinstance(key, str) else key): value for key, value in row.items()}
             mapped: dict[str, Any] = {}
             for field in REQUIRED_FIELDS:
-                value = row.get(field)
+                value = row_norm.get(field)
                 mapped[field] = None if value is None else value
             rows.append(mapped)
         return rows
