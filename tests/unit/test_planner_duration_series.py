@@ -23,11 +23,31 @@ class PlannerDurationParserTests(unittest.TestCase):
             with self.assertRaises(DurationValidationError):
                 parse_duration(value)
 
+    def test_reject_oversized_duration(self):
+        with self.assertRaises(DurationValidationError):
+            parse_duration("PT999999999999H")
+
 
 class PlannerSeriesPublishAtTests(unittest.TestCase):
     def test_requires_step_for_multi_item_series_with_start(self):
         with self.assertRaises(ValueError):
             generate_series_publish_at(count=2, start_publish_at="2025-01-15T10:00", step=None)
+
+    def test_rejects_zero_step_for_multi_item_series(self):
+        with self.assertRaises(ValueError):
+            generate_series_publish_at(
+                count=2,
+                start_publish_at="2025-01-15T10:00",
+                step=timedelta(0),
+            )
+
+    def test_rejects_negative_step_for_multi_item_series(self):
+        with self.assertRaises(ValueError):
+            generate_series_publish_at(
+                count=2,
+                start_publish_at="2025-01-15T10:00",
+                step=-timedelta(minutes=30),
+            )
 
     def test_generates_publish_at_in_kyiv_then_normalizes(self):
         self.assertEqual(

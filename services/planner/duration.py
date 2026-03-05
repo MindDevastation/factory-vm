@@ -35,4 +35,8 @@ def parse_duration(value: str) -> timedelta:
     days = int(match.group("days") or 0)
     hours = int(match.group("hours") or 0)
     minutes = int(match.group("hours_minutes") or match.group("minutes_only") or 0)
-    return timedelta(days=days, hours=hours, minutes=minutes)
+
+    try:
+        return timedelta(days=days, hours=hours, minutes=minutes)
+    except OverflowError as exc:
+        raise DurationValidationError("duration value is too large") from exc
