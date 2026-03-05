@@ -22,10 +22,17 @@ from services.planner.planned_release_service import (
     PlannedReleaseNotFoundError,
     PlannedReleaseService,
 )
+from services.planner.import_service import (
+    PlannerImportParseError,
+    PlannerImportPreviewService,
+    PlannerImportTooManyRowsError,
+)
+from services.planner.preview_store import PreviewStore
 from services.planner.series import BulkSeriesInput, BulkSeriesValidationError, build_bulk_publish_ats
 from services.planner.time_normalization import PublishAtValidationError, normalize_publish_at
 
 logger = logging.getLogger(__name__)
+_preview_store = PreviewStore()
 
 
 def _require_planner_auth(env: Env):
@@ -52,6 +59,49 @@ def _release_dto(row: dict[str, Any]) -> dict[str, Any]:
 def _channel_exists(conn: sqlite3.Connection, channel_slug: str) -> bool:
     row = conn.execute("SELECT 1 FROM channels WHERE slug = ? LIMIT 1", (channel_slug,)).fetchone()
     return bool(row)
+
+
+def _extract_multipart_file(request: Request) -> tuple[str, bytes]:
+    content_type = str(request.headers.get("content-type") or "")
+    prefix = "boundary="
+    if "multipart/form-data" not in content_type.lower() or prefix not in content_type:
+        raise ValueError("multipart/form-data with boundary is required")
+
+    boundary = content_type.split(prefix, 1)[1].strip()
+    boundary = boundary.strip('"')
+    if not boundary:
+        raise ValueError("multipart boundary is required")
+
+    payload = request.scope.get("_body")
+    if payload is None:
+        raise ValueError("multipart body is missing")
+
+    marker = f"--{boundary}".encode("utf-8")
+    sections = payload.split(marker)
+    for section in sections:
+        part = section.strip()
+        if not part or part == b"--":
+            continue
+        if b"\r\n\r\n" not in part:
+            continue
+        headers_raw, body = part.split(b"\r\n\r\n", 1)
+        if body.endswith(b"\r\n"):
+            body = body[:-2]
+        if body.endswith(b"--"):
+            body = body[:-2]
+
+        header_lines = headers_raw.decode("utf-8", errors="ignore").split("\r\n")
+        disposition = next((line for line in header_lines if line.lower().startswith("content-disposition:")), "")
+        if 'name="file"' not in disposition:
+            continue
+
+        filename = "upload"
+        filename_key = 'filename="'
+        if filename_key in disposition:
+            filename = disposition.split(filename_key, 1)[1].split('"', 1)[0] or "upload"
+        return filename, body
+
+    raise ValueError("file part is required")
 
 
 def create_planner_router(env: Env) -> APIRouter:
@@ -259,6 +309,58 @@ def create_planner_router(env: Env) -> APIRouter:
                     "count": payload.get("count") if isinstance(payload, dict) else None,
                     "mode": payload.get("mode") if isinstance(payload, dict) else None,
                 },
+            )
+
+    @router.post("/import/preview")
+    async def planner_import_preview(
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+
+        if not username:
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            request.scope["_body"] = await request.body()
+            filename, payload = _extract_multipart_file(request)
+            svc = PlannerImportPreviewService(conn)
+            preview = svc.build_preview(filename=filename, payload=payload)
+            preview_id = _preview_store.put(username, preview)
+            return {
+                "preview_id": preview_id,
+                "summary": preview["summary"],
+                "can_confirm_strict": preview["can_confirm_strict"],
+                "can_confirm_replace": preview["can_confirm_replace"],
+                "rows": preview["rows"],
+            }
+        except ValueError:
+            status_code = 422
+            return planner_error("PLR_PARSE_ERROR", "parse error", status_code=status_code, request_id=request_id)
+        except PlannerImportTooManyRowsError:
+            status_code = 413
+            return planner_error("PLR_TOO_MANY_ROWS", "too many rows", status_code=status_code, request_id=request_id)
+        except PlannerImportParseError:
+            status_code = 422
+            return planner_error("PLR_PARSE_ERROR", "parse error", status_code=status_code, request_id=request_id)
+        except Exception:
+            logger.exception("planner_import_preview_failed request_id=%s", request_id)
+            status_code = 500
+            return planner_error("PLR_INTERNAL", "planner internal error", status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_import_preview",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={},
             )
 
     @router.patch("/releases/{release_id}")
