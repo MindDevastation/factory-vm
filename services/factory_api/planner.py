@@ -16,11 +16,13 @@ from services.factory_api.planner_common import (
     planner_request_id,
 )
 from services.planner.planned_release_service import (
+    PlannedReleaseConflictError,
     PlannedReleaseListParams,
     PlannedReleaseLockedError,
     PlannedReleaseNotFoundError,
     PlannedReleaseService,
 )
+from services.planner.series import BulkSeriesInput, BulkSeriesValidationError, build_bulk_publish_ats
 from services.planner.time_normalization import PublishAtValidationError, normalize_publish_at
 
 logger = logging.getLogger(__name__)
@@ -146,6 +148,116 @@ def create_planner_router(env: Env) -> APIRouter:
                     "sort_dir": sort_dir_value,
                     "page": page,
                     "page_size": page_size,
+                },
+            )
+
+
+    @router.post("/releases/bulk-create", status_code=201)
+    async def planner_bulk_create_releases(
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 201
+
+        if not username:
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+
+        try:
+            payload = await request.json()
+        except Exception:
+            status_code = 400
+            return planner_error(
+                "PLR_INVALID_INPUT",
+                "body must be valid JSON object",
+                status_code=status_code,
+                request_id=request_id,
+            )
+
+        if not isinstance(payload, dict):
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "body must be object", status_code=status_code, request_id=request_id)
+
+        channel_slug = str(payload.get("channel_slug") or "").strip()
+        content_type = str(payload.get("content_type") or "").strip()
+        if not channel_slug or not content_type:
+            status_code = 400
+            return planner_error(
+                "PLR_INVALID_INPUT",
+                "channel_slug and content_type are required",
+                status_code=status_code,
+                request_id=request_id,
+            )
+
+        count_raw = payload.get("count", 1)
+        mode = str(payload.get("mode") or "strict").strip().lower()
+        if mode not in {"strict", "replace"}:
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "mode must be strict or replace", status_code=status_code, request_id=request_id)
+
+        if not isinstance(count_raw, int):
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "count must be integer", status_code=status_code, request_id=request_id)
+
+        start_publish_at = payload.get("start_publish_at")
+        if start_publish_at is not None:
+            start_publish_at = str(start_publish_at)
+
+        step = payload.get("step")
+        if step is not None:
+            step = str(step)
+
+        conn = dbm.connect(env)
+        try:
+            if not _channel_exists(conn, channel_slug):
+                status_code = 404
+                return planner_error(
+                    "PLR_CHANNEL_NOT_FOUND",
+                    "channel not found",
+                    status_code=status_code,
+                    request_id=request_id,
+                )
+
+            publish_ats = build_bulk_publish_ats(BulkSeriesInput(count=count_raw, start_publish_at=start_publish_at, step=step))
+
+            svc = PlannedReleaseService(conn)
+            result = svc.bulk_create_or_replace(
+                channel_slug=channel_slug,
+                content_type=content_type,
+                title=payload.get("title"),
+                notes=payload.get("notes"),
+                publish_ats=publish_ats,
+                mode=mode,
+            )
+            return result
+        except BulkSeriesValidationError as exc:
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", str(exc), status_code=status_code, request_id=request_id)
+        except PlannedReleaseConflictError:
+            status_code = 409
+            return planner_error("PLR_CONFLICT", "conflict", status_code=status_code, request_id=request_id)
+        except sqlite3.IntegrityError:
+            status_code = 409
+            return planner_error("PLR_CONFLICT", "conflict", status_code=status_code, request_id=request_id)
+        except Exception:
+            logger.exception("planner_bulk_create_releases_failed request_id=%s", request_id)
+            status_code = 500
+            return planner_error("PLR_INTERNAL", "planner internal error", status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_bulk_create_releases",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "channel_slug": channel_slug if isinstance(payload, dict) else None,
+                    "count": payload.get("count") if isinstance(payload, dict) else None,
+                    "mode": payload.get("mode") if isinstance(payload, dict) else None,
                 },
             )
 
