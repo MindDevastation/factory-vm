@@ -163,7 +163,16 @@ def create_planner_router(env: Env) -> APIRouter:
             status_code = 401
             return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
 
-        payload = await request.json()
+        try:
+            payload = await request.json()
+        except Exception:
+            status_code = 400
+            return planner_error(
+                "PLR_INVALID_INPUT",
+                "body must be valid JSON object",
+                status_code=status_code,
+                request_id=request_id,
+            )
         if not isinstance(payload, dict):
             status_code = 400
             return planner_error("PLR_INVALID_INPUT", "body must be object", status_code=status_code, request_id=request_id)
@@ -196,8 +205,17 @@ def create_planner_router(env: Env) -> APIRouter:
 
         conn = dbm.connect(env)
         try:
-            if "channel_slug" in updates and updates["channel_slug"]:
-                if not _channel_exists(conn, str(updates["channel_slug"])):
+            if "channel_slug" in updates:
+                channel_slug = updates["channel_slug"]
+                if isinstance(channel_slug, str) and not channel_slug.strip():
+                    status_code = 400
+                    return planner_error(
+                        "PLR_INVALID_INPUT",
+                        "channel_slug must not be empty",
+                        status_code=status_code,
+                        request_id=request_id,
+                    )
+                if channel_slug and not _channel_exists(conn, str(channel_slug)):
                     status_code = 404
                     return planner_error(
                         "PLR_CHANNEL_NOT_FOUND",
