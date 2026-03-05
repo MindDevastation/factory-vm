@@ -236,3 +236,103 @@ class TestDbMoreCoverage(unittest.TestCase):
                 )
             finally:
                 conn.close()
+
+    def test_migrate_creates_planned_releases_table_and_indexes(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                tables = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("planned_releases", tables)
+
+                indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='planned_releases'"
+                    ).fetchall()
+                }
+                self.assertTrue(
+                    {
+                        "idx_pr_channel_slug",
+                        "idx_pr_content_type",
+                        "idx_pr_publish_at",
+                        "idx_pr_status",
+                        "idx_pr_title",
+                    }.issubset(indexes)
+                )
+            finally:
+                conn.close()
+
+    def test_planned_releases_unique_enforced_for_non_null_publish_at(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(
+                        channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?)
+                    """,
+                    ("ch-a", "video", "t1", "2026-01-01T00:00:00Z", "n1", "PLANNED", "c", "u"),
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        """
+                        INSERT INTO planned_releases(
+                            channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at
+                        ) VALUES(?,?,?,?,?,?,?,?)
+                        """,
+                        ("ch-a", "video", "t2", "2026-01-01T00:00:00Z", "n2", "LOCKED", "c", "u"),
+                    )
+            finally:
+                conn.close()
+
+    def test_planned_releases_allows_multiple_null_publish_at(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(
+                        channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?)
+                    """,
+                    ("ch-null", "video", "t1", None, "n1", "PLANNED", "c", "u"),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(
+                        channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?)
+                    """,
+                    ("ch-null", "audio", "t2", None, "n2", "FAILED", "c", "u"),
+                )
+                count = conn.execute(
+                    "SELECT COUNT(*) AS c FROM planned_releases WHERE channel_slug = ?",
+                    ("ch-null",),
+                ).fetchone()["c"]
+                self.assertEqual(int(count), 2)
+            finally:
+                conn.close()
+
+    def test_planned_releases_status_check_enforced(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        """
+                        INSERT INTO planned_releases(
+                            channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at
+                        ) VALUES(?,?,?,?,?,?,?,?)
+                        """,
+                        ("ch-status", "video", "t", None, "n", "INVALID", "c", "u"),
+                    )
+            finally:
+                conn.close()

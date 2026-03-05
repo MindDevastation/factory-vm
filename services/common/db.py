@@ -67,6 +67,26 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(channel_id) REFERENCES channels(id)
         );
 
+        CREATE TABLE IF NOT EXISTS planned_releases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_slug TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            title TEXT NULL,
+            publish_at TEXT NULL,
+            notes TEXT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(status IN ('PLANNED','LOCKED','FAILED')),
+            UNIQUE(channel_slug, publish_at)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pr_channel_slug ON planned_releases(channel_slug);
+        CREATE INDEX IF NOT EXISTS idx_pr_content_type ON planned_releases(content_type);
+        CREATE INDEX IF NOT EXISTS idx_pr_publish_at ON planned_releases(publish_at);
+        CREATE INDEX IF NOT EXISTS idx_pr_status ON planned_releases(status);
+        CREATE INDEX IF NOT EXISTS idx_pr_title ON planned_releases(title);
+
         CREATE TABLE IF NOT EXISTS assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             channel_id INTEGER NOT NULL,
