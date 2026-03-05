@@ -137,15 +137,6 @@ class PlannedReleaseService:
         if not updates:
             return self.get_by_id(release_id)
 
-        locked_row = self._conn.execute(
-            "SELECT status FROM planned_releases WHERE id = ?",
-            (release_id,),
-        ).fetchone()
-        if locked_row is None:
-            raise PlannedReleaseNotFoundError(f"planned release {release_id} not found")
-        if str(locked_row["status"]) != "PLANNED":
-            raise PlannedReleaseLockedError(f"planned release {release_id} is locked")
-
         set_parts: list[str] = []
         values: list[Any] = []
         for key, value in updates.items():
@@ -161,13 +152,31 @@ class PlannedReleaseService:
         values.append(self._now_iso())
         values.append(release_id)
 
-        self._conn.execute(
-            f"UPDATE planned_releases SET {', '.join(set_parts)} WHERE id = ?",
+        cur = self._conn.execute(
+            f"UPDATE planned_releases SET {', '.join(set_parts)} WHERE id = ? AND status = 'PLANNED'",
             tuple(values),
         )
+
+        if cur.rowcount == 0:
+            row = self._conn.execute(
+                "SELECT status FROM planned_releases WHERE id = ?",
+                (release_id,),
+            ).fetchone()
+            if row is None:
+                raise PlannedReleaseNotFoundError(f"planned release {release_id} not found")
+            if str(row["status"]) != "PLANNED":
+                raise PlannedReleaseLockedError(f"planned release {release_id} is locked")
+
         return self.get_by_id(release_id)
 
     def delete(self, release_id: int) -> None:
+        cur = self._conn.execute(
+            "DELETE FROM planned_releases WHERE id = ? AND status = 'PLANNED'",
+            (release_id,),
+        )
+        if cur.rowcount == 1:
+            return
+
         row = self._conn.execute(
             "SELECT status FROM planned_releases WHERE id = ?",
             (release_id,),
@@ -177,7 +186,9 @@ class PlannedReleaseService:
         if str(row["status"]) != "PLANNED":
             raise PlannedReleaseLockedError(f"planned release {release_id} is locked")
 
-        self._conn.execute("DELETE FROM planned_releases WHERE id = ?", (release_id,))
+        raise RuntimeError(
+            f"planned release {release_id} delete affected 0 rows while status remained PLANNED"
+        )
 
     @staticmethod
     def _now_iso() -> str:

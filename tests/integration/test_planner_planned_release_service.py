@@ -119,6 +119,49 @@ class TestPlannedReleaseService(unittest.TestCase):
         self.assertEqual(updated["notes"], "new note")
         self.assertEqual(updated["status"], "PLANNED")
 
+    def test_update_noop_does_not_raise_when_rowcount_zero(self) -> None:
+        created = self.service.create(
+            channel_slug="channel-a",
+            content_type="video",
+            title="Initial",
+            publish_at=None,
+            notes=None,
+        )
+        rid = int(created["id"])
+
+        self.service._now_iso = lambda: str(created["updated_at"])
+        updated = self.service.update(rid, {"title": created["title"]})
+
+        self.assertEqual(updated["status"], "PLANNED")
+        self.assertEqual(updated["title"], created["title"])
+
+    def test_update_and_delete_sql_are_status_gated(self) -> None:
+        created = self.service.create(
+            channel_slug="channel-a",
+            content_type="video",
+            title="Initial",
+            publish_at=None,
+            notes=None,
+        )
+        rid = int(created["id"])
+
+        traced_sql: list[str] = []
+        self.conn.set_trace_callback(traced_sql.append)
+        try:
+            self.service.update(rid, {"title": "Updated"})
+            self.service.delete(rid)
+        finally:
+            self.conn.set_trace_callback(None)
+
+        normalized = [sql.lower() for sql in traced_sql]
+        update_sql = next(sql for sql in normalized if "update planned_releases" in sql)
+        delete_sql = next(sql for sql in normalized if "delete from planned_releases" in sql)
+
+        self.assertIn("and status", update_sql)
+        self.assertIn("planned", update_sql)
+        self.assertIn("and status", delete_sql)
+        self.assertIn("planned", delete_sql)
+
     def test_update_and_delete_raise_locked_when_status_not_planned(self) -> None:
         created = self.service.create(
             channel_slug="channel-a",
