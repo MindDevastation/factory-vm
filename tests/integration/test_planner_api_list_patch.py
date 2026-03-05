@@ -34,6 +34,15 @@ class TestPlannerApiListPatch(unittest.TestCase):
         finally:
             conn.close()
 
+    def _get_release_channel_slug(self, env: Env, release_id: int) -> str:
+        conn = dbm.connect(env)
+        try:
+            row = conn.execute("SELECT channel_slug FROM planned_releases WHERE id = ?", (release_id,)).fetchone()
+            assert row is not None
+            return str(row["channel_slug"])
+        finally:
+            conn.close()
+
     def test_list_filters_sort_search_and_pagination(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
@@ -149,6 +158,115 @@ class TestPlannerApiListPatch(unittest.TestCase):
             )
             self.assertEqual(resp.status_code, 409)
             self.assertEqual(resp.json()["error"]["code"], "PLR_CONFLICT")
+
+    def test_patch_malformed_json_returns_400_invalid_input(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            rid = self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Malformed",
+                publish_at="2025-01-02T10:00:00+02:00",
+            )
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.patch(
+                f"/v1/planner/releases/{rid}",
+                data='{"title": ',
+                headers={**auth, "Content-Type": "application/json"},
+            )
+            self.assertEqual(resp.status_code, 400)
+            self.assertIn("error", resp.json())
+            self.assertEqual(resp.json()["error"]["code"], "PLR_INVALID_INPUT")
+
+    def test_patch_empty_or_non_object_payload_returns_400_invalid_input(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            rid = self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Payload",
+                publish_at="2025-01-02T10:00:00+02:00",
+            )
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            empty_resp = client.patch(
+                f"/v1/planner/releases/{rid}",
+                data="",
+                headers={**auth, "Content-Type": "application/json"},
+            )
+            self.assertEqual(empty_resp.status_code, 400)
+            self.assertIn("error", empty_resp.json())
+            self.assertEqual(empty_resp.json()["error"]["code"], "PLR_INVALID_INPUT")
+
+            list_resp = client.patch(f"/v1/planner/releases/{rid}", json=["not", "object"], headers=auth)
+            self.assertEqual(list_resp.status_code, 400)
+            self.assertIn("error", list_resp.json())
+            self.assertEqual(list_resp.json()["error"]["code"], "PLR_INVALID_INPUT")
+
+    def test_patch_channel_slug_empty_string_rejected_and_not_saved(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            rid = self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Empty Slug",
+                publish_at="2025-01-02T10:00:00+02:00",
+            )
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            before = self._get_release_channel_slug(env, rid)
+            resp = client.patch(f"/v1/planner/releases/{rid}", json={"channel_slug": ""}, headers=auth)
+            after = self._get_release_channel_slug(env, rid)
+
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(resp.json()["error"]["code"], "PLR_INVALID_INPUT")
+            self.assertEqual(before, "darkwood-reverie")
+            self.assertEqual(after, "darkwood-reverie")
+
+    def test_patch_channel_slug_whitespace_rejected_and_not_saved(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            rid = self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Whitespace Slug",
+                publish_at="2025-01-02T10:00:00+02:00",
+            )
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            before = self._get_release_channel_slug(env, rid)
+            resp = client.patch(f"/v1/planner/releases/{rid}", json={"channel_slug": "   "}, headers=auth)
+            after = self._get_release_channel_slug(env, rid)
+
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(resp.json()["error"]["code"], "PLR_INVALID_INPUT")
+            self.assertEqual(before, "darkwood-reverie")
+            self.assertEqual(after, "darkwood-reverie")
 
 
 if __name__ == "__main__":
