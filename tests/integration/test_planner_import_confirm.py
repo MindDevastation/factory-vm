@@ -272,6 +272,46 @@ class TestPlannerImportConfirm(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_confirm_internal_error_releases_preview_for_retry(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            preview_id = self._preview(
+                client,
+                auth,
+                [
+                    {
+                        "channel_slug": "channel-b",
+                        "content_type": "LONG",
+                        "title": "Retry After Failure",
+                        "publish_at": "2025-06-01T09:00:00",
+                        "notes": "a",
+                    }
+                ],
+            )
+
+            with patch.object(PlannerImportPreviewService, "confirm_preview", side_effect=RuntimeError("boom")):
+                first = client.post(
+                    "/v1/planner/import/confirm",
+                    headers=auth,
+                    json={"preview_id": preview_id, "mode": "strict"},
+                )
+            self.assertEqual(first.status_code, 500)
+            self.assertEqual(first.json()["error"]["code"], "PLR_INTERNAL")
+
+            second = client.post(
+                "/v1/planner/import/confirm",
+                headers=auth,
+                json={"preview_id": preview_id, "mode": "strict"},
+            )
+            self.assertEqual(second.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()
