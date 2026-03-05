@@ -194,6 +194,39 @@ class PlannedReleaseService:
             f"planned release {release_id} delete affected 0 rows while status remained PLANNED"
         )
 
+    def bulk_delete(self, release_ids: list[int]) -> int:
+        unique_ids = list(dict.fromkeys(release_ids))
+        if not unique_ids:
+            return 0
+
+        placeholders = ",".join(["?"] * len(unique_ids))
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = self._conn.execute(
+                f"SELECT id, status FROM planned_releases WHERE id IN ({placeholders})",
+                tuple(unique_ids),
+            ).fetchall()
+            rows_by_id = {int(row["id"]): str(row["status"]) for row in rows}
+
+            missing_ids = [release_id for release_id in unique_ids if release_id not in rows_by_id]
+            if missing_ids:
+                raise PlannedReleaseNotFoundError(f"planned release {missing_ids[0]} not found")
+
+            locked_ids = [release_id for release_id, status in rows_by_id.items() if status != "PLANNED"]
+            if locked_ids:
+                raise PlannedReleaseLockedError(f"planned release {locked_ids[0]} is locked")
+
+            cur = self._conn.execute(
+                f"DELETE FROM planned_releases WHERE id IN ({placeholders})",
+                tuple(unique_ids),
+            )
+            self._conn.execute("COMMIT")
+            return int(cur.rowcount)
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
     def bulk_create_or_replace(
         self,
         *,

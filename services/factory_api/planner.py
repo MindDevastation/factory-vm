@@ -455,6 +455,78 @@ def create_planner_router(env: Env) -> APIRouter:
                 extra_fields={"mode": mode if isinstance(mode, str) else None},
             )
 
+    @router.post("/releases/bulk-delete")
+    async def planner_bulk_delete_releases(
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        release_ids: list[int] = []
+
+        if not username:
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+
+        try:
+            payload = await request.json()
+        except Exception:
+            status_code = 400
+            return planner_error(
+                "PLR_INVALID_INPUT",
+                "body must be valid JSON object",
+                status_code=status_code,
+                request_id=request_id,
+            )
+
+        if not isinstance(payload, dict):
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "body must be object", status_code=status_code, request_id=request_id)
+
+        ids_raw = payload.get("ids")
+        if not isinstance(ids_raw, list) or len(ids_raw) == 0:
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "ids must be non-empty array", status_code=status_code, request_id=request_id)
+
+        if not all(isinstance(item, int) and item > 0 for item in ids_raw):
+            status_code = 400
+            return planner_error(
+                "PLR_INVALID_INPUT",
+                "ids must contain positive integers",
+                status_code=status_code,
+                request_id=request_id,
+            )
+
+        release_ids = [int(item) for item in ids_raw]
+
+        conn = dbm.connect(env)
+        try:
+            svc = PlannedReleaseService(conn)
+            deleted_count = svc.bulk_delete(release_ids)
+            return {"deleted_count": deleted_count}
+        except PlannedReleaseNotFoundError:
+            status_code = 404
+            return planner_error("PLR_NOT_FOUND", "release not found", status_code=status_code, request_id=request_id)
+        except PlannedReleaseLockedError:
+            status_code = 409
+            return planner_error("PLR_RELEASE_LOCKED", "release is locked", status_code=status_code, request_id=request_id)
+        except Exception:
+            logger.exception("planner_bulk_delete_releases_failed request_id=%s", request_id)
+            status_code = 500
+            return planner_error("PLR_INTERNAL", "planner internal error", status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_bulk_delete_releases",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={"ids_count": len(release_ids)},
+            )
+
     @router.patch("/releases/{release_id}")
     async def planner_patch_release(
         release_id: int,
