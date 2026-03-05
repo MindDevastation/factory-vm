@@ -35,6 +35,8 @@ def generate_series_publish_at(
 
     if count > 1 and step is None:
         raise ValueError("step is required when count > 1 and start_publish_at is set")
+    if count > 1 and step is not None and step <= timedelta(0):
+        raise ValueError("step must be > 0 when count > 1 and start_publish_at is set")
 
     step_value = step or timedelta(0)
     normalizer = time_normalization_service or DefaultTimeNormalizationService()
