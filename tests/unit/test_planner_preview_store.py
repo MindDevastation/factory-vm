@@ -6,6 +6,7 @@ from unittest.mock import patch
 from services.planner.preview_store import (
     MAX_PREVIEWS,
     PREVIEW_TTL_SECONDS,
+    PreviewAlreadyUsedError,
     PreviewExpiredError,
     PreviewNotFoundError,
     PreviewStore,
@@ -46,7 +47,7 @@ class TestPlannerPreviewStore(unittest.TestCase):
 
         store.mark_used(preview_id)
 
-        with self.assertRaises(PreviewNotFoundError):
+        with self.assertRaises(PreviewAlreadyUsedError):
             store.get("alice", preview_id)
 
     def test_store_capacity_is_bounded(self) -> None:
@@ -71,6 +72,39 @@ class TestPlannerPreviewStore(unittest.TestCase):
 
         with self.assertRaises(PreviewNotFoundError):
             store.mark_used("missing")
+
+    @patch("services.planner.preview_store.time.time", return_value=100.0)
+    def test_reserve_consumes_and_blocks_second_reserve(self, _mock_time) -> None:
+        store = PreviewStore()
+        preview_id = store.put("alice", {"title": "draft"})
+
+        preview = store.reserve("alice", preview_id)
+
+        self.assertEqual(preview, {"title": "draft"})
+        with self.assertRaises(PreviewAlreadyUsedError):
+            store.reserve("alice", preview_id)
+
+    @patch("services.planner.preview_store.time.time", return_value=100.0)
+    def test_release_restores_after_failure(self, _mock_time) -> None:
+        store = PreviewStore()
+        preview_id = store.put("alice", {"title": "draft"})
+
+        store.reserve("alice", preview_id)
+        store.release(preview_id)
+
+        preview = store.reserve("alice", preview_id)
+        self.assertEqual(preview, {"title": "draft"})
+
+    @patch("services.planner.preview_store.time.time", side_effect=[100.0, 100.0 + PREVIEW_TTL_SECONDS + 1])
+    def test_reserve_expired_raises_and_removes(self, _mock_time) -> None:
+        store = PreviewStore()
+        preview_id = store.put("alice", {"title": "draft"})
+
+        with self.assertRaises(PreviewExpiredError):
+            store.reserve("alice", preview_id)
+
+        with self.assertRaises(PreviewNotFoundError):
+            store.get("alice", preview_id)
 
 
 if __name__ == "__main__":

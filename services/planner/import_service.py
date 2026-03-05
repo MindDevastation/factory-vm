@@ -5,6 +5,7 @@ import io
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from services.planner.time_normalization import PublishAtValidationError, normalize_publish_at
@@ -23,6 +24,14 @@ class PlannerImportTooManyRowsError(PlannerImportError):
 
 class PlannerImportParseError(PlannerImportError):
     """Raised when import file cannot be parsed."""
+
+
+class PlannerImportPreviewNotConfirmableError(PlannerImportError):
+    """Raised when preview flags do not allow selected confirm mode."""
+
+
+class PlannerImportConfirmConflictError(PlannerImportError):
+    """Raised when strict confirm detects conflicts."""
 
 
 @dataclass
@@ -151,6 +160,93 @@ class PlannerImportPreviewService:
             ],
         }
 
+    def confirm_preview(self, *, preview: dict[str, Any], mode: str) -> dict[str, Any]:
+        rows = [row for row in preview.get("rows", []) if not row.get("errors")]
+
+        if mode == "strict":
+            if not bool(preview.get("can_confirm_strict")):
+                raise PlannerImportPreviewNotConfirmableError("strict mode is not confirmable")
+            return self._confirm_strict(rows)
+        if mode == "replace":
+            if not bool(preview.get("can_confirm_replace")):
+                raise PlannerImportPreviewNotConfirmableError("replace mode is not confirmable")
+            return self._confirm_replace(rows)
+        raise ValueError("mode must be strict or replace")
+
+    def _confirm_strict(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        inserted = 0
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            for row in rows:
+                normalized = row.get("normalized") or {}
+                channel_slug = normalized.get("channel_slug")
+                publish_at = normalized.get("publish_at")
+                if isinstance(channel_slug, str) and channel_slug and isinstance(publish_at, str) and publish_at:
+                    if self._find_existing_release_id(channel_slug, publish_at) is not None:
+                        raise PlannerImportConfirmConflictError("conflict")
+                self._insert_non_conflict_row(normalized)
+                inserted += 1
+            self._conn.execute("COMMIT")
+            return {"inserted": inserted, "updated": 0}
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def _confirm_replace(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        inserted = 0
+        updated = 0
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            for row in rows:
+                normalized = row.get("normalized") or {}
+                channel_slug = normalized.get("channel_slug")
+                publish_at = normalized.get("publish_at")
+                if isinstance(channel_slug, str) and channel_slug and isinstance(publish_at, str) and publish_at:
+                    cur = self._conn.execute(
+                        """
+                        UPDATE planned_releases
+                        SET content_type = ?, title = ?, notes = ?, updated_at = ?
+                        WHERE channel_slug = ? AND publish_at = ?
+                        """,
+                        (
+                            normalized.get("content_type"),
+                            normalized.get("title"),
+                            normalized.get("notes"),
+                            self._now_iso(),
+                            channel_slug,
+                            publish_at,
+                        ),
+                    )
+                    if cur.rowcount == 1:
+                        updated += 1
+                        continue
+
+                self._insert_non_conflict_row(normalized)
+                inserted += 1
+            self._conn.execute("COMMIT")
+            return {"inserted": inserted, "updated": updated}
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def _insert_non_conflict_row(self, normalized: dict[str, Any]) -> None:
+        now_iso = self._now_iso()
+        self._conn.execute(
+            """
+            INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'PLANNED', ?, ?)
+            """,
+            (
+                normalized.get("channel_slug"),
+                normalized.get("content_type"),
+                normalized.get("title"),
+                normalized.get("publish_at"),
+                normalized.get("notes"),
+                now_iso,
+                now_iso,
+            ),
+        )
+
     def _parse_rows(self, *, filename: str, payload: bytes) -> list[dict[str, Any]]:
         file_name_lower = (filename or "").strip().lower()
         text = self._decode_payload(payload)
@@ -230,3 +326,7 @@ class PlannerImportPreviewService:
         if not row:
             return None
         return int(row["id"])
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
