@@ -18,6 +18,10 @@ class PlannedReleaseLockedError(PlannedReleaseError):
     """Raised when mutation is attempted on a non-PLANNED release."""
 
 
+class PlannedReleaseConflictError(PlannedReleaseError):
+    """Raised when strict bulk mode detects an existing conflict."""
+
+
 @dataclass(frozen=True)
 class PlannedReleaseListParams:
     channel_slug: str | None = None
@@ -189,6 +193,94 @@ class PlannedReleaseService:
         raise RuntimeError(
             f"planned release {release_id} delete affected 0 rows while status remained PLANNED"
         )
+
+    def bulk_create(
+        self,
+        *,
+        channel_slug: str,
+        content_type: str,
+        title: str | None,
+        notes: str | None,
+        publish_ats: list[str | None],
+        mode: str,
+    ) -> dict[str, Any]:
+        if mode not in {"strict", "replace"}:
+            raise ValueError("mode must be strict or replace")
+
+        now_iso = self._now_iso()
+        created_count = 0
+        updated_count = 0
+        affected_ids: list[int] = []
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            if mode == "strict":
+                non_null_publish_ats = [value for value in publish_ats if value is not None]
+                if non_null_publish_ats:
+                    placeholders = ",".join("?" for _ in non_null_publish_ats)
+                    params = [channel_slug, *non_null_publish_ats]
+                    row = self._conn.execute(
+                        f"""
+                        SELECT 1
+                        FROM planned_releases
+                        WHERE channel_slug = ? AND publish_at IN ({placeholders})
+                        LIMIT 1
+                        """,
+                        tuple(params),
+                    ).fetchone()
+                    if row is not None:
+                        raise PlannedReleaseConflictError("conflict")
+
+            for publish_at in publish_ats:
+                if publish_at is not None:
+                    existing = self._conn.execute(
+                        """
+                        SELECT id
+                        FROM planned_releases
+                        WHERE channel_slug = ? AND publish_at = ?
+                        LIMIT 1
+                        """,
+                        (channel_slug, publish_at),
+                    ).fetchone()
+                else:
+                    existing = None
+
+                if existing is not None:
+                    if mode == "strict":
+                        raise PlannedReleaseConflictError("conflict")
+
+                    release_id = int(existing["id"])
+                    self._conn.execute(
+                        """
+                        UPDATE planned_releases
+                        SET content_type = ?, title = ?, notes = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (content_type, title, notes, now_iso, release_id),
+                    )
+                    updated_count += 1
+                    affected_ids.append(release_id)
+                    continue
+
+                cur = self._conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+                    VALUES(?, ?, ?, ?, ?, 'PLANNED', ?, ?)
+                    """,
+                    (channel_slug, content_type, title, publish_at, notes, now_iso, now_iso),
+                )
+                created_count += 1
+                affected_ids.append(int(cur.lastrowid))
+
+            self._conn.execute("COMMIT")
+            return {
+                "created_count": created_count,
+                "updated_count": updated_count,
+                "affected_ids": affected_ids,
+            }
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _now_iso() -> str:

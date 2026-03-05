@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
+from services.planner.duration import parse_duration
 from services.planner.time_normalization import normalize_publish_at
 
 _KYIV_TZ = ZoneInfo("Europe/Kyiv")
@@ -50,3 +51,17 @@ def generate_series_publish_at(
         publish_ats.append(normalizer.normalize_publish_at(scheduled.isoformat(timespec="seconds")))
 
     return publish_ats
+
+
+def generate_bulk_publish_ats(*, count: int, start_publish_at: str | None, step: str | None) -> list[str | None]:
+    if count < 1 or count > 5000:
+        raise ValueError("count must be between 1 and 5000")
+
+    if start_publish_at is None:
+        return generate_series_publish_at(count=count, start_publish_at=None, step=None)
+
+    step_delta = None
+    if step is not None:
+        step_delta = parse_duration(step)
+
+    return generate_series_publish_at(count=count, start_publish_at=start_publish_at, step=step_delta)
