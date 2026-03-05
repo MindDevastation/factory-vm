@@ -194,6 +194,40 @@ class PlannedReleaseService:
             f"planned release {release_id} delete affected 0 rows while status remained PLANNED"
         )
 
+    def bulk_delete(self, release_ids: list[int]) -> int:
+        unique_ids = list(dict.fromkeys(release_ids))
+        if not unique_ids:
+            return 0
+
+        placeholders = ",".join("?" for _ in unique_ids)
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = self._conn.execute(
+                f"SELECT id, status FROM planned_releases WHERE id IN ({placeholders})",
+                tuple(unique_ids),
+            ).fetchall()
+
+            found_ids = {int(row["id"]) for row in rows}
+            missing_ids = [release_id for release_id in unique_ids if release_id not in found_ids]
+            if missing_ids:
+                raise PlannedReleaseNotFoundError(f"planned release {missing_ids[0]} not found")
+
+            locked_ids = [int(row["id"]) for row in rows if str(row["status"]) != "PLANNED"]
+            if locked_ids:
+                raise PlannedReleaseLockedError(f"planned release {locked_ids[0]} is locked")
+
+            cur = self._conn.execute(
+                f"DELETE FROM planned_releases WHERE id IN ({placeholders})",
+                tuple(unique_ids),
+            )
+            if cur.rowcount != len(unique_ids):
+                raise RuntimeError("planned release bulk delete affected unexpected rowcount")
+            self._conn.commit()
+            return len(unique_ids)
+        except Exception:
+            self._conn.rollback()
+            raise
+
     def bulk_create_or_replace(
         self,
         *,
