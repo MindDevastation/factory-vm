@@ -150,6 +150,38 @@ class TestUiJobsRenderOne(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             self.assertEqual(resp.json(), {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"})
 
+    def test_existing_inputs_returns_noop_even_if_preflight_would_fail(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
+            job_id = self._create_draft_job(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch is not None
+                aid = dbm.create_asset(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    kind="AUDIO",
+                    origin="LOCAL",
+                    origin_id="local_track",
+                    name="local.wav",
+                    path="/tmp/local.wav",
+                )
+                dbm.link_job_input(conn, job_id, aid, "TRACK", 0)
+            finally:
+                conn.close()
+
+            _, client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.post(f"/v1/ui/jobs/{job_id}/render", headers=h)
+
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json(), {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"})
+
+
 
 if __name__ == "__main__":
     unittest.main()
