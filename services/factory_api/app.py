@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -25,7 +25,7 @@ from services.common.pydeps import ensure_py_deps_on_sys_path
 from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, qa_path
 from services.factory_api.ui_gdrive import run_preflight_for_job
-from services.factory_api.ui_jobs_enqueue import enqueue_ui_render_job
+from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
 from services.track_analyzer import track_jobs_db
@@ -1197,6 +1197,10 @@ def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basi
     return {"ok": True, "job_id": job_id}
 
 
+def _uij_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
 @app.post("/v1/ui/jobs/render_all")
 def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -1278,6 +1282,70 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
         "skipped_count": len(skipped_jobs),
         "skipped_jobs": skipped_jobs,
     }
+
+
+@app.post("/v1/ui/jobs/{job_id}/render")
+def api_ui_job_render(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        guard = check_ui_render_guard(conn, job_id=job_id)
+        if guard.reason == "not_found":
+            return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+        if guard.reason == "not_allowed":
+            return _uij_error(409, "UIJ_RENDER_NOT_ALLOWED", "Render is allowed only for Draft jobs")
+        if guard.reason == "already_in_progress":
+            return {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"}
+
+        if not job:
+            return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+
+        channel_slug = str(job.get("channel_slug") or "")
+        token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)
+        if (not channel_slug) or (not token_path.is_file()):
+            raise RuntimeError(f"missing gdrive token for channel '{channel_slug}'")
+
+        token = _render_all_channel_slug.set(channel_slug)
+        try:
+            drive = _create_drive_client(env)
+        finally:
+            _render_all_channel_slug.reset(token)
+
+        result = run_preflight_for_job(conn, env, job_id, drive=drive)
+        if not result.ok:
+            raise RuntimeError("ui render preflight failed")
+
+        draft = dbm.get_ui_job_draft(conn, job_id)
+        if not draft:
+            return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+
+        enqueue_result = enqueue_ui_render_job(
+            conn,
+            job_id=job_id,
+            channel_id=int(draft["channel_id"]),
+            tracks=list(result.resolved.get("tracks") or []),
+            background_file_id=str(result.resolved.get("background_file_id") or ""),
+            background_filename=str(result.resolved.get("background_filename") or ""),
+            cover_file_id=str(result.resolved.get("cover_file_id") or ""),
+            cover_filename=str(result.resolved.get("cover_filename") or ""),
+        )
+
+        if enqueue_result.reason == "already_in_progress":
+            return {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"}
+
+        if not enqueue_result.enqueued:
+            if enqueue_result.reason == "not_allowed":
+                return _uij_error(409, "UIJ_RENDER_NOT_ALLOWED", "Render is allowed only for Draft jobs")
+            if enqueue_result.reason == "not_found":
+                return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+            raise RuntimeError(f"unexpected enqueue result: {enqueue_result.reason}")
+
+        return {"job_id": str(job_id), "enqueued": True, "message": "Render enqueued"}
+    except Exception:
+        logger.exception("ui render enqueue failed", extra={"job_id": job_id, "stage": "enqueue"})
+        return _uij_error(500, "UIJ_ENQUEUE_FAILED", "Failed to enqueue render")
+    finally:
+        conn.close()
 
 
 @app.get("/v1/ui/jobs/{job_id}")

@@ -174,11 +174,16 @@ class TestUiJobsEnqueueCore(unittest.TestCase):
                     """,
                     (job_id,),
                 ).fetchall()
+                total_inputs = conn.execute(
+                    "SELECT COUNT(*) AS c FROM job_inputs WHERE job_id=?",
+                    (job_id,),
+                ).fetchone()
             finally:
                 conn.close()
 
             assert job is not None
             counts = {str(r["role"]): int(r["c"]) for r in role_counts}
+            assert total_inputs is not None
             self.assertTrue(result.enqueued)
             self.assertEqual(result.reason, "enqueued")
             self.assertEqual(job["state"], "READY_FOR_RENDER")
@@ -186,6 +191,7 @@ class TestUiJobsEnqueueCore(unittest.TestCase):
             self.assertEqual(counts.get("BACKGROUND", 0), 1)
             self.assertEqual(counts.get("COVER", 0), 1)
             self.assertEqual([int(r["order_index"]) for r in track_positions], [0, 1, 2])
+            self.assertEqual(int(total_inputs["c"]), 5)
 
 
 if __name__ == "__main__":
