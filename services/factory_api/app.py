@@ -1162,6 +1162,11 @@ def api_ui_jobs_statuses(_: bool = Depends(require_basic_auth(env))):
     return {"statuses": ordered_statuses}
 
 
+@app.get("/v1/ui/jobs/render_allowed_statuses")
+def api_ui_jobs_render_allowed_statuses(_: bool = Depends(require_basic_auth(env))):
+    return {"render_allowed_statuses": ["Draft"]}
+
+
 @app.post("/v1/ui/jobs")
 def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basic_auth(env))):
     errors = _ui_validate(payload)
