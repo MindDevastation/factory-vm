@@ -138,6 +138,30 @@ class TestUiJobsRenderSelected(unittest.TestCase):
                 },
             )
 
+    def test_render_selected_unexpected_error_returns_500(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
+
+            job_id = self._create_draft_job(env, "Explodes")
+            token_path = oauth_token_path(base_dir=Env.load().gdrive_tokens_dir, channel_slug="darkwood-reverie")
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
+
+            mod, client = self._new_client()
+            mod._create_drive_client = lambda _env: object()
+
+            def _raise_preflight(_conn, _env, _job_id, drive):
+                raise RuntimeError("boom")
+
+            mod.run_preflight_for_job = _raise_preflight
+
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.post("/v1/ui/jobs/render_selected", headers=h, json={"job_ids": [str(job_id)]})
+
+            self.assertEqual(resp.status_code, 500)
+            self.assertEqual(resp.json()["error"]["code"], "UIJ_INTERNAL")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1279,10 +1279,7 @@ def _render_selected_item(job_id_text: str) -> dict[str, Any]:
         raise RuntimeError(f"unexpected enqueue result: {enqueue_result.reason}")
     except Exception:
         logger.exception("ui render selected item failed", extra={"job_id": job_id_text, "stage": "enqueue_selected"})
-        return {
-            "job_id": str(job_id_text),
-            "error": {"code": "UIJ_INTERNAL", "message": "Internal error"},
-        }
+        raise
     finally:
         conn.close()
 
@@ -1307,7 +1304,7 @@ def api_ui_jobs_render_selected(payload: UiJobsRenderSelectedPayload, _: bool = 
             },
         }
     except Exception:
-        logger.exception("ui render selected failed", extra={"stage": "enqueue_selected_batch"})
+        logger.exception("render_selected internal error", extra={"stage": "enqueue_selected_batch"})
         return _uij_error(500, "UIJ_INTERNAL", "Internal error")
 
 
