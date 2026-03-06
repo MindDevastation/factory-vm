@@ -2,6 +2,7 @@
   const state = { page: 1, pageSize: 50, total: 0, items: [], selected: new Set(), previewId: null };
   const $ = (id) => document.getElementById(id);
   const noteEl = $('planner-note');
+  function apiUrl(path) { return new URL(path, window.location.origin).toString(); }
 
   function esc(v) { return String(v ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
   async function parseError(res) {
@@ -42,7 +43,7 @@
       <td>${editableInput(item, 'channel_slug', item.channel_slug)}</td>
       <td>${editableInput(item, 'content_type', item.content_type)}</td>
       <td>${editableInput(item, 'title', item.title)}</td>
-      <td>${editableInput(item, 'publish_at', item.publish_at, 'datetime-local')}</td>
+      <td>${editableInput(item, 'publish_at', item.publish_at, 'text')}</td>
       <td>${editableInput(item, 'notes', item.notes)}</td>
       <td>${esc(item.updated_at)}</td>
     </tr>`).join('');
@@ -63,8 +64,10 @@
         const value = el.value;
         if (field === 'status') { return; }
         try {
-          const res = await fetch(`/v1/planner/releases/${id}`, {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: value }),
+          const payload = {};
+          payload[field] = (field === 'publish_at' && value.trim() === '') ? null : value;
+          const res = await fetch(apiUrl(`/v1/planner/releases/${id}`), {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
           });
           if (!res.ok) {
             const err = await parseError(res);
@@ -92,7 +95,7 @@
 
   async function loadList() {
     state.pageSize = Number($('page-size').value) || 50;
-    const res = await fetch(`/v1/planner/releases?${queryParams().toString()}`);
+    const res = await fetch(apiUrl(`/v1/planner/releases?${queryParams().toString()}`));
     if (!res.ok) throw new Error(await parseError(res));
     const data = await res.json();
     state.items = data.items || [];
@@ -108,7 +111,7 @@
   async function bulkDelete() {
     if (!state.selected.size) return;
     const ids = Array.from(state.selected.values());
-    const res = await fetch('/v1/planner/releases/bulk-delete', {
+    const res = await fetch(apiUrl('/v1/planner/releases/bulk-delete'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
     });
     if (!res.ok) throw new Error(await parseError(res));
@@ -120,9 +123,12 @@
   async function submitBulkCreate(mode) {
     const form = $('bulk-create-form');
     const data = Object.fromEntries(new FormData(form).entries());
+    Object.keys(data).forEach((k) => {
+      if (typeof data[k] === 'string' && data[k].trim() === '') delete data[k];
+    });
     data.count = Number(data.count || 1);
     data.mode = mode || 'strict';
-    const res = await fetch('/v1/planner/releases/bulk-create', {
+    const res = await fetch(apiUrl('/v1/planner/releases/bulk-create'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
     });
     if (!res.ok) throw new Error(await parseError(res));
@@ -137,7 +143,7 @@
     if (!file) throw new Error('Choose a file first');
     const fd = new FormData();
     fd.append('file', file, file.name);
-    const res = await fetch('/v1/planner/import/preview', { method: 'POST', body: fd });
+    const res = await fetch(apiUrl('/v1/planner/import/preview'), { method: 'POST', body: fd });
     if (!res.ok) throw new Error(await parseError(res));
     const out = await res.json();
     state.previewId = out.preview_id;
@@ -145,14 +151,18 @@
     $('import-confirm-strict').disabled = !out.can_confirm_strict;
     $('import-confirm-replace').disabled = !out.can_confirm_replace;
     const rows = out.rows || [];
-    $('import-preview-body').innerHTML = rows.length ? rows.map((r, idx) => `<tr>
-      <td>${idx + 1}</td><td>${esc(r.channel_slug)}</td><td>${esc(r.content_type)}</td><td>${esc(r.title)}</td><td>${esc(r.publish_at)}</td><td>${esc(r.error || '')}</td><td>${esc(r.conflict || '')}</td>
-    </tr>`).join('') : '<tr><td colspan="7" class="muted">No rows.</td></tr>';
+    $('import-preview-body').innerHTML = rows.length ? rows.map((r) => {
+      const n = r.normalized || {};
+      const err = (r.errors || []).join('; ');
+      const conflict = r.conflict ? `CONFLICT id=${r.existing_release_id}` : '';
+      return `<tr>
+      <td>${esc(r.row_num)}</td><td>${esc(n.channel_slug)}</td><td>${esc(n.content_type)}</td><td>${esc(n.title)}</td><td>${esc(n.publish_at)}</td><td>${esc(n.notes)}</td><td>${esc(err)}</td><td>${esc(conflict)}</td>
+    </tr>`).join('') : '<tr><td colspan="8" class="muted">No rows.</td></tr>';
   }
 
   async function confirmImport(mode) {
     if (!state.previewId) throw new Error('Preview first');
-    const res = await fetch('/v1/planner/import/confirm', {
+    const res = await fetch(apiUrl('/v1/planner/import/confirm'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ preview_id: state.previewId, mode }),
     });
