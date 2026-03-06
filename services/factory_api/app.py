@@ -1153,6 +1153,15 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
     return {"ok": True, "delete_mp4_at": delete_at}
 
 
+@app.get("/v1/ui/jobs/statuses")
+def api_ui_jobs_statuses(_: bool = Depends(require_basic_auth(env))):
+    ordered_statuses: list[str] = []
+    for status in track_jobs_db.RUNNING_STATUSES + track_jobs_db.TERMINAL_STATUSES:
+        if status not in ordered_statuses:
+            ordered_statuses.append(status)
+    return {"statuses": ordered_statuses}
+
+
 @app.post("/v1/ui/jobs")
 def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basic_auth(env))):
     errors = _ui_validate(payload)
