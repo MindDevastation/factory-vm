@@ -25,7 +25,7 @@ from services.common.pydeps import ensure_py_deps_on_sys_path
 from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, qa_path
 from services.factory_api.ui_gdrive import run_preflight_for_job
-from services.factory_api.ui_jobs_enqueue import enqueue_ui_render_job
+from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
 from services.track_analyzer import track_jobs_db
@@ -1289,11 +1289,16 @@ def api_ui_job_render(job_id: int, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
         job = dbm.get_job(conn, job_id)
-        if not job or str(job.get("job_type") or "") != "UI":
+        guard = check_ui_render_guard(conn, job_id=job_id)
+        if guard.reason == "not_found":
             return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
-
-        if str(job.get("state") or "") != "DRAFT":
+        if guard.reason == "not_allowed":
             return _uij_error(409, "UIJ_RENDER_NOT_ALLOWED", "Render is allowed only for Draft jobs")
+        if guard.reason == "already_in_progress":
+            return {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"}
+
+        if not job:
+            return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
 
         channel_slug = str(job.get("channel_slug") or "")
         token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)

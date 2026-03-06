@@ -13,6 +13,34 @@ class UiRenderEnqueueResult:
     reason: str
 
 
+@dataclass(frozen=True)
+class UiRenderGuardResult:
+    eligible: bool
+    reason: str
+
+
+def check_ui_render_guard(
+    conn: sqlite3.Connection,
+    *,
+    job_id: int,
+) -> UiRenderGuardResult:
+    job = conn.execute("SELECT job_type, state FROM jobs WHERE id=?", (job_id,)).fetchone()
+    if not job or str(job.get("job_type") or "") != "UI":
+        return UiRenderGuardResult(eligible=False, reason="not_found")
+
+    if str(job.get("state") or "") != "DRAFT":
+        return UiRenderGuardResult(eligible=False, reason="not_allowed")
+
+    has_inputs = conn.execute(
+        "SELECT 1 FROM job_inputs WHERE job_id=? LIMIT 1",
+        (job_id,),
+    ).fetchone()
+    if has_inputs:
+        return UiRenderGuardResult(eligible=False, reason="already_in_progress")
+
+    return UiRenderGuardResult(eligible=True, reason="eligible")
+
+
 def enqueue_ui_render_job(
     conn: sqlite3.Connection,
     *,
@@ -29,22 +57,18 @@ def enqueue_ui_render_job(
         conn.execute("BEGIN IMMEDIATE")
         tx_started = True
 
-        job = conn.execute("SELECT job_type, state FROM jobs WHERE id=?", (job_id,)).fetchone()
-        if not job or str(job.get("job_type") or "") != "UI":
+        guard = check_ui_render_guard(conn, job_id=job_id)
+        if guard.reason == "not_found":
             conn.execute("ROLLBACK")
             tx_started = False
             return UiRenderEnqueueResult(enqueued=False, reason="not_found")
 
-        if str(job.get("state") or "") != "DRAFT":
+        if guard.reason == "not_allowed":
             conn.execute("ROLLBACK")
             tx_started = False
             return UiRenderEnqueueResult(enqueued=False, reason="not_allowed")
 
-        has_inputs = conn.execute(
-            "SELECT 1 FROM job_inputs WHERE job_id=? LIMIT 1",
-            (job_id,),
-        ).fetchone()
-        if has_inputs:
+        if guard.reason == "already_in_progress":
             conn.execute("ROLLBACK")
             tx_started = False
             return UiRenderEnqueueResult(enqueued=False, reason="already_in_progress")
