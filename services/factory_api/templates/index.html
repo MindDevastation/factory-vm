@@ -55,7 +55,13 @@
   </tbody>
 </table>
 
-<table>
+<p>
+    <label for="jobs-status-filter"><strong>Status filter:</strong></label>
+    <select id="jobs-status-filter" multiple size="6" disabled></select>
+    <button type="button" id="jobs-status-clear" disabled>Clear</button>
+    <span class="muted" id="jobs-status-note">Loading statuses...</span>
+  </p>
+  <table id="jobs-table">
   <thead>
     <tr>
       <th>ID</th>
@@ -70,7 +76,7 @@
   </thead>
   <tbody>
     {% for j in jobs %}
-    <tr>
+    <tr data-job-status="{{ j.state }}">
       <td><a href="/jobs/{{ j.id }}">{{ j.id }}</a></td>
       <td>{{ j.channel_name }}<div class="muted">{{ j.channel_slug }}</div></td>
       <td><a href="/jobs/{{ j.id }}">{{ j.channel_name }} - {{ j.release_title }}</a>
@@ -103,7 +109,123 @@
   const oauthTableBody = document.querySelector('#oauth-status-table tbody');
   const trackJobStatusBySlug = {};
   const trackJobPollTimers = {};
+  const jobsStatusFilter = document.getElementById('jobs-status-filter');
+  const jobsStatusClear = document.getElementById('jobs-status-clear');
+  const jobsStatusNote = document.getElementById('jobs-status-note');
+  const jobsTableBody = document.querySelector('#jobs-table tbody');
+  const allJobs = Array.from(jobsTableBody.querySelectorAll('tr')).map((row) => {
+    return {
+      row,
+      status: row.getAttribute('data-job-status') || '',
+    };
+  });
   let pollCount = 0;
+
+  function parseStatusesFromQuery(sourceStatuses) {
+    const validStatuses = new Set(sourceStatuses);
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get('statuses');
+    const selected = new Set();
+    if (!raw) {
+      return selected;
+    }
+    raw.split(',').forEach((value) => {
+      const status = value.trim();
+      if (status && validStatuses.has(status)) {
+        selected.add(status);
+      }
+    });
+    return selected;
+  }
+
+  function serializeStatusesToQuery(selectedSet, sourceStatuses) {
+    if (!selectedSet || selectedSet.size === 0 || selectedSet.size === sourceStatuses.length) {
+      return '';
+    }
+    return sourceStatuses.filter((status) => selectedSet.has(status)).join(',');
+  }
+
+  function filterJobs(jobs, selectedSet) {
+    if (!selectedSet || selectedSet.size === 0) {
+      return jobs;
+    }
+    return jobs.filter((job) => selectedSet.has(job.status));
+  }
+
+  function updateStatusesQuery(selectedSet, sourceStatuses) {
+    const params = new URLSearchParams(window.location.search);
+    const serialized = serializeStatusesToQuery(selectedSet, sourceStatuses);
+    if (serialized) {
+      params.set('statuses', serialized);
+    } else {
+      params.delete('statuses');
+    }
+    const query = params.toString();
+    const nextUrl = query ? (window.location.pathname + '?' + query) : window.location.pathname;
+    window.history.replaceState({}, '', nextUrl);
+  }
+
+  function applyJobsFilter(selectedSet) {
+    const visible = new Set(filterJobs(allJobs, selectedSet));
+    allJobs.forEach((job) => {
+      job.row.style.display = visible.has(job) ? '' : 'none';
+    });
+  }
+
+  function selectedStatusesFromUi() {
+    return new Set(Array.from(jobsStatusFilter.selectedOptions).map((option) => option.value));
+  }
+
+  async function initJobsStatusFilter() {
+    try {
+      const res = await fetch('/v1/ui/jobs/statuses');
+      if (!res.ok) {
+        throw new Error('failed to load statuses (' + res.status + ')');
+      }
+      const data = await res.json();
+      const sourceStatuses = Array.isArray(data.statuses) ? data.statuses : [];
+
+      jobsStatusFilter.innerHTML = sourceStatuses.map((status) => {
+        return '<option value="' + esc(status) + '">' + esc(status) + '</option>';
+      }).join('');
+
+      const parsedStatuses = parseStatusesFromQuery(sourceStatuses);
+      const selectedStatuses = parsedStatuses.size ? parsedStatuses : new Set(sourceStatuses);
+
+      Array.from(jobsStatusFilter.options).forEach((option) => {
+        option.selected = selectedStatuses.has(option.value);
+      });
+
+      applyJobsFilter(selectedStatuses);
+      updateStatusesQuery(selectedStatuses, sourceStatuses);
+
+      jobsStatusFilter.disabled = false;
+      jobsStatusClear.disabled = false;
+      jobsStatusNote.textContent = '';
+
+      jobsStatusFilter.addEventListener('change', () => {
+        const uiSelected = selectedStatusesFromUi();
+        const effectiveSelected = uiSelected.size ? uiSelected : new Set(sourceStatuses);
+        applyJobsFilter(effectiveSelected);
+        updateStatusesQuery(effectiveSelected, sourceStatuses);
+      });
+
+      jobsStatusClear.addEventListener('click', () => {
+        Array.from(jobsStatusFilter.options).forEach((option) => {
+          option.selected = true;
+        });
+        const allSelected = new Set(sourceStatuses);
+        applyJobsFilter(allSelected);
+        updateStatusesQuery(allSelected, sourceStatuses);
+      });
+    } catch (err) {
+      console.warn('jobs status filter unavailable:', err);
+      jobsStatusFilter.disabled = true;
+      jobsStatusClear.disabled = true;
+      jobsStatusNote.textContent = 'Status filter unavailable';
+      applyJobsFilter(new Set());
+    }
+  }
   function fmtStatus(isPresent, mtime) {
     if (!isPresent) {
       return 'Missing';
@@ -511,6 +633,7 @@
     refreshAll();
   });
   refreshBtn.addEventListener('click', refreshAll);
+  initJobsStatusFilter();
   refreshAll();
 })();
 </script>
