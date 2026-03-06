@@ -6,7 +6,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from services.common.env import Env
-from services.common.ui_job_statuses import UI_JOB_STATUSES
+from services.track_analyzer import track_jobs_db
 from tests._helpers import basic_auth_header, temp_env
 
 
@@ -37,7 +37,11 @@ class TestUiJobsStatusesEndpoint(unittest.TestCase):
             body = response.json()
             self.assertIn("statuses", body)
             self.assertTrue(body["statuses"])
-            self.assertEqual(body["statuses"], list(UI_JOB_STATUSES))
+            expected = []
+            for status in track_jobs_db.RUNNING_STATUSES + track_jobs_db.TERMINAL_STATUSES:
+                if status not in expected:
+                    expected.append(status)
+            self.assertEqual(body["statuses"], expected)
 
 
 if __name__ == "__main__":
