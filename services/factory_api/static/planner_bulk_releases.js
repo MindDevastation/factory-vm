@@ -1,4 +1,5 @@
 (function () {
+  const PREVIEW_COLS = 8;
   const state = { page: 1, pageSize: 50, total: 0, items: [], selected: new Set(), previewId: null };
   const $ = (id) => document.getElementById(id);
   const noteEl = $('planner-note');
@@ -28,6 +29,10 @@
     const disabled = item.status !== 'PLANNED';
     const val = value == null ? '' : value;
     return `<input data-id="${item.id}" data-field="${field}" value="${esc(val)}" ${type ? `type="${type}"` : ''} ${disabled ? 'disabled' : ''}>`;
+  }
+
+  function previewPlaceholder(message) {
+    return `<tr><td colspan="${PREVIEW_COLS}" class="muted">${esc(message)}</td></tr>`;
   }
 
   function renderRows() {
@@ -80,10 +85,8 @@
             setNote(`Edit failed for ${id}: ${err}`);
             return;
           }
-          const row = await res.json();
-          const idx = state.items.findIndex((x) => x.id === id);
-          if (idx >= 0) state.items[idx] = row;
-          renderRows();
+          await res.json();
+          await loadList();
           setNote(`Saved release ${id}.`);
         } catch (err) {
           el.value = el.dataset.prev || '';
@@ -143,6 +146,7 @@
     if (!file) throw new Error('Choose a file first');
     const fd = new FormData();
     fd.append('file', file, file.name);
+    $('import-preview-body').innerHTML = previewPlaceholder('Loading preview...');
     const res = await fetch(apiUrl('/v1/planner/import/preview'), { method: 'POST', body: fd });
     if (!res.ok) throw new Error(await parseError(res));
     const out = await res.json();
@@ -153,11 +157,13 @@
     const rows = out.rows || [];
     $('import-preview-body').innerHTML = rows.length ? rows.map((r) => {
       const n = r.normalized || {};
-      const err = (r.errors || []).join('; ');
+      const errors = r.errors || [];
+      const err = errors.join('; ');
       const conflict = r.conflict ? `CONFLICT id=${r.existing_release_id}` : '';
-      return `<tr>
+      const rowClass = errors.length ? 'preview-row-error' : (r.conflict ? 'preview-row-conflict' : '');
+      return `<tr${rowClass ? ` class="${rowClass}"` : ''}>
       <td>${esc(r.row_num)}</td><td>${esc(n.channel_slug)}</td><td>${esc(n.content_type)}</td><td>${esc(n.title)}</td><td>${esc(n.publish_at)}</td><td>${esc(n.notes)}</td><td>${esc(err)}</td><td>${esc(conflict)}</td>
-    </tr>`).join('') : '<tr><td colspan="8" class="muted">No rows.</td></tr>';
+    </tr>`).join('') : previewPlaceholder('No rows.');
   }
 
   async function confirmImport(mode) {
@@ -191,9 +197,17 @@
 
   $('import-open').addEventListener('click', () => $('import-modal').showModal());
   $('import-cancel').addEventListener('click', () => $('import-modal').close());
-  $('import-preview-btn').addEventListener('click', async () => { try { await previewImport(); } catch (e) { setNote(e.message); } });
+  $('import-preview-btn').addEventListener('click', async () => {
+    try {
+      await previewImport();
+    } catch (e) {
+      $('import-preview-body').innerHTML = previewPlaceholder('Preview failed.');
+      setNote(e.message);
+    }
+  });
   $('import-confirm-strict').addEventListener('click', async () => { try { await confirmImport('strict'); } catch (e) { setNote(e.message); } });
   $('import-confirm-replace').addEventListener('click', async () => { try { await confirmImport('replace'); } catch (e) { setNote(e.message); } });
 
+  $('import-preview-body').innerHTML = previewPlaceholder('No preview yet.');
   loadList().catch((e) => setNote(e.message));
 })();
