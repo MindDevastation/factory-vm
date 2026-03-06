@@ -949,6 +949,10 @@ class UiJobDraftPayload(BaseModel):
     audio_ids_text: str
 
 
+class UiJobsRenderSelectedPayload(BaseModel):
+    job_ids: Optional[list[str]] = None
+
+
 def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
     errors: Dict[str, List[str]] = {
         "project": [],
@@ -1199,6 +1203,112 @@ def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basi
 
 def _uij_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _render_selected_item(job_id_text: str) -> dict[str, Any]:
+    try:
+        job_id = int(job_id_text)
+    except (TypeError, ValueError):
+        return {
+            "job_id": str(job_id_text),
+            "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"},
+        }
+
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        guard = check_ui_render_guard(conn, job_id=job_id)
+        if guard.reason == "not_found":
+            return {"job_id": str(job_id), "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"}}
+        if guard.reason == "not_allowed":
+            return {
+                "job_id": str(job_id),
+                "error": {"code": "UIJ_RENDER_NOT_ALLOWED", "message": "Status not allowed"},
+            }
+        if guard.reason == "already_in_progress":
+            return {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"}
+
+        if not job:
+            return {"job_id": str(job_id), "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"}}
+
+        channel_slug = str(job.get("channel_slug") or "")
+        token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)
+        if (not channel_slug) or (not token_path.is_file()):
+            raise RuntimeError(f"missing gdrive token for channel '{channel_slug}'")
+
+        token = _render_all_channel_slug.set(channel_slug)
+        try:
+            drive = _create_drive_client(env)
+        finally:
+            _render_all_channel_slug.reset(token)
+
+        result = run_preflight_for_job(conn, env, job_id, drive=drive)
+        if not result.ok:
+            raise RuntimeError("ui render preflight failed")
+
+        draft = dbm.get_ui_job_draft(conn, job_id)
+        if not draft:
+            return {"job_id": str(job_id), "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"}}
+
+        enqueue_result = enqueue_ui_render_job(
+            conn,
+            job_id=job_id,
+            channel_id=int(draft["channel_id"]),
+            tracks=list(result.resolved.get("tracks") or []),
+            background_file_id=str(result.resolved.get("background_file_id") or ""),
+            background_filename=str(result.resolved.get("background_filename") or ""),
+            cover_file_id=str(result.resolved.get("cover_file_id") or ""),
+            cover_filename=str(result.resolved.get("cover_filename") or ""),
+        )
+
+        if enqueue_result.reason == "already_in_progress":
+            return {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"}
+
+        if enqueue_result.reason == "not_allowed":
+            return {
+                "job_id": str(job_id),
+                "error": {"code": "UIJ_RENDER_NOT_ALLOWED", "message": "Status not allowed"},
+            }
+
+        if enqueue_result.reason == "not_found":
+            return {"job_id": str(job_id), "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"}}
+
+        if enqueue_result.enqueued:
+            return {"job_id": str(job_id), "enqueued": True}
+
+        raise RuntimeError(f"unexpected enqueue result: {enqueue_result.reason}")
+    except Exception:
+        logger.exception("ui render selected item failed", extra={"job_id": job_id_text, "stage": "enqueue_selected"})
+        return {
+            "job_id": str(job_id_text),
+            "error": {"code": "UIJ_INTERNAL", "message": "Internal error"},
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/v1/ui/jobs/render_selected")
+def api_ui_jobs_render_selected(payload: UiJobsRenderSelectedPayload, _: bool = Depends(require_basic_auth(env))):
+    try:
+        if not payload.job_ids:
+            return _uij_error(400, "UIJ_INVALID_INPUT", "job_ids is required and must be non-empty")
+
+        results = [_render_selected_item(job_id_text) for job_id_text in payload.job_ids]
+        enqueued_count = sum(1 for item in results if item.get("enqueued") is True)
+        noop_count = sum(1 for item in results if item.get("enqueued") is False)
+        failed_count = sum(1 for item in results if item.get("error"))
+        return {
+            "results": results,
+            "summary": {
+                "requested": len(payload.job_ids),
+                "enqueued": enqueued_count,
+                "noop": noop_count,
+                "failed": failed_count,
+            },
+        }
+    except Exception:
+        logger.exception("ui render selected failed", extra={"stage": "enqueue_selected_batch"})
+        return _uij_error(500, "UIJ_INTERNAL", "Internal error")
 
 
 @app.post("/v1/ui/jobs/render_all")
