@@ -59,11 +59,14 @@
     <label for="jobs-status-filter"><strong>Status filter:</strong></label>
     <select id="jobs-status-filter" multiple size="6" disabled></select>
     <button type="button" id="jobs-status-clear" disabled>Clear</button>
+    <button type="button" id="jobs-render-selected" disabled>Render selected</button>
     <span class="muted" id="jobs-status-note">Loading statuses...</span>
   </p>
+  <p id="jobs-inline-message" class="muted"></p>
   <table id="jobs-table">
   <thead>
     <tr>
+      <th><input type="checkbox" id="jobs-select-all-visible" aria-label="Select all visible"></th>
       <th>ID</th>
       <th>Канал</th>
       <th>Релиз</th>
@@ -76,7 +79,8 @@
   </thead>
   <tbody>
     {% for j in jobs %}
-    <tr data-job-status="{{ j.state }}">
+    <tr data-job-id="{{ j.id }}" data-job-status="{{ j.state }}">
+      <td><input type="checkbox" class="jobs-row-checkbox" data-job-id="{{ j.id }}" aria-label="Select job {{ j.id }}"></td>
       <td><a href="/jobs/{{ j.id }}">{{ j.id }}</a></td>
       <td>{{ j.channel_name }}<div class="muted">{{ j.channel_slug }}</div></td>
       <td><a href="/jobs/{{ j.id }}">{{ j.channel_name }} - {{ j.release_title }}</a>
@@ -92,11 +96,18 @@
         {% if j.state == 'DRAFT' and j.job_type == 'UI' %}
         <a href="/ui/jobs/{{ j.id }}/edit">Edit</a>
         {% endif %}
+        <button type="button" class="jobs-render-btn" data-job-id="{{ j.id }}" data-job-status="{{ j.state }}" {% if j.state|upper != 'DRAFT' %}disabled{% endif %}>Render</button>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+
+<style>
+  .row-failed {
+    background-color: #fef2f2;
+  }
+</style>
 
 <script>
 (function () {
@@ -112,9 +123,15 @@
   const jobsStatusFilter = document.getElementById('jobs-status-filter');
   const jobsStatusClear = document.getElementById('jobs-status-clear');
   const jobsStatusNote = document.getElementById('jobs-status-note');
+  const jobsInlineMessage = document.getElementById('jobs-inline-message');
+  const jobsRenderSelectedBtn = document.getElementById('jobs-render-selected');
+  const jobsSelectAllVisible = document.getElementById('jobs-select-all-visible');
   const jobsTableBody = document.querySelector('#jobs-table tbody');
+  const selectedJobIds = new Set();
+  const failedJobIds = new Set();
   const allJobs = Array.from(jobsTableBody.querySelectorAll('tr')).map((row) => {
     return {
+      id: row.getAttribute('data-job-id') || '',
       row,
       status: row.getAttribute('data-job-status') || '',
     };
@@ -170,7 +187,165 @@
     allJobs.forEach((job) => {
       job.row.style.display = visible.has(job) ? '' : 'none';
     });
+    syncSelectAllVisible();
   }
+
+  function setJobsMessage(message, tone) {
+    jobsInlineMessage.classList.remove('muted');
+    jobsInlineMessage.style.color = '';
+    if (tone === 'success') {
+      jobsInlineMessage.style.color = '#166534';
+    } else if (tone === 'error') {
+      jobsInlineMessage.style.color = '#b91c1c';
+    } else {
+      jobsInlineMessage.classList.add('muted');
+    }
+    jobsInlineMessage.textContent = message;
+  }
+
+  function updateFailedRowHighlights() {
+    allJobs.forEach((job) => {
+      job.row.classList.toggle('row-failed', failedJobIds.has(job.id));
+    });
+  }
+
+  function updateRenderSelectedButtonState() {
+    jobsRenderSelectedBtn.disabled = selectedJobIds.size === 0;
+  }
+
+  function syncSelectAllVisible() {
+    const visibleJobs = allJobs.filter((job) => job.row.style.display !== 'none');
+    if (!visibleJobs.length) {
+      jobsSelectAllVisible.checked = false;
+      jobsSelectAllVisible.indeterminate = false;
+      return;
+    }
+    const selectedVisibleCount = visibleJobs.filter((job) => selectedJobIds.has(job.id)).length;
+    jobsSelectAllVisible.checked = selectedVisibleCount === visibleJobs.length;
+    jobsSelectAllVisible.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleJobs.length;
+  }
+
+  function syncRowCheckboxes() {
+    jobsTableBody.querySelectorAll('.jobs-row-checkbox').forEach((checkbox) => {
+      const jobId = checkbox.getAttribute('data-job-id') || '';
+      checkbox.checked = selectedJobIds.has(jobId);
+    });
+    syncSelectAllVisible();
+    updateRenderSelectedButtonState();
+  }
+
+  function isDraftStatus(status) {
+    return String(status || '').toUpperCase() === 'DRAFT';
+  }
+
+  async function renderJob(jobId, buttonEl) {
+    if (buttonEl) {
+      buttonEl.disabled = true;
+    }
+    try {
+      const res = await fetch('/v1/ui/jobs/' + encodeURIComponent(jobId) + '/render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        const errorMessage = data.error ? data.error.message : 'Failed to render job';
+        setJobsMessage(errorMessage, 'error');
+        return;
+      }
+      if (data.enqueued) {
+        setJobsMessage(data.message, 'success');
+      } else {
+        setJobsMessage(data.message, 'info');
+      }
+    } catch (err) {
+      setJobsMessage(err.message || 'Failed to render job', 'error');
+    } finally {
+      if (buttonEl && isDraftStatus(buttonEl.getAttribute('data-job-status'))) {
+        buttonEl.disabled = false;
+      }
+    }
+  }
+
+  async function renderSelectedJobs() {
+    const jobIds = Array.from(selectedJobIds);
+    jobsRenderSelectedBtn.disabled = true;
+    try {
+      const res = await fetch('/v1/ui/jobs/render_selected', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_ids: jobIds }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        const errorMessage = data.error ? data.error.message : 'Failed to render selected jobs';
+        setJobsMessage(errorMessage, 'error');
+        return;
+      }
+
+      failedJobIds.clear();
+      data.results.forEach((result) => {
+        if (result.error) {
+          failedJobIds.add(String(result.job_id));
+        }
+      });
+      updateFailedRowHighlights();
+
+      const summary = data.summary;
+      setJobsMessage(
+        'Requested: ' + summary.requested +
+        ', Enqueued: ' + summary.enqueued +
+        ', No-op: ' + summary.noop +
+        ', Failed: ' + summary.failed,
+        summary.failed > 0 ? 'error' : 'success'
+      );
+    } catch (err) {
+      setJobsMessage(err.message || 'Failed to render selected jobs', 'error');
+    } finally {
+      updateRenderSelectedButtonState();
+    }
+  }
+
+  jobsTableBody.querySelectorAll('.jobs-row-checkbox').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const jobId = checkbox.getAttribute('data-job-id') || '';
+      if (!jobId) {
+        return;
+      }
+      if (checkbox.checked) {
+        selectedJobIds.add(jobId);
+      } else {
+        selectedJobIds.delete(jobId);
+      }
+      syncSelectAllVisible();
+      updateRenderSelectedButtonState();
+    });
+  });
+
+  jobsSelectAllVisible.addEventListener('change', () => {
+    const shouldSelect = jobsSelectAllVisible.checked;
+    allJobs.forEach((job) => {
+      if (job.row.style.display === 'none') {
+        return;
+      }
+      if (shouldSelect) {
+        selectedJobIds.add(job.id);
+      } else {
+        selectedJobIds.delete(job.id);
+      }
+    });
+    syncRowCheckboxes();
+  });
+
+  jobsTableBody.querySelectorAll('.jobs-render-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await renderJob(button.getAttribute('data-job-id') || '', button);
+    });
+  });
+
+  jobsRenderSelectedBtn.addEventListener('click', renderSelectedJobs);
+  syncRowCheckboxes();
+  updateFailedRowHighlights();
 
   function selectedStatusesFromUi() {
     return new Set(Array.from(jobsStatusFilter.selectedOptions).map((option) => option.value));
