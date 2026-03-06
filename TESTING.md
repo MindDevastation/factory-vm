@@ -60,6 +60,22 @@ PYTHONPATH=. python -m unittest discover -s tests/integration -v
 PYTHONPATH=. python -m unittest discover -s tests/e2e -v
 ```
 
+### UIJ-S4 manual smoke (UI jobs status filters)
+
+> This repository currently does not include a Playwright browser E2E framework.
+> Until one is added, use these manual smoke checks for `SPEC_UI_JOBS_FILTERS_v1.0 §16`:
+
+1. Open the jobs UI page and verify default state shows all rows (no `statuses` query parameter in URL).
+2. Select only `FAILED` in the status filter and verify:
+   - the URL contains `statuses=FAILED`, and
+   - the jobs table displays only `FAILED` rows.
+3. Add `PLANNED` and verify:
+   - the URL contains `statuses=PLANNED,FAILED` (backend status ordering), and
+   - the table displays both `PLANNED` and `FAILED` rows.
+4. Clear the status filter and verify:
+   - the `statuses` query parameter is removed from the URL, and
+   - all jobs are visible again.
+
 ---
 
 ## 3) Coverage
