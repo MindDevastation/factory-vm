@@ -125,23 +125,30 @@ def importer_cycle(*, env: Env, worker_id: str) -> None:
                 audio_dir = drive.find_child_folder(release_folder_id, "audio")
                 images_dir = drive.find_child_folder(release_folder_id, "images")
                 if not audio_dir or not images_dir:
-                    conn.execute(
-                        """
-                        INSERT INTO jobs(release_id, job_type, state, stage, priority, created_at, updated_at)
-                        VALUES(?, ?, 'WAITING_INPUTS', 'FETCH', ?, ?, ?)
-                        """,
-                        (release_id, job_type, int(100 * float(ch["weight"])), ts, ts),
+                    dbm.insert_job_with_lineage_defaults(
+                        conn,
+                        release_id=release_id,
+                        job_type=job_type,
+                        state="WAITING_INPUTS",
+                        stage="FETCH",
+                        priority=int(100 * float(ch["weight"])),
+                        attempt=0,
+                        created_at=ts,
+                        updated_at=ts,
                     )
                     continue
 
-                cur2 = conn.execute(
-                    """
-                    INSERT INTO jobs(release_id, job_type, state, stage, priority, created_at, updated_at)
-                    VALUES(?, ?, 'READY_FOR_RENDER', 'FETCH', ?, ?, ?)
-                    """,
-                    (release_id, job_type, int(100 * float(ch["weight"])), ts, ts),
+                job_id = dbm.insert_job_with_lineage_defaults(
+                    conn,
+                    release_id=release_id,
+                    job_type=job_type,
+                    state="READY_FOR_RENDER",
+                    stage="FETCH",
+                    priority=int(100 * float(ch["weight"])),
+                    attempt=0,
+                    created_at=ts,
+                    updated_at=ts,
                 )
-                job_id = int(cur2.lastrowid)
 
                 _gdrive_attach_assets(conn, drive, ch, job_id, release_folder_id, meta_obj)
 
@@ -251,23 +258,30 @@ def _import_from_local(env: Env, conn, channels_cfg) -> None:
             job_type = "RENDER_TITANWAVE" if str(ch["kind"]) == "TITANWAVE" else "RENDER_LONG"
 
             if not (rel.folder/"audio").exists() or not (rel.folder/"images").exists():
-                conn.execute(
-                    """
-                    INSERT INTO jobs(release_id, job_type, state, stage, priority, created_at, updated_at)
-                    VALUES(?, ?, 'WAITING_INPUTS', 'FETCH', ?, ?, ?)
-                    """,
-                    (release_id, job_type, int(100 * float(ch["weight"])), ts, ts),
+                dbm.insert_job_with_lineage_defaults(
+                    conn,
+                    release_id=release_id,
+                    job_type=job_type,
+                    state="WAITING_INPUTS",
+                    stage="FETCH",
+                    priority=int(100 * float(ch["weight"])),
+                    attempt=0,
+                    created_at=ts,
+                    updated_at=ts,
                 )
                 continue
 
-            cur2 = conn.execute(
-                """
-                INSERT INTO jobs(release_id, job_type, state, stage, priority, created_at, updated_at)
-                VALUES(?, ?, 'READY_FOR_RENDER', 'FETCH', ?, ?, ?)
-                """,
-                (release_id, job_type, int(100 * float(ch["weight"])), ts, ts),
+            job_id = dbm.insert_job_with_lineage_defaults(
+                conn,
+                release_id=release_id,
+                job_type=job_type,
+                state="READY_FOR_RENDER",
+                stage="FETCH",
+                priority=int(100 * float(ch["weight"])),
+                attempt=0,
+                created_at=ts,
+                updated_at=ts,
             )
-            job_id = int(cur2.lastrowid)
 
             _local_attach_assets(conn, ch, job_id, rel)
 

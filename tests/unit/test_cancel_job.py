@@ -34,11 +34,21 @@ class TestCancelJob(unittest.TestCase):
             )
             self.release_id = int(cur.lastrowid)
 
-            cur2 = conn.execute(
-                "INSERT INTO jobs(release_id, job_type, state, stage, priority, attempt, locked_by, locked_at, retry_at, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (self.release_id, "RENDER_LONG", "RENDERING", "RENDER", 1, 0, "w1", ts, ts + 3600, ts, ts),
+            self.job_id = dbm.insert_job_with_lineage_defaults(
+                conn,
+                release_id=self.release_id,
+                job_type="RENDER_LONG",
+                state="RENDERING",
+                stage="RENDER",
+                priority=1,
+                attempt=0,
+                created_at=ts,
+                updated_at=ts,
             )
-            self.job_id = int(cur2.lastrowid)
+            conn.execute(
+                "UPDATE jobs SET locked_by = ?, locked_at = ?, retry_at = ? WHERE id = ?",
+                ("w1", ts, ts + 3600, self.job_id),
+            )
         finally:
             conn.close()
 
