@@ -34,12 +34,16 @@ def enqueue_ui_render_job(
             conn.execute("ROLLBACK")
             tx_started = False
             return UiRenderEnqueueResult(enqueued=False, reason="not_found")
+
         if str(job.get("state") or "") != "DRAFT":
             conn.execute("ROLLBACK")
             tx_started = False
             return UiRenderEnqueueResult(enqueued=False, reason="not_allowed")
 
-        has_inputs = conn.execute("SELECT 1 FROM job_inputs WHERE job_id=? LIMIT 1", (job_id,)).fetchone()
+        has_inputs = conn.execute(
+            "SELECT 1 FROM job_inputs WHERE job_id=? LIMIT 1",
+            (job_id,),
+        ).fetchone()
         if has_inputs:
             conn.execute("ROLLBACK")
             tx_started = False
@@ -83,6 +87,7 @@ def enqueue_ui_render_job(
             dbm.link_job_input(conn, job_id, cover_aid, "COVER", 0)
 
         dbm.update_job_state(conn, job_id, state="READY_FOR_RENDER", stage="FETCH", error_reason="")
+
         conn.execute("COMMIT")
         tx_started = False
         return UiRenderEnqueueResult(enqueued=True, reason="enqueued")
