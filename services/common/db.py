@@ -119,9 +119,16 @@ def migrate(conn: sqlite3.Connection) -> None:
             approval_notified_at REAL,
             published_at REAL,
             delete_mp4_at REAL,
+            retry_of_job_id INTEGER UNIQUE,
+            root_job_id INTEGER NOT NULL,
+            attempt_no INTEGER NOT NULL DEFAULT 1,
+            force_refetch_inputs INTEGER NOT NULL DEFAULT 0,
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL,
-            FOREIGN KEY(release_id) REFERENCES releases(id)
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(retry_of_job_id) REFERENCES jobs(id),
+            FOREIGN KEY(root_job_id) REFERENCES jobs(id),
+            CHECK(attempt_no >= 1)
         );
 
         CREATE INDEX IF NOT EXISTS idx_jobs_state_priority ON jobs(state, priority, created_at);
@@ -373,6 +380,11 @@ def _ensure_track_analyzer_schema_tables(conn: sqlite3.Connection) -> None:
 
 def _ensure_jobs_columns(conn: sqlite3.Connection) -> None:
     cols = _table_columns(conn, "jobs")
+    lineage_cols = {"retry_of_job_id", "root_job_id", "attempt_no", "force_refetch_inputs"}
+    if not lineage_cols.issubset(cols):
+        _migrate_jobs_retry_lineage(conn)
+        cols = _table_columns(conn, "jobs")
+
     if "retry_at" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE jobs ADD COLUMN retry_at REAL;")
@@ -404,6 +416,78 @@ def _ensure_jobs_columns(conn: sqlite3.Connection) -> None:
     # Create index only after ensuring the column exists.
     with suppress(Exception):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_state_retry ON jobs(state, retry_at, priority, created_at);")
+    with suppress(Exception):
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_retry_of_job_id ON jobs(retry_of_job_id);")
+    with suppress(Exception):
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_root_job_id_attempt_no ON jobs(root_job_id, attempt_no);")
+
+
+def _migrate_jobs_retry_lineage(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "jobs")
+
+    def _sel(col: str, default_expr: str) -> str:
+        return col if col in cols else default_expr
+
+    conn.execute("PRAGMA foreign_keys=OFF;")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE jobs__new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            release_id INTEGER NOT NULL,
+            job_type TEXT NOT NULL,
+            state TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 0,
+            attempt INTEGER NOT NULL DEFAULT 0,
+            locked_by TEXT,
+            locked_at REAL,
+            retry_at REAL,
+            progress_pct REAL NOT NULL DEFAULT 0.0,
+            progress_text TEXT,
+            progress_updated_at REAL,
+            error_reason TEXT,
+            approval_notified_at REAL,
+            published_at REAL,
+            delete_mp4_at REAL,
+            retry_of_job_id INTEGER UNIQUE,
+            root_job_id INTEGER NOT NULL,
+            attempt_no INTEGER NOT NULL DEFAULT 1,
+            force_refetch_inputs INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(retry_of_job_id) REFERENCES jobs__new(id),
+            FOREIGN KEY(root_job_id) REFERENCES jobs__new(id),
+            CHECK(attempt_no >= 1)
+        );
+            """
+        )
+        conn.execute(
+            f"""
+            INSERT INTO jobs__new (
+                id, release_id, job_type, state, stage, priority, attempt, locked_by, locked_at,
+                retry_at, progress_pct, progress_text, progress_updated_at, error_reason,
+                approval_notified_at, published_at, delete_mp4_at, retry_of_job_id, root_job_id,
+                attempt_no, force_refetch_inputs, created_at, updated_at
+            )
+            SELECT
+                id, release_id, job_type, state, stage, {_sel('priority', '0')}, {_sel('attempt', '0')},
+                {_sel('locked_by', 'NULL')}, {_sel('locked_at', 'NULL')}, {_sel('retry_at', 'NULL')},
+                {_sel('progress_pct', '0.0')}, {_sel('progress_text', 'NULL')}, {_sel('progress_updated_at', 'NULL')},
+                {_sel('error_reason', 'NULL')}, {_sel('approval_notified_at', 'NULL')}, {_sel('published_at', 'NULL')},
+                {_sel('delete_mp4_at', 'NULL')}, NULL, id, 1, 0, created_at, {_sel('updated_at', 'created_at')}
+            FROM jobs;
+            """
+        )
+        conn.execute("DROP TABLE jobs;")
+        conn.execute("ALTER TABLE jobs__new RENAME TO jobs;")
+        conn.execute("CREATE INDEX idx_jobs_state_priority ON jobs(state, priority, created_at);")
+        conn.execute("CREATE INDEX idx_jobs_state_retry ON jobs(state, retry_at, priority, created_at);")
+        conn.execute("CREATE INDEX idx_jobs_retry_of_job_id ON jobs(retry_of_job_id);")
+        conn.execute("CREATE INDEX idx_jobs_root_job_id_attempt_no ON jobs(root_job_id, attempt_no);")
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON;")
 
 
 def _ensure_channels_columns(conn: sqlite3.Connection) -> None:
@@ -589,6 +673,38 @@ def get_ui_job_draft(conn: sqlite3.Connection, job_id: int) -> Optional[Dict[str
     return cur.fetchone()
 
 
+def _next_job_id(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM jobs").fetchone()
+    assert row is not None
+    return int(row["next_id"])
+
+
+def insert_job_with_lineage_defaults(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    job_type: str,
+    state: str,
+    stage: str,
+    priority: int,
+    attempt: int,
+    created_at: float,
+    updated_at: float,
+) -> int:
+    job_id = _next_job_id(conn)
+    conn.execute(
+        """
+        INSERT INTO jobs(
+            id, release_id, job_type, state, stage, priority, attempt,
+            retry_of_job_id, root_job_id, attempt_no, force_refetch_inputs,
+            created_at, updated_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, 0, ?, ?)
+        """,
+        (job_id, release_id, job_type, state, stage, priority, attempt, job_id, created_at, updated_at),
+    )
+    return job_id
+
+
 def create_ui_job_draft(
     conn: sqlite3.Connection,
     *,
@@ -613,14 +729,17 @@ def create_ui_job_draft(
         (channel_id, title, description, json_dumps(tags), ts),
     )
     release_id = int(cur.lastrowid)
-    cur2 = conn.execute(
-        """
-        INSERT INTO jobs(release_id, job_type, state, stage, priority, attempt, created_at, updated_at)
-        VALUES(?, ?, 'DRAFT', 'DRAFT', 0, 0, ?, ?)
-        """,
-        (release_id, job_type, ts, ts),
+    job_id = insert_job_with_lineage_defaults(
+        conn,
+        release_id=release_id,
+        job_type=job_type,
+        state="DRAFT",
+        stage="DRAFT",
+        priority=0,
+        attempt=0,
+        created_at=ts,
+        updated_at=ts,
     )
-    job_id = int(cur2.lastrowid)
     conn.execute(
         """
         INSERT INTO ui_job_drafts(

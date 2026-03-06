@@ -131,11 +131,17 @@ class TestImporterGDriveMocked(unittest.TestCase):
                 (int(ch["id"]), "Smoke", "d", "[]", None, "rel1", "meta1", ts),
             )
             release_id = int(cur.lastrowid)
-            cur2 = conn.execute(
-                "INSERT INTO jobs(release_id, job_type, state, stage, priority, attempt, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                (release_id, "RENDER_LONG", "WAITING_INPUTS", "FETCH", 1, 0, ts, ts),
+            job_id = dbm.insert_job_with_lineage_defaults(
+                conn,
+                release_id=release_id,
+                job_type="RENDER_LONG",
+                state="WAITING_INPUTS",
+                stage="FETCH",
+                priority=1,
+                attempt=0,
+                created_at=ts,
+                updated_at=ts,
             )
-            job_id = int(cur2.lastrowid)
         finally:
             conn.close()
 
