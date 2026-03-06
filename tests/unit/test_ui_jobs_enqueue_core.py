@@ -132,6 +132,61 @@ class TestUiJobsEnqueueCore(unittest.TestCase):
             self.assertEqual(result.reason, "not_allowed")
             self.assertEqual(job["state"], "READY_FOR_RENDER")
 
+    def test_enqueue_multi_track_job(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            job_id = self._create_ui_draft_job(env)
+
+            conn = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn, job_id)
+                assert draft is not None
+                result = enqueue_ui_render_job(
+                    conn,
+                    job_id=job_id,
+                    channel_id=int(draft["channel_id"]),
+                    tracks=[
+                        {"file_id": "track1", "filename": "track1.wav"},
+                        {"file_id": "track2", "filename": "track2.wav"},
+                        {"file_id": "track3", "filename": "track3.wav"},
+                    ],
+                    background_file_id="bg1",
+                    background_filename="bg1.png",
+                    cover_file_id="cover1",
+                    cover_filename="cover1.png",
+                )
+                job = dbm.get_job(conn, job_id)
+                role_counts = conn.execute(
+                    """
+                    SELECT role, COUNT(*) AS c
+                    FROM job_inputs
+                    WHERE job_id=?
+                    GROUP BY role
+                    """,
+                    (job_id,),
+                ).fetchall()
+                track_positions = conn.execute(
+                    """
+                    SELECT order_index
+                    FROM job_inputs
+                    WHERE job_id=? AND role='TRACK'
+                    ORDER BY order_index ASC
+                    """,
+                    (job_id,),
+                ).fetchall()
+            finally:
+                conn.close()
+
+            assert job is not None
+            counts = {str(r["role"]): int(r["c"]) for r in role_counts}
+            self.assertTrue(result.enqueued)
+            self.assertEqual(result.reason, "enqueued")
+            self.assertEqual(job["state"], "READY_FOR_RENDER")
+            self.assertEqual(counts.get("TRACK", 0), 3)
+            self.assertEqual(counts.get("BACKGROUND", 0), 1)
+            self.assertEqual(counts.get("COVER", 0), 1)
+            self.assertEqual([int(r["order_index"]) for r in track_positions], [0, 1, 2])
+
 
 if __name__ == "__main__":
     unittest.main()
