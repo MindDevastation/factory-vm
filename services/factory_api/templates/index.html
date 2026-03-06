@@ -96,7 +96,7 @@
         {% if j.state == 'DRAFT' and j.job_type == 'UI' %}
         <a href="/ui/jobs/{{ j.id }}/edit">Edit</a>
         {% endif %}
-        <button type="button" class="jobs-render-btn" data-job-id="{{ j.id }}" data-job-status="{{ j.state }}" {% if j.state != 'Draft' %}disabled{% endif %}>Render</button>
+        <button type="button" class="jobs-render-btn" data-job-id="{{ j.id }}" data-job-status="{{ j.state }}" {% if j.state|upper != 'DRAFT' %}disabled{% endif %}>Render</button>
       </td>
     </tr>
     {% endfor %}
@@ -234,6 +234,10 @@
     updateRenderSelectedButtonState();
   }
 
+  function isDraftStatus(status) {
+    return String(status || '').toUpperCase() === 'DRAFT';
+  }
+
   async function renderJob(jobId, buttonEl) {
     if (buttonEl) {
       buttonEl.disabled = true;
@@ -257,7 +261,7 @@
     } catch (err) {
       setJobsMessage(err.message || 'Failed to render job', 'error');
     } finally {
-      if (buttonEl && buttonEl.getAttribute('data-job-status') === 'Draft') {
+      if (buttonEl && isDraftStatus(buttonEl.getAttribute('data-job-status'))) {
         buttonEl.disabled = false;
       }
     }
