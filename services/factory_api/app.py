@@ -24,6 +24,7 @@ from services.common import db as dbm
 from services.common.pydeps import ensure_py_deps_on_sys_path
 from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, qa_path
+from services.common.ui_job_statuses import UI_JOB_STATUSES
 from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
@@ -1151,6 +1152,11 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
     finally:
         conn.close()
     return {"ok": True, "delete_mp4_at": delete_at}
+
+
+@app.get("/v1/ui/jobs/statuses")
+def api_ui_jobs_statuses(_: bool = Depends(require_basic_auth(env))):
+    return {"statuses": list(UI_JOB_STATUSES)}
 
 
 @app.post("/v1/ui/jobs")
