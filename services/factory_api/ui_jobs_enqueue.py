@@ -85,6 +85,7 @@ def enqueue_ui_render_job(
             tx_started = False
             return UiRenderEnqueueResult(enqueued=False, reason="already_in_progress")
 
+        # Do not place COMMIT/return on the same physical line as the for loop.
         for idx, track in enumerate(tracks):
             file_id = str(track.get("file_id") or "")
             filename = str(track.get("filename") or "")
