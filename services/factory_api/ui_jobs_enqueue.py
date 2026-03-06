@@ -18,6 +18,18 @@ class UiRenderGuardResult:
     eligible: bool
     reason: str
 
+    @property
+    def not_found(self) -> bool:
+        return self.reason == "not_found"
+
+    @property
+    def not_allowed(self) -> bool:
+        return self.reason == "not_allowed"
+
+    @property
+    def already_in_progress(self) -> bool:
+        return self.reason == "already_in_progress"
+
 
 def check_ui_render_guard(
     conn: sqlite3.Connection,
@@ -58,17 +70,17 @@ def enqueue_ui_render_job(
         tx_started = True
 
         guard = check_ui_render_guard(conn, job_id=job_id)
-        if guard.reason == "not_found":
+        if guard.not_found:
             conn.execute("ROLLBACK")
             tx_started = False
             return UiRenderEnqueueResult(enqueued=False, reason="not_found")
 
-        if guard.reason == "not_allowed":
+        if guard.not_allowed:
             conn.execute("ROLLBACK")
             tx_started = False
             return UiRenderEnqueueResult(enqueued=False, reason="not_allowed")
 
-        if guard.reason == "already_in_progress":
+        if guard.already_in_progress:
             conn.execute("ROLLBACK")
             tx_started = False
             return UiRenderEnqueueResult(enqueued=False, reason="already_in_progress")
