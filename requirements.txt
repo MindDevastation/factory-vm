@@ -21,3 +21,5 @@ numpy
 librosa
 soundfile
 tflite-runtime; python_version < "3.12"
+
+openpyxl>=3.1,<4.0

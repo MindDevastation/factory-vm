@@ -9,12 +9,13 @@ import secrets
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -39,6 +40,7 @@ from services.track_analysis_report.report_service import (
     TrackAnalysisReportError,
     build_channel_report,
 )
+from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes, sanitize_sheet_name
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.factory_api.oauth_tokens import (
@@ -627,6 +629,64 @@ def api_track_analysis_report(
             )
     finally:
         conn.close()
+
+
+@app.get("/v1/track-catalog/analysis-report.xlsx")
+def api_track_analysis_report_xlsx(
+    channel_slug: str = "",
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            report = build_channel_report(conn, channel_slug)
+            channel_row = conn.execute(
+                "SELECT display_name FROM channels WHERE slug = ? LIMIT 1",
+                (report["channel_slug"],),
+            ).fetchone()
+            sheet_source = report["channel_slug"]
+            if channel_row is not None and channel_row["display_name"]:
+                sheet_source = str(channel_row["display_name"])
+            sheet_name = sanitize_sheet_name(sheet_source)
+            content = export_report_to_xlsx_bytes(report, sheet_name)
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            filename = f"analysis_report__{report['channel_slug']}__{timestamp}.xlsx"
+            return Response(
+                content=content,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        except InvalidChannelSlugError:
+            return _tar_error(
+                400,
+                "TAR_INVALID_CHANNEL",
+                "channel_slug is required",
+            )
+        except ChannelNotFoundError:
+            return _tar_error(
+                404,
+                "TAR_CHANNEL_NOT_FOUND",
+                "channel not found",
+                details={"channel_slug": str(channel_slug or "")},
+            )
+        except TrackAnalysisReportError as exc:
+            logger.exception("track analysis report xlsx build failed: channel_slug=%s", channel_slug)
+            return _tar_error(
+                500,
+                "TAR_REPORT_BUILD_FAILED",
+                "failed to build analysis report",
+                details={"reason": str(exc)},
+            )
+        except Exception:
+            logger.exception("track analysis report xlsx build failed (unexpected): channel_slug=%s", channel_slug)
+            return _tar_error(
+                500,
+                "TAR_REPORT_BUILD_FAILED",
+                "failed to build analysis report",
+            )
+    finally:
+        conn.close()
+
 
 
 def _safe_json_loads(raw: Any) -> dict[str, Any]:
