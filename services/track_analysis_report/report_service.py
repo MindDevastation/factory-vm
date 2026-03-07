@@ -123,10 +123,16 @@ def build_channel_report(conn: sqlite3.Connection, channel_slug: str) -> dict[st
             flattened_row[entry["key"]] = flatten_value(raw_value, entry["flatten"])
         report_rows.append(flattened_row)
 
+    columns = []
+    for entry in COLUMN_REGISTRY:
+        column = dict(entry)
+        column["source_path"] = str(entry["path"])
+        columns.append(column)
+
     return {
         "channel_slug": normalized_slug,
         "column_groups": list(COLUMN_GROUPS),
-        "columns": list(COLUMN_REGISTRY),
+        "columns": columns,
         "rows": report_rows,
         "summary": {"tracks_count": len(report_rows)},
     }
