@@ -33,6 +33,12 @@ from services.ui_jobs import (
     UiJobRetryStatusError,
     retry_failed_ui_job,
 )
+from services.track_analysis_report.report_service import (
+    ChannelNotFoundError,
+    InvalidChannelSlugError,
+    TrackAnalysisReportError,
+    build_channel_report,
+)
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.factory_api.oauth_tokens import (
@@ -541,6 +547,86 @@ def _require_track_channel_and_canon(conn, channel_slug: str) -> None:
     ).fetchone()
     if in_canon_channels is None or in_canon_thresholds is None:
         raise HTTPException(404, "CHANNEL_NOT_IN_CANON")
+
+
+def _tar_error(
+    status_code: int,
+    code: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> JSONResponse:
+    payload: dict[str, Any] = {"error": {"code": code, "message": message}}
+    if details:
+        payload["error"]["details"] = details
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+@app.get("/v1/track-catalog/analysis-report/channels")
+def api_track_analysis_report_channels(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute(
+            """
+            SELECT c.slug, c.display_name
+            FROM channels c
+            JOIN canon_channels cc ON cc.value = c.slug
+            JOIN canon_thresholds ct ON ct.value = c.slug
+            ORDER BY c.slug ASC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    return {
+        "channels": [
+            {
+                "channel_slug": str(row["slug"]),
+                "display_name": str(row.get("display_name") or ""),
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.get("/v1/track-catalog/analysis-report")
+def api_track_analysis_report(
+    channel_slug: str = "",
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            return build_channel_report(conn, channel_slug)
+        except InvalidChannelSlugError:
+            return _tar_error(
+                400,
+                "TAR_INVALID_CHANNEL",
+                "channel_slug is required",
+            )
+        except ChannelNotFoundError:
+            return _tar_error(
+                404,
+                "TAR_CHANNEL_NOT_FOUND",
+                "channel not found",
+                details={"channel_slug": str(channel_slug or "")},
+            )
+        except TrackAnalysisReportError as exc:
+            logger.exception("track analysis report build failed: channel_slug=%s", channel_slug)
+            return _tar_error(
+                500,
+                "TAR_REPORT_BUILD_FAILED",
+                "failed to build analysis report",
+                details={"reason": str(exc)},
+            )
+        except Exception:
+            logger.exception("track analysis report build failed (unexpected): channel_slug=%s", channel_slug)
+            return _tar_error(
+                500,
+                "TAR_REPORT_BUILD_FAILED",
+                "failed to build analysis report",
+            )
+    finally:
+        conn.close()
 
 
 def _safe_json_loads(raw: Any) -> dict[str, Any]:
