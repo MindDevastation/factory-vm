@@ -53,6 +53,68 @@ def check_ui_render_guard(
     return UiRenderGuardResult(eligible=True, reason="eligible")
 
 
+def _enqueue_ui_render_job_in_tx(
+    conn: sqlite3.Connection,
+    *,
+    job_id: int,
+    channel_id: int,
+    tracks: list[dict[str, Any]],
+    background_file_id: str,
+    background_filename: str,
+    cover_file_id: str,
+    cover_filename: str,
+) -> UiRenderEnqueueResult:
+    guard = check_ui_render_guard(conn, job_id=job_id)
+    if guard.not_found:
+        return UiRenderEnqueueResult(enqueued=False, reason="not_found")
+
+    if guard.not_allowed:
+        return UiRenderEnqueueResult(enqueued=False, reason="not_allowed")
+
+    if guard.already_in_progress:
+        return UiRenderEnqueueResult(enqueued=False, reason="already_in_progress")
+
+    for idx, track in enumerate(tracks):
+        file_id = str(track.get("file_id") or "")
+        filename = str(track.get("filename") or "")
+        aid = dbm.create_asset(
+            conn,
+            channel_id=channel_id,
+            kind="AUDIO",
+            origin="GDRIVE",
+            origin_id=file_id,
+            name=filename,
+            path=f"gdrive:{file_id}",
+        )
+        dbm.link_job_input(conn, job_id, aid, "TRACK", idx)
+
+    bg_aid = dbm.create_asset(
+        conn,
+        channel_id=channel_id,
+        kind="IMAGE",
+        origin="GDRIVE",
+        origin_id=background_file_id,
+        name=background_filename,
+        path=f"gdrive:{background_file_id}",
+    )
+    dbm.link_job_input(conn, job_id, bg_aid, "BACKGROUND", 0)
+
+    if cover_file_id:
+        cover_aid = dbm.create_asset(
+            conn,
+            channel_id=channel_id,
+            kind="IMAGE",
+            origin="GDRIVE",
+            origin_id=cover_file_id,
+            name=cover_filename,
+            path=f"gdrive:{cover_file_id}",
+        )
+        dbm.link_job_input(conn, job_id, cover_aid, "COVER", 0)
+
+    dbm.update_job_state(conn, job_id, state="READY_FOR_RENDER", stage="FETCH", error_reason="")
+    return UiRenderEnqueueResult(enqueued=True, reason="enqueued")
+
+
 def enqueue_ui_render_job(
     conn: sqlite3.Connection,
     *,
@@ -69,65 +131,24 @@ def enqueue_ui_render_job(
         conn.execute("BEGIN IMMEDIATE")
         tx_started = True
 
-        guard = check_ui_render_guard(conn, job_id=job_id)
-        if guard.not_found:
-            conn.execute("ROLLBACK")
-            tx_started = False
-            return UiRenderEnqueueResult(enqueued=False, reason="not_found")
-
-        if guard.not_allowed:
-            conn.execute("ROLLBACK")
-            tx_started = False
-            return UiRenderEnqueueResult(enqueued=False, reason="not_allowed")
-
-        if guard.already_in_progress:
-            conn.execute("ROLLBACK")
-            tx_started = False
-            return UiRenderEnqueueResult(enqueued=False, reason="already_in_progress")
-
-        # Do not place COMMIT/return on the same physical line as the for loop.
-        for idx, track in enumerate(tracks):
-            file_id = str(track.get("file_id") or "")
-            filename = str(track.get("filename") or "")
-            aid = dbm.create_asset(
-                conn,
-                channel_id=channel_id,
-                kind="AUDIO",
-                origin="GDRIVE",
-                origin_id=file_id,
-                name=filename,
-                path=f"gdrive:{file_id}",
-            )
-            dbm.link_job_input(conn, job_id, aid, "TRACK", idx)
-
-        bg_aid = dbm.create_asset(
+        result = _enqueue_ui_render_job_in_tx(
             conn,
+            job_id=job_id,
             channel_id=channel_id,
-            kind="IMAGE",
-            origin="GDRIVE",
-            origin_id=background_file_id,
-            name=background_filename,
-            path=f"gdrive:{background_file_id}",
+            tracks=tracks,
+            background_file_id=background_file_id,
+            background_filename=background_filename,
+            cover_file_id=cover_file_id,
+            cover_filename=cover_filename,
         )
-        dbm.link_job_input(conn, job_id, bg_aid, "BACKGROUND", 0)
-
-        if cover_file_id:
-            cover_aid = dbm.create_asset(
-                conn,
-                channel_id=channel_id,
-                kind="IMAGE",
-                origin="GDRIVE",
-                origin_id=cover_file_id,
-                name=cover_filename,
-                path=f"gdrive:{cover_file_id}",
-            )
-            dbm.link_job_input(conn, job_id, cover_aid, "COVER", 0)
-
-        dbm.update_job_state(conn, job_id, state="READY_FOR_RENDER", stage="FETCH", error_reason="")
+        if not result.enqueued:
+            conn.execute("ROLLBACK")
+            tx_started = False
+            return result
 
         conn.execute("COMMIT")
         tx_started = False
-        return UiRenderEnqueueResult(enqueued=True, reason="enqueued")
+        return result
     except Exception:
         if tx_started:
             conn.execute("ROLLBACK")
