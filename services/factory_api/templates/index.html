@@ -92,11 +92,14 @@
         <div class="muted">{{ "%.1f"|format(j.progress_pct) }}% {{ j.progress_text or "" }}</div>
       </td>
       <td class="muted">{{ j.updated_at }}</td>
-      <td>
+      <td class="jobs-actions-cell">
         {% if j.state == 'DRAFT' and j.job_type == 'UI' %}
         <a href="/ui/jobs/{{ j.id }}/edit">Edit</a>
         {% endif %}
         <button type="button" class="jobs-render-btn" data-job-id="{{ j.id }}" data-job-status="{{ j.state }}" {% if j.state|upper != 'DRAFT' %}disabled{% endif %}>Render</button>
+        {% if j.actions and j.actions.retry_allowed == true %}
+        <button type="button" class="jobs-retry-btn" data-job-id="{{ j.id }}">Retry</button>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}
@@ -129,13 +132,7 @@
   const jobsTableBody = document.querySelector('#jobs-table tbody');
   const selectedJobIds = new Set();
   const failedJobIds = new Set();
-  const allJobs = Array.from(jobsTableBody.querySelectorAll('tr')).map((row) => {
-    return {
-      id: row.getAttribute('data-job-id') || '',
-      row,
-      status: row.getAttribute('data-job-status') || '',
-    };
-  });
+  let allJobs = [];
   let pollCount = 0;
 
   function parseStatusesFromQuery(sourceStatuses) {
@@ -213,6 +210,89 @@
     jobsRenderSelectedBtn.disabled = selectedJobIds.size === 0;
   }
 
+  function normalizeStatus(status) {
+    return String(status || '').toUpperCase();
+  }
+
+  function retryAllowedForJob(job) {
+    const status = normalizeStatus(job && (job.state || job.status));
+    return status === 'FAILED' && Boolean(job && job.actions && job.actions.retry_allowed === true);
+  }
+
+  function buildActionButtons(job) {
+    const parts = [];
+    if (normalizeStatus(job.state) === 'DRAFT' && String(job.job_type || '').toUpperCase() === 'UI') {
+      parts.push('<a href="/ui/jobs/' + encodeURIComponent(job.id) + '/edit">Edit</a>');
+    }
+
+    const isDraft = normalizeStatus(job.state) === 'DRAFT';
+    parts.push(
+      '<button type="button" class="jobs-render-btn" data-job-id="' + esc(job.id) + '" data-job-status="' + esc(job.state) + '"' +
+      (isDraft ? '' : ' disabled') +
+      '>Render</button>'
+    );
+
+    if (retryAllowedForJob(job)) {
+      parts.push('<button type="button" class="jobs-retry-btn" data-job-id="' + esc(job.id) + '">Retry</button>');
+    }
+
+    return parts.join(' ');
+  }
+
+  function buildJobsRow(job) {
+    const errorReason = job.error_reason
+      ? '<div style="color:#b91c1c">' + esc(job.error_reason) + '</div>'
+      : '';
+    const progressPct = Number(job.progress_pct || 0);
+    const progressText = job.progress_text || '';
+
+    return '<tr data-job-id="' + esc(job.id) + '" data-job-status="' + esc(job.state) + '">' +
+      '<td><input type="checkbox" class="jobs-row-checkbox" data-job-id="' + esc(job.id) + '" aria-label="Select job ' + esc(job.id) + '"></td>' +
+      '<td><a href="/jobs/' + encodeURIComponent(job.id) + '">' + esc(job.id) + '</a></td>' +
+      '<td>' + esc(job.channel_name || '') + '<div class="muted">' + esc(job.channel_slug || '') + '</div></td>' +
+      '<td><a href="/jobs/' + encodeURIComponent(job.id) + '">' + esc(job.channel_name || '') + ' - ' + esc(job.release_title || '') + '</a>' + errorReason + '</td>' +
+      '<td><span class="pill">' + esc(job.state || '') + '</span></td>' +
+      '<td>' + esc(job.stage || '') + '</td>' +
+      '<td><div class="bar"><div style="width: ' + progressPct + '%"></div></div><div class="muted">' + progressPct.toFixed(1) + '% ' + esc(progressText) + '</div></td>' +
+      '<td class="muted">' + esc(job.updated_at || '') + '</td>' +
+      '<td class="jobs-actions-cell">' + buildActionButtons(job) + '</td>' +
+      '</tr>';
+  }
+
+  function pruneSelectionToVisibleJobs() {
+    const validIds = new Set(allJobs.map((job) => job.id));
+    Array.from(selectedJobIds).forEach((jobId) => {
+      if (!validIds.has(jobId)) {
+        selectedJobIds.delete(jobId);
+      }
+    });
+  }
+
+  async function refreshJobsList() {
+    const res = await fetch('/v1/jobs');
+    if (!res.ok) {
+      throw new Error('Failed to refresh jobs list');
+    }
+    const data = await res.json();
+    const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+
+    jobsTableBody.innerHTML = jobs.map((job) => buildJobsRow(job)).join('');
+    allJobs = Array.from(jobsTableBody.querySelectorAll('tr')).map((row) => {
+      return {
+        id: row.getAttribute('data-job-id') || '',
+        row,
+        status: row.getAttribute('data-job-status') || '',
+      };
+    });
+    syncStatusFilterOptionsFromJobs(jobs);
+    pruneSelectionToVisibleJobs();
+    bindJobsTableEventHandlers();
+    updateFailedRowHighlights();
+    syncRowCheckboxes();
+    const selectedStatuses = selectedStatusesFromUi();
+    applyJobsFilter(selectedStatuses);
+  }
+
   function syncSelectAllVisible() {
     const visibleJobs = allJobs.filter((job) => job.row.style.display !== 'none');
     if (!visibleJobs.length) {
@@ -235,7 +315,7 @@
   }
 
   function isDraftStatus(status) {
-    return String(status || '').toUpperCase() === 'DRAFT';
+    return normalizeStatus(status) === 'DRAFT';
   }
 
   async function renderJob(jobId, buttonEl) {
@@ -306,21 +386,67 @@
     }
   }
 
-  jobsTableBody.querySelectorAll('.jobs-row-checkbox').forEach((checkbox) => {
-    checkbox.addEventListener('change', () => {
-      const jobId = checkbox.getAttribute('data-job-id') || '';
-      if (!jobId) {
+  async function retryJob(jobId, buttonEl) {
+    if (!jobId) {
+      return;
+    }
+    if (buttonEl) {
+      buttonEl.disabled = true;
+    }
+    try {
+      const res = await fetch('/v1/ui/jobs/' + encodeURIComponent(jobId) + '/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        const errorMessage = data.error ? data.error.message : 'Failed to retry job';
+        setJobsMessage(errorMessage, 'error');
         return;
       }
-      if (checkbox.checked) {
-        selectedJobIds.add(jobId);
+      if (data.enqueued) {
+        setJobsMessage(data.message || 'Retry enqueued', 'success');
       } else {
-        selectedJobIds.delete(jobId);
+        setJobsMessage(data.message || 'Retry already created', 'info');
       }
-      syncSelectAllVisible();
-      updateRenderSelectedButtonState();
+      await refreshJobsList();
+    } catch (err) {
+      setJobsMessage(err.message || 'Failed to retry job', 'error');
+      if (buttonEl) {
+        buttonEl.disabled = false;
+      }
+    }
+  }
+
+  function bindJobsTableEventHandlers() {
+    jobsTableBody.querySelectorAll('.jobs-row-checkbox').forEach((checkbox) => {
+      checkbox.addEventListener('change', () => {
+        const jobId = checkbox.getAttribute('data-job-id') || '';
+        if (!jobId) {
+          return;
+        }
+        if (checkbox.checked) {
+          selectedJobIds.add(jobId);
+        } else {
+          selectedJobIds.delete(jobId);
+        }
+        syncSelectAllVisible();
+        updateRenderSelectedButtonState();
+      });
     });
-  });
+
+    jobsTableBody.querySelectorAll('.jobs-render-btn').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await renderJob(button.getAttribute('data-job-id') || '', button);
+      });
+    });
+
+    jobsTableBody.querySelectorAll('.jobs-retry-btn').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await retryJob(button.getAttribute('data-job-id') || '', button);
+      });
+    });
+  }
 
   jobsSelectAllVisible.addEventListener('change', () => {
     const shouldSelect = jobsSelectAllVisible.checked;
@@ -337,18 +463,36 @@
     syncRowCheckboxes();
   });
 
-  jobsTableBody.querySelectorAll('.jobs-render-btn').forEach((button) => {
-    button.addEventListener('click', async () => {
-      await renderJob(button.getAttribute('data-job-id') || '', button);
-    });
+  allJobs = Array.from(jobsTableBody.querySelectorAll('tr')).map((row) => {
+    return {
+      id: row.getAttribute('data-job-id') || '',
+      row,
+      status: row.getAttribute('data-job-status') || '',
+    };
   });
-
+  bindJobsTableEventHandlers();
   jobsRenderSelectedBtn.addEventListener('click', renderSelectedJobs);
   syncRowCheckboxes();
   updateFailedRowHighlights();
 
   function selectedStatusesFromUi() {
     return new Set(Array.from(jobsStatusFilter.selectedOptions).map((option) => option.value));
+  }
+
+  function syncStatusFilterOptionsFromJobs(jobs) {
+    const known = new Set(Array.from(jobsStatusFilter.options).map((option) => option.value));
+    jobs.forEach((job) => {
+      const status = normalizeStatus(job && (job.state || job.status));
+      if (!status || known.has(status)) {
+        return;
+      }
+      const option = document.createElement('option');
+      option.value = status;
+      option.textContent = status;
+      option.selected = true;
+      jobsStatusFilter.appendChild(option);
+      known.add(status);
+    });
   }
 
   async function initJobsStatusFilter() {
@@ -791,6 +935,10 @@
       pollStatus();
     }, 3000);
   }
+
+  refreshJobsList().catch((err) => {
+    setJobsMessage(err.message || 'Failed to refresh jobs list', 'error');
+  });
 
   addBtn.addEventListener('click', async () => {
     try {
