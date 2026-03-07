@@ -49,9 +49,20 @@ def _parse_progress_pct(line: str) -> Optional[float]:
     return v if 0.0 <= v <= 100.0 else None
 
 
-def _fetch_asset_to(*, env: Env, drive: DriveClient | None, asset: dict, dest: Path, channel_slug: str) -> DriveClient | None:
+def _fetch_asset_to(
+    *,
+    env: Env,
+    drive: DriveClient | None,
+    asset: dict,
+    dest: Path,
+    channel_slug: str,
+    force_refetch_inputs: bool = False,
+) -> DriveClient | None:
     """Copy/download asset into dest. Returns DriveClient if instantiated."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if force_refetch_inputs and dest.exists():
+        dest.unlink()
+
     origin = (asset.get("origin") or "").upper()
 
     if origin == "LOCAL":
@@ -182,6 +193,7 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
     ob = outbox_dir(env, job_id)
 
     drive: DriveClient | None = None
+    force_refetch_inputs = int(job.get("force_refetch_inputs") or 0) == 1
 
     try:
         if ws.exists():
@@ -207,7 +219,14 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
         # download background image (fallback: cover for legacy jobs)
         bg_name = safe_path_basename(str(render_bg.get("name") or "background.png"), fallback="background.png")
         bg_dst = images_dir / bg_name
-        drive = _fetch_asset_to(env=env, drive=drive, asset=render_bg, dest=bg_dst, channel_slug=str(job["channel_slug"]))
+        drive = _fetch_asset_to(
+            env=env,
+            drive=drive,
+            asset=render_bg,
+            dest=bg_dst,
+            channel_slug=str(job["channel_slug"]),
+            force_refetch_inputs=force_refetch_inputs,
+        )
 
         # download tracks
         track_ids: List[str] = []
@@ -220,7 +239,14 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
             track_ids.append(tid)
             new_name = f"{_workspace_audio_stem(queue_idx=idx, original_filename_stem=Path(orig_name).stem)}.wav"
             dst = audio_dir / new_name
-            drive = _fetch_asset_to(env=env, drive=drive, asset=t, dest=dst, channel_slug=str(job["channel_slug"]))
+            drive = _fetch_asset_to(
+                env=env,
+                drive=drive,
+                asset=t,
+                dest=dst,
+                channel_slug=str(job["channel_slug"]),
+                force_refetch_inputs=force_refetch_inputs,
+            )
 
         # PlayLists.txt
         playlists = project_dir / "PlayLists.txt"
@@ -347,7 +373,14 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
                 shutil.copyfile(bg_dst, cover_dst)
             else:
                 tmp_cover = ws / "tmp_cover" / cover_name
-                drive = _fetch_asset_to(env=env, drive=drive, asset=cover, dest=tmp_cover, channel_slug=str(job["channel_slug"]))
+                drive = _fetch_asset_to(
+                    env=env,
+                    drive=drive,
+                    asset=cover,
+                    dest=tmp_cover,
+                    channel_slug=str(job["channel_slug"]),
+                    force_refetch_inputs=force_refetch_inputs,
+                )
                 shutil.copyfile(tmp_cover, cover_dst)
 
         # preview
