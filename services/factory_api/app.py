@@ -28,6 +28,11 @@ from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
+from services.ui_jobs import (
+    UiJobRetryNotFoundError,
+    UiJobRetryStatusError,
+    retry_failed_ui_job,
+)
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.factory_api.oauth_tokens import (
@@ -1476,6 +1481,50 @@ def api_ui_job_render(job_id: int, _: bool = Depends(require_basic_auth(env))):
         return _uij_error(500, "UIJ_ENQUEUE_FAILED", "Failed to enqueue render")
     finally:
         conn.close()
+
+
+@app.post("/v1/ui/jobs/{job_id}/retry")
+def api_ui_job_retry(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    logger.info("ui.jobs.retry.request", extra={"job_id": job_id, "stage": "request"})
+    conn = dbm.connect(env)
+    try:
+        result = retry_failed_ui_job(conn, source_job_id=job_id)
+        retry_job = dbm.get_job(conn, result.retry_job_id)
+        attempt_no = int(retry_job.get("attempt_no") or 1) if retry_job else 1
+    except UiJobRetryNotFoundError:
+        logger.info("ui.jobs.retry.error", extra={"job_id": job_id, "stage": "not_found"})
+        return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+    except UiJobRetryStatusError:
+        logger.info("ui.jobs.retry.error", extra={"job_id": job_id, "stage": "not_allowed"})
+        return _uij_error(409, "UIJ_RETRY_NOT_ALLOWED", "Retry is allowed only for Failed jobs")
+    except Exception as exc:
+        message = str(exc)
+        if "retry enqueue integration failed" in message or message.lower() == "enqueue failed":
+            logger.exception("ui.jobs.retry.error", extra={"job_id": job_id, "stage": "enqueue"})
+            return _uij_error(500, "UIJ_RETRY_ENQUEUE_FAILED", "Failed to enqueue retry")
+        logger.exception("ui.jobs.retry.error", extra={"job_id": job_id, "stage": "internal"})
+        return _uij_error(500, "UIJ_RETRY_INTERNAL", "Internal error")
+    finally:
+        conn.close()
+
+    payload = {
+        "source_job_id": str(job_id),
+        "retry_job_id": str(result.retry_job_id),
+        "attempt_no": attempt_no,
+        "enqueued": bool(result.created),
+        "message": "Retry enqueued" if result.created else "Retry already created",
+    }
+    if result.created:
+        logger.info(
+            "ui.jobs.retry.created",
+            extra={"job_id": job_id, "retry_job_id": result.retry_job_id, "stage": "created"},
+        )
+    else:
+        logger.info(
+            "ui.jobs.retry.noop",
+            extra={"job_id": job_id, "retry_job_id": result.retry_job_id, "stage": "noop"},
+        )
+    return payload
 
 
 @app.get("/v1/ui/jobs/{job_id}")
