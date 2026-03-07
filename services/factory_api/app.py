@@ -1043,6 +1043,29 @@ def api_jobs(state: Optional[str] = None, _: bool = Depends(require_basic_auth(e
     conn = dbm.connect(env)
     try:
         jobs = dbm.list_jobs(conn, state=state, limit=500)
+        job_ids = [int(job["id"]) for job in jobs]
+        retry_child_by_parent_id: dict[int, int] = {}
+        if job_ids:
+            placeholders = ",".join("?" for _ in job_ids)
+            rows = conn.execute(
+                f"SELECT id, retry_of_job_id FROM jobs WHERE retry_of_job_id IN ({placeholders})",
+                job_ids,
+            ).fetchall()
+            retry_child_by_parent_id = {
+                int(row["retry_of_job_id"]): int(row["id"])
+                for row in rows
+                if row.get("retry_of_job_id") is not None
+            }
+
+        for job in jobs:
+            retry_child_job_id = retry_child_by_parent_id.get(int(job["id"]))
+            status = str(job.get("state") or "")
+            job["status"] = status
+            job["attempt_no"] = int(job.get("attempt_no") or 1)
+            job["retry_child_job_id"] = retry_child_job_id
+            actions = dict(job.get("actions") or {})
+            actions["retry_allowed"] = bool(status == "FAILED" and retry_child_job_id is None)
+            job["actions"] = actions
     finally:
         conn.close()
     return {"jobs": jobs}
