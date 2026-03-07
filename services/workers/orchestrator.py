@@ -373,7 +373,14 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
                 shutil.copyfile(bg_dst, cover_dst)
             else:
                 tmp_cover = ws / "tmp_cover" / cover_name
-                drive = _fetch_asset_to(env=env, drive=drive, asset=cover, dest=tmp_cover, channel_slug=str(job["channel_slug"]))
+                drive = _fetch_asset_to(
+                    env=env,
+                    drive=drive,
+                    asset=cover,
+                    dest=tmp_cover,
+                    channel_slug=str(job["channel_slug"]),
+                    force_refetch_inputs=force_refetch_inputs,
+                )
                 shutil.copyfile(tmp_cover, cover_dst)
 
         # preview

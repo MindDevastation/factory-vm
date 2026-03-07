@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import os
+
+from services.common import db as dbm
+from services.workers.orchestrator import orchestrator_cycle
+
+from tests._helpers import temp_env, seed_minimal_db, insert_release_and_job
 from pathlib import Path
 from unittest.mock import patch
 
@@ -122,6 +128,83 @@ class TestOrchestratorGDriveTokenSelection(unittest.TestCase):
             _fetch_asset_to(env=env, drive=None, asset=asset, dest=dest, channel_slug="slug")
 
             self.assertEqual(dest.read_text(encoding="utf-8"), "fresh")
+
+    def test_force_refetch_applies_to_separate_cover_fetch(self) -> None:
+        class _FakeProc:
+            def __init__(self, *, release_dir: Path):
+                self._release_dir = release_dir
+                self.stdout = iter(["0.0 %", "100.0 %"])
+
+            def terminate(self):
+                return None
+
+            def wait(self):
+                self._release_dir.mkdir(parents=True, exist_ok=True)
+                (self._release_dir / "out.mp4").write_bytes(b"mp4")
+                return 0
+
+        with temp_env() as (_, _env0):
+            os.environ["ORIGIN_BACKEND"] = "local"
+            env = Env.load()
+            seed_minimal_db(env)
+            job_id = insert_release_and_job(env, state="READY_FOR_RENDER", stage="FETCH")
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE jobs SET force_refetch_inputs = 1 WHERE id = ?", (job_id,))
+                job = dbm.get_job(conn, job_id)
+                assert job is not None
+                ch = dbm.get_channel_by_slug(conn, str(job["channel_slug"]))
+                assert ch is not None
+                ch_id = int(ch["id"])
+
+                base = Path(env.storage_root) / "test_inputs" / f"job_{job_id}_separate_cover"
+                base.mkdir(parents=True, exist_ok=True)
+
+                track = base / "track_1.wav"
+                track.write_bytes(b"RIFF0000WAVEfmt ")
+                bg = base / "bg.png"
+                bg.write_text("bg-fresh", encoding="utf-8")
+                cover = base / "cover.png"
+                cover.write_text("cover-fresh", encoding="utf-8")
+
+                tid = dbm.create_asset(conn, channel_id=ch_id, kind="AUDIO", origin="LOCAL", origin_id=str(track), name=track.name, path=str(track))
+                dbm.link_job_input(conn, job_id, tid, "TRACK", 0)
+                bid = dbm.create_asset(conn, channel_id=ch_id, kind="IMAGE", origin="LOCAL", origin_id=str(bg), name=bg.name, path=str(bg))
+                dbm.link_job_input(conn, job_id, bid, "BACKGROUND", 0)
+                cid = dbm.create_asset(conn, channel_id=ch_id, kind="IMAGE", origin="LOCAL", origin_id=str(cover), name=cover.name, path=str(cover))
+                dbm.link_job_input(conn, job_id, cid, "COVER", 0)
+            finally:
+                conn.close()
+
+            def _fake_preview(*, src_mp4: Path, dst_mp4: Path, seconds: int, width: int, height: int, fps: int, v_bitrate: str, a_bitrate: str):
+                dst_mp4.parent.mkdir(parents=True, exist_ok=True)
+                dst_mp4.write_bytes(b"preview")
+
+            real_fetch = __import__("services.workers.orchestrator", fromlist=["_fetch_asset_to"])._fetch_asset_to
+
+            def _fake_fetch_asset_to(**kwargs):
+                dest = Path(kwargs["dest"])
+                force = bool(kwargs.get("force_refetch_inputs", False))
+
+                if dest.name == "cover.png" and "tmp_cover" in str(dest):
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_text("stale-cover", encoding="utf-8")
+                    if not force:
+                        return kwargs.get("drive")
+
+                return real_fetch(**kwargs)
+
+            release_dir = Path(env.storage_root) / "workspace" / f"job_{job_id}" / "YouTubeRoot" / "Darkwood Reverie" / "Release"
+
+            with patch("services.workers.orchestrator.subprocess.Popen", lambda *a, **k: _FakeProc(release_dir=release_dir)), patch(
+                "services.workers.orchestrator.make_preview_60s", _fake_preview
+            ), patch("services.workers.orchestrator._fetch_asset_to", _fake_fetch_asset_to):
+                orchestrator_cycle(env=env, worker_id="t-orch")
+
+            cover_out = Path(env.storage_root) / "outbox" / f"job_{job_id}" / "cover" / "cover.png"
+            self.assertTrue(cover_out.exists())
+            self.assertEqual(cover_out.read_text(encoding="utf-8"), "cover-fresh")
 
 
 if __name__ == "__main__":
