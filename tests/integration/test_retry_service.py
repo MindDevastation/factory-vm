@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from services.common import db as dbm
+from services.factory_api.ui_jobs_enqueue import enqueue_ui_render_job
 from services.ui_jobs.retry_service import (
     UiJobRetryNotFoundError,
     UiJobRetryStatusError,
@@ -44,6 +45,24 @@ class TestUiJobRetryService(unittest.TestCase):
 
     def _mark_failed(self, job_id: int) -> None:
         dbm.update_job_state(self.conn, job_id, state="FAILED", stage="RENDER", error_reason="boom")
+
+    def _enqueue_source_job(self, job_id: int) -> None:
+        draft = dbm.get_ui_job_draft(self.conn, job_id)
+        assert draft is not None
+        result = enqueue_ui_render_job(
+            self.conn,
+            job_id=job_id,
+            channel_id=int(draft["channel_id"]),
+            tracks=[
+                {"file_id": "track-retry-1", "filename": "track-retry-1.wav"},
+                {"file_id": "track-retry-2", "filename": "track-retry-2.wav"},
+            ],
+            background_file_id="bg-retry-1",
+            background_filename="bg-retry-1.png",
+            cover_file_id="cover-retry-1",
+            cover_filename="cover-retry-1.png",
+        )
+        self.assertTrue(result.enqueued)
 
     def test_not_found_raises_typed_error(self) -> None:
         with self.assertRaises(UiJobRetryNotFoundError):
@@ -145,6 +164,44 @@ class TestUiJobRetryService(unittest.TestCase):
         self.assertEqual(int(row["retry_of_job_id"]), first_retry.retry_job_id)
         self.assertEqual(int(row["root_job_id"]), source_job_id)
         self.assertEqual(int(row["attempt_no"]), 3)
+
+    def test_retry_service_uses_real_enqueue_path_without_nested_transaction_error(self) -> None:
+        source_job_id = self._create_ui_job()
+        self._enqueue_source_job(source_job_id)
+        self._mark_failed(source_job_id)
+
+        result = retry_failed_ui_job(self.conn, source_job_id=source_job_id)
+
+        self.assertTrue(result.created)
+        row = self.conn.execute(
+            """
+            SELECT retry_of_job_id, root_job_id, attempt_no, force_refetch_inputs, state, stage
+            FROM jobs
+            WHERE id = ?
+            """,
+            (result.retry_job_id,),
+        ).fetchone()
+        assert row is not None
+        self.assertEqual(int(row["retry_of_job_id"]), source_job_id)
+        self.assertEqual(int(row["root_job_id"]), source_job_id)
+        self.assertEqual(int(row["attempt_no"]), 2)
+        self.assertEqual(int(row["force_refetch_inputs"]), 1)
+        self.assertEqual(str(row["state"]), "READY_FOR_RENDER")
+        self.assertEqual(str(row["stage"]), "FETCH")
+
+        role_counts = self.conn.execute(
+            """
+            SELECT role, COUNT(*) AS c
+            FROM job_inputs
+            WHERE job_id = ?
+            GROUP BY role
+            """,
+            (result.retry_job_id,),
+        ).fetchall()
+        counts = {str(r["role"]): int(r["c"]) for r in role_counts}
+        self.assertEqual(counts.get("TRACK", 0), 2)
+        self.assertEqual(counts.get("BACKGROUND", 0), 1)
+        self.assertEqual(counts.get("COVER", 0), 1)
 
 
 if __name__ == "__main__":
