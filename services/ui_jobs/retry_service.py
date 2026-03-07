@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from services.common import db as dbm
+from services.factory_api.ui_jobs_enqueue import _enqueue_ui_render_job_in_tx
 
 
 class UiJobRetryError(Exception):
@@ -28,11 +29,68 @@ class UiJobRetryResult:
 EnqueueRetryChild = Callable[[sqlite3.Connection, int], None]
 
 
+def _load_source_enqueue_payload(conn: sqlite3.Connection, *, source_job_id: int) -> dict[str, object]:
+    source_draft = conn.execute(
+        """
+        SELECT channel_id
+        FROM ui_job_drafts
+        WHERE job_id = ?
+        """,
+        (source_job_id,),
+    ).fetchone()
+    if not source_draft:
+        raise UiJobRetryNotFoundError(f"ui source draft {source_job_id} not found")
+
+    rows = conn.execute(
+        """
+        SELECT ji.role, ji.order_index, a.origin_id, a.name
+        FROM job_inputs ji
+        JOIN assets a ON a.id = ji.asset_id
+        WHERE ji.job_id = ?
+        ORDER BY ji.role ASC, ji.order_index ASC
+        """,
+        (source_job_id,),
+    ).fetchall()
+    if not rows:
+        raise RuntimeError(f"ui source job {source_job_id} has no persisted inputs")
+
+    tracks: list[dict[str, str]] = []
+    background_file_id = ""
+    background_filename = ""
+    cover_file_id = ""
+    cover_filename = ""
+
+    for row in rows:
+        role = str(row["role"])
+        origin_id = str(row["origin_id"] or "")
+        name = str(row["name"] or "")
+        if role == "TRACK":
+            tracks.append({"file_id": origin_id, "filename": name})
+        elif role == "BACKGROUND":
+            background_file_id = origin_id
+            background_filename = name
+        elif role == "COVER":
+            cover_file_id = origin_id
+            cover_filename = name
+
+    if not tracks or not background_file_id:
+        raise RuntimeError(f"ui source job {source_job_id} missing required persisted inputs")
+
+    return {
+        "channel_id": int(source_draft["channel_id"]),
+        "tracks": tracks,
+        "background_file_id": background_file_id,
+        "background_filename": background_filename,
+        "cover_file_id": cover_file_id,
+        "cover_filename": cover_filename,
+    }
+
+
 def retry_failed_ui_job(
     conn: sqlite3.Connection,
     *,
     source_job_id: int,
-    enqueue_retry_child: EnqueueRetryChild,
+    enqueue_retry_child: EnqueueRetryChild | None = None,
 ) -> UiJobRetryResult:
     tx_started = False
     try:
@@ -109,6 +167,9 @@ def retry_failed_ui_job(
         ).fetchone()
         if not source_draft:
             raise UiJobRetryNotFoundError(f"ui source draft {source_job_id} not found")
+        enqueue_payload: dict[str, object] | None = None
+        if enqueue_retry_child is None:
+            enqueue_payload = _load_source_enqueue_payload(conn, source_job_id=source_job_id)
 
         conn.execute(
             """
@@ -134,7 +195,24 @@ def retry_failed_ui_job(
             ),
         )
 
-        enqueue_retry_child(conn, retry_job_id)
+        if enqueue_retry_child is None:
+            assert enqueue_payload is not None
+            enqueue_result = _enqueue_ui_render_job_in_tx(
+                conn,
+                job_id=retry_job_id,
+                channel_id=int(enqueue_payload["channel_id"]),
+                tracks=list(enqueue_payload["tracks"]),
+                background_file_id=str(enqueue_payload["background_file_id"]),
+                background_filename=str(enqueue_payload["background_filename"]),
+                cover_file_id=str(enqueue_payload["cover_file_id"]),
+                cover_filename=str(enqueue_payload["cover_filename"]),
+            )
+            if not enqueue_result.enqueued:
+                raise RuntimeError(
+                    f"retry enqueue integration failed for child {retry_job_id}: {enqueue_result.reason}"
+                )
+        else:
+            enqueue_retry_child(conn, retry_job_id)
 
         conn.execute("COMMIT")
         tx_started = False
