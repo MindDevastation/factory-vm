@@ -1146,6 +1146,11 @@ def ui_planner_page(request: Request, _: bool = Depends(require_basic_auth(env))
     return templates.TemplateResponse("planner_bulk_releases.html", {"request": request})
 
 
+@app.get("/ui/track-catalog/analysis-report", response_class=HTMLResponse)
+def ui_track_analysis_report_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("track_analysis_report.html", {"request": request})
+
+
 def _all_channels(conn) -> list:
     return conn.execute("SELECT id, slug, display_name FROM channels ORDER BY display_name ASC").fetchall()
 

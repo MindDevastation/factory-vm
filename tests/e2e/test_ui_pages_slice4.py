@@ -59,6 +59,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="channels-table"', r.text)
             self.assertIn('href="/ui/db-viewer"', r.text)
             self.assertIn('href="/ui/planner"', r.text)
+            self.assertIn('href="/ui/track-catalog/analysis-report"', r.text)
 
             r = client.get("/ui/db-viewer", headers=h)
             self.assertEqual(r.status_code, 200)
@@ -74,6 +75,13 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="bulk-create-modal"', r.text)
             self.assertIn('id="import-modal"', r.text)
             self.assertIn('/static/planner_bulk_releases.js', r.text)
+
+            r = client.get("/ui/track-catalog/analysis-report", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("Track Catalog · Analysis Report", r.text)
+            self.assertIn('id="tar-channel-select"', r.text)
+            self.assertIn('id="tar-export-btn"', r.text)
+            self.assertIn('id="tar-table"', r.text)
 
             r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
             self.assertEqual(r.status_code, 200)

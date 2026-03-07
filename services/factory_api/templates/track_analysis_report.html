@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+{% block body %}
+<style>
+  #tar-error-banner {
+    display: none;
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 8px;
+    background: #fef2f2;
+    color: #b91c1c;
+  }
+
+  #tar-table-wrap {
+    overflow-x: auto;
+  }
+
+  #tar-table th {
+    white-space: nowrap;
+    background: #f9fafb;
+  }
+
+  #tar-table td {
+    white-space: nowrap;
+  }
+</style>
+
+<h1>Track Catalog · Analysis Report</h1>
+<p>
+  <a href="/">Dashboard</a>
+</p>
+
+<p>
+  <label for="tar-channel-select"><strong>Channel:</strong></label>
+  <select id="tar-channel-select" disabled>
+    <option value="">Loading channels...</option>
+  </select>
+  <button type="button" id="tar-export-btn" style="display:none;">Export XLSX</button>
+</p>
+
+<div id="tar-error-banner" role="alert"></div>
+<p class="muted" id="tar-status-note">Loading channels...</p>
+
+<div id="tar-table-wrap" style="display:none;">
+  <table id="tar-table">
+    <thead id="tar-table-head"></thead>
+    <tbody id="tar-table-body"></tbody>
+  </table>
+</div>
+
+<script>
+(function () {
+  const channelSelect = document.getElementById('tar-channel-select');
+  const exportBtn = document.getElementById('tar-export-btn');
+  const statusNote = document.getElementById('tar-status-note');
+  const errorBanner = document.getElementById('tar-error-banner');
+  const tableWrap = document.getElementById('tar-table-wrap');
+  const tableHead = document.getElementById('tar-table-head');
+  const tableBody = document.getElementById('tar-table-body');
+
+  let isLoadingReport = false;
+  let isExporting = false;
+
+  function setError(message) {
+    if (!message) {
+      errorBanner.style.display = 'none';
+      errorBanner.textContent = '';
+      return;
+    }
+    errorBanner.style.display = 'block';
+    errorBanner.textContent = message;
+  }
+
+  function setStatus(message) {
+    statusNote.textContent = message;
+  }
+
+  function updateExportState() {
+    const hasChannel = String(channelSelect.value || '').trim() !== '';
+    exportBtn.style.display = hasChannel ? '' : 'none';
+    exportBtn.disabled = !hasChannel || isLoadingReport || isExporting;
+  }
+
+  function esc(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function buildGroupSpans(columns, columnGroups) {
+    if (!Array.isArray(columns) || columns.length === 0) {
+      return [];
+    }
+
+    const allowedGroups = new Set(Array.isArray(columnGroups) ? columnGroups.map((g) => String(g || '')) : []);
+    const spans = [];
+    let current = String(columns[0].group || '');
+    let start = 0;
+
+    for (let i = 1; i < columns.length; i += 1) {
+      const next = String(columns[i].group || '');
+      if (next !== current) {
+        spans.push({
+          label: allowedGroups.has(current) ? current : current,
+          colspan: i - start,
+        });
+        start = i;
+        current = next;
+      }
+    }
+
+    spans.push({
+      label: allowedGroups.has(current) ? current : current,
+      colspan: columns.length - start,
+    });
+    return spans;
+  }
+
+  function renderTable(report) {
+    const columns = Array.isArray(report.columns) ? report.columns : [];
+    const rows = Array.isArray(report.rows) ? report.rows : [];
+    const groups = buildGroupSpans(columns, report.column_groups);
+
+    if (columns.length === 0) {
+      tableWrap.style.display = 'none';
+      tableHead.innerHTML = '';
+      tableBody.innerHTML = '';
+      setStatus('No columns available for selected channel.');
+      return;
+    }
+
+    const groupRow = '<tr>' + groups.map((group) => (
+      '<th colspan="' + group.colspan + '">' + esc(group.label) + '</th>'
+    )).join('') + '</tr>';
+
+    const headerRow = '<tr>' + columns.map((column) => (
+      '<th>' + esc(column.key || '') + '</th>'
+    )).join('') + '</tr>';
+
+    tableHead.innerHTML = groupRow + headerRow;
+
+    if (rows.length === 0) {
+      tableBody.innerHTML = '<tr><td colspan="' + columns.length + '" class="muted">No tracks found.</td></tr>';
+      tableWrap.style.display = '';
+      setStatus('No tracks found for selected channel.');
+      return;
+    }
+
+    tableBody.innerHTML = rows.map((row) => (
+      '<tr>' + columns.map((column) => (
+        '<td>' + esc(row[column.key]) + '</td>'
+      )).join('') + '</tr>'
+    )).join('');
+
+    tableWrap.style.display = '';
+    const tracksCount = Number(report.summary && report.summary.tracks_count || rows.length);
+    setStatus('Loaded ' + tracksCount + ' track(s).');
+  }
+
+  async function loadReport(channelSlug) {
+    const normalized = String(channelSlug || '').trim();
+    if (!normalized) {
+      tableWrap.style.display = 'none';
+      tableHead.innerHTML = '';
+      tableBody.innerHTML = '';
+      setStatus('Select a channel to load report.');
+      setError('');
+      updateExportState();
+      return;
+    }
+
+    isLoadingReport = true;
+    updateExportState();
+    setError('');
+    setStatus('Loading report...');
+
+    try {
+      const params = new URLSearchParams({ channel_slug: normalized });
+      const response = await fetch('/v1/track-catalog/analysis-report?' + params.toString());
+      const body = await response.json();
+      if (!response.ok) {
+        const errMsg = body && body.error && body.error.message ? body.error.message : 'Failed to load analysis report.';
+        throw new Error(errMsg);
+      }
+      renderTable(body);
+    } catch (error) {
+      tableWrap.style.display = 'none';
+      tableHead.innerHTML = '';
+      tableBody.innerHTML = '';
+      setStatus('Failed to load report.');
+      setError(error && error.message ? error.message : 'Failed to load analysis report.');
+    } finally {
+      isLoadingReport = false;
+      updateExportState();
+    }
+  }
+
+  async function loadChannels() {
+    channelSelect.disabled = true;
+    setError('');
+    setStatus('Loading channels...');
+    updateExportState();
+
+    try {
+      const response = await fetch('/v1/track-catalog/analysis-report/channels');
+      const body = await response.json();
+      if (!response.ok) {
+        const errMsg = body && body.error && body.error.message ? body.error.message : 'Failed to load channels.';
+        throw new Error(errMsg);
+      }
+
+      const channels = Array.isArray(body.channels) ? body.channels : [];
+      const placeholder = '<option value="">Select channel</option>';
+      const options = channels.map((channel) => (
+        '<option value="' + esc(channel.channel_slug || '') + '">' +
+          esc(channel.display_name || channel.channel_slug || '') +
+        '</option>'
+      )).join('');
+
+      channelSelect.innerHTML = placeholder + options;
+      channelSelect.disabled = channels.length === 0;
+
+      if (channels.length === 0) {
+        setStatus('No channels available.');
+        await loadReport('');
+        return;
+      }
+
+      setStatus('Select a channel to load report.');
+      if (channels.length === 1) {
+        channelSelect.value = String(channels[0].channel_slug || '');
+      }
+      await loadReport(channelSelect.value);
+    } catch (error) {
+      channelSelect.disabled = true;
+      channelSelect.innerHTML = '<option value="">Channels unavailable</option>';
+      tableWrap.style.display = 'none';
+      tableHead.innerHTML = '';
+      tableBody.innerHTML = '';
+      setStatus('Failed to load channels.');
+      setError(error && error.message ? error.message : 'Failed to load channels.');
+      updateExportState();
+    }
+  }
+
+  channelSelect.addEventListener('change', () => {
+    loadReport(channelSelect.value);
+  });
+
+  exportBtn.addEventListener('click', async () => {
+    const channelSlug = String(channelSelect.value || '').trim();
+    if (!channelSlug || isLoadingReport || isExporting) {
+      return;
+    }
+
+    isExporting = true;
+    updateExportState();
+    setError('');
+
+    try {
+      const params = new URLSearchParams({ channel_slug: channelSlug });
+      const response = await fetch('/v1/track-catalog/analysis-report.xlsx?' + params.toString());
+      if (!response.ok) {
+        let errMsg = 'Failed to export XLSX.';
+        try {
+          const body = await response.json();
+          if (body && body.error && body.error.message) {
+            errMsg = body.error.message;
+          }
+        } catch (_) {
+        }
+        throw new Error(errMsg);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const disposition = String(response.headers.get('content-disposition') || '');
+      const match = disposition.match(/filename="?([^";]+)"?/i);
+      const filename = match && match[1] ? match[1] : ('analysis_report__' + channelSlug + '.xlsx');
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setError(error && error.message ? error.message : 'Failed to export XLSX.');
+    } finally {
+      isExporting = false;
+      updateExportState();
+    }
+  });
+
+  loadChannels();
+})();
+</script>
+{% endblock %}
