@@ -97,7 +97,7 @@
         <a href="/ui/jobs/{{ j.id }}/edit">Edit</a>
         {% endif %}
         <button type="button" class="jobs-render-btn" data-job-id="{{ j.id }}" data-job-status="{{ j.state }}" {% if j.state|upper != 'DRAFT' %}disabled{% endif %}>Render</button>
-        {% if j.actions and j.actions.retry_allowed %}
+        {% if j.actions and j.actions.retry_allowed == true %}
         <button type="button" class="jobs-retry-btn" data-job-id="{{ j.id }}">Retry</button>
         {% endif %}
       </td>
@@ -284,6 +284,7 @@
         status: row.getAttribute('data-job-status') || '',
       };
     });
+    syncStatusFilterOptionsFromJobs(jobs);
     pruneSelectionToVisibleJobs();
     bindJobsTableEventHandlers();
     updateFailedRowHighlights();
@@ -476,6 +477,22 @@
 
   function selectedStatusesFromUi() {
     return new Set(Array.from(jobsStatusFilter.selectedOptions).map((option) => option.value));
+  }
+
+  function syncStatusFilterOptionsFromJobs(jobs) {
+    const known = new Set(Array.from(jobsStatusFilter.options).map((option) => option.value));
+    jobs.forEach((job) => {
+      const status = normalizeStatus(job && (job.state || job.status));
+      if (!status || known.has(status)) {
+        return;
+      }
+      const option = document.createElement('option');
+      option.value = status;
+      option.textContent = status;
+      option.selected = true;
+      jobsStatusFilter.appendChild(option);
+      known.add(status);
+    });
   }
 
   async function initJobsStatusFilter() {
@@ -918,6 +935,10 @@
       pollStatus();
     }, 3000);
   }
+
+  refreshJobsList().catch((err) => {
+    setJobsMessage(err.message || 'Failed to refresh jobs list', 'error');
+  });
 
   addBtn.addEventListener('click', async () => {
     try {
