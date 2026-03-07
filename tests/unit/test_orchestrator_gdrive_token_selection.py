@@ -89,6 +89,40 @@ class TestOrchestratorGDriveTokenSelection(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, r"^GDrive token missing for channel"):
                     _fetch_asset_to(env=env, drive=None, asset=asset, dest=dest, channel_slug="missing-slug")
 
+    def test_fetch_asset_force_refetch_local_replaces_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            env = _make_env(
+                gdrive_sa_json="",
+                gdrive_tokens_dir=td,
+                gdrive_oauth_token_json="/secure/gdrive_token.json",
+            )
+            src = Path(td) / "source.wav"
+            src.write_text("fresh", encoding="utf-8")
+            dest = Path(td) / "dst.wav"
+            dest.write_text("stale", encoding="utf-8")
+            asset = {"origin": "LOCAL", "origin_id": str(src)}
+
+            _fetch_asset_to(env=env, drive=None, asset=asset, dest=dest, channel_slug="slug", force_refetch_inputs=True)
+
+            self.assertEqual(dest.read_text(encoding="utf-8"), "fresh")
+
+    def test_fetch_asset_default_behavior_keeps_existing_path_valid_for_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            env = _make_env(
+                gdrive_sa_json="",
+                gdrive_tokens_dir=td,
+                gdrive_oauth_token_json="/secure/gdrive_token.json",
+            )
+            src = Path(td) / "source.wav"
+            src.write_text("fresh", encoding="utf-8")
+            dest = Path(td) / "dst.wav"
+            dest.write_text("stale", encoding="utf-8")
+            asset = {"origin": "LOCAL", "origin_id": str(src)}
+
+            _fetch_asset_to(env=env, drive=None, asset=asset, dest=dest, channel_slug="slug")
+
+            self.assertEqual(dest.read_text(encoding="utf-8"), "fresh")
+
 
 if __name__ == "__main__":
     unittest.main()
