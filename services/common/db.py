@@ -322,6 +322,89 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_track_job_logs
             ON track_job_logs(job_id, ts);
+
+        CREATE TABLE IF NOT EXISTS custom_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            label TEXT NOT NULL,
+            category TEXT NOT NULL,
+            description TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(category IN ('VISUAL','MOOD','THEME')),
+            UNIQUE(category, code)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_custom_tags_category
+            ON custom_tags(category);
+
+        CREATE INDEX IF NOT EXISTS idx_custom_tags_is_active
+            ON custom_tags(is_active);
+
+        CREATE TABLE IF NOT EXISTS custom_tag_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tag_id INTEGER NOT NULL,
+            source_path TEXT NOT NULL,
+            operator TEXT NOT NULL,
+            value_json TEXT NOT NULL,
+            match_mode TEXT NOT NULL DEFAULT 'ALL',
+            priority INTEGER NOT NULL DEFAULT 100,
+            weight REAL,
+            required INTEGER NOT NULL DEFAULT 0,
+            stop_after_match INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(tag_id) REFERENCES custom_tags(id),
+            CHECK(match_mode IN ('ALL','ANY'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ctr_tag_id
+            ON custom_tag_rules(tag_id);
+
+        CREATE INDEX IF NOT EXISTS idx_ctr_priority
+            ON custom_tag_rules(priority);
+
+        CREATE INDEX IF NOT EXISTS idx_ctr_active
+            ON custom_tag_rules(is_active);
+
+        CREATE TABLE IF NOT EXISTS custom_tag_channel_bindings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tag_id INTEGER NOT NULL,
+            channel_slug TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(tag_id) REFERENCES custom_tags(id),
+            UNIQUE(tag_id, channel_slug)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ctcb_tag_id
+            ON custom_tag_channel_bindings(tag_id);
+
+        CREATE INDEX IF NOT EXISTS idx_ctcb_channel_slug
+            ON custom_tag_channel_bindings(channel_slug);
+
+        CREATE TABLE IF NOT EXISTS track_custom_tag_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_pk INTEGER NOT NULL,
+            tag_id INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            assigned_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(track_pk) REFERENCES tracks(id),
+            FOREIGN KEY(tag_id) REFERENCES custom_tags(id),
+            CHECK(state IN ('AUTO','MANUAL','SUPPRESSED')),
+            UNIQUE(track_pk, tag_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tcta_track_pk
+            ON track_custom_tag_assignments(track_pk);
+
+        CREATE INDEX IF NOT EXISTS idx_tcta_tag_id
+            ON track_custom_tag_assignments(tag_id);
+
+        CREATE INDEX IF NOT EXISTS idx_tcta_track_state
+            ON track_custom_tag_assignments(track_pk, state);
         """
     )
 
