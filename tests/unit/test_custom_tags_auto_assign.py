@@ -66,6 +66,45 @@ class TestCustomTagsAutoAssign(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_no_active_rules_keeps_existing_auto_untouched(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                track_pk = self._insert_track(conn)
+                tag_id = self._insert_tag(conn, code="calm", category="MOOD")
+                conn.execute(
+                    "INSERT INTO track_custom_tag_assignments(track_pk, tag_id, state, assigned_at, updated_at) VALUES(?,?,?,?,?)",
+                    (track_pk, tag_id, "AUTO", "2025-01-01", "2025-01-01"),
+                )
+
+                before = conn.execute(
+                    "SELECT state, assigned_at, updated_at FROM track_custom_tag_assignments WHERE track_pk = ? AND tag_id = ?",
+                    (track_pk, tag_id),
+                ).fetchone()
+
+                result = apply_auto_custom_tags(
+                    conn,
+                    track_pk,
+                    analyzer_payload={"track_features": {"payload_json": {"voice_flag": True}}},
+                )
+
+                self.assertEqual(result["auto_added"], [])
+                self.assertEqual(result["auto_removed"], [])
+                self.assertEqual(result["preserved_manual"], [])
+                self.assertEqual(result["suppressed_skipped"], [])
+
+                after = conn.execute(
+                    "SELECT state, assigned_at, updated_at FROM track_custom_tag_assignments WHERE track_pk = ? AND tag_id = ?",
+                    (track_pk, tag_id),
+                ).fetchone()
+                self.assertIsNotNone(after)
+                self.assertEqual(str(after["state"]), "AUTO")
+                self.assertEqual(str(after["assigned_at"]), str(before["assigned_at"]))
+                self.assertEqual(str(after["updated_at"]), str(before["updated_at"]))
+            finally:
+                conn.close()
+
     def test_candidate_creates_auto_and_stale_auto_removed(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)
