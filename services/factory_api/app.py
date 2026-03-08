@@ -45,7 +45,7 @@ from services.track_analysis_report.report_service import (
 from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes, sanitize_sheet_name
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
-from services.custom_tags import catalog_service
+from services.custom_tags import catalog_service, rules_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -553,6 +553,40 @@ class CustomTagCatalogPatchRequest(BaseModel):
     category: str | None = None
 
 
+class CustomTagRuleCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_id: int
+    source_path: str
+    operator: str
+    value_json: str
+    match_mode: str = "ALL"
+    priority: int = 100
+    weight: float | None = None
+    required: bool = False
+    stop_after_match: bool = False
+    is_active: bool = True
+
+
+class CustomTagRulePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_id: int | None = None
+    source_path: str | None = None
+    operator: str | None = None
+    value_json: str | None = None
+    match_mode: str | None = None
+    priority: int | None = None
+    weight: float | None = None
+    required: bool | None = None
+    stop_after_match: bool | None = None
+    is_active: bool | None = None
+
+
+class CustomTagChannelBindingCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_id: int
+    channel_slug: str
+
+
 def _normalize_display_name(value: str) -> str:
     return value.strip()
 
@@ -956,6 +990,13 @@ _CTA_CATALOG_ENDPOINTS = {
     ("PATCH", "/v1/track-catalog/custom-tags/catalog/{tag_id}"),
     ("POST", "/v1/track-catalog/custom-tags/catalog/import"),
     ("POST", "/v1/track-catalog/custom-tags/catalog/export"),
+    ("GET", "/v1/track-catalog/custom-tags/rules"),
+    ("POST", "/v1/track-catalog/custom-tags/rules"),
+    ("PATCH", "/v1/track-catalog/custom-tags/rules/{rule_id}"),
+    ("DELETE", "/v1/track-catalog/custom-tags/rules/{rule_id}"),
+    ("GET", "/v1/track-catalog/custom-tags/channel-bindings"),
+    ("POST", "/v1/track-catalog/custom-tags/channel-bindings"),
+    ("DELETE", "/v1/track-catalog/custom-tags/channel-bindings/{binding_id}"),
 }
 
 
@@ -1066,6 +1107,142 @@ def api_custom_tags_catalog_export(_: bool = Depends(require_basic_auth(env))):
     finally:
         conn.close()
     return {"ok": True, **result}
+
+
+@app.get("/v1/track-catalog/custom-tags/rules")
+def api_custom_tag_rules(tag_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            rules = rules_service.list_rules(conn, tag_id=tag_id)
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags rules list failed", extra={"tag_id": tag_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"rules": rules}
+
+
+@app.post("/v1/track-catalog/custom-tags/rules")
+def api_custom_tag_rules_create(payload: CustomTagRuleCreateRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            rule = rules_service.create_rule(conn, payload=payload.model_dump())
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags rules create failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"rule": rule}
+
+
+@app.patch("/v1/track-catalog/custom-tags/rules/{rule_id}")
+def api_custom_tag_rules_patch(rule_id: int, payload: CustomTagRulePatchRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            rule = rules_service.update_rule(conn, rule_id=rule_id, payload=payload.model_dump(exclude_none=True))
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags rules patch failed", extra={"rule_id": rule_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"rule": rule}
+
+
+@app.delete("/v1/track-catalog/custom-tags/rules/{rule_id}")
+def api_custom_tag_rules_delete(rule_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            rules_service.delete_rule(conn, rule_id=rule_id)
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags rules delete failed", extra={"rule_id": rule_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.get("/v1/track-catalog/custom-tags/channel-bindings")
+def api_custom_tag_channel_bindings(tag_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            bindings = rules_service.list_channel_bindings(conn, tag_id=tag_id)
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags channel bindings list failed", extra={"tag_id": tag_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"bindings": bindings}
+
+
+@app.post("/v1/track-catalog/custom-tags/channel-bindings")
+def api_custom_tag_channel_bindings_create(
+    payload: CustomTagChannelBindingCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            binding = rules_service.create_channel_binding(conn, payload=payload.model_dump())
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags channel bindings create failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"binding": binding}
+
+
+@app.delete("/v1/track-catalog/custom-tags/channel-bindings/{binding_id}")
+def api_custom_tag_channel_bindings_delete(binding_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            rules_service.delete_channel_binding(conn, binding_id=binding_id)
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags channel bindings delete failed", extra={"binding_id": binding_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"ok": True}
 
 
 @app.post("/v1/channels")
