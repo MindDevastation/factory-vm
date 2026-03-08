@@ -171,6 +171,15 @@ def apply_auto_custom_tags(conn: sqlite3.Connection, track_pk: int, analyzer_pay
         tag_ids,
     ).fetchall()
 
+    if not rules_rows:
+        return {
+            "track_pk": str(track_pk),
+            "auto_added": [],
+            "auto_removed": [],
+            "preserved_manual": [],
+            "suppressed_skipped": [],
+        }
+
     rules_by_tag: dict[int, list[dict[str, Any]]] = {tag_id: [] for tag_id in tag_ids}
     for row in rules_rows:
         rules_by_tag[int(row["tag_id"])].append(row)
