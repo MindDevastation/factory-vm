@@ -51,6 +51,7 @@
     <p><label>JSON tag definition
       <textarea id="tag-json" rows="8" style="width:100%;"></textarea>
     </label></p>
+    <p><label><input type="checkbox" id="tag-json-mode"> Save using JSON definition above</label></p>
     <p class="muted" id="tag-editor-note"></p>
     <p>
       <button type="button" id="tag-editor-save">Save</button>
@@ -91,11 +92,28 @@
   const editorActive = document.getElementById('tag-is-active');
   const editorManualId = document.getElementById('tag-manual-id');
   const editorJson = document.getElementById('tag-json');
+  const editorJsonMode = document.getElementById('tag-json-mode');
   const editorNote = document.getElementById('tag-editor-note');
 
   const bulkModal = document.getElementById('tags-bulk-modal');
   const bulkJson = document.getElementById('tags-bulk-json');
   const bulkNote = document.getElementById('tags-bulk-note');
+
+  function resolveApiPath(path) {
+    const normalized = String(path || '').startsWith('/') ? String(path || '') : ('/' + String(path || ''));
+    const pathname = String(window.location.pathname || '');
+    const uiMarker = '/ui/';
+    const idx = pathname.indexOf(uiMarker);
+    if (idx < 0) {
+      return '/v1' + normalized;
+    }
+    const prefix = pathname.slice(0, idx);
+    return prefix + '/v1' + normalized;
+  }
+
+  async function apiFetch(path, options) {
+    return fetch(resolveApiPath(path), Object.assign({ credentials: 'same-origin' }, options || {}));
+  }
 
   function esc(v) {
     return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -109,7 +127,7 @@
   async function loadCatalog() {
     setNote('Loading tag catalog...');
     try {
-      const r = await fetch('/v1/track-catalog/custom-tags/catalog');
+      const r = await apiFetch('/track-catalog/custom-tags/catalog');
       const body = await r.json();
       if (!r.ok) {
         throw new Error((body.error && body.error.message) || 'Failed to load tag catalog.');
@@ -156,37 +174,49 @@
       description: editorDescription.value,
       is_active: editorActive.value === 'true',
     }, null, 2);
+    editorJsonMode.checked = false;
     editorNote.textContent = '';
     editorModal.showModal();
   }
 
+  function manualEditorPayload() {
+    return {
+      category: String(editorCategory.value || '').trim().toUpperCase(),
+      code: String(editorCode.value || '').trim(),
+      label: String(editorLabel.value || '').trim(),
+      description: String(editorDescription.value || ''),
+      is_active: editorActive.value === 'true',
+    };
+  }
+
   async function saveEditor() {
     editorNote.textContent = '';
-    let payload = null;
-    try {
-      payload = JSON.parse(editorJson.value || '{}');
-    } catch (error) {
-      editorNote.textContent = 'Invalid JSON in textarea.';
-      editorNote.style.color = '#b91c1c';
-      return;
+    let payload = manualEditorPayload();
+    if (editorJsonMode.checked) {
+      try {
+        payload = JSON.parse(editorJson.value || '{}');
+      } catch (error) {
+        editorNote.textContent = 'Invalid JSON in textarea.';
+        editorNote.style.color = '#b91c1c';
+        return;
+      }
+      payload.category = String(payload.category || '').trim().toUpperCase();
+      payload.code = String(payload.code || '').trim();
+      payload.label = String(payload.label || '').trim();
+      payload.description = payload.description == null ? '' : String(payload.description);
+      payload.is_active = payload.is_active == null ? true : Boolean(payload.is_active);
     }
-
-    payload.category = String(payload.category || editorCategory.value || '').trim().toUpperCase();
-    payload.code = String(payload.code || editorCode.value || '').trim();
-    payload.label = String(payload.label || editorLabel.value || '').trim();
-    payload.description = payload.description == null ? editorDescription.value : String(payload.description);
-    payload.is_active = payload.is_active == null ? (editorActive.value === 'true') : Boolean(payload.is_active);
 
     const editId = Number(editorId.value || editorManualId.value || payload.id || 0);
     const isEdit = editId > 0;
-    const url = isEdit ? ('/v1/track-catalog/custom-tags/catalog/' + encodeURIComponent(editId)) : '/v1/track-catalog/custom-tags/catalog';
+    const url = isEdit ? ('/track-catalog/custom-tags/catalog/' + encodeURIComponent(editId)) : '/track-catalog/custom-tags/catalog';
     const method = isEdit ? 'PATCH' : 'POST';
     if (isEdit) {
       delete payload.category;
       delete payload.id;
     }
 
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method: method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -204,7 +234,7 @@
 
   async function runImport() {
     setNote('Importing from JSON files...');
-    const r = await fetch('/v1/track-catalog/custom-tags/catalog/import', { method: 'POST' });
+    const r = await apiFetch('/track-catalog/custom-tags/catalog/import', { method: 'POST' });
     const body = await r.json();
     if (!r.ok) {
       setNote((body.error && body.error.message) || 'Import failed (missing file?).', true);
@@ -216,7 +246,7 @@
 
   async function runExport() {
     setNote('Exporting tags to JSON files...');
-    const r = await fetch('/v1/track-catalog/custom-tags/catalog/export', { method: 'POST' });
+    const r = await apiFetch('/track-catalog/custom-tags/catalog/export', { method: 'POST' });
     const body = await r.json();
     if (!r.ok) {
       setNote((body.error && body.error.message) || 'Export failed.', true);
@@ -238,7 +268,7 @@
     const items = Array.isArray(parsed.tags) ? parsed.tags : [];
     let created = 0;
     for (const item of items) {
-      const r = await fetch('/v1/track-catalog/custom-tags/catalog', {
+      const r = await apiFetch('/track-catalog/custom-tags/catalog', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
