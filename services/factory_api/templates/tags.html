@@ -99,6 +99,22 @@
   const bulkJson = document.getElementById('tags-bulk-json');
   const bulkNote = document.getElementById('tags-bulk-note');
 
+  function resolveApiPath(path) {
+    const normalized = String(path || '').startsWith('/') ? String(path || '') : ('/' + String(path || ''));
+    const pathname = String(window.location.pathname || '');
+    const uiMarker = '/ui/';
+    const idx = pathname.indexOf(uiMarker);
+    if (idx < 0) {
+      return '/v1' + normalized;
+    }
+    const prefix = pathname.slice(0, idx);
+    return prefix + '/v1' + normalized;
+  }
+
+  async function apiFetch(path, options) {
+    return fetch(resolveApiPath(path), Object.assign({ credentials: 'same-origin' }, options || {}));
+  }
+
   function esc(v) {
     return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
@@ -111,7 +127,7 @@
   async function loadCatalog() {
     setNote('Loading tag catalog...');
     try {
-      const r = await fetch('/v1/track-catalog/custom-tags/catalog');
+      const r = await apiFetch('/track-catalog/custom-tags/catalog');
       const body = await r.json();
       if (!r.ok) {
         throw new Error((body.error && body.error.message) || 'Failed to load tag catalog.');
@@ -193,14 +209,14 @@
 
     const editId = Number(editorId.value || editorManualId.value || payload.id || 0);
     const isEdit = editId > 0;
-    const url = isEdit ? ('/v1/track-catalog/custom-tags/catalog/' + encodeURIComponent(editId)) : '/v1/track-catalog/custom-tags/catalog';
+    const url = isEdit ? ('/track-catalog/custom-tags/catalog/' + encodeURIComponent(editId)) : '/track-catalog/custom-tags/catalog';
     const method = isEdit ? 'PATCH' : 'POST';
     if (isEdit) {
       delete payload.category;
       delete payload.id;
     }
 
-    const r = await fetch(url, {
+    const r = await apiFetch(url, {
       method: method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -218,7 +234,7 @@
 
   async function runImport() {
     setNote('Importing from JSON files...');
-    const r = await fetch('/v1/track-catalog/custom-tags/catalog/import', { method: 'POST' });
+    const r = await apiFetch('/track-catalog/custom-tags/catalog/import', { method: 'POST' });
     const body = await r.json();
     if (!r.ok) {
       setNote((body.error && body.error.message) || 'Import failed (missing file?).', true);
@@ -230,7 +246,7 @@
 
   async function runExport() {
     setNote('Exporting tags to JSON files...');
-    const r = await fetch('/v1/track-catalog/custom-tags/catalog/export', { method: 'POST' });
+    const r = await apiFetch('/track-catalog/custom-tags/catalog/export', { method: 'POST' });
     const body = await r.json();
     if (!r.ok) {
       setNote((body.error && body.error.message) || 'Export failed.', true);
@@ -252,7 +268,7 @@
     const items = Array.isArray(parsed.tags) ? parsed.tags : [];
     let created = 0;
     for (const item of items) {
-      const r = await fetch('/v1/track-catalog/custom-tags/catalog', {
+      const r = await apiFetch('/track-catalog/custom-tags/catalog', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
