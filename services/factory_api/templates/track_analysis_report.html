@@ -230,6 +230,11 @@
       await openTrackTagEditor(target.getAttribute('data-track-pk'));
       return;
     }
+  });
+
+  tagEditorGroups.addEventListener('click', async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) { return; }
     if (target.classList.contains('tar-remove-tag-btn')) {
       const trackPk = tagEditorTrackPk.textContent;
       const tagId = target.getAttribute('data-tag-id');

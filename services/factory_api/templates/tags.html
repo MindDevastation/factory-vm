@@ -51,6 +51,7 @@
     <p><label>JSON tag definition
       <textarea id="tag-json" rows="8" style="width:100%;"></textarea>
     </label></p>
+    <p><label><input type="checkbox" id="tag-json-mode"> Save using JSON definition above</label></p>
     <p class="muted" id="tag-editor-note"></p>
     <p>
       <button type="button" id="tag-editor-save">Save</button>
@@ -91,6 +92,7 @@
   const editorActive = document.getElementById('tag-is-active');
   const editorManualId = document.getElementById('tag-manual-id');
   const editorJson = document.getElementById('tag-json');
+  const editorJsonMode = document.getElementById('tag-json-mode');
   const editorNote = document.getElementById('tag-editor-note');
 
   const bulkModal = document.getElementById('tags-bulk-modal');
@@ -156,26 +158,38 @@
       description: editorDescription.value,
       is_active: editorActive.value === 'true',
     }, null, 2);
+    editorJsonMode.checked = false;
     editorNote.textContent = '';
     editorModal.showModal();
   }
 
+  function manualEditorPayload() {
+    return {
+      category: String(editorCategory.value || '').trim().toUpperCase(),
+      code: String(editorCode.value || '').trim(),
+      label: String(editorLabel.value || '').trim(),
+      description: String(editorDescription.value || ''),
+      is_active: editorActive.value === 'true',
+    };
+  }
+
   async function saveEditor() {
     editorNote.textContent = '';
-    let payload = null;
-    try {
-      payload = JSON.parse(editorJson.value || '{}');
-    } catch (error) {
-      editorNote.textContent = 'Invalid JSON in textarea.';
-      editorNote.style.color = '#b91c1c';
-      return;
+    let payload = manualEditorPayload();
+    if (editorJsonMode.checked) {
+      try {
+        payload = JSON.parse(editorJson.value || '{}');
+      } catch (error) {
+        editorNote.textContent = 'Invalid JSON in textarea.';
+        editorNote.style.color = '#b91c1c';
+        return;
+      }
+      payload.category = String(payload.category || '').trim().toUpperCase();
+      payload.code = String(payload.code || '').trim();
+      payload.label = String(payload.label || '').trim();
+      payload.description = payload.description == null ? '' : String(payload.description);
+      payload.is_active = payload.is_active == null ? true : Boolean(payload.is_active);
     }
-
-    payload.category = String(payload.category || editorCategory.value || '').trim().toUpperCase();
-    payload.code = String(payload.code || editorCode.value || '').trim();
-    payload.label = String(payload.label || editorLabel.value || '').trim();
-    payload.description = payload.description == null ? editorDescription.value : String(payload.description);
-    payload.is_active = payload.is_active == null ? (editorActive.value === 'true') : Boolean(payload.is_active);
 
     const editId = Number(editorId.value || editorManualId.value || payload.id || 0);
     const isEdit = editId > 0;
