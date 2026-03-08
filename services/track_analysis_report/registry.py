@@ -68,6 +68,9 @@ COLUMN_REGISTRY: Final[tuple[ColumnEntry, ...]] = (
     {"key": "texture_confidence", "group": "tags", "source": "features", "path": "payload_json.texture_confidence", "flatten": "direct"},
     {"key": "texture_reason", "group": "tags", "source": "features", "path": "payload_json.texture_reason", "flatten": "direct"},
     {"key": "prohibited_cues_notes", "group": "tags", "source": "tags", "path": "payload_json.prohibited_cues_notes", "flatten": "direct"},
+    {"key": "custom_tags_visual", "group": "tags", "source": "effective_custom_tags", "path": "visual", "flatten": "join_csv"},
+    {"key": "custom_tags_mood", "group": "tags", "source": "effective_custom_tags", "path": "mood", "flatten": "join_csv"},
+    {"key": "custom_tags_theme", "group": "tags", "source": "effective_custom_tags", "path": "theme", "flatten": "join_csv"},
     # scores
     {"key": "dsp_score", "group": "scores", "source": "scores", "path": "payload_json.dsp_score", "flatten": "direct"},
     {"key": "dsp_score_version", "group": "scores", "source": "scores", "path": "payload_json.dsp_score_version", "flatten": "direct"},
