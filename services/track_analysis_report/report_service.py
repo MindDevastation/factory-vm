@@ -41,6 +41,37 @@ def _row_to_mapping(row: Any, column_names: Sequence[str]) -> Mapping[str, Any]:
     return {}
 
 
+def _resolve_effective_custom_tags_by_track(
+    conn: sqlite3.Connection, track_pks: Sequence[int]
+) -> dict[int, dict[str, list[str]]]:
+    if not track_pks:
+        return {}
+
+    placeholders = ", ".join("?" for _ in track_pks)
+    rows = conn.execute(
+        f"""
+        SELECT a.track_pk AS track_pk, t.category AS category, t.label AS label
+        FROM track_custom_tag_assignments a
+        JOIN custom_tags t ON t.id = a.tag_id
+        WHERE a.track_pk IN ({placeholders})
+          AND a.state IN ('AUTO', 'MANUAL')
+        ORDER BY a.track_pk ASC, t.category ASC, t.label ASC, t.id ASC
+        """,
+        tuple(track_pks),
+    ).fetchall()
+
+    output: dict[int, dict[str, list[str]]] = {}
+    category_map = {"VISUAL": "visual", "MOOD": "mood", "THEME": "theme"}
+    for row in rows:
+        track_pk = int(row["track_pk"])
+        category = category_map.get(str(row["category"]))
+        if category is None:
+            continue
+        bucket = output.setdefault(track_pk, {})
+        bucket.setdefault(category, []).append(str(row["label"]))
+    return output
+
+
 def build_channel_report(conn: sqlite3.Connection, channel_slug: str) -> dict[str, Any]:
     normalized_slug = str(channel_slug or "").strip()
     if not normalized_slug:
@@ -84,6 +115,8 @@ def build_channel_report(conn: sqlite3.Connection, channel_slug: str) -> dict[st
     )
     rows = cursor.fetchall()
     column_names = [desc[0] for desc in (cursor.description or ())]
+    track_pks = [int(_row_to_mapping(raw_row, column_names).get("t_id") or 0) for raw_row in rows]
+    effective_tags_by_track = _resolve_effective_custom_tags_by_track(conn, [pk for pk in track_pks if pk > 0])
 
     report_rows: list[dict[str, Any]] = []
     for raw_row in rows:
@@ -115,6 +148,7 @@ def build_channel_report(conn: sqlite3.Connection, channel_slug: str) -> dict[st
                 "computed_at": db_row.get("ts_computed_at"),
                 "payload_json": _parse_payload_json(db_row.get("ts_payload_json")),
             },
+            "effective_custom_tags": effective_tags_by_track.get(int(db_row.get("t_id") or 0), {}),
         }
 
         flattened_row: dict[str, Any] = {}
