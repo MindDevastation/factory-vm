@@ -96,6 +96,10 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="tag-editor-modal"', r.text)
             self.assertIn('id="tag-json-mode"', r.text)
             self.assertIn('if (editorJsonMode.checked)', r.text)
+            self.assertIn("credentials: 'same-origin'", r.text)
+            self.assertIn('function resolveApiPath(path)', r.text)
+            self.assertIn('Catalog is empty.', r.text)
+            self.assertNotIn("fetch('/v1/track-catalog/custom-tags/catalog')", r.text)
             self.assertNotIn('payload.code || editorCode.value', r.text)
             self.assertNotIn('payload.label || editorLabel.value', r.text)
 
