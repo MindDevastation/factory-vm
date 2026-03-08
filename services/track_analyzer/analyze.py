@@ -12,6 +12,7 @@ import numpy as np
 
 from services.common import db as dbm
 from services.common import ffmpeg
+from services.custom_tags.auto_assign import apply_auto_custom_tags
 import services.track_analyzer.yamnet as yamnet
 from services.track_analyzer.texture_heuristics import classify_texture
 from services.track_analyzer.yamnet_buckets import SPEECH_LABELS, VOICE_LABELS
@@ -179,6 +180,22 @@ def analyze_tracks(
                 """,
                 (track_pk, dbm.json_dumps(scores_payload), computed_at),
             )
+            analyzer_payload = {
+                "track_features": {"payload_json": features_payload},
+                "track_tags": {"payload_json": tags_payload},
+                "track_scores": {"payload_json": scores_payload},
+            }
+            try:
+                apply_auto_custom_tags(conn, track_pk, analyzer_payload)
+            except Exception as exc:
+                log.exception(
+                    "custom tag auto-assign failed: job_id=%s track_pk=%s error_class=%s error_message=%s",
+                    job_id,
+                    track_pk,
+                    exc.__class__.__name__,
+                    str(exc),
+                )
+                raise AnalyzeError("CTA_AUTO_ASSIGN_FAILED") from exc
             conn.execute(
                 "UPDATE tracks SET analyzed_at=?, duration_sec=? WHERE id=?",
                 (computed_at, duration_sec, track_pk),
