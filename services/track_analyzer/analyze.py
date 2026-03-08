@@ -156,50 +156,57 @@ def analyze_tracks(
                 "missing_fields": missing_fields,
             }
 
-            conn.execute(
-                """
-                INSERT INTO track_features(track_pk, payload_json, computed_at)
-                VALUES(?,?,?)
-                ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
-                """,
-                (track_pk, dbm.json_dumps(features_payload), computed_at),
-            )
-            conn.execute(
-                """
-                INSERT INTO track_tags(track_pk, payload_json, computed_at)
-                VALUES(?,?,?)
-                ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
-                """,
-                (track_pk, dbm.json_dumps(tags_payload), computed_at),
-            )
-            conn.execute(
-                """
-                INSERT INTO track_scores(track_pk, payload_json, computed_at)
-                VALUES(?,?,?)
-                ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
-                """,
-                (track_pk, dbm.json_dumps(scores_payload), computed_at),
-            )
-            analyzer_payload = {
-                "track_features": {"payload_json": features_payload},
-                "track_tags": {"payload_json": tags_payload},
-                "track_scores": {"payload_json": scores_payload},
-            }
+            conn.execute("BEGIN")
             try:
-                apply_auto_custom_tags(conn, track_pk, analyzer_payload)
-            except Exception as exc:
-                log.exception(
-                    "custom tag auto-assign failed: job_id=%s track_pk=%s error_class=%s error_message=%s",
-                    job_id,
-                    track_pk,
-                    exc.__class__.__name__,
-                    str(exc),
+                conn.execute(
+                    """
+                    INSERT INTO track_features(track_pk, payload_json, computed_at)
+                    VALUES(?,?,?)
+                    ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
+                    """,
+                    (track_pk, dbm.json_dumps(features_payload), computed_at),
                 )
-                raise AnalyzeError("CTA_AUTO_ASSIGN_FAILED") from exc
-            conn.execute(
-                "UPDATE tracks SET analyzed_at=?, duration_sec=? WHERE id=?",
-                (computed_at, duration_sec, track_pk),
-            )
+                conn.execute(
+                    """
+                    INSERT INTO track_tags(track_pk, payload_json, computed_at)
+                    VALUES(?,?,?)
+                    ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
+                    """,
+                    (track_pk, dbm.json_dumps(tags_payload), computed_at),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO track_scores(track_pk, payload_json, computed_at)
+                    VALUES(?,?,?)
+                    ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
+                    """,
+                    (track_pk, dbm.json_dumps(scores_payload), computed_at),
+                )
+                analyzer_payload = {
+                    "track_features": {"payload_json": features_payload},
+                    "track_tags": {"payload_json": tags_payload},
+                    "track_scores": {"payload_json": scores_payload},
+                }
+                try:
+                    apply_auto_custom_tags(conn, track_pk, analyzer_payload)
+                except Exception as exc:
+                    log.exception(
+                        "custom tag auto-assign failed: job_id=%s track_pk=%s error_class=%s error_message=%s",
+                        job_id,
+                        track_pk,
+                        exc.__class__.__name__,
+                        str(exc),
+                    )
+                    raise AnalyzeError("CTA_AUTO_ASSIGN_FAILED") from exc
+                conn.execute(
+                    "UPDATE tracks SET analyzed_at=?, duration_sec=? WHERE id=?",
+                    (computed_at, duration_sec, track_pk),
+                )
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            else:
+                conn.execute("COMMIT")
             processed += 1
         except Exception:
             failed += 1
