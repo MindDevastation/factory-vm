@@ -10,7 +10,7 @@ from unittest import mock
 import numpy as np
 
 from services.common import db as dbm
-from services.track_analyzer.analyze import analyze_tracks
+from services.track_analyzer.analyze import AnalyzeError, analyze_tracks
 
 
 class FakeDrive:
@@ -236,6 +236,62 @@ class TestCustomTagsAnalyzeIntegration(unittest.TestCase):
                 self.assertNotIn(auto_tag_id, by_tag)
                 self.assertEqual(by_tag[manual_tag_id], "MANUAL")
                 self.assertEqual(by_tag[suppressed_tag_id], "SUPPRESSED")
+            finally:
+                conn.close()
+
+    def test_analyze_rolls_back_when_auto_assign_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
+            try:
+                dbm.migrate(conn)
+                track_pk = self._seed_track(conn)
+                rollback_tag_id = self._insert_tag(conn, code="rollback_probe", category="MOOD")
+
+                def _failing_auto_assign(connection, assigned_track_pk, analyzer_payload):
+                    del analyzer_payload
+                    connection.execute(
+                        "INSERT INTO track_custom_tag_assignments(track_pk, tag_id, state, assigned_at, updated_at) VALUES(?,?,?,?,?)",
+                        (assigned_track_pk, rollback_tag_id, "AUTO", "2025-01-01", "2025-01-01"),
+                    )
+                    raise RuntimeError("forced auto-assign failure")
+
+                with mock.patch("services.track_analyzer.analyze.ffmpeg.ffprobe_json", return_value={"format": {"duration": "12.5"}}), mock.patch(
+                    "services.track_analyzer.analyze.ffmpeg.run",
+                    return_value=(0, "", "[Parsed_ebur128_0] Peak: -2.1 dB"),
+                ), mock.patch("services.track_analyzer.analyze.yamnet.analyze_with_yamnet", return_value={
+                    "top_classes": [{"label": "Music", "score": 0.9}],
+                    "probabilities": {"speech": 0.0, "voice": 0.1, "music": 0.9},
+                }), mock.patch(
+                    "services.track_analyzer.analyze.apply_auto_custom_tags",
+                    side_effect=_failing_auto_assign,
+                ):
+                    with self.assertRaisesRegex(AnalyzeError, "CTA_AUTO_ASSIGN_FAILED"):
+                        analyze_tracks(
+                            conn,
+                            FakeDrive(),
+                            channel_slug="darkwood-reverie",
+                            storage_root=td,
+                            job_id=811,
+                            scope="pending",
+                            force=False,
+                            max_tracks=10,
+                        )
+
+                assignment_count = conn.execute(
+                    "SELECT COUNT(*) AS c FROM track_custom_tag_assignments WHERE track_pk = ?",
+                    (track_pk,),
+                ).fetchone()
+                self.assertEqual(int(assignment_count["c"]), 0)
+
+                features_count = conn.execute("SELECT COUNT(*) AS c FROM track_features WHERE track_pk = ?", (track_pk,)).fetchone()
+                tags_count = conn.execute("SELECT COUNT(*) AS c FROM track_tags WHERE track_pk = ?", (track_pk,)).fetchone()
+                scores_count = conn.execute("SELECT COUNT(*) AS c FROM track_scores WHERE track_pk = ?", (track_pk,)).fetchone()
+                self.assertEqual(int(features_count["c"]), 0)
+                self.assertEqual(int(tags_count["c"]), 0)
+                self.assertEqual(int(scores_count["c"]), 0)
+
+                analyzed_at_row = conn.execute("SELECT analyzed_at FROM tracks WHERE id = ?", (track_pk,)).fetchone()
+                self.assertIsNone(analyzed_at_row["analyzed_at"])
             finally:
                 conn.close()
 
