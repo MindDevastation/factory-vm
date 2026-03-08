@@ -1,32 +1,17 @@
 {% extends "base.html" %}
 {% block body %}
 <style>
-  #tar-error-banner {
-    display: none;
-    padding: 10px;
-    margin: 10px 0;
-    border-radius: 8px;
-    background: #fef2f2;
-    color: #b91c1c;
-  }
-
-  #tar-table-wrap {
-    overflow-x: auto;
-  }
-
-  #tar-table th {
-    white-space: nowrap;
-    background: #f9fafb;
-  }
-
-  #tar-table td {
-    white-space: nowrap;
-  }
+  #tar-error-banner { display: none; padding: 10px; margin: 10px 0; border-radius: 8px; background: #fef2f2; color: #b91c1c; }
+  #tar-table-wrap { overflow-x: auto; }
+  #tar-table th { white-space: nowrap; background: #f9fafb; }
+  #tar-table td { white-space: nowrap; }
 </style>
 
 <h1>Track Catalog · Analysis Report</h1>
 <p>
   <a href="/">Dashboard</a>
+  <span class="muted" style="margin:0 8px;">|</span>
+  <a href="/ui/tags">TAGS</a>
 </p>
 
 <p>
@@ -47,6 +32,29 @@
   </table>
 </div>
 
+<dialog id="tar-tag-editor-modal">
+  <form method="dialog">
+    <h3>Track Tag Editor</h3>
+    <p><strong>Track PK:</strong> <span id="tar-tag-editor-track-pk"></span></p>
+    <p class="muted" id="tar-tag-editor-note">Loading track tags...</p>
+    <div id="tar-tag-editor-groups"></div>
+    <p>
+      <label>Category
+        <select id="tar-tag-category">
+          <option value="VISUAL">VISUAL</option>
+          <option value="MOOD">MOOD</option>
+          <option value="THEME">THEME</option>
+        </select>
+      </label>
+      <label>Tag code
+        <input type="text" id="tar-tag-code" placeholder="code">
+      </label>
+      <button type="button" id="tar-tag-add-btn">Add tag</button>
+    </p>
+    <p><button type="button" id="tar-tag-editor-close">Close</button></p>
+  </form>
+</dialog>
+
 <script>
 (function () {
   const channelSelect = document.getElementById('tar-channel-select');
@@ -56,6 +64,12 @@
   const tableWrap = document.getElementById('tar-table-wrap');
   const tableHead = document.getElementById('tar-table-head');
   const tableBody = document.getElementById('tar-table-body');
+  const tagEditorModal = document.getElementById('tar-tag-editor-modal');
+  const tagEditorTrackPk = document.getElementById('tar-tag-editor-track-pk');
+  const tagEditorNote = document.getElementById('tar-tag-editor-note');
+  const tagEditorGroups = document.getElementById('tar-tag-editor-groups');
+  const tagCategory = document.getElementById('tar-tag-category');
+  const tagCode = document.getElementById('tar-tag-code');
 
   let isLoadingReport = false;
   let isExporting = false;
@@ -70,9 +84,7 @@
     errorBanner.textContent = message;
   }
 
-  function setStatus(message) {
-    statusNote.textContent = message;
-  }
+  function setStatus(message) { statusNote.textContent = message; }
 
   function updateExportState() {
     const hasChannel = String(channelSelect.value || '').trim() !== '';
@@ -82,46 +94,32 @@
 
   function esc(value) {
     return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  function buildGroupSpans(columns, columnGroups) {
-    if (!Array.isArray(columns) || columns.length === 0) {
-      return [];
-    }
-
-    const allowedGroups = new Set(Array.isArray(columnGroups) ? columnGroups.map((g) => String(g || '')) : []);
+  function buildGroupSpans(columns) {
+    if (!Array.isArray(columns) || columns.length === 0) { return []; }
     const spans = [];
     let current = String(columns[0].group || '');
     let start = 0;
-
     for (let i = 1; i < columns.length; i += 1) {
       const next = String(columns[i].group || '');
       if (next !== current) {
-        spans.push({
-          label: allowedGroups.has(current) ? current : current,
-          colspan: i - start,
-        });
+        spans.push({ label: current, colspan: i - start });
         start = i;
         current = next;
       }
     }
-
-    spans.push({
-      label: allowedGroups.has(current) ? current : current,
-      colspan: columns.length - start,
-    });
+    spans.push({ label: current, colspan: columns.length - start });
+    spans.push({ label: 'actions', colspan: 1 });
     return spans;
   }
 
   function renderTable(report) {
     const columns = Array.isArray(report.columns) ? report.columns : [];
     const rows = Array.isArray(report.rows) ? report.rows : [];
-    const groups = buildGroupSpans(columns, report.column_groups);
+    const groups = buildGroupSpans(columns);
 
     if (columns.length === 0) {
       tableWrap.style.display = 'none';
@@ -131,168 +129,153 @@
       return;
     }
 
-    const groupRow = '<tr>' + groups.map((group) => (
-      '<th colspan="' + group.colspan + '">' + esc(group.label) + '</th>'
-    )).join('') + '</tr>';
-
-    const headerRow = '<tr>' + columns.map((column) => (
-      '<th>' + esc(column.key || '') + '</th>'
-    )).join('') + '</tr>';
-
+    const groupRow = '<tr>' + groups.map((g) => '<th colspan="' + g.colspan + '">' + esc(g.label) + '</th>').join('') + '</tr>';
+    const headerRow = '<tr>' + columns.map((c) => '<th>' + esc(c.key || '') + '</th>').join('') + '<th>Actions</th></tr>';
     tableHead.innerHTML = groupRow + headerRow;
 
     if (rows.length === 0) {
-      tableBody.innerHTML = '<tr><td colspan="' + columns.length + '" class="muted">No tracks found.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="' + (columns.length + 1) + '" class="muted">No tracks found.</td></tr>';
       tableWrap.style.display = '';
       setStatus('No tracks found for selected channel.');
       return;
     }
 
     tableBody.innerHTML = rows.map((row) => (
-      '<tr>' + columns.map((column) => (
-        '<td>' + esc(row[column.key]) + '</td>'
-      )).join('') + '</tr>'
+      '<tr>' + columns.map((column) => '<td>' + esc(row[column.key]) + '</td>').join('') +
+      '<td><button type="button" class="tar-edit-tags-btn" data-track-pk="' + esc(row.track_pk) + '">Edit Tags</button></td>' +
+      '</tr>'
     )).join('');
 
     tableWrap.style.display = '';
-    const tracksCount = Number(report.summary && report.summary.tracks_count || rows.length);
-    setStatus('Loaded ' + tracksCount + ' track(s).');
+    setStatus('Loaded ' + rows.length + ' track(s).');
+  }
+
+  function renderTagGroups(effectiveTags, assignments) {
+    const cats = ['VISUAL', 'MOOD', 'THEME'];
+    tagEditorGroups.innerHTML = cats.map((cat) => {
+      const effective = Array.isArray(effectiveTags[cat]) ? effectiveTags[cat] : [];
+      const effHtml = effective.length
+        ? '<ul>' + effective.map((t) => '<li>' + esc(t.label) + ' <span class="muted">(' + esc(t.code) + ', ' + esc(t.source) + ')</span></li>').join('') + '</ul>'
+        : '<p class="muted">None</p>';
+      const assigned = (Array.isArray(assignments) ? assignments : []).filter((a) => String(a.category) === cat && String(a.state) !== 'SUPPRESSED');
+      const remove = assigned.map((a) => '<button type="button" class="tar-remove-tag-btn" data-tag-id="' + esc(a.tag_id) + '">Remove ' + esc(a.code) + '</button>').join(' ');
+      return '<h4>' + esc(cat) + '</h4>' + effHtml + '<p>' + remove + '</p>';
+    }).join('');
+  }
+
+  async function loadTrackTags(trackPk) {
+    tagEditorNote.textContent = 'Loading track tags...';
+    tagEditorNote.style.color = '';
+    const r = await fetch('/v1/track-catalog/tracks/' + encodeURIComponent(trackPk) + '/custom-tags');
+    const body = await r.json();
+    if (!r.ok) { throw new Error((body.error && body.error.message) || 'Failed to load track tags.'); }
+    renderTagGroups(body.effective_tags || {}, body.assignments || []);
+    tagEditorNote.textContent = 'Track tags loaded.';
+  }
+
+  async function openTrackTagEditor(trackPk) {
+    tagEditorTrackPk.textContent = String(trackPk || '');
+    tagEditorGroups.innerHTML = '';
+    tagEditorModal.showModal();
+    try { await loadTrackTags(trackPk); } catch (e) {
+      tagEditorNote.style.color = '#b91c1c';
+      tagEditorNote.textContent = e && e.message ? e.message : 'Failed to load track tags.';
+    }
   }
 
   async function loadReport(channelSlug) {
     const normalized = String(channelSlug || '').trim();
     if (!normalized) {
-      tableWrap.style.display = 'none';
-      tableHead.innerHTML = '';
-      tableBody.innerHTML = '';
-      setStatus('Select a channel to load report.');
-      setError('');
-      updateExportState();
-      return;
+      tableWrap.style.display = 'none'; tableHead.innerHTML = ''; tableBody.innerHTML = '';
+      setStatus('Select a channel to load report.'); setError(''); updateExportState(); return;
     }
-
-    isLoadingReport = true;
-    updateExportState();
-    setError('');
-    setStatus('Loading report...');
-
+    isLoadingReport = true; updateExportState(); setError(''); setStatus('Loading report...');
     try {
-      const params = new URLSearchParams({ channel_slug: normalized });
-      const response = await fetch('/v1/track-catalog/analysis-report?' + params.toString());
+      const response = await fetch('/v1/track-catalog/analysis-report?' + new URLSearchParams({ channel_slug: normalized }).toString());
       const body = await response.json();
-      if (!response.ok) {
-        const errMsg = body && body.error && body.error.message ? body.error.message : 'Failed to load analysis report.';
-        throw new Error(errMsg);
-      }
+      if (!response.ok) { throw new Error(body && body.error && body.error.message ? body.error.message : 'Failed to load analysis report.'); }
       renderTable(body);
     } catch (error) {
-      tableWrap.style.display = 'none';
-      tableHead.innerHTML = '';
-      tableBody.innerHTML = '';
-      setStatus('Failed to load report.');
-      setError(error && error.message ? error.message : 'Failed to load analysis report.');
-    } finally {
-      isLoadingReport = false;
-      updateExportState();
-    }
+      tableWrap.style.display = 'none'; tableHead.innerHTML = ''; tableBody.innerHTML = '';
+      setStatus('Failed to load report.'); setError(error && error.message ? error.message : 'Failed to load analysis report.');
+    } finally { isLoadingReport = false; updateExportState(); }
   }
 
   async function loadChannels() {
-    channelSelect.disabled = true;
-    setError('');
-    setStatus('Loading channels...');
-    updateExportState();
-
+    channelSelect.disabled = true; setError(''); setStatus('Loading channels...'); updateExportState();
     try {
       const response = await fetch('/v1/track-catalog/analysis-report/channels');
       const body = await response.json();
-      if (!response.ok) {
-        const errMsg = body && body.error && body.error.message ? body.error.message : 'Failed to load channels.';
-        throw new Error(errMsg);
-      }
-
+      if (!response.ok) { throw new Error(body && body.error && body.error.message ? body.error.message : 'Failed to load channels.'); }
       const channels = Array.isArray(body.channels) ? body.channels : [];
-      const placeholder = '<option value="">Select channel</option>';
-      const options = channels.map((channel) => (
-        '<option value="' + esc(channel.channel_slug || '') + '">' +
-          esc(channel.display_name || channel.channel_slug || '') +
-        '</option>'
-      )).join('');
-
-      channelSelect.innerHTML = placeholder + options;
+      channelSelect.innerHTML = '<option value="">Select channel</option>' + channels.map((c) => '<option value="' + esc(c.channel_slug || '') + '">' + esc(c.display_name || c.channel_slug || '') + '</option>').join('');
       channelSelect.disabled = channels.length === 0;
-
-      if (channels.length === 0) {
-        setStatus('No channels available.');
-        await loadReport('');
-        return;
-      }
-
+      if (channels.length === 0) { setStatus('No channels available.'); await loadReport(''); return; }
+      if (channels.length === 1) { channelSelect.value = String(channels[0].channel_slug || ''); }
       setStatus('Select a channel to load report.');
-      if (channels.length === 1) {
-        channelSelect.value = String(channels[0].channel_slug || '');
-      }
       await loadReport(channelSelect.value);
     } catch (error) {
-      channelSelect.disabled = true;
-      channelSelect.innerHTML = '<option value="">Channels unavailable</option>';
-      tableWrap.style.display = 'none';
-      tableHead.innerHTML = '';
-      tableBody.innerHTML = '';
-      setStatus('Failed to load channels.');
-      setError(error && error.message ? error.message : 'Failed to load channels.');
-      updateExportState();
+      channelSelect.disabled = true; channelSelect.innerHTML = '<option value="">Channels unavailable</option>';
+      tableWrap.style.display = 'none'; tableHead.innerHTML = ''; tableBody.innerHTML = '';
+      setStatus('Failed to load channels.'); setError(error && error.message ? error.message : 'Failed to load channels.'); updateExportState();
     }
   }
 
-  channelSelect.addEventListener('change', () => {
-    loadReport(channelSelect.value);
+  channelSelect.addEventListener('change', () => loadReport(channelSelect.value));
+
+  tableBody.addEventListener('click', async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) { return; }
+    if (target.classList.contains('tar-edit-tags-btn')) {
+      await openTrackTagEditor(target.getAttribute('data-track-pk'));
+      return;
+    }
   });
+
+  tagEditorGroups.addEventListener('click', async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) { return; }
+    if (target.classList.contains('tar-remove-tag-btn')) {
+      const trackPk = tagEditorTrackPk.textContent;
+      const tagId = target.getAttribute('data-tag-id');
+      await fetch('/v1/track-catalog/tracks/' + encodeURIComponent(trackPk) + '/custom-tags/' + encodeURIComponent(tagId), { method: 'DELETE' });
+      await loadTrackTags(trackPk);
+    }
+  });
+
+  document.getElementById('tar-tag-add-btn').addEventListener('click', async () => {
+    const trackPk = tagEditorTrackPk.textContent;
+    const payload = { category: String(tagCategory.value || ''), tag_code: String(tagCode.value || '').trim() };
+    if (!payload.tag_code) { tagEditorNote.style.color = '#b91c1c'; tagEditorNote.textContent = 'Tag code is required.'; return; }
+    const r = await fetch('/v1/track-catalog/tracks/' + encodeURIComponent(trackPk) + '/custom-tags', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!r.ok) { tagEditorNote.style.color = '#b91c1c'; tagEditorNote.textContent = 'Failed to add tag.'; return; }
+    tagCode.value = '';
+    await loadTrackTags(trackPk);
+  });
+
+  document.getElementById('tar-tag-editor-close').addEventListener('click', () => tagEditorModal.close());
 
   exportBtn.addEventListener('click', async () => {
     const channelSlug = String(channelSelect.value || '').trim();
-    if (!channelSlug || isLoadingReport || isExporting) {
-      return;
-    }
-
-    isExporting = true;
-    updateExportState();
-    setError('');
-
+    if (!channelSlug || isLoadingReport || isExporting) { return; }
+    isExporting = true; updateExportState(); setError('');
     try {
-      const params = new URLSearchParams({ channel_slug: channelSlug });
-      const response = await fetch('/v1/track-catalog/analysis-report.xlsx?' + params.toString());
-      if (!response.ok) {
-        let errMsg = 'Failed to export XLSX.';
-        try {
-          const body = await response.json();
-          if (body && body.error && body.error.message) {
-            errMsg = body.error.message;
-          }
-        } catch (_) {
-        }
-        throw new Error(errMsg);
-      }
-
+      const response = await fetch('/v1/track-catalog/analysis-report.xlsx?' + new URLSearchParams({ channel_slug: channelSlug }).toString());
+      if (!response.ok) { throw new Error('Failed to export XLSX.'); }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
-      const disposition = String(response.headers.get('content-disposition') || '');
-      const match = disposition.match(/filename="?([^";]+)"?/i);
-      const filename = match && match[1] ? match[1] : ('analysis_report__' + channelSlug + '.xlsx');
-
       const link = document.createElement('a');
       link.href = url;
-      link.download = filename;
+      link.download = 'analysis_report__' + channelSlug + '.xlsx';
       document.body.appendChild(link);
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
     } catch (error) {
       setError(error && error.message ? error.message : 'Failed to export XLSX.');
-    } finally {
-      isExporting = false;
-      updateExportState();
-    }
+    } finally { isExporting = false; updateExportState(); }
   });
 
   loadChannels();

@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>TAGS</h1>
+<p>
+  <a href="/">Dashboard</a>
+  <span class="muted" style="margin:0 8px;">|</span>
+  <a href="/ui/track-catalog/analysis-report">Track Catalog · Analysis Report</a>
+</p>
+
+<p>
+  <button type="button" id="tags-import-btn">Import</button>
+  <button type="button" id="tags-export-btn">Export</button>
+  <button type="button" id="tags-create-btn">Create Tag</button>
+  <button type="button" id="tags-bulk-create-btn">Bulk Create (JSON)</button>
+</p>
+<p class="muted" id="tags-note">Loading tag catalog...</p>
+
+<table id="tags-table">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Category</th>
+      <th>Code</th>
+      <th>Label</th>
+      <th>Description</th>
+      <th>Active</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody id="tags-tbody">
+    <tr><td colspan="7" class="muted">Loading...</td></tr>
+  </tbody>
+</table>
+
+<dialog id="tag-editor-modal">
+  <form method="dialog" id="tag-editor-form">
+    <h3 id="tag-editor-title">Create Tag</h3>
+    <input type="hidden" id="tag-edit-id">
+    <p><label>Category
+      <select id="tag-category">
+        <option value="VISUAL">VISUAL</option>
+        <option value="MOOD">MOOD</option>
+        <option value="THEME">THEME</option>
+      </select>
+    </label></p>
+    <p><label>Code <input type="text" id="tag-code"></label></p>
+    <p><label>Label <input type="text" id="tag-label"></label></p>
+    <p><label>Description <input type="text" id="tag-description"></label></p>
+    <p><label>Active <select id="tag-is-active"><option value="true">true</option><option value="false">false</option></select></label></p>
+    <p><label>Tag ID (numeric, optional for edit override) <input type="number" id="tag-manual-id" min="1"></label></p>
+    <p><label>JSON tag definition
+      <textarea id="tag-json" rows="8" style="width:100%;"></textarea>
+    </label></p>
+    <p><label><input type="checkbox" id="tag-json-mode"> Save using JSON definition above</label></p>
+    <p class="muted" id="tag-editor-note"></p>
+    <p>
+      <button type="button" id="tag-editor-save">Save</button>
+      <button type="button" id="tag-editor-cancel">Cancel</button>
+    </p>
+  </form>
+</dialog>
+
+<dialog id="tags-bulk-modal">
+  <form method="dialog">
+    <h3>Bulk Create Tags (JSON)</h3>
+    <p class="muted">JSON format: {"tags":[{"category":"VISUAL","code":"...","label":"..."}]}</p>
+    <p><textarea id="tags-bulk-json" rows="12" style="width:100%;"></textarea></p>
+    <p class="muted" id="tags-bulk-note"></p>
+    <p>
+      <button type="button" id="tags-bulk-run">Create</button>
+      <button type="button" id="tags-bulk-cancel">Cancel</button>
+    </p>
+  </form>
+</dialog>
+
+<script>
+(function () {
+  const tbody = document.getElementById('tags-tbody');
+  const note = document.getElementById('tags-note');
+  const importBtn = document.getElementById('tags-import-btn');
+  const exportBtn = document.getElementById('tags-export-btn');
+  const createBtn = document.getElementById('tags-create-btn');
+  const bulkBtn = document.getElementById('tags-bulk-create-btn');
+
+  const editorModal = document.getElementById('tag-editor-modal');
+  const editorTitle = document.getElementById('tag-editor-title');
+  const editorId = document.getElementById('tag-edit-id');
+  const editorCategory = document.getElementById('tag-category');
+  const editorCode = document.getElementById('tag-code');
+  const editorLabel = document.getElementById('tag-label');
+  const editorDescription = document.getElementById('tag-description');
+  const editorActive = document.getElementById('tag-is-active');
+  const editorManualId = document.getElementById('tag-manual-id');
+  const editorJson = document.getElementById('tag-json');
+  const editorJsonMode = document.getElementById('tag-json-mode');
+  const editorNote = document.getElementById('tag-editor-note');
+
+  const bulkModal = document.getElementById('tags-bulk-modal');
+  const bulkJson = document.getElementById('tags-bulk-json');
+  const bulkNote = document.getElementById('tags-bulk-note');
+
+  function resolveApiPath(path) {
+    const normalized = String(path || '').startsWith('/') ? String(path || '') : ('/' + String(path || ''));
+    const pathname = String(window.location.pathname || '');
+    const uiMarker = '/ui/';
+    const idx = pathname.indexOf(uiMarker);
+    if (idx < 0) {
+      return '/v1' + normalized;
+    }
+    const prefix = pathname.slice(0, idx);
+    return prefix + '/v1' + normalized;
+  }
+
+  async function apiFetch(path, options) {
+    return fetch(resolveApiPath(path), Object.assign({ credentials: 'same-origin' }, options || {}));
+  }
+
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function setNote(message, isError) {
+    note.style.color = isError ? '#b91c1c' : '';
+    note.textContent = message;
+  }
+
+  async function loadCatalog() {
+    setNote('Loading tag catalog...');
+    try {
+      const r = await apiFetch('/track-catalog/custom-tags/catalog');
+      const body = await r.json();
+      if (!r.ok) {
+        throw new Error((body.error && body.error.message) || 'Failed to load tag catalog.');
+      }
+      const tags = Array.isArray(body.tags) ? body.tags : [];
+      if (tags.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="muted">Catalog is empty.</td></tr>';
+        setNote('Catalog loaded (0 tags).');
+        return;
+      }
+      tbody.innerHTML = tags.map((tag) => (
+        '<tr>' +
+          '<td>' + esc(tag.id) + '</td>' +
+          '<td>' + esc(tag.category) + '</td>' +
+          '<td>' + esc(tag.code) + '</td>' +
+          '<td>' + esc(tag.label) + '</td>' +
+          '<td>' + esc(tag.description || '') + '</td>' +
+          '<td>' + esc(tag.is_active) + '</td>' +
+          '<td><button type="button" class="tag-edit-btn" data-tag-id="' + esc(tag.id) + '">Edit</button></td>' +
+        '</tr>'
+      )).join('');
+      setNote('Catalog loaded (' + tags.length + ' tags).');
+    } catch (error) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted">Failed to load catalog.</td></tr>';
+      setNote(error && error.message ? error.message : 'Failed to load tag catalog.', true);
+    }
+  }
+
+  function openEditor(mode, tag) {
+    editorTitle.textContent = mode === 'edit' ? 'Edit Tag' : 'Create Tag';
+    editorId.value = tag && tag.id ? String(tag.id) : '';
+    editorCategory.disabled = mode === 'edit';
+    editorCategory.value = (tag && tag.category) ? String(tag.category) : 'VISUAL';
+    editorCode.value = tag && tag.code ? String(tag.code) : '';
+    editorLabel.value = tag && tag.label ? String(tag.label) : '';
+    editorDescription.value = tag && tag.description ? String(tag.description) : '';
+    editorActive.value = String(tag && tag.is_active === false ? 'false' : 'true');
+    editorManualId.value = tag && tag.id ? String(tag.id) : '';
+    editorJson.value = JSON.stringify({
+      id: tag && tag.id ? tag.id : undefined,
+      category: editorCategory.value,
+      code: editorCode.value,
+      label: editorLabel.value,
+      description: editorDescription.value,
+      is_active: editorActive.value === 'true',
+    }, null, 2);
+    editorJsonMode.checked = false;
+    editorNote.textContent = '';
+    editorModal.showModal();
+  }
+
+  function manualEditorPayload() {
+    return {
+      category: String(editorCategory.value || '').trim().toUpperCase(),
+      code: String(editorCode.value || '').trim(),
+      label: String(editorLabel.value || '').trim(),
+      description: String(editorDescription.value || ''),
+      is_active: editorActive.value === 'true',
+    };
+  }
+
+  async function saveEditor() {
+    editorNote.textContent = '';
+    let payload = manualEditorPayload();
+    if (editorJsonMode.checked) {
+      try {
+        payload = JSON.parse(editorJson.value || '{}');
+      } catch (error) {
+        editorNote.textContent = 'Invalid JSON in textarea.';
+        editorNote.style.color = '#b91c1c';
+        return;
+      }
+      payload.category = String(payload.category || '').trim().toUpperCase();
+      payload.code = String(payload.code || '').trim();
+      payload.label = String(payload.label || '').trim();
+      payload.description = payload.description == null ? '' : String(payload.description);
+      payload.is_active = payload.is_active == null ? true : Boolean(payload.is_active);
+    }
+
+    const editId = Number(editorId.value || editorManualId.value || payload.id || 0);
+    const isEdit = editId > 0;
+    const url = isEdit ? ('/track-catalog/custom-tags/catalog/' + encodeURIComponent(editId)) : '/track-catalog/custom-tags/catalog';
+    const method = isEdit ? 'PATCH' : 'POST';
+    if (isEdit) {
+      delete payload.category;
+      delete payload.id;
+    }
+
+    const r = await apiFetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await r.json();
+    if (!r.ok) {
+      editorNote.textContent = (body.error && body.error.message) || 'Failed to save tag.';
+      editorNote.style.color = '#b91c1c';
+      return;
+    }
+
+    editorModal.close();
+    await loadCatalog();
+  }
+
+  async function runImport() {
+    setNote('Importing from JSON files...');
+    const r = await apiFetch('/track-catalog/custom-tags/catalog/import', { method: 'POST' });
+    const body = await r.json();
+    if (!r.ok) {
+      setNote((body.error && body.error.message) || 'Import failed (missing file?).', true);
+      return;
+    }
+    await loadCatalog();
+    setNote('Import complete: imported=' + body.imported + ', created=' + body.created + ', updated=' + body.updated + '.');
+  }
+
+  async function runExport() {
+    setNote('Exporting tags to JSON files...');
+    const r = await apiFetch('/track-catalog/custom-tags/catalog/export', { method: 'POST' });
+    const body = await r.json();
+    if (!r.ok) {
+      setNote((body.error && body.error.message) || 'Export failed.', true);
+      return;
+    }
+    setNote('Export complete. Files: ' + (body.files || []).join(', ') + '.');
+  }
+
+  async function runBulkCreate() {
+    bulkNote.textContent = '';
+    let parsed = null;
+    try {
+      parsed = JSON.parse(bulkJson.value || '{}');
+    } catch (_) {
+      bulkNote.textContent = 'Invalid JSON.';
+      bulkNote.style.color = '#b91c1c';
+      return;
+    }
+    const items = Array.isArray(parsed.tags) ? parsed.tags : [];
+    let created = 0;
+    for (const item of items) {
+      const r = await apiFetch('/track-catalog/custom-tags/catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item),
+      });
+      if (r.ok) {
+        created += 1;
+      }
+    }
+    bulkModal.close();
+    await loadCatalog();
+    setNote('Bulk create finished: created ' + created + ' of ' + items.length + '.');
+  }
+
+  tbody.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.classList.contains('tag-edit-btn')) {
+      const row = target.closest('tr');
+      if (!row) {
+        return;
+      }
+      openEditor('edit', {
+        id: row.children[0].textContent,
+        category: row.children[1].textContent,
+        code: row.children[2].textContent,
+        label: row.children[3].textContent,
+        description: row.children[4].textContent,
+        is_active: String(row.children[5].textContent).toLowerCase() === 'true',
+      });
+    }
+  });
+
+  importBtn.addEventListener('click', runImport);
+  exportBtn.addEventListener('click', runExport);
+  createBtn.addEventListener('click', () => openEditor('create', null));
+  bulkBtn.addEventListener('click', () => {
+    bulkJson.value = JSON.stringify({ tags: [] }, null, 2);
+    bulkNote.textContent = '';
+    bulkModal.showModal();
+  });
+
+  document.getElementById('tag-editor-save').addEventListener('click', saveEditor);
+  document.getElementById('tag-editor-cancel').addEventListener('click', () => editorModal.close());
+  document.getElementById('tags-bulk-run').addEventListener('click', runBulkCreate);
+  document.getElementById('tags-bulk-cancel').addEventListener('click', () => bulkModal.close());
+
+  loadCatalog();
+})();
+</script>
+{% endblock %}
