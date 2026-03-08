@@ -59,6 +59,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="channels-table"', r.text)
             self.assertIn('href="/ui/db-viewer"', r.text)
             self.assertIn('href="/ui/planner"', r.text)
+            self.assertIn('href="/ui/tags"', r.text)
             self.assertIn('href="/ui/track-catalog/analysis-report"', r.text)
 
             r = client.get("/ui/db-viewer", headers=h)
@@ -82,6 +83,16 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="tar-channel-select"', r.text)
             self.assertIn('id="tar-export-btn"', r.text)
             self.assertIn('id="tar-table"', r.text)
+            self.assertIn('id="tar-tag-editor-modal"', r.text)
+            self.assertIn('id="tar-tag-add-btn"', r.text)
+
+            r = client.get("/ui/tags", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("TAGS", r.text)
+            self.assertIn('id="tags-table"', r.text)
+            self.assertIn('id="tags-import-btn"', r.text)
+            self.assertIn('id="tags-export-btn"', r.text)
+            self.assertIn('id="tag-editor-modal"', r.text)
 
             r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
             self.assertEqual(r.status_code, 200)
