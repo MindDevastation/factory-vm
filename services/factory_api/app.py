@@ -1004,7 +1004,9 @@ _CTA_CATALOG_ENDPOINTS = {
     ("GET", "/v1/track-catalog/custom-tags/channel-bindings"),
     ("POST", "/v1/track-catalog/custom-tags/channel-bindings"),
     ("DELETE", "/v1/track-catalog/custom-tags/channel-bindings/{binding_id}"),
+    ("GET", "/v1/track-catalog/tracks/{track_pk}/custom-tags"),
     ("POST", "/v1/track-catalog/tracks/{track_pk}/custom-tags"),
+    ("DELETE", "/v1/track-catalog/tracks/{track_pk}/custom-tags/{tag_id}"),
 }
 
 
