@@ -37,6 +37,10 @@ VOICE_MIN_PROB = 0.2
 SINGING_MIN_PROB = 0.08
 SPEECH_MIN_PROB = 0.10
 DSP_SCORE_VERSION = "v1"
+ADVANCED_ANALYZER_VERSION = "advanced_track_analyzer_v1.1"
+ADVANCED_SCHEMA_VERSION = "advanced_v1"
+ADVANCED_ROLLOUT_TIER = "s1"
+ADVANCED_SEGMENT_POLICY = "track_full"
 SILENCE_RMS_THRESHOLD = 0.01
 SILENCE_GAP_MIN_MS = 1000
 SILENCE_IGNORE_EDGE_MS = 2000
@@ -121,6 +125,13 @@ def analyze_tracks(
 
             analysis_status = "COMPLETE" if not missing_fields else "REVIEW"
             computed_at = dbm.now_ts()
+            advanced_v1_meta = {
+                "analyzer_version": ADVANCED_ANALYZER_VERSION,
+                "schema_version": ADVANCED_SCHEMA_VERSION,
+                "analyzed_at": computed_at,
+                "rollout_tier": ADVANCED_ROLLOUT_TIER,
+                "segment_policy": ADVANCED_SEGMENT_POLICY,
+            }
 
             features_payload = {
                 "duration_sec": duration_sec,
@@ -139,6 +150,10 @@ def analyze_tracks(
                 "texture_reason": texture_meta["texture_reason"],
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
+                "advanced_v1": {
+                    "meta": advanced_v1_meta,
+                    "profiles": {},
+                },
             }
             tags_payload = {
                 "yamnet_tags": [entry.get("label") for entry in (yamnet_payload.get("top_classes") or []) if entry.get("label")],
@@ -146,6 +161,10 @@ def analyze_tracks(
                 "prohibited_cues": prohibited_cues,
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
+                "advanced_v1": {
+                    "meta": advanced_v1_meta,
+                    "profiles": {},
+                },
             }
             scores_payload = {
                 "dsp_score": dsp_score,
@@ -154,6 +173,10 @@ def analyze_tracks(
                 "dsp_notes": dsp_notes,
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
+                "advanced_v1": {
+                    "meta": advanced_v1_meta,
+                    "profiles": {},
+                },
             }
 
             conn.execute("BEGIN")
