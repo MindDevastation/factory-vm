@@ -45,7 +45,7 @@ from services.track_analysis_report.report_service import (
 from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes, sanitize_sheet_name
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
-from services.custom_tags import catalog_service, rules_service
+from services.custom_tags import assignment_service, catalog_service, rules_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -587,6 +587,13 @@ class CustomTagChannelBindingCreateRequest(BaseModel):
     channel_slug: str
 
 
+class CustomTagAssignmentUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_id: int | None = None
+    tag_code: str | None = None
+    category: str | None = None
+
+
 def _normalize_display_name(value: str) -> str:
     return value.strip()
 
@@ -977,7 +984,7 @@ def api_track_catalog_track_detail(track_pk: int, _: bool = Depends(require_basi
 
 
 
-def _cta_error_response(err: catalog_service.CatalogError) -> JSONResponse:
+def _cta_error_response(err: catalog_service.CatalogError | rules_service.RulesError | assignment_service.AssignmentError) -> JSONResponse:
     return JSONResponse(
         status_code=err.status_code,
         content={"error": {"code": err.code, "message": err.message, "details": err.details or {}}},
@@ -997,6 +1004,7 @@ _CTA_CATALOG_ENDPOINTS = {
     ("GET", "/v1/track-catalog/custom-tags/channel-bindings"),
     ("POST", "/v1/track-catalog/custom-tags/channel-bindings"),
     ("DELETE", "/v1/track-catalog/custom-tags/channel-bindings/{binding_id}"),
+    ("POST", "/v1/track-catalog/tracks/{track_pk}/custom-tags"),
 }
 
 
@@ -1243,6 +1251,84 @@ def api_custom_tag_channel_bindings_delete(binding_id: int, _: bool = Depends(re
     finally:
         conn.close()
     return {"ok": True}
+
+
+@app.get("/v1/track-catalog/tracks/{track_pk}/custom-tags")
+def api_track_custom_tag_assignments(track_pk: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            return assignment_service.get_track_custom_tags(conn, track_pk=track_pk)
+        except assignment_service.AssignmentError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags assignments get failed", extra={"track_pk": track_pk})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+
+
+@app.post("/v1/track-catalog/tracks/{track_pk}/custom-tags")
+def api_track_custom_tag_assignments_upsert(
+    track_pk: int,
+    payload: CustomTagAssignmentUpsertRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    tag_id = payload.tag_id
+    tag_code = payload.tag_code
+    category = payload.category
+    has_tag_id = tag_id is not None
+    has_code_selector = tag_code is not None or category is not None
+    if has_tag_id and has_code_selector:
+        return _cta_error_response(assignment_service.InvalidInputError("provide either tag_id or tag_code+category"))
+    if not has_tag_id and not has_code_selector:
+        return _cta_error_response(assignment_service.InvalidInputError("tag selector is required"))
+    if has_code_selector and (tag_code is None or category is None):
+        return _cta_error_response(assignment_service.InvalidInputError("tag_code and category must be provided together"))
+
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = assignment_service.upsert_manual_assignment(
+                conn,
+                track_pk=track_pk,
+                tag_id=tag_id,
+                tag_code=tag_code,
+                category=category,
+            )
+        except assignment_service.AssignmentError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags assignments upsert failed", extra={"track_pk": track_pk})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
+@app.delete("/v1/track-catalog/tracks/{track_pk}/custom-tags/{tag_id}")
+def api_track_custom_tag_assignments_delete(track_pk: int, tag_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = assignment_service.suppress_assignment(conn, track_pk=track_pk, tag_id=tag_id)
+        except assignment_service.AssignmentError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags assignments delete failed", extra={"track_pk": track_pk, "tag_id": tag_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
 
 
 @app.post("/v1/channels")
