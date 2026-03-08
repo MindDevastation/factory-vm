@@ -188,6 +188,33 @@ class TestCustomTagsAssignmentsApi(unittest.TestCase):
             assignments = {a["tag_id"]: a["state"] for a in listed.json()["assignments"]}
             self.assertEqual(assignments[inactive_id], "MANUAL")
 
+    def test_invalid_path_params_return_cta_invalid_input_envelope(self) -> None:
+        with temp_env() as (_td, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            track_pk = self._insert_track(env)
+
+            bad_get = client.get("/v1/track-catalog/tracks/not-an-int/custom-tags", headers=h)
+            self.assertEqual(bad_get.status_code, 400)
+            bad_get_payload = bad_get.json()
+            self.assertIn("error", bad_get_payload)
+            self.assertEqual(bad_get_payload["error"]["code"], "CTA_INVALID_INPUT")
+            self.assertIn("details", bad_get_payload["error"])
+            self.assertNotIn("detail", bad_get_payload)
+
+            bad_delete = client.delete(f"/v1/track-catalog/tracks/{track_pk}/custom-tags/not-an-int", headers=h)
+            self.assertEqual(bad_delete.status_code, 400)
+            bad_delete_payload = bad_delete.json()
+            self.assertIn("error", bad_delete_payload)
+            self.assertEqual(bad_delete_payload["error"]["code"], "CTA_INVALID_INPUT")
+            self.assertIn("details", bad_delete_payload["error"])
+            self.assertNotIn("detail", bad_delete_payload)
+
 
 if __name__ == "__main__":
     unittest.main()
