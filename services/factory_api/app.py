@@ -15,10 +15,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from services.common.env import Env
 from services.common import db as dbm
@@ -43,6 +45,7 @@ from services.track_analysis_report.report_service import (
 from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes, sanitize_sheet_name
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
+from services.custom_tags import catalog_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -532,6 +535,24 @@ class AnalyzeTrackJobPayload(BaseModel):
     force: bool = False
 
 
+class CustomTagCatalogCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str
+    label: str
+    category: str
+    description: str | None = None
+    is_active: bool = True
+
+
+class CustomTagCatalogPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str | None = None
+    label: str | None = None
+    description: str | None = None
+    is_active: bool | None = None
+    category: str | None = None
+
+
 def _normalize_display_name(value: str) -> str:
     return value.strip()
 
@@ -920,6 +941,131 @@ def api_track_catalog_track_detail(track_pk: int, _: bool = Depends(require_basi
         raise HTTPException(404, "track not found")
     return {"track": _track_catalog_row_to_item(row)}
 
+
+
+def _cta_error_response(err: catalog_service.CatalogError) -> JSONResponse:
+    return JSONResponse(
+        status_code=err.status_code,
+        content={"error": {"code": err.code, "message": err.message, "details": err.details or {}}},
+    )
+
+
+_CTA_CATALOG_ENDPOINTS = {
+    ("GET", "/v1/track-catalog/custom-tags/catalog"),
+    ("POST", "/v1/track-catalog/custom-tags/catalog"),
+    ("PATCH", "/v1/track-catalog/custom-tags/catalog/{tag_id}"),
+    ("POST", "/v1/track-catalog/custom-tags/catalog/import"),
+    ("POST", "/v1/track-catalog/custom-tags/catalog/export"),
+}
+
+
+def _is_cta_catalog_route_validation_error(request: Request) -> bool:
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    method = request.method.upper()
+    return isinstance(route_path, str) and (method, route_path) in _CTA_CATALOG_ENDPOINTS
+
+
+@app.exception_handler(RequestValidationError)
+async def _handle_request_validation_error(request: Request, exc: RequestValidationError):
+    if _is_cta_catalog_route_validation_error(request):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "CTA_INVALID_INPUT",
+                    "message": "invalid request payload",
+                    "details": {"errors": exc.errors()},
+                }
+            },
+        )
+    return await request_validation_exception_handler(request, exc)
+
+
+@app.get("/v1/track-catalog/custom-tags/catalog")
+def api_custom_tags_catalog(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        tags = catalog_service.list_catalog(conn)
+    finally:
+        conn.close()
+    return {"tags": tags}
+
+
+@app.post("/v1/track-catalog/custom-tags/catalog")
+def api_custom_tags_catalog_create(payload: CustomTagCatalogCreateRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            tag = catalog_service.create_tag(conn, payload.model_dump())
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags create failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"tag": tag}
+
+
+@app.patch("/v1/track-catalog/custom-tags/catalog/{tag_id}")
+def api_custom_tags_catalog_patch(tag_id: int, payload: CustomTagCatalogPatchRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            tag = catalog_service.update_tag(conn, tag_id=tag_id, payload=payload.model_dump(exclude_none=True))
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags patch failed", extra={"tag_id": tag_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"tag": tag}
+
+
+@app.post("/v1/track-catalog/custom-tags/catalog/import")
+def api_custom_tags_catalog_import(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = catalog_service.import_catalog(conn, seed_dir=env.custom_tags_seed_dir)
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags import failed", extra={"seed_dir": env.custom_tags_seed_dir})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"ok": True, **result}
+
+
+@app.post("/v1/track-catalog/custom-tags/catalog/export")
+def api_custom_tags_catalog_export(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = catalog_service.export_catalog(conn, seed_dir=env.custom_tags_seed_dir)
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags export failed", extra={"seed_dir": env.custom_tags_seed_dir})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"ok": True, **result}
 
 
 @app.post("/v1/channels")
