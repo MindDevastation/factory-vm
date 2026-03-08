@@ -201,6 +201,9 @@ def create_rule(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, 
 
 
 def update_rule(conn: sqlite3.Connection, rule_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    if "tag_id" in payload:
+        raise InvalidInputError("tag_id is not editable", {"field": "tag_id"})
+
     allowed = {
         "source_path",
         "operator",
@@ -215,8 +218,6 @@ def update_rule(conn: sqlite3.Connection, rule_id: int, payload: dict[str, Any])
     extra = sorted(set(payload.keys()) - allowed)
     if extra:
         raise InvalidInputError("unknown fields in patch", {"fields": extra})
-    if "tag_id" in payload:
-        raise InvalidInputError("tag_id is not editable", {"field": "tag_id"})
 
     existing = conn.execute(
         """

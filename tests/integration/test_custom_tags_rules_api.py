@@ -10,6 +10,16 @@ from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
 class TestCustomTagsRulesApi(unittest.TestCase):
+    def _assert_cta_invalid_input(self, response, *, msg_fragment: str | None = None) -> None:
+        self.assertEqual(response.status_code, 400)
+        body = response.json()
+        self.assertIn("error", body)
+        self.assertEqual(body["error"]["code"], "CTA_INVALID_INPUT")
+        self.assertIn("message", body["error"])
+        self.assertIn("details", body["error"])
+        if msg_fragment is not None:
+            self.assertIn(msg_fragment, str(body["error"]["message"]).lower())
+
     def _create_tag(self, client: TestClient, headers: dict[str, str], *, code: str, category: str) -> int:
         resp = client.post(
             "/v1/track-catalog/custom-tags/catalog",
@@ -192,6 +202,133 @@ class TestCustomTagsRulesApi(unittest.TestCase):
             )
             self.assertEqual(invalid_match_mode.status_code, 400)
             self.assertEqual(invalid_match_mode.json()["error"]["code"], "CTA_INVALID_INPUT")
+
+    def test_request_validation_errors_use_cta_envelope_for_rules_and_bindings(self) -> None:
+        with temp_env() as (_td, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            tag_id = self._create_tag(client, h, code="aurora", category="VISUAL")
+            self._create_channel(client, h, slug="nova-stream")
+
+            # Rules POST invalid body: missing required field.
+            rules_missing_required = client.post(
+                "/v1/track-catalog/custom-tags/rules",
+                headers=h,
+                json={
+                    "tag_id": tag_id,
+                    "operator": "equals",
+                    "value_json": "false",
+                    "match_mode": "ALL",
+                    "priority": 100,
+                    "required": False,
+                    "stop_after_match": False,
+                    "is_active": True,
+                },
+            )
+            self._assert_cta_invalid_input(rules_missing_required, msg_fragment="invalid request payload")
+
+            # Rules POST invalid body: wrong type.
+            rules_wrong_type = client.post(
+                "/v1/track-catalog/custom-tags/rules",
+                headers=h,
+                json={
+                    "tag_id": tag_id,
+                    "source_path": "track_features.payload_json.voice_flag",
+                    "operator": "equals",
+                    "value_json": "false",
+                    "match_mode": "ALL",
+                    "priority": "high",
+                    "required": False,
+                    "stop_after_match": False,
+                    "is_active": True,
+                },
+            )
+            self._assert_cta_invalid_input(rules_wrong_type, msg_fragment="invalid request payload")
+
+            # Rules POST invalid body: unknown extra field.
+            rules_unknown_field = client.post(
+                "/v1/track-catalog/custom-tags/rules",
+                headers=h,
+                json={
+                    "tag_id": tag_id,
+                    "source_path": "track_features.payload_json.voice_flag",
+                    "operator": "equals",
+                    "value_json": "false",
+                    "match_mode": "ALL",
+                    "priority": 100,
+                    "required": False,
+                    "stop_after_match": False,
+                    "is_active": True,
+                    "unexpected": "value",
+                },
+            )
+            self._assert_cta_invalid_input(rules_unknown_field, msg_fragment="invalid request payload")
+
+            # Channel bindings POST invalid body: missing required field.
+            bindings_missing_required = client.post(
+                "/v1/track-catalog/custom-tags/channel-bindings",
+                headers=h,
+                json={"tag_id": tag_id},
+            )
+            self._assert_cta_invalid_input(bindings_missing_required, msg_fragment="invalid request payload")
+
+            # Channel bindings POST invalid body: wrong type.
+            bindings_wrong_type = client.post(
+                "/v1/track-catalog/custom-tags/channel-bindings",
+                headers=h,
+                json={"tag_id": "not-int", "channel_slug": "nova-stream"},
+            )
+            self._assert_cta_invalid_input(bindings_wrong_type, msg_fragment="invalid request payload")
+
+            # Channel bindings POST invalid body: unknown extra field.
+            bindings_unknown_field = client.post(
+                "/v1/track-catalog/custom-tags/channel-bindings",
+                headers=h,
+                json={"tag_id": tag_id, "channel_slug": "nova-stream", "extra": True},
+            )
+            self._assert_cta_invalid_input(bindings_unknown_field, msg_fragment="invalid request payload")
+
+    def test_patch_rule_tag_id_returns_non_editable_error_path(self) -> None:
+        with temp_env() as (_td, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            tag_id = self._create_tag(client, h, code="blaze", category="VISUAL")
+            created_rule = client.post(
+                "/v1/track-catalog/custom-tags/rules",
+                headers=h,
+                json={
+                    "tag_id": tag_id,
+                    "source_path": "track_features.payload_json.voice_flag",
+                    "operator": "equals",
+                    "value_json": "false",
+                    "match_mode": "ALL",
+                    "priority": 100,
+                    "required": False,
+                    "stop_after_match": False,
+                    "is_active": True,
+                },
+            )
+            self.assertEqual(created_rule.status_code, 200)
+            rule_id = int(created_rule.json()["rule"]["id"])
+
+            patched = client.patch(
+                f"/v1/track-catalog/custom-tags/rules/{rule_id}",
+                headers=h,
+                json={"tag_id": tag_id + 1},
+            )
+            self._assert_cta_invalid_input(patched)
+            self.assertIn("not editable", patched.json()["error"]["message"].lower())
+            self.assertEqual(patched.json()["error"]["details"].get("field"), "tag_id")
 
 
 if __name__ == "__main__":
