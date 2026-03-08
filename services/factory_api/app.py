@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -946,6 +948,38 @@ def _cta_error_response(err: catalog_service.CatalogError) -> JSONResponse:
         status_code=err.status_code,
         content={"error": {"code": err.code, "message": err.message, "details": err.details or {}}},
     )
+
+
+_CTA_CATALOG_ENDPOINTS = {
+    ("GET", "/v1/track-catalog/custom-tags/catalog"),
+    ("POST", "/v1/track-catalog/custom-tags/catalog"),
+    ("PATCH", "/v1/track-catalog/custom-tags/catalog/{tag_id}"),
+    ("POST", "/v1/track-catalog/custom-tags/catalog/import"),
+    ("POST", "/v1/track-catalog/custom-tags/catalog/export"),
+}
+
+
+def _is_cta_catalog_route_validation_error(request: Request) -> bool:
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    method = request.method.upper()
+    return isinstance(route_path, str) and (method, route_path) in _CTA_CATALOG_ENDPOINTS
+
+
+@app.exception_handler(RequestValidationError)
+async def _handle_request_validation_error(request: Request, exc: RequestValidationError):
+    if _is_cta_catalog_route_validation_error(request):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "CTA_INVALID_INPUT",
+                    "message": "invalid request payload",
+                    "details": {"errors": exc.errors()},
+                }
+            },
+        )
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.get("/v1/track-catalog/custom-tags/catalog")
