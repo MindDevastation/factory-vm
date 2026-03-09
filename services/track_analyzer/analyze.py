@@ -135,6 +135,13 @@ def analyze_tracks(
 
             analysis_status = "COMPLETE" if not missing_fields else "REVIEW"
             computed_at = dbm.now_ts()
+            advanced_meta = {
+                "analyzer_version": "ata-s2",
+                "schema_version": "advanced_v1",
+                "analyzed_at": computed_at,
+                "rollout_tier": "p0",
+                "segment_policy": "full_track",
+            }
 
             features_payload = {
                 "duration_sec": duration_sec,
@@ -154,6 +161,7 @@ def analyze_tracks(
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
                 "advanced_v1": {
+                    "meta": advanced_meta,
                     "quality": quality_metrics,
                     "dynamics": dynamics_metrics,
                 },
@@ -164,6 +172,7 @@ def analyze_tracks(
                 "prohibited_cues": prohibited_cues,
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
+                "advanced_v1": {"meta": advanced_meta},
             }
             scores_payload = {
                 "dsp_score": dsp_score,
@@ -172,6 +181,7 @@ def analyze_tracks(
                 "dsp_notes": dsp_notes,
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
+                "advanced_v1": {"meta": advanced_meta},
             }
 
             conn.execute("BEGIN")
