@@ -176,8 +176,6 @@ def analyze_tracks(
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
                     "profiles": {},
-                    "quality": quality_metrics,
-                    "dynamics": dynamics_metrics,
                 },
             }
             scores_payload = {
@@ -190,8 +188,6 @@ def analyze_tracks(
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
                     "profiles": {},
-                    "quality": quality_metrics,
-                    "dynamics": dynamics_metrics,
                 },
             }
 

@@ -173,8 +173,13 @@ class TestTrackAnalyze(unittest.TestCase):
                     self.assertEqual(meta.get("rollout_tier"), "s1")
                     self.assertEqual(meta.get("segment_policy"), "track_full")
                     self.assertEqual(advanced_v1.get("profiles"), {})
-                    self.assertIsInstance(advanced_v1.get("quality"), dict)
-                    self.assertIsInstance(advanced_v1.get("dynamics"), dict)
+
+                self.assertIn("quality", features["advanced_v1"])
+                self.assertIn("dynamics", features["advanced_v1"])
+                self.assertNotIn("quality", tags["advanced_v1"])
+                self.assertNotIn("dynamics", tags["advanced_v1"])
+                self.assertNotIn("quality", scores["advanced_v1"])
+                self.assertNotIn("dynamics", scores["advanced_v1"])
 
                 quality = features["advanced_v1"]["quality"]
                 quality_keys = {
