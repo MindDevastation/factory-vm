@@ -13,6 +13,7 @@ import numpy as np
 from services.common import db as dbm
 from services.common import ffmpeg
 from services.custom_tags.auto_assign import apply_auto_custom_tags
+from services.track_analyzer.advanced_metrics import compute_dynamics_metrics, compute_quality_metrics
 import services.track_analyzer.yamnet as yamnet
 from services.track_analyzer.texture_heuristics import classify_texture
 from services.track_analyzer.yamnet_buckets import SPEECH_LABELS, VOICE_LABELS
@@ -72,7 +73,7 @@ def analyze_tracks(
         try:
             drive.download_to_path(file_id, local_path)
             duration_sec = _extract_duration_sec(local_path)
-            waveform, sample_rate = _load_wav_mono(local_path)
+            waveform, sample_rate, channels_count, stereo_waveform = _load_wav_pcm(local_path)
             true_peak_dbfs = _extract_true_peak_dbfs(local_path)
             spikes_found = _detect_spikes(true_peak_dbfs)
             try:
@@ -132,6 +133,15 @@ def analyze_tracks(
                 "rollout_tier": ADVANCED_ROLLOUT_TIER,
                 "segment_policy": ADVANCED_SEGMENT_POLICY,
             }
+            quality_metrics = compute_quality_metrics(
+                mono_waveform=waveform,
+                stereo_waveform=stereo_waveform,
+                sample_rate=sample_rate,
+                channels_count=channels_count,
+                duration_sec=duration_sec,
+                true_peak_dbfs=true_peak_dbfs,
+            )
+            dynamics_metrics = compute_dynamics_metrics(mono_waveform=waveform, sample_rate=sample_rate)
 
             features_payload = {
                 "duration_sec": duration_sec,
@@ -153,6 +163,8 @@ def analyze_tracks(
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
                     "profiles": {},
+                    "quality": quality_metrics,
+                    "dynamics": dynamics_metrics,
                 },
             }
             tags_payload = {
@@ -164,6 +176,8 @@ def analyze_tracks(
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
                     "profiles": {},
+                    "quality": quality_metrics,
+                    "dynamics": dynamics_metrics,
                 },
             }
             scores_payload = {
@@ -176,6 +190,8 @@ def analyze_tracks(
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
                     "profiles": {},
+                    "quality": quality_metrics,
+                    "dynamics": dynamics_metrics,
                 },
             }
 
@@ -556,7 +572,7 @@ def _detect_abrupt_gain_jumps(waveform: np.ndarray, sample_rate: int) -> tuple[b
 
 
 def _analyze_texture(path: Path) -> dict[str, str | float | None]:
-    waveform, sample_rate = _load_wav_mono(path)
+    waveform, sample_rate, _channels_count, _stereo_waveform = _load_wav_pcm(path)
     return _analyze_texture_from_waveform(waveform, sample_rate)
 
 
@@ -577,6 +593,11 @@ def _analyze_texture_from_waveform(waveform: np.ndarray, sample_rate: int) -> di
 
 
 def _load_wav_mono(path: Path) -> tuple[np.ndarray, int]:
+    waveform, sample_rate, _channels_count, _stereo_waveform = _load_wav_pcm(path)
+    return waveform, sample_rate
+
+
+def _load_wav_pcm(path: Path) -> tuple[np.ndarray, int, int, np.ndarray | None]:
     with wave.open(str(path), "rb") as wav_file:
         sample_rate = int(wav_file.getframerate())
         sample_width = int(wav_file.getsampwidth())
@@ -596,7 +617,13 @@ def _load_wav_mono(path: Path) -> tuple[np.ndarray, int]:
     else:
         raise ValueError(f"unsupported sample width: {sample_width}")
 
+    stereo_waveform: np.ndarray | None = None
     if channels > 1:
-        data = data.reshape(-1, channels).mean(axis=1)
+        reshaped = data.reshape(-1, channels)
+        if channels >= 2:
+            stereo_waveform = reshaped[:, :2].astype(np.float32)
+        mono = reshaped.mean(axis=1)
+    else:
+        mono = data
 
-    return data.astype(np.float32), sample_rate
+    return mono.astype(np.float32), sample_rate, channels, stereo_waveform
