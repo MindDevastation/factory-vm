@@ -9,7 +9,12 @@ from pathlib import Path
 from unittest import mock
 
 from services.common import db as dbm
-from services.track_analyzer.analyze import AnalyzeError, SIMILARITY_VECTOR_ORDER, analyze_tracks
+from services.track_analyzer.analyze import (
+    AnalyzeError,
+    SIMILARITY_VECTOR_ORDER,
+    _compute_advanced_derived_outputs,
+    analyze_tracks,
+)
 from services.track_analyzer.yamnet import YAMNetUnavailableError
 
 
@@ -114,6 +119,46 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertIsNotNone(scores.get("dsp_score"))
                 self.assertEqual(features.get("yamnet_probabilities", {}).get("music"), 0.95)
                 self.assertEqual(tags.get("yamnet_tags"), ["Music", "Speech"])
+
+                functional_scores = scores.get("advanced_v1", {}).get("semantic", {}).get("functional_scores", {})
+                self.assertAlmostEqual(float(functional_scores.get("focus")), 0.852335498867187)
+                self.assertAlmostEqual(float(functional_scores.get("energy")), 0.013681948844507368)
+                self.assertAlmostEqual(float(functional_scores.get("narrative")), 0.019799999999999998)
+                self.assertAlmostEqual(float(functional_scores.get("background_compatibility")), 0.8138048203590911)
+
+                semantic_tags = tags.get("advanced_v1", {}).get("semantic", {})
+                self.assertEqual(semantic_tags.get("mood_tags"), ["ambient", "calm"])
+                self.assertEqual(semantic_tags.get("theme_tags"), ["loopable"])
+
+                rule_trace = scores.get("advanced_v1", {}).get("rule_trace", [])
+                self.assertIsInstance(rule_trace, list)
+                self.assertGreater(len(rule_trace), 0)
+                self.assertEqual(
+                    rule_trace[0],
+                    {
+                        "rule_id": "semantic.focus.v1",
+                        "inputs": {
+                            "smooth": 0.9999006498183007,
+                            "ambient": 0.5996435398281906,
+                            "speech": 0.03,
+                        },
+                        "weights": {
+                            "smooth": 0.4,
+                            "ambient": 0.35,
+                            "speech_inverse": 0.25,
+                        },
+                        "output": 0.852335498867187,
+                    },
+                )
+
+                self.assertEqual(
+                    scores.get("advanced_v1", {}).get("final_decisions"),
+                    {
+                        "hard_veto": False,
+                        "soft_penalty_total": 0.0,
+                        "warning_codes": [],
+                    },
+                )
                 self.assertIn("yamnet_agg", features)
                 self.assertIn("voice_flag", features)
                 self.assertIn("voice_flag_reason", features)
@@ -184,6 +229,16 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertNotIn("dynamics", tags["advanced_v1"])
                 self.assertNotIn("quality", scores["advanced_v1"])
                 self.assertNotIn("dynamics", scores["advanced_v1"])
+
+                self.assertIn("semantic", tags["advanced_v1"])
+                self.assertIn("voice_tags", tags["advanced_v1"])
+                self.assertIn("classifier_evidence", tags["advanced_v1"])
+                self.assertIn("semantic", scores["advanced_v1"])
+                self.assertIn("playlist_fit", scores["advanced_v1"])
+                self.assertIn("transition", scores["advanced_v1"])
+                self.assertIn("suitability", scores["advanced_v1"])
+                self.assertIn("rule_trace", scores["advanced_v1"])
+                self.assertIn("final_decisions", scores["advanced_v1"])
 
                 quality = features["advanced_v1"]["quality"]
                 quality_keys = {
@@ -358,6 +413,55 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertFalse(tmp_track_dir.exists())
             finally:
                 conn.close()
+
+
+
+    def test_compute_advanced_outputs_tags_and_scores(self) -> None:
+        outputs = _compute_advanced_derived_outputs(
+            quality={"clipping_ratio": 0.0},
+            dynamics={"energy_mean": 0.6, "pulse_strength": 0.4, "tempo_confidence": 0.5},
+            timbre={"pad_presence": 0.8, "drone_presence": 0.6, "percussion_presence": 0.1, "texture_smoothness": 0.9},
+            structure={
+                "intro_smoothness": 0.9,
+                "outro_smoothness": 0.9,
+                "climax_presence": 0.3,
+                "fade_friendliness": 0.7,
+                "loop_friendliness": 0.8,
+                "abruptness_score": 0.1,
+            },
+            voice={"speech_probability": 0.1, "vocal_probability": 0.1, "spoken_word_density": 0.1, "human_presence_score": 0.1},
+            similarity={"diversity_penalty_base": 0.35},
+            channel_slug="darkwood-reverie",
+        )
+        self.assertIn("ambient", outputs["semantic"]["mood_tags"])
+        self.assertIn("calm", outputs["semantic"]["mood_tags"])
+        self.assertIn("fade-friendly", outputs["semantic"]["theme_tags"])
+        self.assertIn("loopable", outputs["semantic"]["theme_tags"])
+        self.assertGreaterEqual(outputs["suitability"]["channel_fit_score"], 0.0)
+        self.assertLessEqual(outputs["suitability"]["channel_fit_score"], 1.0)
+
+    def test_compute_advanced_outputs_veto_and_penalties(self) -> None:
+        outputs = _compute_advanced_derived_outputs(
+            quality={"clipping_ratio": 0.05},
+            dynamics={"energy_mean": 0.4, "pulse_strength": 0.3, "tempo_confidence": 0.2},
+            timbre={"pad_presence": 0.7, "drone_presence": 0.7, "percussion_presence": 0.1, "texture_smoothness": 0.8},
+            structure={
+                "intro_smoothness": 0.8,
+                "outro_smoothness": 0.8,
+                "climax_presence": 0.2,
+                "fade_friendliness": 0.3,
+                "loop_friendliness": 0.2,
+                "abruptness_score": 0.9,
+            },
+            voice={"speech_probability": 0.95, "vocal_probability": 0.6, "spoken_word_density": 0.9, "human_presence_score": 0.95},
+            similarity={"diversity_penalty_base": 0.6},
+            channel_slug="darkwood-reverie",
+        )
+        self.assertTrue(outputs["final_decisions"]["hard_veto"])
+        self.assertGreater(outputs["final_decisions"]["soft_penalty_total"], 0.0)
+        self.assertIn("VETO_SPEECH_IN_INSTRUMENTAL", outputs["final_decisions"]["warning_codes"])
+        self.assertTrue(any(row.get("rule_id") == "decision.veto.instrumental_speech.v1" for row in outputs["rule_trace"]))
+
 
 
 

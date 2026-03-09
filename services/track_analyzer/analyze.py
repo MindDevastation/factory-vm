@@ -42,6 +42,10 @@ ADVANCED_ANALYZER_VERSION = "advanced_track_analyzer_v1.1"
 ADVANCED_SCHEMA_VERSION = "advanced_v1"
 ADVANCED_ROLLOUT_TIER = "s1"
 ADVANCED_SEGMENT_POLICY = "track_full"
+P0_CONTEXTS = ("LONG_INSTRUMENTAL_AMBIENT", "LONG_LYRICAL")
+P0_CHANNEL_ARCHETYPE_BY_SLUG = {
+    "darkwood-reverie": "LONG_INSTRUMENTAL_AMBIENT",
+}
 SILENCE_RMS_THRESHOLD = 0.01
 SILENCE_GAP_MIN_MS = 1000
 SILENCE_IGNORE_EDGE_MS = 2000
@@ -182,6 +186,15 @@ def analyze_tracks(
                 structure=structure_metrics,
                 voice=voice_metrics,
             )
+            derived_outputs = _compute_advanced_derived_outputs(
+                quality=quality_metrics,
+                dynamics=dynamics_metrics,
+                timbre=timbre_metrics,
+                structure=structure_metrics,
+                voice=voice_metrics,
+                similarity=similarity_metrics,
+                channel_slug=channel_slug,
+            )
 
             features_payload = {
                 "duration_sec": duration_sec,
@@ -220,6 +233,14 @@ def analyze_tracks(
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
                     "profiles": {},
+                    "semantic": {
+                        "mood_tags": derived_outputs["semantic"]["mood_tags"],
+                        "theme_tags": derived_outputs["semantic"]["theme_tags"],
+                    },
+                    "voice_tags": derived_outputs["voice_tags"],
+                    "classifier_evidence": {
+                        "yamnet_top_classes": yamnet_payload.get("top_classes") or [],
+                    },
                 },
             }
             scores_payload = {
@@ -232,6 +253,14 @@ def analyze_tracks(
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
                     "profiles": {},
+                    "semantic": {
+                        "functional_scores": derived_outputs["semantic"]["functional_scores"],
+                    },
+                    "playlist_fit": derived_outputs["playlist_fit"],
+                    "transition": derived_outputs["transition"],
+                    "suitability": derived_outputs["suitability"],
+                    "rule_trace": derived_outputs["rule_trace"],
+                    "final_decisions": derived_outputs["final_decisions"],
                 },
             }
 
@@ -790,6 +819,147 @@ def _compute_similarity_metrics(
     return {
         "normalized_feature_vector": vector,
         "diversity_penalty_base": float(np.clip(np.mean(vector), 0.0, 1.0)),
+    }
+
+
+def _clip01(value: float) -> float:
+    return float(np.clip(value, 0.0, 1.0))
+
+
+def _compute_advanced_derived_outputs(
+    *,
+    quality: dict[str, Any],
+    dynamics: dict[str, Any],
+    timbre: dict[str, Any],
+    structure: dict[str, Any],
+    voice: dict[str, Any],
+    similarity: dict[str, Any],
+    channel_slug: str,
+) -> dict[str, Any]:
+    proxies = {
+        "speech": _clip01(float(voice.get("speech_probability") or 0.0)),
+        "vocal": _clip01(float(voice.get("vocal_probability") or 0.0)),
+        "human": _clip01(float(voice.get("human_presence_score") or 0.0)),
+        "ambient": _clip01(float(timbre.get("pad_presence") or 0.0) * 0.6 + float(timbre.get("drone_presence") or 0.0) * 0.4),
+        "rhythmic": _clip01(float(timbre.get("percussion_presence") or 0.0) * 0.7 + float(dynamics.get("pulse_strength") or 0.0) * 0.3),
+        "smooth": _clip01(float(timbre.get("texture_smoothness") or 0.0) * 0.5 + float(structure.get("intro_smoothness") or 0.0) * 0.25 + float(structure.get("outro_smoothness") or 0.0) * 0.25),
+    }
+    functional_scores = {
+        "focus": _clip01(0.4 * proxies["smooth"] + 0.35 * proxies["ambient"] + 0.25 * (1.0 - proxies["speech"])),
+        "energy": _clip01(0.5 * proxies["rhythmic"] + 0.3 * float(dynamics.get("energy_mean") or 0.0) + 0.2 * float(structure.get("climax_presence") or 0.0)),
+        "narrative": _clip01(0.5 * proxies["speech"] + 0.3 * proxies["vocal"] + 0.2 * float(voice.get("spoken_word_density") or 0.0)),
+        "background_compatibility": _clip01(0.45 * proxies["ambient"] + 0.35 * proxies["smooth"] + 0.2 * (1.0 - proxies["human"])),
+    }
+    mood_tags: list[str] = []
+    if functional_scores["focus"] >= 0.62:
+        mood_tags.append("calm")
+    if functional_scores["energy"] >= 0.58:
+        mood_tags.append("driving")
+    if functional_scores["narrative"] >= 0.55:
+        mood_tags.append("lyrical")
+    if proxies["ambient"] >= 0.5:
+        mood_tags.append("ambient")
+
+    theme_tags: list[str] = []
+    if float(structure.get("fade_friendliness") or 0.0) >= 0.5:
+        theme_tags.append("fade-friendly")
+    if float(structure.get("loop_friendliness") or 0.0) >= 0.7:
+        theme_tags.append("loopable")
+    if float(similarity.get("diversity_penalty_base") or 0.0) <= 0.42:
+        theme_tags.append("minimal")
+
+    playlist_fit = {
+        "continuity_score": _clip01(0.55 * float(structure.get("loop_friendliness") or 0.0) + 0.45 * proxies["smooth"]),
+        "mixability_score": _clip01(0.5 * float(structure.get("fade_friendliness") or 0.0) + 0.3 * (1.0 - float(structure.get("abruptness_score") or 0.0)) + 0.2 * proxies["ambient"]),
+        "variety_support_score": _clip01(1.0 - float(similarity.get("diversity_penalty_base") or 0.0)),
+    }
+    transition = {
+        "intro_profile": "soft" if proxies["smooth"] >= 0.55 else "hard",
+        "outro_profile": "tail" if float(structure.get("fade_friendliness") or 0.0) >= 0.45 else "cut",
+        "transition_risk_score": _clip01(0.5 * float(structure.get("abruptness_score") or 0.0) + 0.5 * (1.0 - playlist_fit["mixability_score"])),
+    }
+
+    context_scores = {
+        "LONG_INSTRUMENTAL_AMBIENT": _clip01(0.45 * functional_scores["background_compatibility"] + 0.3 * (1.0 - proxies["speech"]) + 0.25 * proxies["ambient"]),
+        "LONG_LYRICAL": _clip01(0.5 * functional_scores["narrative"] + 0.25 * proxies["vocal"] + 0.25 * float(dynamics.get("tempo_confidence") or 0.0)),
+    }
+    selected_context = max(P0_CONTEXTS, key=lambda key: context_scores[key])
+    suitability = {
+        "content_type_fit_score": context_scores[selected_context],
+        "content_type_fit_by_context": context_scores,
+        "selected_content_context": selected_context,
+    }
+    channel_archetype = P0_CHANNEL_ARCHETYPE_BY_SLUG.get(channel_slug)
+    if channel_archetype in context_scores:
+        suitability["channel_fit_score"] = context_scores[channel_archetype]
+
+    warning_codes: list[str] = []
+    soft_penalty_total = 0.0
+    hard_veto = False
+    if proxies["speech"] >= 0.85 and proxies["ambient"] >= 0.55:
+        hard_veto = True
+        warning_codes.append("VETO_SPEECH_IN_INSTRUMENTAL")
+    if float(quality.get("clipping_ratio") or 0.0) > 0.03:
+        soft_penalty_total += 0.2
+        warning_codes.append("PENALTY_CLIPPING")
+    if transition["transition_risk_score"] > 0.65:
+        soft_penalty_total += 0.15
+        warning_codes.append("PENALTY_TRANSITION_RISK")
+    if playlist_fit["continuity_score"] < 0.35:
+        soft_penalty_total += 0.1
+        warning_codes.append("PENALTY_LOW_CONTINUITY")
+
+    rule_trace = [
+        {
+            "rule_id": "semantic.focus.v1",
+            "inputs": {"smooth": proxies["smooth"], "ambient": proxies["ambient"], "speech": proxies["speech"]},
+            "weights": {"smooth": 0.4, "ambient": 0.35, "speech_inverse": 0.25},
+            "output": functional_scores["focus"],
+        },
+        {
+            "rule_id": "semantic.narrative.v1",
+            "inputs": {"speech": proxies["speech"], "vocal": proxies["vocal"], "spoken_word_density": float(voice.get("spoken_word_density") or 0.0)},
+            "weights": {"speech": 0.5, "vocal": 0.3, "spoken_word_density": 0.2},
+            "output": functional_scores["narrative"],
+        },
+        {
+            "rule_id": "decision.penalty.transition_risk.v1",
+            "inputs": {"transition_risk_score": transition["transition_risk_score"]},
+            "thresholds": {"gt": 0.65},
+            "weight": 0.15,
+            "matched": transition["transition_risk_score"] > 0.65,
+        },
+    ]
+    if hard_veto:
+        rule_trace.append(
+            {
+                "rule_id": "decision.veto.instrumental_speech.v1",
+                "inputs": {
+                    "speech": proxies["speech"],
+                    "ambient": proxies["ambient"],
+                },
+                "thresholds": {"speech_gte": 0.85, "ambient_gte": 0.55},
+                "matched": True,
+            }
+        )
+
+    voice_tags = ["spoken_word"] if proxies["speech"] >= 0.55 else []
+    return {
+        "semantic": {
+            "functional_scores": functional_scores,
+            "mood_tags": sorted(set(mood_tags)),
+            "theme_tags": sorted(set(theme_tags)),
+        },
+        "playlist_fit": playlist_fit,
+        "transition": transition,
+        "suitability": suitability,
+        "rule_trace": rule_trace,
+        "voice_tags": voice_tags,
+        "final_decisions": {
+            "hard_veto": hard_veto,
+            "soft_penalty_total": _clip01(soft_penalty_total),
+            "warning_codes": warning_codes,
+        },
     }
 
 
