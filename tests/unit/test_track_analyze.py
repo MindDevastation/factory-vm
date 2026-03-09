@@ -104,6 +104,74 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertIn("prohibited_cues", tags)
                 self.assertIn("dsp_score_version", scores)
                 self.assertIn("dsp_components", scores)
+                self.assertIn("advanced_v1", features)
+                self.assertIn("quality", features["advanced_v1"])
+                self.assertIn("dynamics", features["advanced_v1"])
+
+                quality = features["advanced_v1"]["quality"]
+                dynamics = features["advanced_v1"]["dynamics"]
+
+                required_quality_fields = {
+                    "duration_sec",
+                    "integrated_lufs",
+                    "loudness_range_lra",
+                    "true_peak_dbfs",
+                    "clipping_ratio",
+                    "noise_floor_estimate",
+                    "silence_ratio",
+                    "intro_silence_ratio",
+                    "outro_silence_ratio",
+                    "stereo_width",
+                    "mono_compatibility",
+                    "sample_rate",
+                    "channels_count",
+                }
+                self.assertTrue(required_quality_fields.issubset(set(quality.keys())))
+                self.assertGreaterEqual(float(quality["clipping_ratio"]), 0.0)
+                self.assertLessEqual(float(quality["clipping_ratio"]), 1.0)
+                self.assertGreaterEqual(float(quality["silence_ratio"]), 0.0)
+                self.assertLessEqual(float(quality["silence_ratio"]), 1.0)
+                self.assertGreaterEqual(float(quality["intro_silence_ratio"]), 0.0)
+                self.assertLessEqual(float(quality["intro_silence_ratio"]), 1.0)
+                self.assertGreaterEqual(float(quality["outro_silence_ratio"]), 0.0)
+                self.assertLessEqual(float(quality["outro_silence_ratio"]), 1.0)
+                self.assertGreaterEqual(float(quality["stereo_width"]), 0.0)
+                self.assertLessEqual(float(quality["stereo_width"]), 1.0)
+                self.assertGreaterEqual(float(quality["mono_compatibility"]), 0.0)
+                self.assertLessEqual(float(quality["mono_compatibility"]), 1.0)
+                self.assertEqual(int(quality["sample_rate"]), 16000)
+                self.assertEqual(int(quality["channels_count"]), 1)
+
+                required_dynamics_fields = {
+                    "energy_mean",
+                    "energy_variance",
+                    "dynamic_stability",
+                    "transient_density",
+                    "pulse_strength",
+                    "tempo_estimate",
+                    "tempo_confidence",
+                    "event_density",
+                    "intensity_curve_summary",
+                }
+                self.assertTrue(required_dynamics_fields.issubset(set(dynamics.keys())))
+                self.assertGreaterEqual(float(dynamics["dynamic_stability"]), 0.0)
+                self.assertLessEqual(float(dynamics["dynamic_stability"]), 1.0)
+                self.assertGreaterEqual(float(dynamics["pulse_strength"]), 0.0)
+                self.assertLessEqual(float(dynamics["pulse_strength"]), 1.0)
+                self.assertGreaterEqual(float(dynamics["tempo_confidence"]), 0.0)
+                self.assertLessEqual(float(dynamics["tempo_confidence"]), 1.0)
+
+                summary = dynamics["intensity_curve_summary"]
+                self.assertEqual(
+                    set(summary.keys()),
+                    {"start_mean", "middle_mean", "end_mean", "linear_slope", "peak_position_ratio", "convexity_hint"},
+                )
+                self.assertIn(summary["convexity_hint"], {"convex", "concave", "flat"})
+                self.assertGreaterEqual(float(summary["peak_position_ratio"]), 0.0)
+                self.assertLessEqual(float(summary["peak_position_ratio"]), 1.0)
+
+                self.assertEqual(features.get("duration_sec"), 12.5)
+                self.assertEqual(features.get("true_peak_dbfs"), -2.1)
 
                 tmp_track_dir = Path(td) / "tmp" / "track_analyzer" / "99" / "1"
                 self.assertFalse(tmp_track_dir.exists())
