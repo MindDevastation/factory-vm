@@ -111,7 +111,7 @@ class TestTrackAnalysisReportService(unittest.TestCase):
                 "timbre": {"brightness": 0.31},
                 "structure": {"intro_energy": 0.22, "section_summary": {"parts": 3}},
                 "voice": {"speech_probability": 0.12},
-                "similarity": {"normalized_feature_vector": [0.1, 0.2, 0.3]},
+                "similarity": {"normalized_feature_vector": [0.1, 0.2, 0.3], "diversity_penalty_base": 0.27},
             },
         }
         tags_payload = {
@@ -167,9 +167,11 @@ class TestTrackAnalysisReportService(unittest.TestCase):
         self.assertEqual(row["intensity_curve_summary_json"], '{"middle_mean": 0.2, "start_mean": 0.1}')
         self.assertEqual(row["section_summary_json"], '{"parts": 3}')
         self.assertEqual(row["normalized_feature_vector_json"], "[0.1, 0.2, 0.3]")
+        self.assertEqual(row["similarity_diversity_penalty_base"], 0.27)
         self.assertEqual(row["rule_trace_json"], '[{"matched": true, "rule_id": "semantic.focus.v1"}]')
 
         keys = [col["key"] for col in report["columns"]]
+        self.assertIn("similarity_diversity_penalty_base", keys)
         self.assertLess(keys.index("quality_integrated_lufs"), keys.index("dynamics_energy_mean"))
         self.assertLess(keys.index("dynamics_energy_mean"), keys.index("timbre_brightness"))
         self.assertLess(keys.index("timbre_brightness"), keys.index("structure_intro_energy"))

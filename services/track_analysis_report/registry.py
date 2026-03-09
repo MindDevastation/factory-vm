@@ -171,6 +171,7 @@ COLUMN_REGISTRY: Final[tuple[ColumnEntry, ...]] = (
     {"key": "analyzer_version", "group": "Metadata / Versioning", "source": "features", "path": "payload_json.advanced_v1.meta.analyzer_version", "flatten": "direct"},
     {"key": "schema_version", "group": "Metadata / Versioning", "source": "features", "path": "payload_json.advanced_v1.meta.schema_version", "flatten": "direct"},
     # Advanced JSON Fields
+    {"key": "similarity_diversity_penalty_base", "group": "Advanced JSON Fields", "source": "features", "path": "payload_json.advanced_v1.similarity.diversity_penalty_base", "flatten": "direct"},
     {"key": "intensity_curve_summary_json", "group": "Advanced JSON Fields", "source": "features", "path": "payload_json.advanced_v1.dynamics.intensity_curve_summary", "flatten": "json_string"},
     {"key": "section_summary_json", "group": "Advanced JSON Fields", "source": "features", "path": "payload_json.advanced_v1.structure.section_summary", "flatten": "json_string"},
     {"key": "normalized_feature_vector_json", "group": "Advanced JSON Fields", "source": "features", "path": "payload_json.advanced_v1.similarity.normalized_feature_vector", "flatten": "json_string"},

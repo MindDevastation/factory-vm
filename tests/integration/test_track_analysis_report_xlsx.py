@@ -72,7 +72,7 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
                                 "timbre": {"brightness": 0.31},
                                 "structure": {"intro_energy": 0.22, "section_summary": {"parts": 3}},
                                 "voice": {"speech_probability": 0.12},
-                                "similarity": {"normalized_feature_vector": [0.1, 0.2, 0.3]},
+                                "similarity": {"normalized_feature_vector": [0.1, 0.2, 0.3], "diversity_penalty_base": 0.27},
                             },
                         }
                     ),
@@ -213,6 +213,7 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
                 "intensity_curve_summary_json",
                 "section_summary_json",
                 "normalized_feature_vector_json",
+                "similarity_diversity_penalty_base",
                 "rule_trace_json",
             ):
                 self.assertIn(required_key, ordered_keys)
@@ -224,6 +225,22 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
             self.assertEqual(row["soft_penalty_total"], 0.15)
             self.assertEqual(row["mood_tags_csv"], "calm, ambient")
             self.assertEqual(row["theme_tags_csv"], "minimal")
+            self.assertEqual(row["similarity_diversity_penalty_base"], 0.27)
+
+            xlsx_resp = client.get(
+                "/v1/track-catalog/analysis-report.xlsx",
+                params={"channel_slug": "darkwood-reverie"},
+                headers=auth,
+            )
+            self.assertEqual(xlsx_resp.status_code, 200)
+            wb = load_workbook(io.BytesIO(xlsx_resp.content))
+            ws = wb.active
+            header_to_col = {ws.cell(row=2, column=idx).value: idx for idx in range(1, ws.max_column + 1)}
+            self.assertIn("similarity_diversity_penalty_base", header_to_col)
+            self.assertEqual(
+                ws.cell(row=3, column=header_to_col["similarity_diversity_penalty_base"]).value,
+                row["similarity_diversity_penalty_base"],
+            )
 
     def test_xlsx_legacy_rows_without_advanced_v1_remain_valid(self) -> None:
         with temp_env() as (_, env):
