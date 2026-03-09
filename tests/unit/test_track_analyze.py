@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from services.common import db as dbm
-from services.track_analyzer.analyze import AnalyzeError, analyze_tracks
+from services.track_analyzer.analyze import AnalyzeError, SIMILARITY_VECTOR_ORDER, analyze_tracks
 from services.track_analyzer.yamnet import YAMNetUnavailableError
 
 
@@ -176,6 +176,10 @@ class TestTrackAnalyze(unittest.TestCase):
 
                 self.assertIn("quality", features["advanced_v1"])
                 self.assertIn("dynamics", features["advanced_v1"])
+                self.assertIn("timbre", features["advanced_v1"])
+                self.assertIn("structure", features["advanced_v1"])
+                self.assertIn("voice", features["advanced_v1"])
+                self.assertIn("similarity", features["advanced_v1"])
                 self.assertNotIn("quality", tags["advanced_v1"])
                 self.assertNotIn("dynamics", tags["advanced_v1"])
                 self.assertNotIn("quality", scores["advanced_v1"])
@@ -247,6 +251,102 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertGreaterEqual(float(curve["peak_position_ratio"]), 0.0)
                 self.assertLessEqual(float(curve["peak_position_ratio"]), 1.0)
                 self.assertIn(float(curve["convexity_hint"]), {-1.0, 0.0, 1.0})
+
+                timbre = features["advanced_v1"]["timbre"]
+                timbre_keys = {
+                    "brightness",
+                    "warmth",
+                    "darkness",
+                    "spectral_centroid_mean",
+                    "spectral_rolloff_mean",
+                    "low_end_weight",
+                    "high_end_sharpness",
+                    "harmonic_density",
+                    "tonal_stability",
+                    "drone_presence",
+                    "pad_presence",
+                    "percussion_presence",
+                    "melodic_prominence",
+                    "texture_smoothness",
+                }
+                self.assertEqual(set(timbre.keys()), timbre_keys)
+
+                structure = features["advanced_v1"]["structure"]
+                structure_keys = {
+                    "intro_energy",
+                    "early_section_energy",
+                    "middle_section_energy",
+                    "late_section_energy",
+                    "outro_energy",
+                    "intro_smoothness",
+                    "outro_smoothness",
+                    "structural_stability",
+                    "climax_presence",
+                    "abruptness_score",
+                    "loop_friendliness",
+                    "fade_friendliness",
+                    "section_summary",
+                }
+                self.assertEqual(set(structure.keys()), structure_keys)
+                self.assertEqual(set(structure["section_summary"].keys()), {"parts", "peak_section", "mean_energy"})
+                self.assertEqual(len(structure["section_summary"]["parts"]), 5)
+
+                voice = features["advanced_v1"]["voice"]
+                self.assertEqual(
+                    set(voice.keys()),
+                    {"speech_probability", "vocal_probability", "spoken_word_density", "human_presence_score"},
+                )
+
+                similarity = features["advanced_v1"]["similarity"]
+                vector = similarity["normalized_feature_vector"]
+                self.assertEqual(
+                    SIMILARITY_VECTOR_ORDER,
+                    [
+                        "timbre.brightness",
+                        "timbre.warmth",
+                        "timbre.darkness",
+                        "timbre.spectral_centroid_mean",
+                        "timbre.spectral_rolloff_mean",
+                        "timbre.low_end_weight",
+                        "timbre.high_end_sharpness",
+                        "timbre.harmonic_density",
+                        "timbre.tonal_stability",
+                        "timbre.drone_presence",
+                        "timbre.pad_presence",
+                        "timbre.percussion_presence",
+                        "timbre.melodic_prominence",
+                        "timbre.texture_smoothness",
+                        "structure.intro_energy",
+                        "structure.early_section_energy",
+                        "structure.middle_section_energy",
+                        "structure.late_section_energy",
+                        "structure.outro_energy",
+                        "structure.intro_smoothness",
+                        "structure.outro_smoothness",
+                        "structure.structural_stability",
+                        "structure.climax_presence",
+                        "structure.abruptness_score",
+                        "structure.loop_friendliness",
+                        "structure.fade_friendliness",
+                        "voice.speech_probability",
+                        "voice.vocal_probability",
+                        "voice.spoken_word_density",
+                        "voice.human_presence_score",
+                    ],
+                )
+                self.assertEqual(len(vector), len(SIMILARITY_VECTOR_ORDER))
+                self.assertTrue(all(isinstance(v, float) for v in vector))
+                self.assertIn("diversity_penalty_base", similarity)
+                self.assertGreaterEqual(float(similarity["diversity_penalty_base"]), 0.0)
+                self.assertLessEqual(float(similarity["diversity_penalty_base"]), 1.0)
+
+                flat = {
+                    **{f"timbre.{k}": float(v) for k, v in timbre.items()},
+                    **{f"structure.{k}": float(v) for k, v in structure.items() if k != "section_summary"},
+                    **{f"voice.{k}": float(v) for k, v in voice.items()},
+                }
+                expected_vector = [flat[key] for key in SIMILARITY_VECTOR_ORDER]
+                self.assertEqual(vector, expected_vector)
 
                 self.assertEqual(quality["duration_sec"], features["duration_sec"])
                 self.assertEqual(quality["true_peak_dbfs"], features["true_peak_dbfs"])
