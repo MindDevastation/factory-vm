@@ -112,6 +112,12 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertIn("meta", tags["advanced_v1"])
                 self.assertIn("advanced_v1", scores)
                 self.assertIn("meta", scores["advanced_v1"])
+                self.assertEqual(set(features["advanced_v1"].keys()), {"meta", "quality", "dynamics"})
+                self.assertEqual(set(tags["advanced_v1"].keys()), {"meta"})
+                self.assertEqual(set(scores["advanced_v1"].keys()), {"meta"})
+                self.assertNotIn("normalized_feature_vector", features)
+                self.assertNotIn("normalized_feature_vector", tags)
+                self.assertNotIn("normalized_feature_vector", scores)
 
                 for payload in (features, tags, scores):
                     meta = payload["advanced_v1"]["meta"]
