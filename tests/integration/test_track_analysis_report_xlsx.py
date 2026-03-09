@@ -122,6 +122,62 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
                 ),
             )
             conn.execute(
+                """
+                INSERT INTO track_analysis_flat(
+                    track_pk, channel_slug, track_id, gdrive_file_id, analysis_computed_at,
+                    analysis_status, analyzer_version, schema_version, duration_sec,
+                    true_peak_dbfs, spikes_found, yamnet_top_tags_text, yamnet_top_classes_json,
+                    voice_flag, voice_flag_reason, speech_flag, speech_flag_reason,
+                    dominant_texture, texture_confidence, texture_reason, prohibited_cues_summary,
+                    prohibited_cues_flags_json, dsp_score, dsp_score_version, dsp_notes,
+                    legacy_scene, legacy_mood, legacy_safety, legacy_scene_match,
+                    human_readable_notes, updated_at
+                ) VALUES(
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?
+                )
+                """,
+                (
+                    first_pk,
+                    "darkwood-reverie",
+                    "001",
+                    "file-001",
+                    1040.0,
+                    "flat-ok",
+                    "flat-analyzer-version",
+                    "flat-schema-version",
+                    180.0,
+                    -0.1,
+                    1,
+                    "flat-rain, flat-wind",
+                    "[]",
+                    1,
+                    "flat-voice-reason",
+                    1,
+                    "flat-speech-reason",
+                    "flat-texture",
+                    0.88,
+                    "flat-texture-reason",
+                    None,
+                    "{}",
+                    0.99,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "2026-01-01T00:00:00Z",
+                ),
+            )
+            conn.execute(
                 "INSERT INTO track_features(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
                 (second_pk, '{"analysis_status":"ok","voice_flag":true}', 2010.0),
             )
@@ -219,8 +275,8 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
                 self.assertIn(required_key, ordered_keys)
 
             row = payload["rows"][0]
-            self.assertEqual(row["analyzer_version"], "advanced_track_analyzer_v1.1")
-            self.assertEqual(row["schema_version"], "advanced_v1")
+            self.assertEqual(row["analyzer_version"], "flat-analyzer-version")
+            self.assertEqual(row["schema_version"], "flat-schema-version")
             self.assertEqual(row["hard_veto"], False)
             self.assertEqual(row["soft_penalty_total"], 0.15)
             self.assertEqual(row["mood_tags_csv"], "calm, ambient")
@@ -260,11 +316,11 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
             ws = wb.active
             header_to_col = {ws.cell(row=2, column=idx).value: idx for idx in range(1, ws.max_column + 1)}
             self.assertEqual(ws.max_row - 2, 2)
-            self.assertEqual(ws.cell(row=3, column=header_to_col["analysis_status"]).value, "ok")
-            self.assertEqual(ws.cell(row=3, column=header_to_col["voice_flag"]).value, False)
-            self.assertEqual(ws.cell(row=3, column=header_to_col["yamnet_tags"]).value, "rain, wind")
-            self.assertEqual(ws.cell(row=3, column=header_to_col["dsp_score"]).value, 0.93)
-            self.assertEqual(ws.cell(row=3, column=header_to_col["analyzer_version"]).value, "advanced_track_analyzer_v1.1")
+            self.assertEqual(ws.cell(row=3, column=header_to_col["analysis_status"]).value, "flat-ok")
+            self.assertEqual(ws.cell(row=3, column=header_to_col["voice_flag"]).value, True)
+            self.assertEqual(ws.cell(row=3, column=header_to_col["yamnet_tags"]).value, "flat-rain, flat-wind")
+            self.assertEqual(ws.cell(row=3, column=header_to_col["dsp_score"]).value, 0.99)
+            self.assertEqual(ws.cell(row=3, column=header_to_col["analyzer_version"]).value, "flat-analyzer-version")
             self.assertEqual(ws.cell(row=3, column=header_to_col["soft_penalty_total"]).value, 0.15)
 
 
