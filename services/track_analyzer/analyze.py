@@ -45,6 +45,38 @@ ADVANCED_SEGMENT_POLICY = "track_full"
 SILENCE_RMS_THRESHOLD = 0.01
 SILENCE_GAP_MIN_MS = 1000
 SILENCE_IGNORE_EDGE_MS = 2000
+SIMILARITY_VECTOR_ORDER = [
+    "timbre.brightness",
+    "timbre.warmth",
+    "timbre.darkness",
+    "timbre.spectral_centroid_mean",
+    "timbre.spectral_rolloff_mean",
+    "timbre.low_end_weight",
+    "timbre.high_end_sharpness",
+    "timbre.harmonic_density",
+    "timbre.tonal_stability",
+    "timbre.drone_presence",
+    "timbre.pad_presence",
+    "timbre.percussion_presence",
+    "timbre.melodic_prominence",
+    "timbre.texture_smoothness",
+    "structure.intro_energy",
+    "structure.early_section_energy",
+    "structure.middle_section_energy",
+    "structure.late_section_energy",
+    "structure.outro_energy",
+    "structure.intro_smoothness",
+    "structure.outro_smoothness",
+    "structure.structural_stability",
+    "structure.climax_presence",
+    "structure.abruptness_score",
+    "structure.loop_friendliness",
+    "structure.fade_friendliness",
+    "voice.speech_probability",
+    "voice.vocal_probability",
+    "voice.spoken_word_density",
+    "voice.human_presence_score",
+]
 
 
 def analyze_tracks(
@@ -142,6 +174,14 @@ def analyze_tracks(
                 true_peak_dbfs=true_peak_dbfs,
             )
             dynamics_metrics = compute_dynamics_metrics(mono_waveform=waveform, sample_rate=sample_rate)
+            timbre_metrics = _compute_timbre_metrics(waveform, sample_rate, dominant_texture=dominant_texture)
+            structure_metrics = _compute_structure_metrics(waveform, sample_rate)
+            voice_metrics = _compute_voice_metrics(yamnet_agg)
+            similarity_metrics = _compute_similarity_metrics(
+                timbre=timbre_metrics,
+                structure=structure_metrics,
+                voice=voice_metrics,
+            )
 
             features_payload = {
                 "duration_sec": duration_sec,
@@ -165,6 +205,10 @@ def analyze_tracks(
                     "profiles": {},
                     "quality": quality_metrics,
                     "dynamics": dynamics_metrics,
+                    "timbre": timbre_metrics,
+                    "structure": structure_metrics,
+                    "voice": voice_metrics,
+                    "similarity": similarity_metrics,
                 },
             }
             tags_payload = {
@@ -585,6 +629,167 @@ def _analyze_texture_from_waveform(waveform: np.ndarray, sample_rate: int) -> di
         "texture_backend": "heuristic",
         "texture_confidence": confidence,
         "texture_reason": reason,
+    }
+
+
+def _compute_timbre_metrics(
+    waveform: np.ndarray,
+    sample_rate: int,
+    *,
+    dominant_texture: str,
+) -> dict[str, float]:
+    if waveform.size == 0 or sample_rate <= 0:
+        return {
+            "brightness": 0.0,
+            "warmth": 0.0,
+            "darkness": 1.0,
+            "spectral_centroid_mean": 0.0,
+            "spectral_rolloff_mean": 0.0,
+            "low_end_weight": 0.0,
+            "high_end_sharpness": 0.0,
+            "harmonic_density": 0.0,
+            "tonal_stability": 0.0,
+            "drone_presence": 0.0,
+            "pad_presence": 0.0,
+            "percussion_presence": 0.0,
+            "melodic_prominence": 0.0,
+            "texture_smoothness": 0.0,
+        }
+
+    n_fft = min(4096, max(512, int(2 ** np.floor(np.log2(max(512, waveform.size // 4))))))
+    window = np.hanning(n_fft).astype(np.float32)
+    hop = max(1, n_fft // 4)
+    if waveform.size < n_fft:
+        waveform = np.pad(waveform, (0, n_fft - waveform.size))
+    frames = np.lib.stride_tricks.sliding_window_view(waveform, n_fft)[::hop]
+    if frames.size == 0:
+        frames = waveform[:n_fft][None, :]
+    spectrum = np.abs(np.fft.rfft(frames * window[None, :], axis=1)) + 1e-12
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate)
+
+    frame_energy = np.sum(spectrum, axis=1, keepdims=True)
+    centroid = np.sum(spectrum * freqs[None, :], axis=1) / np.maximum(frame_energy[:, 0], 1e-12)
+    cdf = np.cumsum(spectrum, axis=1) / np.maximum(frame_energy, 1e-12)
+    roll_idx = np.argmax(cdf >= 0.85, axis=1)
+    rolloff = freqs[np.clip(roll_idx, 0, freqs.size - 1)]
+
+    nyquist = max(sample_rate / 2.0, 1.0)
+    centroid_norm = float(np.clip(np.mean(centroid) / nyquist, 0.0, 1.0))
+    rolloff_norm = float(np.clip(np.mean(rolloff) / nyquist, 0.0, 1.0))
+
+    low_mask = freqs <= 250.0
+    high_mask = freqs >= 4000.0
+    mid_mask = (freqs > 250.0) & (freqs < 4000.0)
+    low_energy = float(np.mean(np.sum(spectrum[:, low_mask], axis=1) / np.maximum(frame_energy[:, 0], 1e-12)))
+    high_energy = float(np.mean(np.sum(spectrum[:, high_mask], axis=1) / np.maximum(frame_energy[:, 0], 1e-12)))
+    mid_energy = float(np.mean(np.sum(spectrum[:, mid_mask], axis=1) / np.maximum(frame_energy[:, 0], 1e-12)))
+
+    diff_energy = np.abs(np.diff(np.sum(spectrum, axis=1)))
+    transient = float(np.clip(np.mean(diff_energy) / (np.mean(np.sum(spectrum, axis=1)) + 1e-12), 0.0, 1.0))
+    tonal_stability = float(np.clip(1.0 - np.std(centroid / nyquist), 0.0, 1.0))
+
+    texture_smoothness = float(np.clip(1.0 - (transient * 2.0), 0.0, 1.0))
+    if dominant_texture in {"pad", "drone"}:
+        texture_smoothness = float(np.clip(max(texture_smoothness, 0.7), 0.0, 1.0))
+
+    harmonic_density = float(np.clip(mid_energy + (1.0 - transient) * 0.25, 0.0, 1.0))
+    brightness = float(np.clip((centroid_norm * 0.6) + (high_energy * 0.4), 0.0, 1.0))
+    warmth = float(np.clip((low_energy * 0.7) + ((1.0 - centroid_norm) * 0.3), 0.0, 1.0))
+    darkness = float(np.clip(1.0 - brightness, 0.0, 1.0))
+
+    return {
+        "brightness": brightness,
+        "warmth": warmth,
+        "darkness": darkness,
+        "spectral_centroid_mean": centroid_norm,
+        "spectral_rolloff_mean": rolloff_norm,
+        "low_end_weight": float(np.clip(low_energy, 0.0, 1.0)),
+        "high_end_sharpness": float(np.clip(high_energy + transient * 0.3, 0.0, 1.0)),
+        "harmonic_density": harmonic_density,
+        "tonal_stability": tonal_stability,
+        "drone_presence": float(np.clip((1.0 - transient) * low_energy, 0.0, 1.0)),
+        "pad_presence": float(np.clip(texture_smoothness * (0.5 + mid_energy * 0.5), 0.0, 1.0)),
+        "percussion_presence": float(np.clip(transient * (0.5 + high_energy * 0.5), 0.0, 1.0)),
+        "melodic_prominence": float(np.clip(harmonic_density * tonal_stability, 0.0, 1.0)),
+        "texture_smoothness": texture_smoothness,
+    }
+
+
+def _compute_structure_metrics(waveform: np.ndarray, sample_rate: int) -> dict[str, Any]:
+    frame_size = max(1, int(0.2 * sample_rate))
+    hop_size = frame_size
+    rms = _frame_rms(waveform, frame_size, hop_size)
+    if rms.size == 0:
+        rms = np.array([0.0], dtype=np.float32)
+    rms_norm = rms / max(float(np.max(rms)), 1e-12)
+
+    sections = np.array_split(rms_norm, 5)
+    energy_values = [float(np.mean(section)) if section.size else 0.0 for section in sections]
+    intro, early, middle, late, outro = energy_values
+
+    first_deltas = np.abs(np.diff(sections[0])) if sections[0].size > 1 else np.array([0.0])
+    last_deltas = np.abs(np.diff(sections[-1])) if sections[-1].size > 1 else np.array([0.0])
+    global_deltas = np.abs(np.diff(rms_norm)) if rms_norm.size > 1 else np.array([0.0])
+    abruptness = float(np.clip(np.mean(global_deltas) * 3.0, 0.0, 1.0))
+
+    summary = {
+        "parts": [
+            {"name": "intro", "energy": intro},
+            {"name": "early", "energy": early},
+            {"name": "middle", "energy": middle},
+            {"name": "late", "energy": late},
+            {"name": "outro", "energy": outro},
+        ],
+        "peak_section": ["intro", "early", "middle", "late", "outro"][int(np.argmax(energy_values))],
+        "mean_energy": float(np.mean(energy_values)),
+    }
+
+    return {
+        "intro_energy": intro,
+        "early_section_energy": early,
+        "middle_section_energy": middle,
+        "late_section_energy": late,
+        "outro_energy": outro,
+        "intro_smoothness": float(np.clip(1.0 - np.mean(first_deltas) * 4.0, 0.0, 1.0)),
+        "outro_smoothness": float(np.clip(1.0 - np.mean(last_deltas) * 4.0, 0.0, 1.0)),
+        "structural_stability": float(np.clip(1.0 - np.std(energy_values) * 2.0, 0.0, 1.0)),
+        "climax_presence": float(np.clip(max(energy_values) - np.mean(energy_values), 0.0, 1.0)),
+        "abruptness_score": abruptness,
+        "loop_friendliness": float(np.clip(1.0 - abs(intro - outro), 0.0, 1.0)),
+        "fade_friendliness": float(np.clip(max(0.0, late - outro), 0.0, 1.0)),
+        "section_summary": summary,
+    }
+
+
+def _compute_voice_metrics(yamnet_agg: dict[str, Any]) -> dict[str, float]:
+    speech_probability = float(np.clip(yamnet_agg.get("speech_prob") or 0.0, 0.0, 1.0))
+    voice_probability = float(np.clip(yamnet_agg.get("voice_prob") or 0.0, 0.0, 1.0))
+    singing_probability = float(np.clip(yamnet_agg.get("singing_prob") or 0.0, 0.0, 1.0))
+    spoken_word_density = float(np.clip((speech_probability * 0.8) + (voice_probability * 0.2), 0.0, 1.0))
+    human_presence = float(np.clip(max(voice_probability, singing_probability, speech_probability), 0.0, 1.0))
+    return {
+        "speech_probability": speech_probability,
+        "vocal_probability": voice_probability,
+        "spoken_word_density": spoken_word_density,
+        "human_presence_score": human_presence,
+    }
+
+
+def _compute_similarity_metrics(
+    *,
+    timbre: dict[str, Any],
+    structure: dict[str, Any],
+    voice: dict[str, Any],
+) -> dict[str, Any]:
+    flattened = {
+        **{f"timbre.{k}": float(v) for k, v in timbre.items()},
+        **{f"structure.{k}": float(v) for k, v in structure.items() if k != "section_summary"},
+        **{f"voice.{k}": float(v) for k, v in voice.items()},
+    }
+    vector = [float(np.clip(flattened.get(key, 0.0), 0.0, 1.0)) for key in SIMILARITY_VECTOR_ORDER]
+    return {
+        "normalized_feature_vector": vector,
+        "diversity_penalty_base": float(np.clip(np.mean(vector), 0.0, 1.0)),
     }
 
 
