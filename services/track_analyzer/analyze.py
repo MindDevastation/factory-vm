@@ -82,6 +82,93 @@ SIMILARITY_VECTOR_ORDER = [
     "voice.human_presence_score",
 ]
 
+FEATURES_REQUIRED_ADVANCED_SCALAR_PATHS = (
+    "quality.duration_sec",
+    "quality.integrated_lufs",
+    "quality.loudness_range_lra",
+    "quality.true_peak_dbfs",
+    "quality.clipping_ratio",
+    "quality.noise_floor_estimate",
+    "quality.silence_ratio",
+    "quality.intro_silence_ratio",
+    "quality.outro_silence_ratio",
+    "quality.stereo_width",
+    "quality.mono_compatibility",
+    "quality.sample_rate",
+    "quality.channels_count",
+    "dynamics.energy_mean",
+    "dynamics.energy_variance",
+    "dynamics.dynamic_stability",
+    "dynamics.transient_density",
+    "dynamics.pulse_strength",
+    "dynamics.tempo_estimate",
+    "dynamics.tempo_confidence",
+    "dynamics.event_density",
+    "dynamics.intensity_curve_summary.start_mean",
+    "dynamics.intensity_curve_summary.middle_mean",
+    "dynamics.intensity_curve_summary.end_mean",
+    "dynamics.intensity_curve_summary.linear_slope",
+    "dynamics.intensity_curve_summary.peak_position_ratio",
+    "dynamics.intensity_curve_summary.convexity_hint",
+    "timbre.brightness",
+    "timbre.warmth",
+    "timbre.darkness",
+    "timbre.spectral_centroid_mean",
+    "timbre.spectral_rolloff_mean",
+    "timbre.low_end_weight",
+    "timbre.high_end_sharpness",
+    "timbre.harmonic_density",
+    "timbre.tonal_stability",
+    "timbre.drone_presence",
+    "timbre.pad_presence",
+    "timbre.percussion_presence",
+    "timbre.melodic_prominence",
+    "timbre.texture_smoothness",
+    "structure.intro_energy",
+    "structure.early_section_energy",
+    "structure.middle_section_energy",
+    "structure.late_section_energy",
+    "structure.outro_energy",
+    "structure.intro_smoothness",
+    "structure.outro_smoothness",
+    "structure.structural_stability",
+    "structure.climax_presence",
+    "structure.abruptness_score",
+    "structure.loop_friendliness",
+    "structure.fade_friendliness",
+    "voice.speech_probability",
+    "voice.vocal_probability",
+    "voice.spoken_word_density",
+    "voice.human_presence_score",
+    "similarity.diversity_penalty_base",
+)
+
+FEATURES_REQUIRED_ADVANCED_OBJECT_PATHS = ("structure.section_summary", "dynamics.intensity_curve_summary")
+FEATURES_REQUIRED_ADVANCED_LIST_PATHS = ("similarity.normalized_feature_vector",)
+
+SCORES_REQUIRED_ADVANCED_SCALAR_PATHS = (
+    "semantic.functional_scores.focus",
+    "semantic.functional_scores.energy",
+    "semantic.functional_scores.narrative",
+    "semantic.functional_scores.background_compatibility",
+    "suitability.content_type_fit_score",
+    "final_decisions.hard_veto",
+    "final_decisions.soft_penalty_total",
+)
+SCORES_REQUIRED_ADVANCED_OBJECT_PATHS = (
+    "playlist_fit",
+    "transition",
+)
+SCORES_REQUIRED_ADVANCED_LIST_PATHS = ("final_decisions.warning_codes", "rule_trace")
+
+TAGS_REQUIRED_ADVANCED_OBJECT_PATHS = ("semantic", "classifier_evidence")
+TAGS_REQUIRED_ADVANCED_LIST_PATHS = (
+    "semantic.mood_tags",
+    "semantic.theme_tags",
+    "classifier_evidence.yamnet_top_classes",
+    "voice_tags",
+)
+
 
 def analyze_tracks(
     conn: Any,
@@ -215,7 +302,7 @@ def analyze_tracks(
                 "missing_fields": missing_fields,
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
-                    "profiles": {},
+                    "profiles": _build_p0_profiles(),
                     "quality": quality_metrics,
                     "dynamics": dynamics_metrics,
                     "timbre": timbre_metrics,
@@ -232,7 +319,7 @@ def analyze_tracks(
                 "missing_fields": missing_fields,
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
-                    "profiles": {},
+                    "profiles": _build_p0_profiles(),
                     "semantic": {
                         "mood_tags": derived_outputs["semantic"]["mood_tags"],
                         "theme_tags": derived_outputs["semantic"]["theme_tags"],
@@ -252,7 +339,7 @@ def analyze_tracks(
                 "missing_fields": missing_fields,
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
-                    "profiles": {},
+                    "profiles": _build_p0_profiles(),
                     "semantic": {
                         "functional_scores": derived_outputs["semantic"]["functional_scores"],
                     },
@@ -263,6 +350,26 @@ def analyze_tracks(
                     "final_decisions": derived_outputs["final_decisions"],
                 },
             }
+            _validate_advanced_v1_payload(
+                features_payload,
+                required_scalar_paths=("duration_sec",),
+                allow_none_scalar_paths=("duration_sec",),
+                required_advanced_scalar_paths=FEATURES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=FEATURES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=FEATURES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
+            _validate_advanced_v1_payload(
+                tags_payload,
+                required_advanced_object_paths=TAGS_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=TAGS_REQUIRED_ADVANCED_LIST_PATHS,
+            )
+            _validate_advanced_v1_payload(
+                scores_payload,
+                required_scalar_paths=("dsp_score",),
+                required_advanced_scalar_paths=SCORES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=SCORES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=SCORES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
 
             conn.execute("BEGIN")
             try:
@@ -346,6 +453,79 @@ def _select_tracks(conn: Any, *, channel_slug: str, scope: str, force: bool, max
         """,
         tuple(args),
     ).fetchall()
+
+
+def _build_p0_profiles() -> dict[str, dict[str, Any]]:
+    return {context: {} for context in P0_CONTEXTS}
+
+
+def _validate_advanced_v1_payload(
+    payload: dict[str, Any],
+    *,
+    required_scalar_paths: tuple[str, ...] = (),
+    allow_none_scalar_paths: tuple[str, ...] = (),
+    required_advanced_scalar_paths: tuple[str, ...] = (),
+    required_advanced_object_paths: tuple[str, ...] = (),
+    required_advanced_list_paths: tuple[str, ...] = (),
+) -> None:
+    advanced = payload.get("advanced_v1")
+    if not isinstance(advanced, dict):
+        raise AnalyzeError("ADVANCED_V1_INVALID: missing advanced_v1 object")
+
+    profiles = advanced.get("profiles")
+    if not isinstance(profiles, dict):
+        raise AnalyzeError("ADVANCED_V1_INVALID: profiles must be an object")
+    for context in P0_CONTEXTS:
+        profile_obj = profiles.get(context)
+        if not isinstance(profile_obj, dict):
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: missing profile object {context}")
+
+    meta = advanced.get("meta")
+    if not isinstance(meta, dict):
+        raise AnalyzeError("ADVANCED_V1_INVALID: missing meta object")
+    for meta_key in ("analyzer_version", "schema_version", "analyzed_at", "rollout_tier", "segment_policy"):
+        if meta.get(meta_key) is None:
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: meta.{meta_key} must be non-null")
+
+    similarity = advanced.get("similarity")
+    if isinstance(similarity, dict):
+        vector = similarity.get("normalized_feature_vector")
+        if not isinstance(vector, list) or len(vector) != len(SIMILARITY_VECTOR_ORDER):
+            raise AnalyzeError("ADVANCED_V1_INVALID: normalized_feature_vector length mismatch")
+
+    for path in required_scalar_paths:
+        value: Any = payload
+        for part in path.split("."):
+            if not isinstance(value, dict):
+                value = None
+                break
+            value = value.get(part)
+        if value is None and path not in allow_none_scalar_paths:
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: {path} must be non-null")
+
+    for path in required_advanced_scalar_paths:
+        value = _resolve_nested_path(advanced, path)
+        if value is None:
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: advanced_v1.{path} must be non-null")
+
+    for path in required_advanced_object_paths:
+        value = _resolve_nested_path(advanced, path)
+        if not isinstance(value, dict):
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: advanced_v1.{path} must be an object")
+
+    for path in required_advanced_list_paths:
+        value = _resolve_nested_path(advanced, path)
+        if not isinstance(value, list):
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: advanced_v1.{path} must be a list")
+
+
+def _resolve_nested_path(root: dict[str, Any], path: str) -> Any:
+    value: Any = root
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
 
 
 def _require_thresholds(conn: Any, channel_slug: str) -> None:
