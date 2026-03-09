@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import io
+import json
 import unittest
 
 from fastapi.testclient import TestClient
@@ -57,15 +58,68 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
             )
             conn.execute(
                 "INSERT INTO track_features(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
-                (first_pk, '{"analysis_status":"ok","voice_flag":false,"yamnet_agg":{"voice_labels_used":["speech"],"speech_labels_used":["conversation"]}}', 1010.0),
+                (
+                    first_pk,
+                    json.dumps(
+                        {
+                            "analysis_status": "ok",
+                            "voice_flag": False,
+                            "yamnet_agg": {"voice_labels_used": ["speech"], "speech_labels_used": ["conversation"]},
+                            "advanced_v1": {
+                                "meta": {"analyzer_version": "advanced_track_analyzer_v1.1", "schema_version": "advanced_v1"},
+                                "quality": {"integrated_lufs": -18.2},
+                                "dynamics": {"energy_mean": 0.44, "intensity_curve_summary": {"start_mean": 0.1}},
+                                "timbre": {"brightness": 0.31},
+                                "structure": {"intro_energy": 0.22, "section_summary": {"parts": 3}},
+                                "voice": {"speech_probability": 0.12},
+                                "similarity": {"normalized_feature_vector": [0.1, 0.2, 0.3], "diversity_penalty_base": 0.27},
+                            },
+                        }
+                    ),
+                    1010.0,
+                ),
             )
             conn.execute(
                 "INSERT INTO track_tags(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
-                (first_pk, '{"yamnet_tags":["rain","wind"]}', 1020.0),
+                (
+                    first_pk,
+                    json.dumps(
+                        {
+                            "yamnet_tags": ["rain", "wind"],
+                            "advanced_v1": {
+                                "semantic": {"mood_tags": ["calm", "ambient"], "theme_tags": ["minimal"]},
+                                "voice_tags": ["spoken_word"],
+                                "classifier_evidence": {"yamnet_top_classes": [{"label": "rain", "score": 0.9}]},
+                            },
+                        }
+                    ),
+                    1020.0,
+                ),
             )
             conn.execute(
                 "INSERT INTO track_scores(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
-                (first_pk, '{"dsp_score":0.93}', 1030.0),
+                (
+                    first_pk,
+                    json.dumps(
+                        {
+                            "dsp_score": 0.93,
+                            "advanced_v1": {
+                                "semantic": {"functional_scores": {"focus": 0.8, "energy": 0.3, "narrative": 0.2, "background_compatibility": 0.7}},
+                                "playlist_fit": {"continuity_score": 0.6, "mixability_score": 0.7, "variety_support_score": 0.8},
+                                "transition": {"intro_profile": "soft", "outro_profile": "tail", "transition_risk_score": 0.1},
+                                "suitability": {
+                                    "content_type_fit_score": 0.9,
+                                    "channel_fit_score": 0.85,
+                                    "selected_content_context": "LONG_INSTRUMENTAL_AMBIENT",
+                                    "content_type_fit_by_context": {"LONG_INSTRUMENTAL_AMBIENT": 0.9, "LONG_LYRICAL": 0.2},
+                                },
+                                "rule_trace": [{"rule_id": "semantic.focus.v1", "matched": True}],
+                                "final_decisions": {"hard_veto": False, "soft_penalty_total": 0.15, "warning_codes": ["PENALTY_TRANSITION_RISK"]},
+                            },
+                        }
+                    ),
+                    1030.0,
+                ),
             )
             conn.execute(
                 "INSERT INTO track_features(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
@@ -137,25 +191,56 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
                 for col_idx, key in enumerate(ordered_keys, start=1):
                     self.assertEqual(ws.cell(row=row_offset, column=col_idx).value, api_row.get(key))
 
-    def test_xlsx_columns_do_not_include_advanced_v1_until_registry_update(self) -> None:
+    def test_xlsx_includes_selected_advanced_columns_and_values(self) -> None:
         with temp_env() as (_, env):
             self._seed_channel(env)
             self._seed_tracks(env)
-            conn = dbm.connect(env)
-            try:
-                conn.execute(
-                    "UPDATE track_features SET payload_json = ? WHERE track_pk = 1",
-                    ('{"analysis_status":"ok","voice_flag":false,"advanced_v1":{"meta":{"schema_version":"advanced_v1"},"profiles":{"LONG_INSTRUMENTAL_AMBIENT":{},"LONG_LYRICAL":{}}}}',),
-                )
-            finally:
-                conn.close()
-
             _, client = self._new_client()
             auth = basic_auth_header(env.basic_user, env.basic_pass)
             api_resp = client.get("/v1/track-catalog/analysis-report", params={"channel_slug": "darkwood-reverie"}, headers=auth)
             self.assertEqual(api_resp.status_code, 200)
-            columns = api_resp.json()["columns"]
-            self.assertTrue(all("advanced_v1" not in str(col.get("source_path") or "") for col in columns))
+            payload = api_resp.json()
+            columns = payload["columns"]
+            ordered_keys = [col["key"] for col in columns]
+            for required_key in (
+                "analyzer_version",
+                "schema_version",
+                "hard_veto",
+                "soft_penalty_total",
+                "warning_codes_json",
+                "mood_tags_csv",
+                "theme_tags_csv",
+                "intensity_curve_summary_json",
+                "section_summary_json",
+                "normalized_feature_vector_json",
+                "similarity_diversity_penalty_base",
+                "rule_trace_json",
+            ):
+                self.assertIn(required_key, ordered_keys)
+
+            row = payload["rows"][0]
+            self.assertEqual(row["analyzer_version"], "advanced_track_analyzer_v1.1")
+            self.assertEqual(row["schema_version"], "advanced_v1")
+            self.assertEqual(row["hard_veto"], False)
+            self.assertEqual(row["soft_penalty_total"], 0.15)
+            self.assertEqual(row["mood_tags_csv"], "calm, ambient")
+            self.assertEqual(row["theme_tags_csv"], "minimal")
+            self.assertEqual(row["similarity_diversity_penalty_base"], 0.27)
+
+            xlsx_resp = client.get(
+                "/v1/track-catalog/analysis-report.xlsx",
+                params={"channel_slug": "darkwood-reverie"},
+                headers=auth,
+            )
+            self.assertEqual(xlsx_resp.status_code, 200)
+            wb = load_workbook(io.BytesIO(xlsx_resp.content))
+            ws = wb.active
+            header_to_col = {ws.cell(row=2, column=idx).value: idx for idx in range(1, ws.max_column + 1)}
+            self.assertIn("similarity_diversity_penalty_base", header_to_col)
+            self.assertEqual(
+                ws.cell(row=3, column=header_to_col["similarity_diversity_penalty_base"]).value,
+                row["similarity_diversity_penalty_base"],
+            )
 
     def test_xlsx_legacy_rows_without_advanced_v1_remain_valid(self) -> None:
         with temp_env() as (_, env):
@@ -179,6 +264,8 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
             self.assertEqual(ws.cell(row=3, column=header_to_col["voice_flag"]).value, False)
             self.assertEqual(ws.cell(row=3, column=header_to_col["yamnet_tags"]).value, "rain, wind")
             self.assertEqual(ws.cell(row=3, column=header_to_col["dsp_score"]).value, 0.93)
+            self.assertEqual(ws.cell(row=3, column=header_to_col["analyzer_version"]).value, "advanced_track_analyzer_v1.1")
+            self.assertEqual(ws.cell(row=3, column=header_to_col["soft_penalty_total"]).value, 0.15)
 
 
 
