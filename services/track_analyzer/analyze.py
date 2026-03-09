@@ -14,6 +14,7 @@ from services.common import db as dbm
 from services.common import ffmpeg
 from services.custom_tags.auto_assign import apply_auto_custom_tags
 from services.track_analyzer.advanced_metrics import compute_dynamics_metrics, compute_quality_metrics
+from services.track_analyzer.track_analysis_flat import sync_track_analysis_flat
 import services.track_analyzer.yamnet as yamnet
 from services.track_analyzer.texture_heuristics import classify_texture
 from services.track_analyzer.yamnet_buckets import SPEECH_LABELS, VOICE_LABELS
@@ -396,6 +397,14 @@ def analyze_tracks(
                     ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
                     """,
                     (track_pk, dbm.json_dumps(scores_payload), computed_at),
+                )
+                sync_track_analysis_flat(
+                    conn,
+                    track_row=row,
+                    features_payload=features_payload,
+                    tags_payload=tags_payload,
+                    scores_payload=scores_payload,
+                    analysis_computed_at=computed_at,
                 )
                 analyzer_payload = {
                     "track_features": {"payload_json": features_payload},

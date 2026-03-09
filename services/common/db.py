@@ -295,6 +295,41 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(track_pk) REFERENCES tracks(id)
         );
 
+        CREATE TABLE IF NOT EXISTS track_analysis_flat (
+            track_pk INTEGER PRIMARY KEY,
+            channel_slug TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            gdrive_file_id TEXT NULL,
+            analysis_computed_at REAL NOT NULL,
+            analysis_status TEXT NOT NULL,
+            analyzer_version TEXT NULL,
+            schema_version TEXT NULL,
+            duration_sec REAL NULL,
+            true_peak_dbfs REAL NULL,
+            spikes_found INTEGER NOT NULL DEFAULT 0,
+            yamnet_top_tags_text TEXT NULL,
+            yamnet_top_classes_json TEXT NULL,
+            voice_flag INTEGER NOT NULL DEFAULT 0,
+            voice_flag_reason TEXT NULL,
+            speech_flag INTEGER NOT NULL DEFAULT 0,
+            speech_flag_reason TEXT NULL,
+            dominant_texture TEXT NULL,
+            texture_confidence REAL NULL,
+            texture_reason TEXT NULL,
+            prohibited_cues_summary TEXT NULL,
+            prohibited_cues_flags_json TEXT NULL,
+            dsp_score REAL NULL,
+            dsp_score_version TEXT NULL,
+            dsp_notes TEXT NULL,
+            legacy_scene TEXT NULL,
+            legacy_mood TEXT NULL,
+            legacy_safety REAL NULL,
+            legacy_scene_match REAL NULL,
+            human_readable_notes TEXT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(track_pk) REFERENCES tracks(id)
+        );
+
         CREATE TABLE IF NOT EXISTS track_jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             job_type TEXT NOT NULL,
