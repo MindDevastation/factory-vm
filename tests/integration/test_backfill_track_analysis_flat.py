@@ -23,15 +23,23 @@ class TestBackfillTrackAnalysisFlat(unittest.TestCase):
                 {
                     "analysis_status": "COMPLETE",
                     "duration_sec": 12.5,
+                    "true_peak_dbfs": -0.7,
                     "yamnet_top_classes": [{"label": "Music", "score": 0.95}],
+                    "voice_flag": True,
+                    "voice_flag_reason": "Detected sung vocal",
+                    "speech_flag": False,
+                    "dominant_texture": "harmonic",
+                    "texture_reason": "Stable pad + guitar",
+                    "scene": "cinematic",
                     "advanced_v1": {"meta": {"analyzer_version": "adv", "schema_version": "v1"}},
                 }
             )
             tags_json = dbm.json_dumps(
                 {
                     "yamnet_tags": ["Music"],
-                    "prohibited_cues": {"flags": {"clipping_detected": False}},
-                    "prohibited_cues_notes": "No prohibited cues.",
+                    "mood": "reflective",
+                    "prohibited_cues": {"flags": {"clipping_detected": True}},
+                    "prohibited_cues_notes": "Mild clipping on intro.",
                 }
             )
             scores_json = dbm.json_dumps({"dsp_score": 0.7, "dsp_score_version": "v1", "dsp_notes": "weighted"})
@@ -47,6 +55,23 @@ class TestBackfillTrackAnalysisFlat(unittest.TestCase):
             assert flat is not None
             self.assertEqual(flat["analysis_computed_at"], 1002.0)
             self.assertEqual(flat["analysis_status"], "COMPLETE")
+            self.assertEqual(flat["analyzer_version"], "adv")
+            self.assertEqual(flat["schema_version"], "v1")
+            self.assertEqual(flat["duration_sec"], 12.5)
+            self.assertEqual(flat["true_peak_dbfs"], -0.7)
+            self.assertEqual(flat["yamnet_top_tags_text"], "Music")
+            self.assertEqual(flat["voice_flag"], 1)
+            self.assertEqual(flat["speech_flag"], 0)
+            self.assertEqual(flat["dominant_texture"], "harmonic")
+            self.assertEqual(flat["prohibited_cues_summary"], "Mild clipping on intro. | active_flags=clipping_detected")
+            self.assertEqual(flat["dsp_score"], 0.7)
+            self.assertEqual(flat["legacy_scene"], "cinematic")
+            self.assertEqual(flat["legacy_mood"], "reflective")
+            self.assertEqual(
+                flat["human_readable_notes"],
+                "Mild clipping on intro. | weighted | Stable pad + guitar | Detected sung vocal",
+            )
+            self.assertIsNotNone(flat["updated_at"])
 
             conn.execute(
                 "UPDATE track_scores SET payload_json = ?, computed_at = ? WHERE track_pk = ?",
