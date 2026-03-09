@@ -78,6 +78,51 @@ class TestTrackAnalysisFlatSync(unittest.TestCase):
             self.assertEqual(flat["dsp_score_version"], "v1")
             self.assertEqual(flat["voice_flag"], 1)
             self.assertEqual(flat["speech_flag"], 0)
+            row_fragment = {
+                "track_pk": flat["track_pk"],
+                "channel_slug": flat["channel_slug"],
+                "track_id": flat["track_id"],
+                "analysis_computed_at": flat["analysis_computed_at"],
+                "analysis_status": flat["analysis_status"],
+                "analyzer_version": flat["analyzer_version"],
+                "schema_version": flat["schema_version"],
+                "duration_sec": flat["duration_sec"],
+                "true_peak_dbfs": flat["true_peak_dbfs"],
+                "yamnet_top_tags_text": flat["yamnet_top_tags_text"],
+                "voice_flag": flat["voice_flag"],
+                "speech_flag": flat["speech_flag"],
+                "dominant_texture": flat["dominant_texture"],
+                "prohibited_cues_summary": flat["prohibited_cues_summary"],
+                "dsp_score": flat["dsp_score"],
+                "legacy_scene": flat["legacy_scene"],
+                "legacy_mood": flat["legacy_mood"],
+                "human_readable_notes": flat["human_readable_notes"],
+            }
+            self.assertEqual(
+                row_fragment,
+                {
+                    "track_pk": int(track_row["id"]),
+                    "channel_slug": "darkwood-reverie",
+                    "track_id": "001",
+                    "analysis_computed_at": 1234.5,
+                    "analysis_status": "COMPLETE",
+                    "analyzer_version": "adv",
+                    "schema_version": "v1",
+                    "duration_sec": 12.5,
+                    "true_peak_dbfs": -2.1,
+                    "yamnet_top_tags_text": "Music",
+                    "voice_flag": 1,
+                    "speech_flag": 0,
+                    "dominant_texture": "smooth",
+                    "prohibited_cues_summary": "No prohibited cues detected by fallback analyzer.",
+                    "dsp_score": 0.8,
+                    "legacy_scene": None,
+                    "legacy_mood": None,
+                    "human_readable_notes": "No prohibited cues detected by fallback analyzer. | weighted components | ok | voice_prob=0.9 | speech_prob=0.0",
+                },
+            )
+            self.assertIsInstance(flat["updated_at"], str)
+            self.assertNotEqual(flat["updated_at"], "")
         finally:
             conn.close()
 
