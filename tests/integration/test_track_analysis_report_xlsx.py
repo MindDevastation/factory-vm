@@ -137,6 +137,26 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
                 for col_idx, key in enumerate(ordered_keys, start=1):
                     self.assertEqual(ws.cell(row=row_offset, column=col_idx).value, api_row.get(key))
 
+    def test_xlsx_columns_do_not_include_advanced_v1_until_registry_update(self) -> None:
+        with temp_env() as (_, env):
+            self._seed_channel(env)
+            self._seed_tracks(env)
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    "UPDATE track_features SET payload_json = ? WHERE track_pk = 1",
+                    ('{"analysis_status":"ok","voice_flag":false,"advanced_v1":{"meta":{"schema_version":"advanced_v1"},"profiles":{"LONG_INSTRUMENTAL_AMBIENT":{},"LONG_LYRICAL":{}}}}',),
+                )
+            finally:
+                conn.close()
+
+            _, client = self._new_client()
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+            api_resp = client.get("/v1/track-catalog/analysis-report", params={"channel_slug": "darkwood-reverie"}, headers=auth)
+            self.assertEqual(api_resp.status_code, 200)
+            columns = api_resp.json()["columns"]
+            self.assertTrue(all("advanced_v1" not in str(col.get("source_path") or "") for col in columns))
+
 
 
 def _col(value: int) -> str:

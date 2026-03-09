@@ -12,7 +12,9 @@ from services.common import db as dbm
 from services.track_analyzer.analyze import (
     AnalyzeError,
     SIMILARITY_VECTOR_ORDER,
+    _build_p0_profiles,
     _compute_advanced_derived_outputs,
+    _validate_advanced_v1_payload,
     analyze_tracks,
 )
 from services.track_analyzer.yamnet import YAMNetUnavailableError
@@ -217,7 +219,10 @@ class TestTrackAnalyze(unittest.TestCase):
                     self.assertTrue(str(meta.get("analyzed_at") or "").strip())
                     self.assertEqual(meta.get("rollout_tier"), "s1")
                     self.assertEqual(meta.get("segment_policy"), "track_full")
-                    self.assertEqual(advanced_v1.get("profiles"), {})
+                    profiles = advanced_v1.get("profiles")
+                self.assertIsInstance(profiles, dict)
+                self.assertEqual(set(profiles.keys()), {"LONG_INSTRUMENTAL_AMBIENT", "LONG_LYRICAL"})
+                self.assertTrue(all(isinstance(v, dict) for v in profiles.values()))
 
                 self.assertIn("quality", features["advanced_v1"])
                 self.assertIn("dynamics", features["advanced_v1"])
@@ -517,6 +522,42 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertEqual(features.get("missing_fields"), [])
             finally:
                 conn.close()
+
+    def test_validate_advanced_v1_payload_rejects_bad_vector_length(self) -> None:
+        payload = {
+            "dsp_score": 0.5,
+            "advanced_v1": {
+                "meta": {
+                    "analyzer_version": "advanced_track_analyzer_v1.1",
+                    "schema_version": "advanced_v1",
+                    "analyzed_at": "2026-01-01T00:00:00Z",
+                    "rollout_tier": "s1",
+                    "segment_policy": "track_full",
+                },
+                "profiles": _build_p0_profiles(),
+                "similarity": {"normalized_feature_vector": [0.1]},
+            },
+        }
+
+        with self.assertRaisesRegex(AnalyzeError, "normalized_feature_vector"):
+            _validate_advanced_v1_payload(payload, required_scalar_paths=("dsp_score",))
+
+    def test_validate_advanced_v1_payload_requires_p0_profiles(self) -> None:
+        payload = {
+            "advanced_v1": {
+                "meta": {
+                    "analyzer_version": "advanced_track_analyzer_v1.1",
+                    "schema_version": "advanced_v1",
+                    "analyzed_at": "2026-01-01T00:00:00Z",
+                    "rollout_tier": "s1",
+                    "segment_policy": "track_full",
+                },
+                "profiles": {"LONG_INSTRUMENTAL_AMBIENT": {}},
+            },
+        }
+
+        with self.assertRaisesRegex(AnalyzeError, "missing profile object LONG_LYRICAL"):
+            _validate_advanced_v1_payload(payload)
 
     def test_analyze_requires_thresholds(self) -> None:
         with tempfile.TemporaryDirectory() as td:

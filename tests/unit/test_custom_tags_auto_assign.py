@@ -251,6 +251,49 @@ class TestCustomTagsAutoAssign(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_source_path_resolution_supports_legacy_and_advanced_v1_paths(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                track_pk = self._insert_track(conn)
+                legacy_tag = self._insert_tag(conn, code="legacy-match", category="MOOD")
+                advanced_tag = self._insert_tag(conn, code="advanced-match", category="THEME")
+
+                self._insert_rule(
+                    conn,
+                    tag_id=legacy_tag,
+                    source_path="track_features.payload_json.voice_flag",
+                    operator="equals",
+                    value=True,
+                )
+                self._insert_rule(
+                    conn,
+                    tag_id=advanced_tag,
+                    source_path="track_features.payload_json.advanced_v1.voice.human_presence_score",
+                    operator="gte",
+                    value=0.8,
+                )
+
+                result = apply_auto_custom_tags(
+                    conn,
+                    track_pk,
+                    analyzer_payload={
+                        "track_features": {
+                            "payload_json": {
+                                "voice_flag": True,
+                                "advanced_v1": {
+                                    "voice": {"human_presence_score": 0.91},
+                                },
+                            }
+                        }
+                    },
+                )
+
+                self.assertEqual(result["auto_added"], [legacy_tag, advanced_tag])
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

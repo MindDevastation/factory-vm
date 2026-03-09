@@ -98,6 +98,33 @@ class TestTrackAnalysisReportService(unittest.TestCase):
         self.assertEqual(len(report["rows"]), 1)
         self.assertEqual(set(report["rows"][0].keys()), expected_keys)
 
+    def test_advanced_v1_presence_does_not_change_report_row_shape_or_values(self) -> None:
+        track_pk = self._insert_track("001", "file-001")
+        self.conn.execute(
+            "INSERT INTO track_features(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
+            (
+                track_pk,
+                '{"analysis_status":"ok","voice_flag":false,"advanced_v1":{"meta":{"schema_version":"advanced_v1"},"profiles":{"LONG_INSTRUMENTAL_AMBIENT":{},"LONG_LYRICAL":{}},"similarity":{"normalized_feature_vector":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}}}',
+                1010.0,
+            ),
+        )
+        self.conn.execute(
+            "INSERT INTO track_tags(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
+            (track_pk, '{"yamnet_tags":["rain"],"advanced_v1":{"meta":{"schema_version":"advanced_v1"},"profiles":{"LONG_INSTRUMENTAL_AMBIENT":{},"LONG_LYRICAL":{}}}}', 1020.0),
+        )
+        self.conn.execute(
+            "INSERT INTO track_scores(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
+            (track_pk, '{"dsp_score":0.93,"advanced_v1":{"meta":{"schema_version":"advanced_v1"},"profiles":{"LONG_INSTRUMENTAL_AMBIENT":{},"LONG_LYRICAL":{}}}}', 1030.0),
+        )
+
+        report = build_channel_report(self.conn, "darkwood-reverie")
+        row = report["rows"][0]
+        self.assertEqual(row["analysis_status"], "ok")
+        self.assertEqual(row["voice_flag"], False)
+        self.assertEqual(row["yamnet_tags"], "rain")
+        self.assertEqual(row["dsp_score"], 0.93)
+        self.assertTrue(all("advanced_v1" not in str(col.get("source_path") or "") for col in report["columns"]))
+
 
 if __name__ == "__main__":
     unittest.main()

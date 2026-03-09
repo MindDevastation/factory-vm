@@ -215,7 +215,7 @@ def analyze_tracks(
                 "missing_fields": missing_fields,
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
-                    "profiles": {},
+                    "profiles": _build_p0_profiles(),
                     "quality": quality_metrics,
                     "dynamics": dynamics_metrics,
                     "timbre": timbre_metrics,
@@ -232,7 +232,7 @@ def analyze_tracks(
                 "missing_fields": missing_fields,
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
-                    "profiles": {},
+                    "profiles": _build_p0_profiles(),
                     "semantic": {
                         "mood_tags": derived_outputs["semantic"]["mood_tags"],
                         "theme_tags": derived_outputs["semantic"]["theme_tags"],
@@ -252,7 +252,7 @@ def analyze_tracks(
                 "missing_fields": missing_fields,
                 "advanced_v1": {
                     "meta": advanced_v1_meta,
-                    "profiles": {},
+                    "profiles": _build_p0_profiles(),
                     "semantic": {
                         "functional_scores": derived_outputs["semantic"]["functional_scores"],
                     },
@@ -263,6 +263,9 @@ def analyze_tracks(
                     "final_decisions": derived_outputs["final_decisions"],
                 },
             }
+            _validate_advanced_v1_payload(features_payload, required_scalar_paths=("duration_sec",), allow_none_scalar_paths=("duration_sec",))
+            _validate_advanced_v1_payload(tags_payload)
+            _validate_advanced_v1_payload(scores_payload, required_scalar_paths=("dsp_score",))
 
             conn.execute("BEGIN")
             try:
@@ -346,6 +349,52 @@ def _select_tracks(conn: Any, *, channel_slug: str, scope: str, force: bool, max
         """,
         tuple(args),
     ).fetchall()
+
+
+def _build_p0_profiles() -> dict[str, dict[str, Any]]:
+    return {context: {} for context in P0_CONTEXTS}
+
+
+def _validate_advanced_v1_payload(
+    payload: dict[str, Any],
+    *,
+    required_scalar_paths: tuple[str, ...] = (),
+    allow_none_scalar_paths: tuple[str, ...] = (),
+) -> None:
+    advanced = payload.get("advanced_v1")
+    if not isinstance(advanced, dict):
+        raise AnalyzeError("ADVANCED_V1_INVALID: missing advanced_v1 object")
+
+    profiles = advanced.get("profiles")
+    if not isinstance(profiles, dict):
+        raise AnalyzeError("ADVANCED_V1_INVALID: profiles must be an object")
+    for context in P0_CONTEXTS:
+        profile_obj = profiles.get(context)
+        if not isinstance(profile_obj, dict):
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: missing profile object {context}")
+
+    meta = advanced.get("meta")
+    if not isinstance(meta, dict):
+        raise AnalyzeError("ADVANCED_V1_INVALID: missing meta object")
+    for meta_key in ("analyzer_version", "schema_version", "analyzed_at", "rollout_tier", "segment_policy"):
+        if meta.get(meta_key) is None:
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: meta.{meta_key} must be non-null")
+
+    similarity = advanced.get("similarity")
+    if isinstance(similarity, dict):
+        vector = similarity.get("normalized_feature_vector")
+        if not isinstance(vector, list) or len(vector) != len(SIMILARITY_VECTOR_ORDER):
+            raise AnalyzeError("ADVANCED_V1_INVALID: normalized_feature_vector length mismatch")
+
+    for path in required_scalar_paths:
+        value: Any = payload
+        for part in path.split("."):
+            if not isinstance(value, dict):
+                value = None
+                break
+            value = value.get(part)
+        if value is None and path not in allow_none_scalar_paths:
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: {path} must be non-null")
 
 
 def _require_thresholds(conn: Any, channel_slug: str) -> None:
