@@ -119,6 +119,46 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertIsNotNone(scores.get("dsp_score"))
                 self.assertEqual(features.get("yamnet_probabilities", {}).get("music"), 0.95)
                 self.assertEqual(tags.get("yamnet_tags"), ["Music", "Speech"])
+
+                functional_scores = scores.get("advanced_v1", {}).get("semantic", {}).get("functional_scores", {})
+                self.assertAlmostEqual(float(functional_scores.get("focus")), 0.852335498867187)
+                self.assertAlmostEqual(float(functional_scores.get("energy")), 0.013681948844507368)
+                self.assertAlmostEqual(float(functional_scores.get("narrative")), 0.019799999999999998)
+                self.assertAlmostEqual(float(functional_scores.get("background_compatibility")), 0.8138048203590911)
+
+                semantic_tags = tags.get("advanced_v1", {}).get("semantic", {})
+                self.assertEqual(semantic_tags.get("mood_tags"), ["ambient", "calm"])
+                self.assertEqual(semantic_tags.get("theme_tags"), ["loopable"])
+
+                rule_trace = scores.get("advanced_v1", {}).get("rule_trace", [])
+                self.assertIsInstance(rule_trace, list)
+                self.assertGreater(len(rule_trace), 0)
+                self.assertEqual(
+                    rule_trace[0],
+                    {
+                        "rule_id": "semantic.focus.v1",
+                        "inputs": {
+                            "smooth": 0.9999006498183007,
+                            "ambient": 0.5996435398281906,
+                            "speech": 0.03,
+                        },
+                        "weights": {
+                            "smooth": 0.4,
+                            "ambient": 0.35,
+                            "speech_inverse": 0.25,
+                        },
+                        "output": 0.852335498867187,
+                    },
+                )
+
+                self.assertEqual(
+                    scores.get("advanced_v1", {}).get("final_decisions"),
+                    {
+                        "hard_veto": False,
+                        "soft_penalty_total": 0.0,
+                        "warning_codes": [],
+                    },
+                )
                 self.assertIn("yamnet_agg", features)
                 self.assertIn("voice_flag", features)
                 self.assertIn("voice_flag_reason", features)
