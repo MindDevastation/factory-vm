@@ -11,7 +11,15 @@ from unittest import mock
 from services.common import db as dbm
 from services.track_analyzer.analyze import (
     AnalyzeError,
+    FEATURES_REQUIRED_ADVANCED_LIST_PATHS,
+    FEATURES_REQUIRED_ADVANCED_OBJECT_PATHS,
+    FEATURES_REQUIRED_ADVANCED_SCALAR_PATHS,
     SIMILARITY_VECTOR_ORDER,
+    SCORES_REQUIRED_ADVANCED_LIST_PATHS,
+    SCORES_REQUIRED_ADVANCED_OBJECT_PATHS,
+    SCORES_REQUIRED_ADVANCED_SCALAR_PATHS,
+    TAGS_REQUIRED_ADVANCED_LIST_PATHS,
+    TAGS_REQUIRED_ADVANCED_OBJECT_PATHS,
     _build_p0_profiles,
     _compute_advanced_derived_outputs,
     _validate_advanced_v1_payload,
@@ -36,6 +44,131 @@ class FakeDrive:
 
 
 class TestTrackAnalyze(unittest.TestCase):
+    def _advanced_meta(self) -> dict[str, str]:
+        return {
+            "analyzer_version": "advanced_track_analyzer_v1.1",
+            "schema_version": "advanced_v1",
+            "analyzed_at": "2026-01-01T00:00:00Z",
+            "rollout_tier": "s1",
+            "segment_policy": "track_full",
+        }
+
+    def _valid_features_payload(self) -> dict[str, object]:
+        return {
+            "duration_sec": 10.0,
+            "advanced_v1": {
+                "meta": self._advanced_meta(),
+                "profiles": _build_p0_profiles(),
+                "quality": {
+                    "duration_sec": 10.0,
+                    "integrated_lufs": -14.0,
+                    "loudness_range_lra": 6.0,
+                    "true_peak_dbfs": -1.0,
+                    "clipping_ratio": 0.0,
+                    "noise_floor_estimate": -60.0,
+                    "silence_ratio": 0.1,
+                    "intro_silence_ratio": 0.0,
+                    "outro_silence_ratio": 0.0,
+                    "stereo_width": 0.5,
+                    "mono_compatibility": 0.9,
+                    "sample_rate": 16000,
+                    "channels_count": 2,
+                },
+                "dynamics": {
+                    "energy_mean": 0.1,
+                    "energy_variance": 0.01,
+                    "dynamic_stability": 0.8,
+                    "transient_density": 0.2,
+                    "pulse_strength": 0.5,
+                    "tempo_estimate": 90.0,
+                    "tempo_confidence": 0.7,
+                    "event_density": 0.2,
+                    "intensity_curve_summary": {
+                        "start_mean": 0.1,
+                        "middle_mean": 0.2,
+                        "end_mean": 0.15,
+                        "linear_slope": 0.01,
+                        "peak_position_ratio": 0.6,
+                        "convexity_hint": 1.0,
+                    },
+                },
+                "timbre": {
+                    "brightness": 0.4,
+                    "warmth": 0.5,
+                    "darkness": 0.3,
+                    "spectral_centroid_mean": 400.0,
+                    "spectral_rolloff_mean": 1200.0,
+                    "low_end_weight": 0.2,
+                    "high_end_sharpness": 0.2,
+                    "harmonic_density": 0.6,
+                    "tonal_stability": 0.7,
+                    "drone_presence": 0.3,
+                    "pad_presence": 0.3,
+                    "percussion_presence": 0.3,
+                    "melodic_prominence": 0.4,
+                    "texture_smoothness": 0.5,
+                },
+                "structure": {
+                    "intro_energy": 0.1,
+                    "early_section_energy": 0.2,
+                    "middle_section_energy": 0.3,
+                    "late_section_energy": 0.2,
+                    "outro_energy": 0.1,
+                    "intro_smoothness": 0.5,
+                    "outro_smoothness": 0.5,
+                    "structural_stability": 0.7,
+                    "climax_presence": 0.3,
+                    "abruptness_score": 0.2,
+                    "loop_friendliness": 0.4,
+                    "fade_friendliness": 0.5,
+                    "section_summary": {"intro": "quiet"},
+                },
+                "voice": {
+                    "speech_probability": 0.1,
+                    "vocal_probability": 0.2,
+                    "spoken_word_density": 0.05,
+                    "human_presence_score": 0.2,
+                },
+                "similarity": {
+                    "normalized_feature_vector": [0.0] * len(SIMILARITY_VECTOR_ORDER),
+                    "diversity_penalty_base": 0.1,
+                },
+            },
+        }
+
+    def _valid_scores_payload(self) -> dict[str, object]:
+        return {
+            "dsp_score": 0.8,
+            "advanced_v1": {
+                "meta": self._advanced_meta(),
+                "profiles": _build_p0_profiles(),
+                "semantic": {
+                    "functional_scores": {
+                        "focus": 0.5,
+                        "energy": 0.5,
+                        "narrative": 0.5,
+                        "background_compatibility": 0.5,
+                    }
+                },
+                "playlist_fit": 0.5,
+                "transition": 0.5,
+                "suitability": {"content_type_fit_score": 0.5},
+                "final_decisions": {"hard_veto": False, "soft_penalty_total": 0.0, "warning_codes": []},
+                "rule_trace": [],
+            },
+        }
+
+    def _valid_tags_payload(self) -> dict[str, object]:
+        return {
+            "advanced_v1": {
+                "meta": self._advanced_meta(),
+                "profiles": _build_p0_profiles(),
+                "semantic": {"mood_tags": ["calm"], "theme_tags": ["night"]},
+                "voice_tags": [],
+                "classifier_evidence": {"yamnet_top_classes": []},
+            }
+        }
+
     def test_analyze_writes_required_rows_and_fields(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
@@ -524,23 +657,18 @@ class TestTrackAnalyze(unittest.TestCase):
                 conn.close()
 
     def test_validate_advanced_v1_payload_rejects_bad_vector_length(self) -> None:
-        payload = {
-            "dsp_score": 0.5,
-            "advanced_v1": {
-                "meta": {
-                    "analyzer_version": "advanced_track_analyzer_v1.1",
-                    "schema_version": "advanced_v1",
-                    "analyzed_at": "2026-01-01T00:00:00Z",
-                    "rollout_tier": "s1",
-                    "segment_policy": "track_full",
-                },
-                "profiles": _build_p0_profiles(),
-                "similarity": {"normalized_feature_vector": [0.1]},
-            },
-        }
+        payload = self._valid_features_payload()
+        payload["advanced_v1"]["similarity"]["normalized_feature_vector"] = [0.1]
 
         with self.assertRaisesRegex(AnalyzeError, "normalized_feature_vector"):
-            _validate_advanced_v1_payload(payload, required_scalar_paths=("dsp_score",))
+            _validate_advanced_v1_payload(
+                payload,
+                required_scalar_paths=("duration_sec",),
+                allow_none_scalar_paths=("duration_sec",),
+                required_advanced_scalar_paths=FEATURES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=FEATURES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=FEATURES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
 
     def test_validate_advanced_v1_payload_requires_p0_profiles(self) -> None:
         payload = {
@@ -558,6 +686,78 @@ class TestTrackAnalyze(unittest.TestCase):
 
         with self.assertRaisesRegex(AnalyzeError, "missing profile object LONG_LYRICAL"):
             _validate_advanced_v1_payload(payload)
+
+    def test_validate_advanced_v1_payload_rejects_missing_quality_scalar(self) -> None:
+        payload = self._valid_features_payload()
+        del payload["advanced_v1"]["quality"]["integrated_lufs"]
+        with self.assertRaisesRegex(AnalyzeError, "quality.integrated_lufs"):
+            _validate_advanced_v1_payload(
+                payload,
+                required_scalar_paths=("duration_sec",),
+                allow_none_scalar_paths=("duration_sec",),
+                required_advanced_scalar_paths=FEATURES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=FEATURES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=FEATURES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
+
+    def test_validate_advanced_v1_payload_rejects_null_voice_scalar(self) -> None:
+        payload = self._valid_features_payload()
+        payload["advanced_v1"]["voice"]["human_presence_score"] = None
+        with self.assertRaisesRegex(AnalyzeError, "voice.human_presence_score"):
+            _validate_advanced_v1_payload(
+                payload,
+                required_scalar_paths=("duration_sec",),
+                allow_none_scalar_paths=("duration_sec",),
+                required_advanced_scalar_paths=FEATURES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=FEATURES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=FEATURES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
+
+    def test_validate_advanced_v1_payload_rejects_missing_scores_semantic_focus(self) -> None:
+        payload = self._valid_scores_payload()
+        del payload["advanced_v1"]["semantic"]["functional_scores"]["focus"]
+        with self.assertRaisesRegex(AnalyzeError, "semantic.functional_scores.focus"):
+            _validate_advanced_v1_payload(
+                payload,
+                required_scalar_paths=("dsp_score",),
+                required_advanced_scalar_paths=SCORES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=SCORES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=SCORES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
+
+    def test_validate_advanced_v1_payload_rejects_missing_scores_suitability(self) -> None:
+        payload = self._valid_scores_payload()
+        del payload["advanced_v1"]["suitability"]["content_type_fit_score"]
+        with self.assertRaisesRegex(AnalyzeError, "suitability.content_type_fit_score"):
+            _validate_advanced_v1_payload(
+                payload,
+                required_scalar_paths=("dsp_score",),
+                required_advanced_scalar_paths=SCORES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=SCORES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=SCORES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
+
+    def test_validate_advanced_v1_payload_valid_payloads_pass(self) -> None:
+        _validate_advanced_v1_payload(
+            self._valid_features_payload(),
+            required_scalar_paths=("duration_sec",),
+            allow_none_scalar_paths=("duration_sec",),
+            required_advanced_scalar_paths=FEATURES_REQUIRED_ADVANCED_SCALAR_PATHS,
+            required_advanced_object_paths=FEATURES_REQUIRED_ADVANCED_OBJECT_PATHS,
+            required_advanced_list_paths=FEATURES_REQUIRED_ADVANCED_LIST_PATHS,
+        )
+        _validate_advanced_v1_payload(
+            self._valid_scores_payload(),
+            required_scalar_paths=("dsp_score",),
+            required_advanced_scalar_paths=SCORES_REQUIRED_ADVANCED_SCALAR_PATHS,
+            required_advanced_object_paths=SCORES_REQUIRED_ADVANCED_OBJECT_PATHS,
+            required_advanced_list_paths=SCORES_REQUIRED_ADVANCED_LIST_PATHS,
+        )
+        _validate_advanced_v1_payload(
+            self._valid_tags_payload(),
+            required_advanced_object_paths=TAGS_REQUIRED_ADVANCED_OBJECT_PATHS,
+            required_advanced_list_paths=TAGS_REQUIRED_ADVANCED_LIST_PATHS,
+        )
 
     def test_analyze_requires_thresholds(self) -> None:
         with tempfile.TemporaryDirectory() as td:
