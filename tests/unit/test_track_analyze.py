@@ -174,6 +174,83 @@ class TestTrackAnalyze(unittest.TestCase):
                     self.assertEqual(meta.get("segment_policy"), "track_full")
                     self.assertEqual(advanced_v1.get("profiles"), {})
 
+                self.assertIn("quality", features["advanced_v1"])
+                self.assertIn("dynamics", features["advanced_v1"])
+                self.assertNotIn("quality", tags["advanced_v1"])
+                self.assertNotIn("dynamics", tags["advanced_v1"])
+                self.assertNotIn("quality", scores["advanced_v1"])
+                self.assertNotIn("dynamics", scores["advanced_v1"])
+
+                quality = features["advanced_v1"]["quality"]
+                quality_keys = {
+                    "duration_sec",
+                    "integrated_lufs",
+                    "loudness_range_lra",
+                    "true_peak_dbfs",
+                    "clipping_ratio",
+                    "noise_floor_estimate",
+                    "silence_ratio",
+                    "intro_silence_ratio",
+                    "outro_silence_ratio",
+                    "stereo_width",
+                    "mono_compatibility",
+                    "sample_rate",
+                    "channels_count",
+                }
+                self.assertTrue(quality_keys.issubset(quality.keys()))
+                self.assertGreaterEqual(float(quality["clipping_ratio"]), 0.0)
+                self.assertLessEqual(float(quality["clipping_ratio"]), 1.0)
+                self.assertGreaterEqual(float(quality["silence_ratio"]), 0.0)
+                self.assertLessEqual(float(quality["silence_ratio"]), 1.0)
+                self.assertGreaterEqual(float(quality["intro_silence_ratio"]), 0.0)
+                self.assertLessEqual(float(quality["intro_silence_ratio"]), 1.0)
+                self.assertGreaterEqual(float(quality["outro_silence_ratio"]), 0.0)
+                self.assertLessEqual(float(quality["outro_silence_ratio"]), 1.0)
+                self.assertGreaterEqual(float(quality["mono_compatibility"]), -1.0)
+                self.assertLessEqual(float(quality["mono_compatibility"]), 1.0)
+
+                dynamics = features["advanced_v1"]["dynamics"]
+                dynamics_keys = {
+                    "energy_mean",
+                    "energy_variance",
+                    "dynamic_stability",
+                    "transient_density",
+                    "pulse_strength",
+                    "tempo_estimate",
+                    "tempo_confidence",
+                    "event_density",
+                    "intensity_curve_summary",
+                }
+                self.assertTrue(dynamics_keys.issubset(dynamics.keys()))
+                self.assertGreaterEqual(float(dynamics["energy_mean"]), 0.0)
+                self.assertGreaterEqual(float(dynamics["energy_variance"]), 0.0)
+                self.assertGreaterEqual(float(dynamics["dynamic_stability"]), 0.0)
+                self.assertLessEqual(float(dynamics["dynamic_stability"]), 1.0)
+                self.assertGreaterEqual(float(dynamics["pulse_strength"]), 0.0)
+                self.assertLessEqual(float(dynamics["pulse_strength"]), 1.0)
+                self.assertGreaterEqual(float(dynamics["tempo_confidence"]), 0.0)
+                self.assertLessEqual(float(dynamics["tempo_confidence"]), 1.0)
+
+                curve = dynamics["intensity_curve_summary"]
+                self.assertIsInstance(curve, dict)
+                self.assertEqual(
+                    set(curve.keys()),
+                    {
+                        "start_mean",
+                        "middle_mean",
+                        "end_mean",
+                        "linear_slope",
+                        "peak_position_ratio",
+                        "convexity_hint",
+                    },
+                )
+                self.assertGreaterEqual(float(curve["peak_position_ratio"]), 0.0)
+                self.assertLessEqual(float(curve["peak_position_ratio"]), 1.0)
+                self.assertIn(float(curve["convexity_hint"]), {-1.0, 0.0, 1.0})
+
+                self.assertEqual(quality["duration_sec"], features["duration_sec"])
+                self.assertEqual(quality["true_peak_dbfs"], features["true_peak_dbfs"])
+
                 self.assertEqual(features["advanced_v1"]["meta"]["analyzed_at"], tags["advanced_v1"]["meta"]["analyzed_at"])
                 self.assertEqual(features["advanced_v1"]["meta"]["analyzed_at"], scores["advanced_v1"]["meta"]["analyzed_at"])
 
