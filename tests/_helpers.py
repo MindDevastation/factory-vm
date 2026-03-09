@@ -99,11 +99,17 @@ def insert_release_and_job(
             (int(ch["id"]), title, "desc", "[]", None, None, meta_id, ts),
         )
         release_id = int(cur.lastrowid)
-        cur2 = conn.execute(
-            "INSERT INTO jobs(release_id, job_type, state, stage, priority, attempt, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
-            (release_id, job_type, state, stage, 1, 0, ts, ts),
+        return dbm.insert_job_with_lineage_defaults(
+            conn,
+            release_id=release_id,
+            job_type=job_type,
+            state=state,
+            stage=stage,
+            priority=1,
+            attempt=0,
+            created_at=ts,
+            updated_at=ts,
         )
-        return int(cur2.lastrowid)
     finally:
         conn.close()
 

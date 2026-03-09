@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block body %}
+<style>
+  #import-preview-body tr.preview-row-conflict td { background: #fff8e6; }
+  #import-preview-body tr.preview-row-error td { background: #fdecec; }
+</style>
+<h1>Planner · Bulk Releases</h1>
+<p>
+  <a href="/">Dashboard</a>
+  <span class="muted" style="margin:0 8px;">|</span>
+  <button type="button" id="bulk-create-open">Bulk create series</button>
+  <button type="button" id="import-open">Import</button>
+  <button type="button" id="bulk-delete-btn" disabled>Delete selected</button>
+</p>
+
+<div style="display:flex; gap:12px; flex-wrap:wrap; margin: 10px 0;">
+  <label>Channel <input id="filter-channel" placeholder="channel slug"></label>
+  <label>Content type <input id="filter-content-type" placeholder="content type"></label>
+  <label>Search <input id="filter-q" placeholder="title/notes"></label>
+  <label>Sort by
+    <select id="sort-by">
+      <option value="created_at">created_at</option>
+      <option value="updated_at">updated_at</option>
+      <option value="publish_at">publish_at</option>
+      <option value="title">title</option>
+      <option value="channel_slug">channel_slug</option>
+      <option value="content_type">content_type</option>
+      <option value="status">status</option>
+    </select>
+  </label>
+  <label>Sort dir
+    <select id="sort-dir"><option value="desc">desc</option><option value="asc">asc</option></select>
+  </label>
+  <label>Page size
+    <select id="page-size"><option>20</option><option selected>50</option><option>100</option></select>
+  </label>
+  <button type="button" id="reload-btn">Reload</button>
+</div>
+
+<p class="muted" id="planner-note"></p>
+<table>
+  <thead>
+    <tr>
+      <th><input id="select-all" type="checkbox"></th>
+      <th>ID</th><th>Status</th><th>Channel</th><th>Content type</th><th>Title</th><th>Publish at</th><th>Notes</th><th>Updated</th>
+    </tr>
+  </thead>
+  <tbody id="planner-tbody"><tr><td colspan="9" class="muted">Loading...</td></tr></tbody>
+</table>
+<p>
+  <button type="button" id="prev-page">Prev</button>
+  <span id="page-label" class="muted"></span>
+  <button type="button" id="next-page">Next</button>
+</p>
+
+<dialog id="bulk-create-modal">
+  <form method="dialog" id="bulk-create-form">
+    <h3>Bulk create series</h3>
+    <label>Channel <input name="channel_slug" required></label><br>
+    <label>Content type <input name="content_type" required></label><br>
+    <label>Count <input name="count" type="number" min="1" value="1" required></label><br>
+    <label>Start publish_at <input name="start_publish_at" placeholder="2026-01-01T12:00:00Z"></label><br>
+    <label>Step <input name="step" placeholder="1 day"></label><br>
+    <label>Title <input name="title"></label><br>
+    <label>Notes <textarea name="notes"></textarea></label><br>
+    <p class="muted">Default mode is STRICT. Replace is only used by explicit button.</p>
+    <menu>
+      <button value="cancel" type="button" id="bulk-create-cancel">Cancel</button>
+      <button value="default" type="button" id="bulk-create-strict">Create (strict)</button>
+      <button value="replace" type="button" id="bulk-create-replace">Replace conflicts</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="import-modal">
+  <form method="dialog" id="import-form">
+    <h3>Import releases</h3>
+    <input type="file" id="import-file" required>
+    <button type="button" id="import-preview-btn">Preview</button>
+    <p id="import-summary" class="muted"></p>
+    <table>
+      <thead><tr><th>#</th><th>channel</th><th>content_type</th><th>title</th><th>publish_at</th><th>notes</th><th>error</th><th>conflict</th></tr></thead>
+      <tbody id="import-preview-body"><tr><td colspan="8" class="muted">No preview yet.</td></tr></tbody>
+    </table>
+    <menu>
+      <button type="button" id="import-cancel">Close</button>
+      <button type="button" id="import-confirm-strict" disabled>Confirm strict</button>
+      <button type="button" id="import-confirm-replace" disabled>Replace conflicts</button>
+    </menu>
+  </form>
+</dialog>
+
+<script src="/static/planner_bulk_releases.js"></script>
+{% endblock %}

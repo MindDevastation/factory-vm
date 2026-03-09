@@ -9,15 +9,18 @@ import secrets
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from services.common.env import Env
 from services.common import db as dbm
@@ -25,9 +28,24 @@ from services.common.pydeps import ensure_py_deps_on_sys_path
 from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, qa_path
 from services.factory_api.ui_gdrive import run_preflight_for_job
+from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
+from services.factory_api.planner import create_planner_router
+from services.ui_jobs import (
+    UiJobRetryNotFoundError,
+    UiJobRetryStatusError,
+    retry_failed_ui_job,
+)
+from services.track_analysis_report.report_service import (
+    ChannelNotFoundError,
+    InvalidChannelSlugError,
+    TrackAnalysisReportError,
+    build_channel_report,
+)
+from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes, sanitize_sheet_name
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
+from services.custom_tags import assignment_service, catalog_service, rules_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -50,6 +68,7 @@ _render_all_channel_slug: ContextVar[Optional[str]] = ContextVar("render_all_cha
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.include_router(create_db_viewer_router(env))
+app.include_router(create_planner_router(env))
 
 
 def _create_drive_client(_env: Env) -> DriveClient:
@@ -516,6 +535,65 @@ class AnalyzeTrackJobPayload(BaseModel):
     force: bool = False
 
 
+class CustomTagCatalogCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str
+    label: str
+    category: str
+    description: str | None = None
+    is_active: bool = True
+
+
+class CustomTagCatalogPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str | None = None
+    label: str | None = None
+    description: str | None = None
+    is_active: bool | None = None
+    category: str | None = None
+
+
+class CustomTagRuleCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_id: int
+    source_path: str
+    operator: str
+    value_json: str
+    match_mode: str = "ALL"
+    priority: int = 100
+    weight: float | None = None
+    required: bool = False
+    stop_after_match: bool = False
+    is_active: bool = True
+
+
+class CustomTagRulePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_id: int | None = None
+    source_path: str | None = None
+    operator: str | None = None
+    value_json: str | None = None
+    match_mode: str | None = None
+    priority: int | None = None
+    weight: float | None = None
+    required: bool | None = None
+    stop_after_match: bool | None = None
+    is_active: bool | None = None
+
+
+class CustomTagChannelBindingCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_id: int
+    channel_slug: str
+
+
+class CustomTagAssignmentUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_id: int | None = None
+    tag_code: str | None = None
+    category: str | None = None
+
+
 def _normalize_display_name(value: str) -> str:
     return value.strip()
 
@@ -533,6 +611,144 @@ def _require_track_channel_and_canon(conn, channel_slug: str) -> None:
     ).fetchone()
     if in_canon_channels is None or in_canon_thresholds is None:
         raise HTTPException(404, "CHANNEL_NOT_IN_CANON")
+
+
+def _tar_error(
+    status_code: int,
+    code: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> JSONResponse:
+    payload: dict[str, Any] = {"error": {"code": code, "message": message}}
+    if details:
+        payload["error"]["details"] = details
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+@app.get("/v1/track-catalog/analysis-report/channels")
+def api_track_analysis_report_channels(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute(
+            """
+            SELECT c.slug, c.display_name
+            FROM channels c
+            JOIN canon_channels cc ON cc.value = c.slug
+            JOIN canon_thresholds ct ON ct.value = c.slug
+            ORDER BY c.slug ASC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    return {
+        "channels": [
+            {
+                "channel_slug": str(row["slug"]),
+                "display_name": str(row.get("display_name") or ""),
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.get("/v1/track-catalog/analysis-report")
+def api_track_analysis_report(
+    channel_slug: str = "",
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            return build_channel_report(conn, channel_slug)
+        except InvalidChannelSlugError:
+            return _tar_error(
+                400,
+                "TAR_INVALID_CHANNEL",
+                "channel_slug is required",
+            )
+        except ChannelNotFoundError:
+            return _tar_error(
+                404,
+                "TAR_CHANNEL_NOT_FOUND",
+                "channel not found",
+                details={"channel_slug": str(channel_slug or "")},
+            )
+        except TrackAnalysisReportError as exc:
+            logger.exception("track analysis report build failed: channel_slug=%s", channel_slug)
+            return _tar_error(
+                500,
+                "TAR_REPORT_BUILD_FAILED",
+                "failed to build analysis report",
+                details={"reason": str(exc)},
+            )
+        except Exception:
+            logger.exception("track analysis report build failed (unexpected): channel_slug=%s", channel_slug)
+            return _tar_error(
+                500,
+                "TAR_REPORT_BUILD_FAILED",
+                "failed to build analysis report",
+            )
+    finally:
+        conn.close()
+
+
+@app.get("/v1/track-catalog/analysis-report.xlsx")
+def api_track_analysis_report_xlsx(
+    channel_slug: str = "",
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            report = build_channel_report(conn, channel_slug)
+            channel_row = conn.execute(
+                "SELECT display_name FROM channels WHERE slug = ? LIMIT 1",
+                (report["channel_slug"],),
+            ).fetchone()
+            sheet_source = report["channel_slug"]
+            if channel_row is not None and channel_row["display_name"]:
+                sheet_source = str(channel_row["display_name"])
+            sheet_name = sanitize_sheet_name(sheet_source)
+            content = export_report_to_xlsx_bytes(report, sheet_name)
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            filename = f"analysis_report__{report['channel_slug']}__{timestamp}.xlsx"
+            return Response(
+                content=content,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        except InvalidChannelSlugError:
+            return _tar_error(
+                400,
+                "TAR_INVALID_CHANNEL",
+                "channel_slug is required",
+            )
+        except ChannelNotFoundError:
+            return _tar_error(
+                404,
+                "TAR_CHANNEL_NOT_FOUND",
+                "channel not found",
+                details={"channel_slug": str(channel_slug or "")},
+            )
+        except TrackAnalysisReportError as exc:
+            logger.exception("track analysis report xlsx build failed: channel_slug=%s", channel_slug)
+            return _tar_error(
+                500,
+                "TAR_REPORT_BUILD_FAILED",
+                "failed to build analysis report",
+                details={"reason": str(exc)},
+            )
+        except Exception:
+            logger.exception("track analysis report xlsx build failed (unexpected): channel_slug=%s", channel_slug)
+            return _tar_error(
+                500,
+                "TAR_REPORT_BUILD_FAILED",
+                "failed to build analysis report",
+            )
+    finally:
+        conn.close()
+
 
 
 def _safe_json_loads(raw: Any) -> dict[str, Any]:
@@ -768,6 +984,355 @@ def api_track_catalog_track_detail(track_pk: int, _: bool = Depends(require_basi
 
 
 
+def _cta_error_response(err: catalog_service.CatalogError | rules_service.RulesError | assignment_service.AssignmentError) -> JSONResponse:
+    return JSONResponse(
+        status_code=err.status_code,
+        content={"error": {"code": err.code, "message": err.message, "details": err.details or {}}},
+    )
+
+
+_CTA_CATALOG_ENDPOINTS = {
+    ("GET", "/v1/track-catalog/custom-tags/catalog"),
+    ("POST", "/v1/track-catalog/custom-tags/catalog"),
+    ("PATCH", "/v1/track-catalog/custom-tags/catalog/{tag_id}"),
+    ("POST", "/v1/track-catalog/custom-tags/catalog/import"),
+    ("POST", "/v1/track-catalog/custom-tags/catalog/export"),
+    ("GET", "/v1/track-catalog/custom-tags/rules"),
+    ("POST", "/v1/track-catalog/custom-tags/rules"),
+    ("PATCH", "/v1/track-catalog/custom-tags/rules/{rule_id}"),
+    ("DELETE", "/v1/track-catalog/custom-tags/rules/{rule_id}"),
+    ("GET", "/v1/track-catalog/custom-tags/channel-bindings"),
+    ("POST", "/v1/track-catalog/custom-tags/channel-bindings"),
+    ("DELETE", "/v1/track-catalog/custom-tags/channel-bindings/{binding_id}"),
+    ("GET", "/v1/track-catalog/tracks/{track_pk}/custom-tags"),
+    ("POST", "/v1/track-catalog/tracks/{track_pk}/custom-tags"),
+    ("DELETE", "/v1/track-catalog/tracks/{track_pk}/custom-tags/{tag_id}"),
+}
+
+
+def _is_cta_catalog_route_validation_error(request: Request) -> bool:
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None)
+    method = request.method.upper()
+    return isinstance(route_path, str) and (method, route_path) in _CTA_CATALOG_ENDPOINTS
+
+
+@app.exception_handler(RequestValidationError)
+async def _handle_request_validation_error(request: Request, exc: RequestValidationError):
+    if _is_cta_catalog_route_validation_error(request):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "CTA_INVALID_INPUT",
+                    "message": "invalid request payload",
+                    "details": {"errors": exc.errors()},
+                }
+            },
+        )
+    return await request_validation_exception_handler(request, exc)
+
+
+@app.get("/v1/track-catalog/custom-tags/catalog")
+def api_custom_tags_catalog(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        tags = catalog_service.list_catalog(conn)
+    finally:
+        conn.close()
+    return {"tags": tags}
+
+
+@app.post("/v1/track-catalog/custom-tags/catalog")
+def api_custom_tags_catalog_create(payload: CustomTagCatalogCreateRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            tag = catalog_service.create_tag(conn, payload.model_dump())
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags create failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"tag": tag}
+
+
+@app.patch("/v1/track-catalog/custom-tags/catalog/{tag_id}")
+def api_custom_tags_catalog_patch(tag_id: int, payload: CustomTagCatalogPatchRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            tag = catalog_service.update_tag(conn, tag_id=tag_id, payload=payload.model_dump(exclude_none=True))
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags patch failed", extra={"tag_id": tag_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"tag": tag}
+
+
+@app.post("/v1/track-catalog/custom-tags/catalog/import")
+def api_custom_tags_catalog_import(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = catalog_service.import_catalog(conn, seed_dir=env.custom_tags_seed_dir)
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags import failed", extra={"seed_dir": env.custom_tags_seed_dir})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"ok": True, **result}
+
+
+@app.post("/v1/track-catalog/custom-tags/catalog/export")
+def api_custom_tags_catalog_export(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = catalog_service.export_catalog(conn, seed_dir=env.custom_tags_seed_dir)
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags export failed", extra={"seed_dir": env.custom_tags_seed_dir})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"ok": True, **result}
+
+
+@app.get("/v1/track-catalog/custom-tags/rules")
+def api_custom_tag_rules(tag_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            rules = rules_service.list_rules(conn, tag_id=tag_id)
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags rules list failed", extra={"tag_id": tag_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"rules": rules}
+
+
+@app.post("/v1/track-catalog/custom-tags/rules")
+def api_custom_tag_rules_create(payload: CustomTagRuleCreateRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            rule = rules_service.create_rule(conn, payload=payload.model_dump())
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags rules create failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"rule": rule}
+
+
+@app.patch("/v1/track-catalog/custom-tags/rules/{rule_id}")
+def api_custom_tag_rules_patch(rule_id: int, payload: CustomTagRulePatchRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            rule = rules_service.update_rule(conn, rule_id=rule_id, payload=payload.model_dump(exclude_none=True))
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags rules patch failed", extra={"rule_id": rule_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"rule": rule}
+
+
+@app.delete("/v1/track-catalog/custom-tags/rules/{rule_id}")
+def api_custom_tag_rules_delete(rule_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            rules_service.delete_rule(conn, rule_id=rule_id)
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags rules delete failed", extra={"rule_id": rule_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.get("/v1/track-catalog/custom-tags/channel-bindings")
+def api_custom_tag_channel_bindings(tag_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            bindings = rules_service.list_channel_bindings(conn, tag_id=tag_id)
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags channel bindings list failed", extra={"tag_id": tag_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"bindings": bindings}
+
+
+@app.post("/v1/track-catalog/custom-tags/channel-bindings")
+def api_custom_tag_channel_bindings_create(
+    payload: CustomTagChannelBindingCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            binding = rules_service.create_channel_binding(conn, payload=payload.model_dump())
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags channel bindings create failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"binding": binding}
+
+
+@app.delete("/v1/track-catalog/custom-tags/channel-bindings/{binding_id}")
+def api_custom_tag_channel_bindings_delete(binding_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            rules_service.delete_channel_binding(conn, binding_id=binding_id)
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags channel bindings delete failed", extra={"binding_id": binding_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.get("/v1/track-catalog/tracks/{track_pk}/custom-tags")
+def api_track_custom_tag_assignments(track_pk: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            return assignment_service.get_track_custom_tags(conn, track_pk=track_pk)
+        except assignment_service.AssignmentError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags assignments get failed", extra={"track_pk": track_pk})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+
+
+@app.post("/v1/track-catalog/tracks/{track_pk}/custom-tags")
+def api_track_custom_tag_assignments_upsert(
+    track_pk: int,
+    payload: CustomTagAssignmentUpsertRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    tag_id = payload.tag_id
+    tag_code = payload.tag_code
+    category = payload.category
+    has_tag_id = tag_id is not None
+    has_code_selector = tag_code is not None or category is not None
+    if has_tag_id and has_code_selector:
+        return _cta_error_response(assignment_service.InvalidInputError("provide either tag_id or tag_code+category"))
+    if not has_tag_id and not has_code_selector:
+        return _cta_error_response(assignment_service.InvalidInputError("tag selector is required"))
+    if has_code_selector and (tag_code is None or category is None):
+        return _cta_error_response(assignment_service.InvalidInputError("tag_code and category must be provided together"))
+
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = assignment_service.upsert_manual_assignment(
+                conn,
+                track_pk=track_pk,
+                tag_id=tag_id,
+                tag_code=tag_code,
+                category=category,
+            )
+        except assignment_service.AssignmentError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags assignments upsert failed", extra={"track_pk": track_pk})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
+@app.delete("/v1/track-catalog/tracks/{track_pk}/custom-tags/{tag_id}")
+def api_track_custom_tag_assignments_delete(track_pk: int, tag_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = assignment_service.suppress_assignment(conn, track_pk=track_pk, tag_id=tag_id)
+        except assignment_service.AssignmentError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags assignments delete failed", extra={"track_pk": track_pk, "tag_id": tag_id})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
 @app.post("/v1/channels")
 def api_create_channel(payload: CreateChannelPayload, _: bool = Depends(require_basic_auth(env))):
     slug = payload.slug.strip()
@@ -946,6 +1511,10 @@ class UiJobDraftPayload(BaseModel):
     audio_ids_text: str
 
 
+class UiJobsRenderSelectedPayload(BaseModel):
+    job_ids: Optional[list[str]] = None
+
+
 def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
     errors: Dict[str, List[str]] = {
         "project": [],
@@ -981,6 +1550,21 @@ def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
 @app.get("/ui/db-viewer", response_class=HTMLResponse)
 def ui_db_viewer_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("db_viewer.html", {"request": request})
+
+
+@app.get("/ui/planner", response_class=HTMLResponse)
+def ui_planner_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("planner_bulk_releases.html", {"request": request})
+
+
+@app.get("/ui/track-catalog/analysis-report", response_class=HTMLResponse)
+def ui_track_analysis_report_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("track_analysis_report.html", {"request": request})
+
+
+@app.get("/ui/tags", response_class=HTMLResponse)
+def ui_tags_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("tags.html", {"request": request})
 
 
 def _all_channels(conn) -> list:
@@ -1031,6 +1615,29 @@ def api_jobs(state: Optional[str] = None, _: bool = Depends(require_basic_auth(e
     conn = dbm.connect(env)
     try:
         jobs = dbm.list_jobs(conn, state=state, limit=500)
+        job_ids = [int(job["id"]) for job in jobs]
+        retry_child_by_parent_id: dict[int, int] = {}
+        if job_ids:
+            placeholders = ",".join("?" for _ in job_ids)
+            rows = conn.execute(
+                f"SELECT id, retry_of_job_id FROM jobs WHERE retry_of_job_id IN ({placeholders})",
+                job_ids,
+            ).fetchall()
+            retry_child_by_parent_id = {
+                int(row["retry_of_job_id"]): int(row["id"])
+                for row in rows
+                if row.get("retry_of_job_id") is not None
+            }
+
+        for job in jobs:
+            retry_child_job_id = retry_child_by_parent_id.get(int(job["id"]))
+            status = str(job.get("state") or "")
+            job["status"] = status
+            job["attempt_no"] = int(job.get("attempt_no") or 1)
+            job["retry_child_job_id"] = retry_child_job_id
+            actions = dict(job.get("actions") or {})
+            actions["retry_allowed"] = bool(status == "FAILED" and retry_child_job_id is None)
+            job["actions"] = actions
     finally:
         conn.close()
     return {"jobs": jobs}
@@ -1146,6 +1753,20 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
     return {"ok": True, "delete_mp4_at": delete_at}
 
 
+@app.get("/v1/ui/jobs/statuses")
+def api_ui_jobs_statuses(_: bool = Depends(require_basic_auth(env))):
+    ordered_statuses: list[str] = []
+    for status in track_jobs_db.RUNNING_STATUSES + track_jobs_db.TERMINAL_STATUSES:
+        if status not in ordered_statuses:
+            ordered_statuses.append(status)
+    return {"statuses": ordered_statuses}
+
+
+@app.get("/v1/ui/jobs/render_allowed_statuses")
+def api_ui_jobs_render_allowed_statuses(_: bool = Depends(require_basic_auth(env))):
+    return {"render_allowed_statuses": ["Draft"]}
+
+
 @app.post("/v1/ui/jobs")
 def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basic_auth(env))):
     errors = _ui_validate(payload)
@@ -1173,6 +1794,113 @@ def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basi
     finally:
         conn.close()
     return {"ok": True, "job_id": job_id}
+
+
+def _uij_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _render_selected_item(job_id_text: str) -> dict[str, Any]:
+    try:
+        job_id = int(job_id_text)
+    except (TypeError, ValueError):
+        return {
+            "job_id": str(job_id_text),
+            "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"},
+        }
+
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        guard = check_ui_render_guard(conn, job_id=job_id)
+        if guard.reason == "not_found":
+            return {"job_id": str(job_id), "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"}}
+        if guard.reason == "not_allowed":
+            return {
+                "job_id": str(job_id),
+                "error": {"code": "UIJ_RENDER_NOT_ALLOWED", "message": "Status not allowed"},
+            }
+        if guard.reason == "already_in_progress":
+            return {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"}
+
+        if not job:
+            return {"job_id": str(job_id), "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"}}
+
+        channel_slug = str(job.get("channel_slug") or "")
+        token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)
+        if (not channel_slug) or (not token_path.is_file()):
+            raise RuntimeError(f"missing gdrive token for channel '{channel_slug}'")
+
+        token = _render_all_channel_slug.set(channel_slug)
+        try:
+            drive = _create_drive_client(env)
+        finally:
+            _render_all_channel_slug.reset(token)
+
+        result = run_preflight_for_job(conn, env, job_id, drive=drive)
+        if not result.ok:
+            raise RuntimeError("ui render preflight failed")
+
+        draft = dbm.get_ui_job_draft(conn, job_id)
+        if not draft:
+            return {"job_id": str(job_id), "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"}}
+
+        enqueue_result = enqueue_ui_render_job(
+            conn,
+            job_id=job_id,
+            channel_id=int(draft["channel_id"]),
+            tracks=list(result.resolved.get("tracks") or []),
+            background_file_id=str(result.resolved.get("background_file_id") or ""),
+            background_filename=str(result.resolved.get("background_filename") or ""),
+            cover_file_id=str(result.resolved.get("cover_file_id") or ""),
+            cover_filename=str(result.resolved.get("cover_filename") or ""),
+        )
+
+        if enqueue_result.reason == "already_in_progress":
+            return {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"}
+
+        if enqueue_result.reason == "not_allowed":
+            return {
+                "job_id": str(job_id),
+                "error": {"code": "UIJ_RENDER_NOT_ALLOWED", "message": "Status not allowed"},
+            }
+
+        if enqueue_result.reason == "not_found":
+            return {"job_id": str(job_id), "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"}}
+
+        if enqueue_result.enqueued:
+            return {"job_id": str(job_id), "enqueued": True}
+
+        raise RuntimeError(f"unexpected enqueue result: {enqueue_result.reason}")
+    except Exception:
+        logger.exception("ui render selected item failed", extra={"job_id": job_id_text, "stage": "enqueue_selected"})
+        raise
+    finally:
+        conn.close()
+
+
+@app.post("/v1/ui/jobs/render_selected")
+def api_ui_jobs_render_selected(payload: UiJobsRenderSelectedPayload, _: bool = Depends(require_basic_auth(env))):
+    try:
+        if not payload.job_ids:
+            return _uij_error(400, "UIJ_INVALID_INPUT", "job_ids is required and must be non-empty")
+
+        results = [_render_selected_item(job_id_text) for job_id_text in payload.job_ids]
+        enqueued_count = sum(1 for item in results if item.get("enqueued") is True)
+        noop_count = sum(1 for item in results if item.get("enqueued") is False)
+        failed_count = sum(1 for item in results if item.get("error"))
+        return {
+            "results": results,
+            "summary": {
+                "requested": len(payload.job_ids),
+                "enqueued": enqueued_count,
+                "noop": noop_count,
+                "failed": failed_count,
+            },
+        }
+    except Exception:
+        logger.exception("render_selected internal error", extra={"stage": "enqueue_selected_batch"})
+        return _uij_error(500, "UIJ_INTERNAL", "Internal error")
 
 
 @app.post("/v1/ui/jobs/render_all")
@@ -1232,44 +1960,18 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
                 cover_id = str(result.resolved.get("cover_file_id") or "")
                 cover_name = str(result.resolved.get("cover_filename") or "")
 
-                tx_started = False
-                try:
-                    conn.execute("BEGIN IMMEDIATE")
-                    tx_started = True
-
-                    job = conn.execute("SELECT job_type, state FROM jobs WHERE id=?", (job_id,)).fetchone()
-                    if not job or str(job.get("job_type") or "") != "UI" or str(job.get("state") or "") != "DRAFT":
-                        conn.execute("ROLLBACK")
-                        tx_started = False
-                        continue
-
-                    has_inputs = conn.execute("SELECT 1 FROM job_inputs WHERE job_id=? LIMIT 1", (job_id,)).fetchone()
-                    if has_inputs:
-                        conn.execute("ROLLBACK")
-                        tx_started = False
-                        continue
-
-                    for idx, track in enumerate(tracks):
-                        fid = str(track.get("file_id") or "")
-                        fname = str(track.get("filename") or "")
-                        aid = dbm.create_asset(conn, channel_id=channel_id, kind="AUDIO", origin="GDRIVE", origin_id=fid, name=fname, path=f"gdrive:{fid}")
-                        dbm.link_job_input(conn, job_id, aid, "TRACK", idx)
-
-                    bg_aid = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="GDRIVE", origin_id=bg_id, name=bg_name, path=f"gdrive:{bg_id}")
-                    dbm.link_job_input(conn, job_id, bg_aid, "BACKGROUND", 0)
-
-                    if cover_id:
-                        c_aid = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="GDRIVE", origin_id=cover_id, name=cover_name, path=f"gdrive:{cover_id}")
-                        dbm.link_job_input(conn, job_id, c_aid, "COVER", 0)
-
-                    dbm.update_job_state(conn, job_id, state="READY_FOR_RENDER", stage="FETCH", error_reason="")
-                    conn.execute("COMMIT")
-                    tx_started = False
+                enqueue_result = enqueue_ui_render_job(
+                    conn,
+                    job_id=job_id,
+                    channel_id=channel_id,
+                    tracks=tracks,
+                    background_file_id=bg_id,
+                    background_filename=bg_name,
+                    cover_file_id=cover_id,
+                    cover_filename=cover_name,
+                )
+                if enqueue_result.enqueued:
                     enqueued += 1
-                except Exception:
-                    if tx_started:
-                        conn.execute("ROLLBACK")
-                    raise
             except Exception as exc:
                 failed += 1
                 error_reason = f"render_all: {exc}".strip()[:500]
@@ -1282,6 +1984,114 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
         "skipped_count": len(skipped_jobs),
         "skipped_jobs": skipped_jobs,
     }
+
+
+@app.post("/v1/ui/jobs/{job_id}/render")
+def api_ui_job_render(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        guard = check_ui_render_guard(conn, job_id=job_id)
+        if guard.reason == "not_found":
+            return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+        if guard.reason == "not_allowed":
+            return _uij_error(409, "UIJ_RENDER_NOT_ALLOWED", "Render is allowed only for Draft jobs")
+        if guard.reason == "already_in_progress":
+            return {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"}
+
+        if not job:
+            return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+
+        channel_slug = str(job.get("channel_slug") or "")
+        token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug=channel_slug)
+        if (not channel_slug) or (not token_path.is_file()):
+            raise RuntimeError(f"missing gdrive token for channel '{channel_slug}'")
+
+        token = _render_all_channel_slug.set(channel_slug)
+        try:
+            drive = _create_drive_client(env)
+        finally:
+            _render_all_channel_slug.reset(token)
+
+        result = run_preflight_for_job(conn, env, job_id, drive=drive)
+        if not result.ok:
+            raise RuntimeError("ui render preflight failed")
+
+        draft = dbm.get_ui_job_draft(conn, job_id)
+        if not draft:
+            return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+
+        enqueue_result = enqueue_ui_render_job(
+            conn,
+            job_id=job_id,
+            channel_id=int(draft["channel_id"]),
+            tracks=list(result.resolved.get("tracks") or []),
+            background_file_id=str(result.resolved.get("background_file_id") or ""),
+            background_filename=str(result.resolved.get("background_filename") or ""),
+            cover_file_id=str(result.resolved.get("cover_file_id") or ""),
+            cover_filename=str(result.resolved.get("cover_filename") or ""),
+        )
+
+        if enqueue_result.reason == "already_in_progress":
+            return {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"}
+
+        if not enqueue_result.enqueued:
+            if enqueue_result.reason == "not_allowed":
+                return _uij_error(409, "UIJ_RENDER_NOT_ALLOWED", "Render is allowed only for Draft jobs")
+            if enqueue_result.reason == "not_found":
+                return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+            raise RuntimeError(f"unexpected enqueue result: {enqueue_result.reason}")
+
+        return {"job_id": str(job_id), "enqueued": True, "message": "Render enqueued"}
+    except Exception:
+        logger.exception("ui render enqueue failed", extra={"job_id": job_id, "stage": "enqueue"})
+        return _uij_error(500, "UIJ_ENQUEUE_FAILED", "Failed to enqueue render")
+    finally:
+        conn.close()
+
+
+@app.post("/v1/ui/jobs/{job_id}/retry")
+def api_ui_job_retry(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    logger.info("ui.jobs.retry.request", extra={"job_id": job_id, "stage": "request"})
+    conn = dbm.connect(env)
+    try:
+        result = retry_failed_ui_job(conn, source_job_id=job_id)
+        retry_job = dbm.get_job(conn, result.retry_job_id)
+        attempt_no = int(retry_job.get("attempt_no") or 1) if retry_job else 1
+    except UiJobRetryNotFoundError:
+        logger.info("ui.jobs.retry.error", extra={"job_id": job_id, "stage": "not_found"})
+        return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+    except UiJobRetryStatusError:
+        logger.info("ui.jobs.retry.error", extra={"job_id": job_id, "stage": "not_allowed"})
+        return _uij_error(409, "UIJ_RETRY_NOT_ALLOWED", "Retry is allowed only for Failed jobs")
+    except Exception as exc:
+        message = str(exc)
+        if "retry enqueue integration failed" in message or message.lower() == "enqueue failed":
+            logger.exception("ui.jobs.retry.error", extra={"job_id": job_id, "stage": "enqueue"})
+            return _uij_error(500, "UIJ_RETRY_ENQUEUE_FAILED", "Failed to enqueue retry")
+        logger.exception("ui.jobs.retry.error", extra={"job_id": job_id, "stage": "internal"})
+        return _uij_error(500, "UIJ_RETRY_INTERNAL", "Internal error")
+    finally:
+        conn.close()
+
+    payload = {
+        "source_job_id": str(job_id),
+        "retry_job_id": str(result.retry_job_id),
+        "attempt_no": attempt_no,
+        "enqueued": bool(result.created),
+        "message": "Retry enqueued" if result.created else "Retry already created",
+    }
+    if result.created:
+        logger.info(
+            "ui.jobs.retry.created",
+            extra={"job_id": job_id, "retry_job_id": result.retry_job_id, "stage": "created"},
+        )
+    else:
+        logger.info(
+            "ui.jobs.retry.noop",
+            extra={"job_id": job_id, "retry_job_id": result.retry_job_id, "stage": "noop"},
+        )
+    return payload
 
 
 @app.get("/v1/ui/jobs/{job_id}")

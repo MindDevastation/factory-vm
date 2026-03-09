@@ -12,6 +12,8 @@ import numpy as np
 
 from services.common import db as dbm
 from services.common import ffmpeg
+from services.custom_tags.auto_assign import apply_auto_custom_tags
+from services.track_analyzer.advanced_metrics import compute_dynamics_metrics, compute_quality_metrics
 import services.track_analyzer.yamnet as yamnet
 from services.track_analyzer.texture_heuristics import classify_texture
 from services.track_analyzer.yamnet_buckets import SPEECH_LABELS, VOICE_LABELS
@@ -36,9 +38,136 @@ VOICE_MIN_PROB = 0.2
 SINGING_MIN_PROB = 0.08
 SPEECH_MIN_PROB = 0.10
 DSP_SCORE_VERSION = "v1"
+ADVANCED_ANALYZER_VERSION = "advanced_track_analyzer_v1.1"
+ADVANCED_SCHEMA_VERSION = "advanced_v1"
+ADVANCED_ROLLOUT_TIER = "s1"
+ADVANCED_SEGMENT_POLICY = "track_full"
+P0_CONTEXTS = ("LONG_INSTRUMENTAL_AMBIENT", "LONG_LYRICAL")
+P0_CHANNEL_ARCHETYPE_BY_SLUG = {
+    "darkwood-reverie": "LONG_INSTRUMENTAL_AMBIENT",
+}
 SILENCE_RMS_THRESHOLD = 0.01
 SILENCE_GAP_MIN_MS = 1000
 SILENCE_IGNORE_EDGE_MS = 2000
+SIMILARITY_VECTOR_ORDER = [
+    "timbre.brightness",
+    "timbre.warmth",
+    "timbre.darkness",
+    "timbre.spectral_centroid_mean",
+    "timbre.spectral_rolloff_mean",
+    "timbre.low_end_weight",
+    "timbre.high_end_sharpness",
+    "timbre.harmonic_density",
+    "timbre.tonal_stability",
+    "timbre.drone_presence",
+    "timbre.pad_presence",
+    "timbre.percussion_presence",
+    "timbre.melodic_prominence",
+    "timbre.texture_smoothness",
+    "structure.intro_energy",
+    "structure.early_section_energy",
+    "structure.middle_section_energy",
+    "structure.late_section_energy",
+    "structure.outro_energy",
+    "structure.intro_smoothness",
+    "structure.outro_smoothness",
+    "structure.structural_stability",
+    "structure.climax_presence",
+    "structure.abruptness_score",
+    "structure.loop_friendliness",
+    "structure.fade_friendliness",
+    "voice.speech_probability",
+    "voice.vocal_probability",
+    "voice.spoken_word_density",
+    "voice.human_presence_score",
+]
+
+FEATURES_REQUIRED_ADVANCED_SCALAR_PATHS = (
+    "quality.duration_sec",
+    "quality.integrated_lufs",
+    "quality.loudness_range_lra",
+    "quality.true_peak_dbfs",
+    "quality.clipping_ratio",
+    "quality.noise_floor_estimate",
+    "quality.silence_ratio",
+    "quality.intro_silence_ratio",
+    "quality.outro_silence_ratio",
+    "quality.stereo_width",
+    "quality.mono_compatibility",
+    "quality.sample_rate",
+    "quality.channels_count",
+    "dynamics.energy_mean",
+    "dynamics.energy_variance",
+    "dynamics.dynamic_stability",
+    "dynamics.transient_density",
+    "dynamics.pulse_strength",
+    "dynamics.tempo_estimate",
+    "dynamics.tempo_confidence",
+    "dynamics.event_density",
+    "dynamics.intensity_curve_summary.start_mean",
+    "dynamics.intensity_curve_summary.middle_mean",
+    "dynamics.intensity_curve_summary.end_mean",
+    "dynamics.intensity_curve_summary.linear_slope",
+    "dynamics.intensity_curve_summary.peak_position_ratio",
+    "dynamics.intensity_curve_summary.convexity_hint",
+    "timbre.brightness",
+    "timbre.warmth",
+    "timbre.darkness",
+    "timbre.spectral_centroid_mean",
+    "timbre.spectral_rolloff_mean",
+    "timbre.low_end_weight",
+    "timbre.high_end_sharpness",
+    "timbre.harmonic_density",
+    "timbre.tonal_stability",
+    "timbre.drone_presence",
+    "timbre.pad_presence",
+    "timbre.percussion_presence",
+    "timbre.melodic_prominence",
+    "timbre.texture_smoothness",
+    "structure.intro_energy",
+    "structure.early_section_energy",
+    "structure.middle_section_energy",
+    "structure.late_section_energy",
+    "structure.outro_energy",
+    "structure.intro_smoothness",
+    "structure.outro_smoothness",
+    "structure.structural_stability",
+    "structure.climax_presence",
+    "structure.abruptness_score",
+    "structure.loop_friendliness",
+    "structure.fade_friendliness",
+    "voice.speech_probability",
+    "voice.vocal_probability",
+    "voice.spoken_word_density",
+    "voice.human_presence_score",
+    "similarity.diversity_penalty_base",
+)
+
+FEATURES_REQUIRED_ADVANCED_OBJECT_PATHS = ("structure.section_summary", "dynamics.intensity_curve_summary")
+FEATURES_REQUIRED_ADVANCED_LIST_PATHS = ("similarity.normalized_feature_vector",)
+
+SCORES_REQUIRED_ADVANCED_SCALAR_PATHS = (
+    "semantic.functional_scores.focus",
+    "semantic.functional_scores.energy",
+    "semantic.functional_scores.narrative",
+    "semantic.functional_scores.background_compatibility",
+    "suitability.content_type_fit_score",
+    "final_decisions.hard_veto",
+    "final_decisions.soft_penalty_total",
+)
+SCORES_REQUIRED_ADVANCED_OBJECT_PATHS = (
+    "playlist_fit",
+    "transition",
+)
+SCORES_REQUIRED_ADVANCED_LIST_PATHS = ("final_decisions.warning_codes", "rule_trace")
+
+TAGS_REQUIRED_ADVANCED_OBJECT_PATHS = ("semantic", "classifier_evidence")
+TAGS_REQUIRED_ADVANCED_LIST_PATHS = (
+    "semantic.mood_tags",
+    "semantic.theme_tags",
+    "classifier_evidence.yamnet_top_classes",
+    "voice_tags",
+)
 
 
 def analyze_tracks(
@@ -67,7 +196,7 @@ def analyze_tracks(
         try:
             drive.download_to_path(file_id, local_path)
             duration_sec = _extract_duration_sec(local_path)
-            waveform, sample_rate = _load_wav_mono(local_path)
+            waveform, sample_rate, channels_count, stereo_waveform = _load_wav_pcm(local_path)
             true_peak_dbfs = _extract_true_peak_dbfs(local_path)
             spikes_found = _detect_spikes(true_peak_dbfs)
             try:
@@ -120,6 +249,39 @@ def analyze_tracks(
 
             analysis_status = "COMPLETE" if not missing_fields else "REVIEW"
             computed_at = dbm.now_ts()
+            advanced_v1_meta = {
+                "analyzer_version": ADVANCED_ANALYZER_VERSION,
+                "schema_version": ADVANCED_SCHEMA_VERSION,
+                "analyzed_at": computed_at,
+                "rollout_tier": ADVANCED_ROLLOUT_TIER,
+                "segment_policy": ADVANCED_SEGMENT_POLICY,
+            }
+            quality_metrics = compute_quality_metrics(
+                mono_waveform=waveform,
+                stereo_waveform=stereo_waveform,
+                sample_rate=sample_rate,
+                channels_count=channels_count,
+                duration_sec=duration_sec,
+                true_peak_dbfs=true_peak_dbfs,
+            )
+            dynamics_metrics = compute_dynamics_metrics(mono_waveform=waveform, sample_rate=sample_rate)
+            timbre_metrics = _compute_timbre_metrics(waveform, sample_rate, dominant_texture=dominant_texture)
+            structure_metrics = _compute_structure_metrics(waveform, sample_rate)
+            voice_metrics = _compute_voice_metrics(yamnet_agg)
+            similarity_metrics = _compute_similarity_metrics(
+                timbre=timbre_metrics,
+                structure=structure_metrics,
+                voice=voice_metrics,
+            )
+            derived_outputs = _compute_advanced_derived_outputs(
+                quality=quality_metrics,
+                dynamics=dynamics_metrics,
+                timbre=timbre_metrics,
+                structure=structure_metrics,
+                voice=voice_metrics,
+                similarity=similarity_metrics,
+                channel_slug=channel_slug,
+            )
 
             features_payload = {
                 "duration_sec": duration_sec,
@@ -138,6 +300,16 @@ def analyze_tracks(
                 "texture_reason": texture_meta["texture_reason"],
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
+                "advanced_v1": {
+                    "meta": advanced_v1_meta,
+                    "profiles": _build_p0_profiles(),
+                    "quality": quality_metrics,
+                    "dynamics": dynamics_metrics,
+                    "timbre": timbre_metrics,
+                    "structure": structure_metrics,
+                    "voice": voice_metrics,
+                    "similarity": similarity_metrics,
+                },
             }
             tags_payload = {
                 "yamnet_tags": [entry.get("label") for entry in (yamnet_payload.get("top_classes") or []) if entry.get("label")],
@@ -145,6 +317,18 @@ def analyze_tracks(
                 "prohibited_cues": prohibited_cues,
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
+                "advanced_v1": {
+                    "meta": advanced_v1_meta,
+                    "profiles": _build_p0_profiles(),
+                    "semantic": {
+                        "mood_tags": derived_outputs["semantic"]["mood_tags"],
+                        "theme_tags": derived_outputs["semantic"]["theme_tags"],
+                    },
+                    "voice_tags": derived_outputs["voice_tags"],
+                    "classifier_evidence": {
+                        "yamnet_top_classes": yamnet_payload.get("top_classes") or [],
+                    },
+                },
             }
             scores_payload = {
                 "dsp_score": dsp_score,
@@ -153,36 +337,91 @@ def analyze_tracks(
                 "dsp_notes": dsp_notes,
                 "analysis_status": analysis_status,
                 "missing_fields": missing_fields,
+                "advanced_v1": {
+                    "meta": advanced_v1_meta,
+                    "profiles": _build_p0_profiles(),
+                    "semantic": {
+                        "functional_scores": derived_outputs["semantic"]["functional_scores"],
+                    },
+                    "playlist_fit": derived_outputs["playlist_fit"],
+                    "transition": derived_outputs["transition"],
+                    "suitability": derived_outputs["suitability"],
+                    "rule_trace": derived_outputs["rule_trace"],
+                    "final_decisions": derived_outputs["final_decisions"],
+                },
             }
+            _validate_advanced_v1_payload(
+                features_payload,
+                required_scalar_paths=("duration_sec",),
+                allow_none_scalar_paths=("duration_sec",),
+                required_advanced_scalar_paths=FEATURES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=FEATURES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=FEATURES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
+            _validate_advanced_v1_payload(
+                tags_payload,
+                required_advanced_object_paths=TAGS_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=TAGS_REQUIRED_ADVANCED_LIST_PATHS,
+            )
+            _validate_advanced_v1_payload(
+                scores_payload,
+                required_scalar_paths=("dsp_score",),
+                required_advanced_scalar_paths=SCORES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=SCORES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=SCORES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
 
-            conn.execute(
-                """
-                INSERT INTO track_features(track_pk, payload_json, computed_at)
-                VALUES(?,?,?)
-                ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
-                """,
-                (track_pk, dbm.json_dumps(features_payload), computed_at),
-            )
-            conn.execute(
-                """
-                INSERT INTO track_tags(track_pk, payload_json, computed_at)
-                VALUES(?,?,?)
-                ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
-                """,
-                (track_pk, dbm.json_dumps(tags_payload), computed_at),
-            )
-            conn.execute(
-                """
-                INSERT INTO track_scores(track_pk, payload_json, computed_at)
-                VALUES(?,?,?)
-                ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
-                """,
-                (track_pk, dbm.json_dumps(scores_payload), computed_at),
-            )
-            conn.execute(
-                "UPDATE tracks SET analyzed_at=?, duration_sec=? WHERE id=?",
-                (computed_at, duration_sec, track_pk),
-            )
+            conn.execute("BEGIN")
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO track_features(track_pk, payload_json, computed_at)
+                    VALUES(?,?,?)
+                    ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
+                    """,
+                    (track_pk, dbm.json_dumps(features_payload), computed_at),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO track_tags(track_pk, payload_json, computed_at)
+                    VALUES(?,?,?)
+                    ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
+                    """,
+                    (track_pk, dbm.json_dumps(tags_payload), computed_at),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO track_scores(track_pk, payload_json, computed_at)
+                    VALUES(?,?,?)
+                    ON CONFLICT(track_pk) DO UPDATE SET payload_json=excluded.payload_json, computed_at=excluded.computed_at
+                    """,
+                    (track_pk, dbm.json_dumps(scores_payload), computed_at),
+                )
+                analyzer_payload = {
+                    "track_features": {"payload_json": features_payload},
+                    "track_tags": {"payload_json": tags_payload},
+                    "track_scores": {"payload_json": scores_payload},
+                }
+                try:
+                    apply_auto_custom_tags(conn, track_pk, analyzer_payload)
+                except Exception as exc:
+                    log.exception(
+                        "custom tag auto-assign failed: job_id=%s track_pk=%s error_class=%s error_message=%s",
+                        job_id,
+                        track_pk,
+                        exc.__class__.__name__,
+                        str(exc),
+                    )
+                    raise AnalyzeError("CTA_AUTO_ASSIGN_FAILED") from exc
+                conn.execute(
+                    "UPDATE tracks SET analyzed_at=?, duration_sec=? WHERE id=?",
+                    (computed_at, duration_sec, track_pk),
+                )
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            else:
+                conn.execute("COMMIT")
             processed += 1
         except Exception:
             failed += 1
@@ -214,6 +453,79 @@ def _select_tracks(conn: Any, *, channel_slug: str, scope: str, force: bool, max
         """,
         tuple(args),
     ).fetchall()
+
+
+def _build_p0_profiles() -> dict[str, dict[str, Any]]:
+    return {context: {} for context in P0_CONTEXTS}
+
+
+def _validate_advanced_v1_payload(
+    payload: dict[str, Any],
+    *,
+    required_scalar_paths: tuple[str, ...] = (),
+    allow_none_scalar_paths: tuple[str, ...] = (),
+    required_advanced_scalar_paths: tuple[str, ...] = (),
+    required_advanced_object_paths: tuple[str, ...] = (),
+    required_advanced_list_paths: tuple[str, ...] = (),
+) -> None:
+    advanced = payload.get("advanced_v1")
+    if not isinstance(advanced, dict):
+        raise AnalyzeError("ADVANCED_V1_INVALID: missing advanced_v1 object")
+
+    profiles = advanced.get("profiles")
+    if not isinstance(profiles, dict):
+        raise AnalyzeError("ADVANCED_V1_INVALID: profiles must be an object")
+    for context in P0_CONTEXTS:
+        profile_obj = profiles.get(context)
+        if not isinstance(profile_obj, dict):
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: missing profile object {context}")
+
+    meta = advanced.get("meta")
+    if not isinstance(meta, dict):
+        raise AnalyzeError("ADVANCED_V1_INVALID: missing meta object")
+    for meta_key in ("analyzer_version", "schema_version", "analyzed_at", "rollout_tier", "segment_policy"):
+        if meta.get(meta_key) is None:
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: meta.{meta_key} must be non-null")
+
+    similarity = advanced.get("similarity")
+    if isinstance(similarity, dict):
+        vector = similarity.get("normalized_feature_vector")
+        if not isinstance(vector, list) or len(vector) != len(SIMILARITY_VECTOR_ORDER):
+            raise AnalyzeError("ADVANCED_V1_INVALID: normalized_feature_vector length mismatch")
+
+    for path in required_scalar_paths:
+        value: Any = payload
+        for part in path.split("."):
+            if not isinstance(value, dict):
+                value = None
+                break
+            value = value.get(part)
+        if value is None and path not in allow_none_scalar_paths:
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: {path} must be non-null")
+
+    for path in required_advanced_scalar_paths:
+        value = _resolve_nested_path(advanced, path)
+        if value is None:
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: advanced_v1.{path} must be non-null")
+
+    for path in required_advanced_object_paths:
+        value = _resolve_nested_path(advanced, path)
+        if not isinstance(value, dict):
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: advanced_v1.{path} must be an object")
+
+    for path in required_advanced_list_paths:
+        value = _resolve_nested_path(advanced, path)
+        if not isinstance(value, list):
+            raise AnalyzeError(f"ADVANCED_V1_INVALID: advanced_v1.{path} must be a list")
+
+
+def _resolve_nested_path(root: dict[str, Any], path: str) -> Any:
+    value: Any = root
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
 
 
 def _require_thresholds(conn: Any, channel_slug: str) -> None:
@@ -509,7 +821,7 @@ def _detect_abrupt_gain_jumps(waveform: np.ndarray, sample_rate: int) -> tuple[b
 
 
 def _analyze_texture(path: Path) -> dict[str, str | float | None]:
-    waveform, sample_rate = _load_wav_mono(path)
+    waveform, sample_rate, _channels_count, _stereo_waveform = _load_wav_pcm(path)
     return _analyze_texture_from_waveform(waveform, sample_rate)
 
 
@@ -529,7 +841,314 @@ def _analyze_texture_from_waveform(waveform: np.ndarray, sample_rate: int) -> di
     }
 
 
+def _compute_timbre_metrics(
+    waveform: np.ndarray,
+    sample_rate: int,
+    *,
+    dominant_texture: str,
+) -> dict[str, float]:
+    if waveform.size == 0 or sample_rate <= 0:
+        return {
+            "brightness": 0.0,
+            "warmth": 0.0,
+            "darkness": 1.0,
+            "spectral_centroid_mean": 0.0,
+            "spectral_rolloff_mean": 0.0,
+            "low_end_weight": 0.0,
+            "high_end_sharpness": 0.0,
+            "harmonic_density": 0.0,
+            "tonal_stability": 0.0,
+            "drone_presence": 0.0,
+            "pad_presence": 0.0,
+            "percussion_presence": 0.0,
+            "melodic_prominence": 0.0,
+            "texture_smoothness": 0.0,
+        }
+
+    n_fft = min(4096, max(512, int(2 ** np.floor(np.log2(max(512, waveform.size // 4))))))
+    window = np.hanning(n_fft).astype(np.float32)
+    hop = max(1, n_fft // 4)
+    if waveform.size < n_fft:
+        waveform = np.pad(waveform, (0, n_fft - waveform.size))
+    frames = np.lib.stride_tricks.sliding_window_view(waveform, n_fft)[::hop]
+    if frames.size == 0:
+        frames = waveform[:n_fft][None, :]
+    spectrum = np.abs(np.fft.rfft(frames * window[None, :], axis=1)) + 1e-12
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate)
+
+    frame_energy = np.sum(spectrum, axis=1, keepdims=True)
+    centroid = np.sum(spectrum * freqs[None, :], axis=1) / np.maximum(frame_energy[:, 0], 1e-12)
+    cdf = np.cumsum(spectrum, axis=1) / np.maximum(frame_energy, 1e-12)
+    roll_idx = np.argmax(cdf >= 0.85, axis=1)
+    rolloff = freqs[np.clip(roll_idx, 0, freqs.size - 1)]
+
+    nyquist = max(sample_rate / 2.0, 1.0)
+    centroid_norm = float(np.clip(np.mean(centroid) / nyquist, 0.0, 1.0))
+    rolloff_norm = float(np.clip(np.mean(rolloff) / nyquist, 0.0, 1.0))
+
+    low_mask = freqs <= 250.0
+    high_mask = freqs >= 4000.0
+    mid_mask = (freqs > 250.0) & (freqs < 4000.0)
+    low_energy = float(np.mean(np.sum(spectrum[:, low_mask], axis=1) / np.maximum(frame_energy[:, 0], 1e-12)))
+    high_energy = float(np.mean(np.sum(spectrum[:, high_mask], axis=1) / np.maximum(frame_energy[:, 0], 1e-12)))
+    mid_energy = float(np.mean(np.sum(spectrum[:, mid_mask], axis=1) / np.maximum(frame_energy[:, 0], 1e-12)))
+
+    diff_energy = np.abs(np.diff(np.sum(spectrum, axis=1)))
+    transient = float(np.clip(np.mean(diff_energy) / (np.mean(np.sum(spectrum, axis=1)) + 1e-12), 0.0, 1.0))
+    tonal_stability = float(np.clip(1.0 - np.std(centroid / nyquist), 0.0, 1.0))
+
+    texture_smoothness = float(np.clip(1.0 - (transient * 2.0), 0.0, 1.0))
+    if dominant_texture in {"pad", "drone"}:
+        texture_smoothness = float(np.clip(max(texture_smoothness, 0.7), 0.0, 1.0))
+
+    harmonic_density = float(np.clip(mid_energy + (1.0 - transient) * 0.25, 0.0, 1.0))
+    brightness = float(np.clip((centroid_norm * 0.6) + (high_energy * 0.4), 0.0, 1.0))
+    warmth = float(np.clip((low_energy * 0.7) + ((1.0 - centroid_norm) * 0.3), 0.0, 1.0))
+    darkness = float(np.clip(1.0 - brightness, 0.0, 1.0))
+
+    return {
+        "brightness": brightness,
+        "warmth": warmth,
+        "darkness": darkness,
+        "spectral_centroid_mean": centroid_norm,
+        "spectral_rolloff_mean": rolloff_norm,
+        "low_end_weight": float(np.clip(low_energy, 0.0, 1.0)),
+        "high_end_sharpness": float(np.clip(high_energy + transient * 0.3, 0.0, 1.0)),
+        "harmonic_density": harmonic_density,
+        "tonal_stability": tonal_stability,
+        "drone_presence": float(np.clip((1.0 - transient) * low_energy, 0.0, 1.0)),
+        "pad_presence": float(np.clip(texture_smoothness * (0.5 + mid_energy * 0.5), 0.0, 1.0)),
+        "percussion_presence": float(np.clip(transient * (0.5 + high_energy * 0.5), 0.0, 1.0)),
+        "melodic_prominence": float(np.clip(harmonic_density * tonal_stability, 0.0, 1.0)),
+        "texture_smoothness": texture_smoothness,
+    }
+
+
+def _compute_structure_metrics(waveform: np.ndarray, sample_rate: int) -> dict[str, Any]:
+    frame_size = max(1, int(0.2 * sample_rate))
+    hop_size = frame_size
+    rms = _frame_rms(waveform, frame_size, hop_size)
+    if rms.size == 0:
+        rms = np.array([0.0], dtype=np.float32)
+    rms_norm = rms / max(float(np.max(rms)), 1e-12)
+
+    sections = np.array_split(rms_norm, 5)
+    energy_values = [float(np.mean(section)) if section.size else 0.0 for section in sections]
+    intro, early, middle, late, outro = energy_values
+
+    first_deltas = np.abs(np.diff(sections[0])) if sections[0].size > 1 else np.array([0.0])
+    last_deltas = np.abs(np.diff(sections[-1])) if sections[-1].size > 1 else np.array([0.0])
+    global_deltas = np.abs(np.diff(rms_norm)) if rms_norm.size > 1 else np.array([0.0])
+    abruptness = float(np.clip(np.mean(global_deltas) * 3.0, 0.0, 1.0))
+
+    summary = {
+        "parts": [
+            {"name": "intro", "energy": intro},
+            {"name": "early", "energy": early},
+            {"name": "middle", "energy": middle},
+            {"name": "late", "energy": late},
+            {"name": "outro", "energy": outro},
+        ],
+        "peak_section": ["intro", "early", "middle", "late", "outro"][int(np.argmax(energy_values))],
+        "mean_energy": float(np.mean(energy_values)),
+    }
+
+    return {
+        "intro_energy": intro,
+        "early_section_energy": early,
+        "middle_section_energy": middle,
+        "late_section_energy": late,
+        "outro_energy": outro,
+        "intro_smoothness": float(np.clip(1.0 - np.mean(first_deltas) * 4.0, 0.0, 1.0)),
+        "outro_smoothness": float(np.clip(1.0 - np.mean(last_deltas) * 4.0, 0.0, 1.0)),
+        "structural_stability": float(np.clip(1.0 - np.std(energy_values) * 2.0, 0.0, 1.0)),
+        "climax_presence": float(np.clip(max(energy_values) - np.mean(energy_values), 0.0, 1.0)),
+        "abruptness_score": abruptness,
+        "loop_friendliness": float(np.clip(1.0 - abs(intro - outro), 0.0, 1.0)),
+        "fade_friendliness": float(np.clip(max(0.0, late - outro), 0.0, 1.0)),
+        "section_summary": summary,
+    }
+
+
+def _compute_voice_metrics(yamnet_agg: dict[str, Any]) -> dict[str, float]:
+    speech_probability = float(np.clip(yamnet_agg.get("speech_prob") or 0.0, 0.0, 1.0))
+    voice_probability = float(np.clip(yamnet_agg.get("voice_prob") or 0.0, 0.0, 1.0))
+    singing_probability = float(np.clip(yamnet_agg.get("singing_prob") or 0.0, 0.0, 1.0))
+    spoken_word_density = float(np.clip((speech_probability * 0.8) + (voice_probability * 0.2), 0.0, 1.0))
+    human_presence = float(np.clip(max(voice_probability, singing_probability, speech_probability), 0.0, 1.0))
+    return {
+        "speech_probability": speech_probability,
+        "vocal_probability": voice_probability,
+        "spoken_word_density": spoken_word_density,
+        "human_presence_score": human_presence,
+    }
+
+
+def _compute_similarity_metrics(
+    *,
+    timbre: dict[str, Any],
+    structure: dict[str, Any],
+    voice: dict[str, Any],
+) -> dict[str, Any]:
+    flattened = {
+        **{f"timbre.{k}": float(v) for k, v in timbre.items()},
+        **{f"structure.{k}": float(v) for k, v in structure.items() if k != "section_summary"},
+        **{f"voice.{k}": float(v) for k, v in voice.items()},
+    }
+    vector = [float(np.clip(flattened.get(key, 0.0), 0.0, 1.0)) for key in SIMILARITY_VECTOR_ORDER]
+    return {
+        "normalized_feature_vector": vector,
+        "diversity_penalty_base": float(np.clip(np.mean(vector), 0.0, 1.0)),
+    }
+
+
+def _clip01(value: float) -> float:
+    return float(np.clip(value, 0.0, 1.0))
+
+
+def _compute_advanced_derived_outputs(
+    *,
+    quality: dict[str, Any],
+    dynamics: dict[str, Any],
+    timbre: dict[str, Any],
+    structure: dict[str, Any],
+    voice: dict[str, Any],
+    similarity: dict[str, Any],
+    channel_slug: str,
+) -> dict[str, Any]:
+    proxies = {
+        "speech": _clip01(float(voice.get("speech_probability") or 0.0)),
+        "vocal": _clip01(float(voice.get("vocal_probability") or 0.0)),
+        "human": _clip01(float(voice.get("human_presence_score") or 0.0)),
+        "ambient": _clip01(float(timbre.get("pad_presence") or 0.0) * 0.6 + float(timbre.get("drone_presence") or 0.0) * 0.4),
+        "rhythmic": _clip01(float(timbre.get("percussion_presence") or 0.0) * 0.7 + float(dynamics.get("pulse_strength") or 0.0) * 0.3),
+        "smooth": _clip01(float(timbre.get("texture_smoothness") or 0.0) * 0.5 + float(structure.get("intro_smoothness") or 0.0) * 0.25 + float(structure.get("outro_smoothness") or 0.0) * 0.25),
+    }
+    functional_scores = {
+        "focus": _clip01(0.4 * proxies["smooth"] + 0.35 * proxies["ambient"] + 0.25 * (1.0 - proxies["speech"])),
+        "energy": _clip01(0.5 * proxies["rhythmic"] + 0.3 * float(dynamics.get("energy_mean") or 0.0) + 0.2 * float(structure.get("climax_presence") or 0.0)),
+        "narrative": _clip01(0.5 * proxies["speech"] + 0.3 * proxies["vocal"] + 0.2 * float(voice.get("spoken_word_density") or 0.0)),
+        "background_compatibility": _clip01(0.45 * proxies["ambient"] + 0.35 * proxies["smooth"] + 0.2 * (1.0 - proxies["human"])),
+    }
+    mood_tags: list[str] = []
+    if functional_scores["focus"] >= 0.62:
+        mood_tags.append("calm")
+    if functional_scores["energy"] >= 0.58:
+        mood_tags.append("driving")
+    if functional_scores["narrative"] >= 0.55:
+        mood_tags.append("lyrical")
+    if proxies["ambient"] >= 0.5:
+        mood_tags.append("ambient")
+
+    theme_tags: list[str] = []
+    if float(structure.get("fade_friendliness") or 0.0) >= 0.5:
+        theme_tags.append("fade-friendly")
+    if float(structure.get("loop_friendliness") or 0.0) >= 0.7:
+        theme_tags.append("loopable")
+    if float(similarity.get("diversity_penalty_base") or 0.0) <= 0.42:
+        theme_tags.append("minimal")
+
+    playlist_fit = {
+        "continuity_score": _clip01(0.55 * float(structure.get("loop_friendliness") or 0.0) + 0.45 * proxies["smooth"]),
+        "mixability_score": _clip01(0.5 * float(structure.get("fade_friendliness") or 0.0) + 0.3 * (1.0 - float(structure.get("abruptness_score") or 0.0)) + 0.2 * proxies["ambient"]),
+        "variety_support_score": _clip01(1.0 - float(similarity.get("diversity_penalty_base") or 0.0)),
+    }
+    transition = {
+        "intro_profile": "soft" if proxies["smooth"] >= 0.55 else "hard",
+        "outro_profile": "tail" if float(structure.get("fade_friendliness") or 0.0) >= 0.45 else "cut",
+        "transition_risk_score": _clip01(0.5 * float(structure.get("abruptness_score") or 0.0) + 0.5 * (1.0 - playlist_fit["mixability_score"])),
+    }
+
+    context_scores = {
+        "LONG_INSTRUMENTAL_AMBIENT": _clip01(0.45 * functional_scores["background_compatibility"] + 0.3 * (1.0 - proxies["speech"]) + 0.25 * proxies["ambient"]),
+        "LONG_LYRICAL": _clip01(0.5 * functional_scores["narrative"] + 0.25 * proxies["vocal"] + 0.25 * float(dynamics.get("tempo_confidence") or 0.0)),
+    }
+    selected_context = max(P0_CONTEXTS, key=lambda key: context_scores[key])
+    suitability = {
+        "content_type_fit_score": context_scores[selected_context],
+        "content_type_fit_by_context": context_scores,
+        "selected_content_context": selected_context,
+    }
+    channel_archetype = P0_CHANNEL_ARCHETYPE_BY_SLUG.get(channel_slug)
+    if channel_archetype in context_scores:
+        suitability["channel_fit_score"] = context_scores[channel_archetype]
+
+    warning_codes: list[str] = []
+    soft_penalty_total = 0.0
+    hard_veto = False
+    if proxies["speech"] >= 0.85 and proxies["ambient"] >= 0.55:
+        hard_veto = True
+        warning_codes.append("VETO_SPEECH_IN_INSTRUMENTAL")
+    if float(quality.get("clipping_ratio") or 0.0) > 0.03:
+        soft_penalty_total += 0.2
+        warning_codes.append("PENALTY_CLIPPING")
+    if transition["transition_risk_score"] > 0.65:
+        soft_penalty_total += 0.15
+        warning_codes.append("PENALTY_TRANSITION_RISK")
+    if playlist_fit["continuity_score"] < 0.35:
+        soft_penalty_total += 0.1
+        warning_codes.append("PENALTY_LOW_CONTINUITY")
+
+    rule_trace = [
+        {
+            "rule_id": "semantic.focus.v1",
+            "inputs": {"smooth": proxies["smooth"], "ambient": proxies["ambient"], "speech": proxies["speech"]},
+            "weights": {"smooth": 0.4, "ambient": 0.35, "speech_inverse": 0.25},
+            "output": functional_scores["focus"],
+        },
+        {
+            "rule_id": "semantic.narrative.v1",
+            "inputs": {"speech": proxies["speech"], "vocal": proxies["vocal"], "spoken_word_density": float(voice.get("spoken_word_density") or 0.0)},
+            "weights": {"speech": 0.5, "vocal": 0.3, "spoken_word_density": 0.2},
+            "output": functional_scores["narrative"],
+        },
+        {
+            "rule_id": "decision.penalty.transition_risk.v1",
+            "inputs": {"transition_risk_score": transition["transition_risk_score"]},
+            "thresholds": {"gt": 0.65},
+            "weight": 0.15,
+            "matched": transition["transition_risk_score"] > 0.65,
+        },
+    ]
+    if hard_veto:
+        rule_trace.append(
+            {
+                "rule_id": "decision.veto.instrumental_speech.v1",
+                "inputs": {
+                    "speech": proxies["speech"],
+                    "ambient": proxies["ambient"],
+                },
+                "thresholds": {"speech_gte": 0.85, "ambient_gte": 0.55},
+                "matched": True,
+            }
+        )
+
+    voice_tags = ["spoken_word"] if proxies["speech"] >= 0.55 else []
+    return {
+        "semantic": {
+            "functional_scores": functional_scores,
+            "mood_tags": sorted(set(mood_tags)),
+            "theme_tags": sorted(set(theme_tags)),
+        },
+        "playlist_fit": playlist_fit,
+        "transition": transition,
+        "suitability": suitability,
+        "rule_trace": rule_trace,
+        "voice_tags": voice_tags,
+        "final_decisions": {
+            "hard_veto": hard_veto,
+            "soft_penalty_total": _clip01(soft_penalty_total),
+            "warning_codes": warning_codes,
+        },
+    }
+
+
 def _load_wav_mono(path: Path) -> tuple[np.ndarray, int]:
+    waveform, sample_rate, _channels_count, _stereo_waveform = _load_wav_pcm(path)
+    return waveform, sample_rate
+
+
+def _load_wav_pcm(path: Path) -> tuple[np.ndarray, int, int, np.ndarray | None]:
     with wave.open(str(path), "rb") as wav_file:
         sample_rate = int(wav_file.getframerate())
         sample_width = int(wav_file.getsampwidth())
@@ -549,7 +1168,13 @@ def _load_wav_mono(path: Path) -> tuple[np.ndarray, int]:
     else:
         raise ValueError(f"unsupported sample width: {sample_width}")
 
+    stereo_waveform: np.ndarray | None = None
     if channels > 1:
-        data = data.reshape(-1, channels).mean(axis=1)
+        reshaped = data.reshape(-1, channels)
+        if channels >= 2:
+            stereo_waveform = reshaped[:, :2].astype(np.float32)
+        mono = reshaped.mean(axis=1)
+    else:
+        mono = data
 
-    return data.astype(np.float32), sample_rate
+    return mono.astype(np.float32), sample_rate, channels, stereo_waveform

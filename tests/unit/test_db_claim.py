@@ -43,23 +43,22 @@ class TestDbClaimJob(unittest.TestCase):
         conn = dbm.connect(self.env)
         try:
             ts = dbm.now_ts()
-            cur = conn.execute(
-                "INSERT INTO jobs(release_id, job_type, state, stage, priority, attempt, locked_by, locked_at, retry_at, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    self.release_id,
-                    "RENDER_LONG",
-                    state,
-                    "FETCH",
-                    1,
-                    0,
-                    "w" if locked else None,
-                    locked_at,
-                    retry_at,
-                    ts,
-                    ts,
-                ),
+            job_id = dbm.insert_job_with_lineage_defaults(
+                conn,
+                release_id=self.release_id,
+                job_type="RENDER_LONG",
+                state=state,
+                stage="FETCH",
+                priority=1,
+                attempt=0,
+                created_at=ts,
+                updated_at=ts,
             )
-            return int(cur.lastrowid)
+            conn.execute(
+                "UPDATE jobs SET locked_by = ?, locked_at = ?, retry_at = ? WHERE id = ?",
+                ("w" if locked else None, locked_at, retry_at, job_id),
+            )
+            return job_id
         finally:
             conn.close()
 
