@@ -275,6 +275,23 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
                 self.assertIn(required_key, ordered_keys)
 
             row = payload["rows"][0]
+            expected_row_fragment = {
+                "analysis_status": "flat-ok",
+                "voice_flag": True,
+                "yamnet_tags": "flat-rain, flat-wind",
+                "dominant_texture": "flat-texture",
+                "dsp_score": 0.99,
+                "analyzer_version": "flat-analyzer-version",
+                "schema_version": "flat-schema-version",
+                "hard_veto": False,
+                "soft_penalty_total": 0.15,
+                "mood_tags_csv": "calm, ambient",
+                "theme_tags_csv": "minimal",
+                "normalized_feature_vector_json": "[0.1, 0.2, 0.3]",
+                "rule_trace_json": '[{"matched": true, "rule_id": "semantic.focus.v1"}]',
+                "similarity_diversity_penalty_base": 0.27,
+            }
+            self.assertEqual({key: row[key] for key in expected_row_fragment}, expected_row_fragment)
             self.assertEqual(row["analyzer_version"], "flat-analyzer-version")
             self.assertEqual(row["schema_version"], "flat-schema-version")
             self.assertEqual(row["hard_veto"], False)
@@ -292,10 +309,19 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
             wb = load_workbook(io.BytesIO(xlsx_resp.content))
             ws = wb.active
             header_to_col = {ws.cell(row=2, column=idx).value: idx for idx in range(1, ws.max_column + 1)}
+            self.assertIn("analysis_status", header_to_col)
             self.assertIn("similarity_diversity_penalty_base", header_to_col)
+            self.assertEqual(
+                ws.cell(row=3, column=header_to_col["analysis_status"]).value,
+                row["analysis_status"],
+            )
             self.assertEqual(
                 ws.cell(row=3, column=header_to_col["similarity_diversity_penalty_base"]).value,
                 row["similarity_diversity_penalty_base"],
+            )
+            self.assertEqual(
+                ws.cell(row=3, column=header_to_col["hard_veto"]).value,
+                row["hard_veto"],
             )
 
     def test_xlsx_legacy_rows_without_advanced_v1_remain_valid(self) -> None:
