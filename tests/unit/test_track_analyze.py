@@ -105,8 +105,27 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertIn("dsp_score_version", scores)
                 self.assertIn("dsp_components", scores)
                 self.assertIn("advanced_v1", features)
+                self.assertIn("meta", features["advanced_v1"])
                 self.assertIn("quality", features["advanced_v1"])
                 self.assertIn("dynamics", features["advanced_v1"])
+                self.assertIn("advanced_v1", tags)
+                self.assertIn("meta", tags["advanced_v1"])
+                self.assertIn("advanced_v1", scores)
+                self.assertIn("meta", scores["advanced_v1"])
+                self.assertEqual(set(features["advanced_v1"].keys()), {"meta", "quality", "dynamics"})
+                self.assertEqual(set(tags["advanced_v1"].keys()), {"meta"})
+                self.assertEqual(set(scores["advanced_v1"].keys()), {"meta"})
+                self.assertNotIn("normalized_feature_vector", features)
+                self.assertNotIn("normalized_feature_vector", tags)
+                self.assertNotIn("normalized_feature_vector", scores)
+
+                for payload in (features, tags, scores):
+                    meta = payload["advanced_v1"]["meta"]
+                    self.assertIn("analyzer_version", meta)
+                    self.assertIn("schema_version", meta)
+                    self.assertIn("analyzed_at", meta)
+                    self.assertIn("rollout_tier", meta)
+                    self.assertIn("segment_policy", meta)
 
                 quality = features["advanced_v1"]["quality"]
                 dynamics = features["advanced_v1"]["dynamics"]
