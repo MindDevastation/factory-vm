@@ -151,13 +151,14 @@ SCORES_REQUIRED_ADVANCED_SCALAR_PATHS = (
     "semantic.functional_scores.energy",
     "semantic.functional_scores.narrative",
     "semantic.functional_scores.background_compatibility",
-    "playlist_fit",
-    "transition",
     "suitability.content_type_fit_score",
     "final_decisions.hard_veto",
     "final_decisions.soft_penalty_total",
 )
-SCORES_REQUIRED_ADVANCED_OBJECT_PATHS = ()
+SCORES_REQUIRED_ADVANCED_OBJECT_PATHS = (
+    "playlist_fit",
+    "transition",
+)
 SCORES_REQUIRED_ADVANCED_LIST_PATHS = ("final_decisions.warning_codes", "rule_trace")
 
 TAGS_REQUIRED_ADVANCED_OBJECT_PATHS = ("semantic", "classifier_evidence")

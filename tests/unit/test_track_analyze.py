@@ -150,8 +150,15 @@ class TestTrackAnalyze(unittest.TestCase):
                         "background_compatibility": 0.5,
                     }
                 },
-                "playlist_fit": 0.5,
-                "transition": 0.5,
+                "playlist_fit": {
+                    "fit_score": 0.5,
+                    "continuity_score": 0.5,
+                    "mixability_score": 0.5,
+                },
+                "transition": {
+                    "transition_risk_score": 0.2,
+                    "recommended_transition_type": "smooth",
+                },
                 "suitability": {"content_type_fit_score": 0.5},
                 "final_decisions": {"hard_veto": False, "soft_penalty_total": 0.0, "warning_codes": []},
                 "rule_trace": [],
@@ -729,6 +736,30 @@ class TestTrackAnalyze(unittest.TestCase):
         payload = self._valid_scores_payload()
         del payload["advanced_v1"]["suitability"]["content_type_fit_score"]
         with self.assertRaisesRegex(AnalyzeError, "suitability.content_type_fit_score"):
+            _validate_advanced_v1_payload(
+                payload,
+                required_scalar_paths=("dsp_score",),
+                required_advanced_scalar_paths=SCORES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=SCORES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=SCORES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
+
+    def test_validate_advanced_v1_payload_rejects_non_object_playlist_fit(self) -> None:
+        payload = self._valid_scores_payload()
+        payload["advanced_v1"]["playlist_fit"] = 0.5
+        with self.assertRaisesRegex(AnalyzeError, "playlist_fit"):
+            _validate_advanced_v1_payload(
+                payload,
+                required_scalar_paths=("dsp_score",),
+                required_advanced_scalar_paths=SCORES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                required_advanced_object_paths=SCORES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                required_advanced_list_paths=SCORES_REQUIRED_ADVANCED_LIST_PATHS,
+            )
+
+    def test_validate_advanced_v1_payload_rejects_non_object_transition(self) -> None:
+        payload = self._valid_scores_payload()
+        payload["advanced_v1"]["transition"] = "bad"
+        with self.assertRaisesRegex(AnalyzeError, "transition"):
             _validate_advanced_v1_payload(
                 payload,
                 required_scalar_paths=("dsp_score",),
