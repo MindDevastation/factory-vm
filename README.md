@@ -11,7 +11,7 @@ A runnable MVP scaffold that:
 
 ## Quickstart (high level)
 1) Install system deps: ffmpeg + python3.11
-2) Create venv + install requirements
+2) Create venv + install requirements (choose profile below)
 3) Put secrets into `deploy/env` (copy from env.example)
 4) Init DB: `python scripts/init_db.py`
 5) Seed configs: `python scripts/seed_configs.py`
@@ -33,6 +33,15 @@ Worker heartbeat: http://<VM_IP>:8080/v1/workers
 VPS API-only mode (without importer):
 - `python scripts/run_stack.py --profile prod --with-bot 1 --no-importer`
 - You can also disable importer via env override: `IMPORTER_ENABLED=0 python scripts/run_stack.py --profile prod --with-bot 1`
+
+
+Dependency install profiles:
+- Core runtime: `pip install -r requirements.txt`
+- Dev/test (includes runtime): `pip install -r requirements-dev.txt`
+- YAMNet extras (includes runtime): `pip install -r requirements-yamnet.txt`
+- Whisper extras (includes runtime): `pip install -r requirements-whisper.txt`
+- Full local stack: `pip install -r requirements-all.txt`
+- Dependency coverage check: `python scripts/check_dependency_coverage.py`
 
 Tests:
 - Unit tests: `PYTHONPATH=. python -m unittest discover -s tests -v`
