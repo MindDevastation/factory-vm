@@ -85,6 +85,25 @@ class TestTrackAnalyze(unittest.TestCase):
                 tags = dbm.json_loads(tag_row["payload_json"])
                 scores = dbm.json_loads(score_row["payload_json"])
 
+                feature_meta = features.get("advanced_v1", {}).get("meta", {})
+                self.assertEqual(
+                    {
+                        "analyzer_version": feature_meta.get("analyzer_version"),
+                        "schema_version": feature_meta.get("schema_version"),
+                        "analyzed_at": feature_meta.get("analyzed_at"),
+                        "rollout_tier": feature_meta.get("rollout_tier"),
+                        "segment_policy": feature_meta.get("segment_policy"),
+                    },
+                    {
+                        "analyzer_version": "advanced_track_analyzer_v1.1",
+                        "schema_version": "advanced_v1",
+                        "analyzed_at": feature_meta.get("analyzed_at"),
+                        "rollout_tier": "s1",
+                        "segment_policy": "track_full",
+                    },
+                )
+                self.assertTrue(str(feature_meta.get("analyzed_at") or "").strip())
+
                 self.assertTrue(str(features.get("dominant_texture") or "").strip())
                 self.assertEqual(features.get("texture_backend"), "heuristic")
                 self.assertGreaterEqual(float(features.get("texture_confidence")), 0.0)
