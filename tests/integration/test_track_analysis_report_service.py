@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import json
 
 from services.common import db as dbm
 from services.track_analysis_report.registry import COLUMN_REGISTRY
@@ -98,23 +99,56 @@ class TestTrackAnalysisReportService(unittest.TestCase):
         self.assertEqual(len(report["rows"]), 1)
         self.assertEqual(set(report["rows"][0].keys()), expected_keys)
 
-    def test_advanced_v1_presence_does_not_change_report_row_shape_or_values(self) -> None:
+    def test_advanced_v1_fields_are_exposed_with_expected_flattening(self) -> None:
         track_pk = self._insert_track("001", "file-001")
+        features_payload = {
+            "analysis_status": "ok",
+            "voice_flag": False,
+            "advanced_v1": {
+                "meta": {"analyzer_version": "advanced_track_analyzer_v1.1", "schema_version": "advanced_v1"},
+                "quality": {"integrated_lufs": -18.2, "channels_count": 2},
+                "dynamics": {"energy_mean": 0.44, "intensity_curve_summary": {"start_mean": 0.1, "middle_mean": 0.2}},
+                "timbre": {"brightness": 0.31},
+                "structure": {"intro_energy": 0.22, "section_summary": {"parts": 3}},
+                "voice": {"speech_probability": 0.12},
+                "similarity": {"normalized_feature_vector": [0.1, 0.2, 0.3]},
+            },
+        }
+        tags_payload = {
+            "yamnet_tags": ["rain"],
+            "advanced_v1": {
+                "semantic": {"mood_tags": ["calm", "ambient"], "theme_tags": ["minimal"]},
+                "voice_tags": ["spoken_word"],
+                "classifier_evidence": {"yamnet_top_classes": [{"label": "rain", "score": 0.9}]},
+            },
+        }
+        scores_payload = {
+            "dsp_score": 0.93,
+            "advanced_v1": {
+                "semantic": {"functional_scores": {"focus": 0.8, "energy": 0.3, "narrative": 0.2, "background_compatibility": 0.7}},
+                "playlist_fit": {"continuity_score": 0.6, "mixability_score": 0.7, "variety_support_score": 0.8},
+                "transition": {"intro_profile": "soft", "outro_profile": "tail", "transition_risk_score": 0.1},
+                "suitability": {
+                    "content_type_fit_score": 0.9,
+                    "channel_fit_score": 0.85,
+                    "selected_content_context": "LONG_INSTRUMENTAL_AMBIENT",
+                    "content_type_fit_by_context": {"LONG_INSTRUMENTAL_AMBIENT": 0.9, "LONG_LYRICAL": 0.2},
+                },
+                "rule_trace": [{"rule_id": "semantic.focus.v1", "matched": True}],
+                "final_decisions": {"hard_veto": False, "soft_penalty_total": 0.15, "warning_codes": ["PENALTY_TRANSITION_RISK"]},
+            },
+        }
         self.conn.execute(
             "INSERT INTO track_features(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
-            (
-                track_pk,
-                '{"analysis_status":"ok","voice_flag":false,"advanced_v1":{"meta":{"schema_version":"advanced_v1"},"profiles":{"LONG_INSTRUMENTAL_AMBIENT":{},"LONG_LYRICAL":{}},"similarity":{"normalized_feature_vector":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}}}',
-                1010.0,
-            ),
+            (track_pk, json.dumps(features_payload), 1010.0),
         )
         self.conn.execute(
             "INSERT INTO track_tags(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
-            (track_pk, '{"yamnet_tags":["rain"],"advanced_v1":{"meta":{"schema_version":"advanced_v1"},"profiles":{"LONG_INSTRUMENTAL_AMBIENT":{},"LONG_LYRICAL":{}}}}', 1020.0),
+            (track_pk, json.dumps(tags_payload), 1020.0),
         )
         self.conn.execute(
             "INSERT INTO track_scores(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
-            (track_pk, '{"dsp_score":0.93,"advanced_v1":{"meta":{"schema_version":"advanced_v1"},"profiles":{"LONG_INSTRUMENTAL_AMBIENT":{},"LONG_LYRICAL":{}}}}', 1030.0),
+            (track_pk, json.dumps(scores_payload), 1030.0),
         )
 
         report = build_channel_report(self.conn, "darkwood-reverie")
@@ -123,7 +157,29 @@ class TestTrackAnalysisReportService(unittest.TestCase):
         self.assertEqual(row["voice_flag"], False)
         self.assertEqual(row["yamnet_tags"], "rain")
         self.assertEqual(row["dsp_score"], 0.93)
-        self.assertTrue(all("advanced_v1" not in str(col.get("source_path") or "") for col in report["columns"]))
+        self.assertEqual(row["analyzer_version"], "advanced_track_analyzer_v1.1")
+        self.assertEqual(row["schema_version"], "advanced_v1")
+        self.assertEqual(row["hard_veto"], False)
+        self.assertEqual(row["soft_penalty_total"], 0.15)
+        self.assertEqual(row["mood_tags_csv"], "calm, ambient")
+        self.assertEqual(row["theme_tags_csv"], "minimal")
+        self.assertEqual(row["warning_codes_json"], '["PENALTY_TRANSITION_RISK"]')
+        self.assertEqual(row["intensity_curve_summary_json"], '{"middle_mean": 0.2, "start_mean": 0.1}')
+        self.assertEqual(row["section_summary_json"], '{"parts": 3}')
+        self.assertEqual(row["normalized_feature_vector_json"], "[0.1, 0.2, 0.3]")
+        self.assertEqual(row["rule_trace_json"], '[{"matched": true, "rule_id": "semantic.focus.v1"}]')
+
+        keys = [col["key"] for col in report["columns"]]
+        self.assertLess(keys.index("quality_integrated_lufs"), keys.index("dynamics_energy_mean"))
+        self.assertLess(keys.index("dynamics_energy_mean"), keys.index("timbre_brightness"))
+        self.assertLess(keys.index("timbre_brightness"), keys.index("structure_intro_energy"))
+        self.assertLess(keys.index("structure_intro_energy"), keys.index("voice_speech_probability"))
+        self.assertLess(keys.index("voice_speech_probability"), keys.index("semantic_focus"))
+        self.assertLess(keys.index("semantic_focus"), keys.index("playlist_continuity_score"))
+        self.assertLess(keys.index("playlist_continuity_score"), keys.index("transition_intro_profile"))
+        self.assertLess(keys.index("transition_intro_profile"), keys.index("suitability_content_type_fit_score"))
+        self.assertLess(keys.index("suitability_content_type_fit_score"), keys.index("analyzer_version"))
+        self.assertLess(keys.index("analyzer_version"), keys.index("intensity_curve_summary_json"))
 
     def test_legacy_rows_without_advanced_v1_remain_readable(self) -> None:
         track_pk = self._insert_track("001", "file-001")
@@ -147,7 +203,8 @@ class TestTrackAnalysisReportService(unittest.TestCase):
         self.assertEqual(row["voice_flag"], True)
         self.assertEqual(row["yamnet_tags"], "legacy-rain")
         self.assertEqual(row["dsp_score"], 0.42)
-        self.assertTrue(all("advanced_v1" not in str(col.get("source_path") or "") for col in report["columns"]))
+        self.assertIsNone(row["analyzer_version"])
+        self.assertIsNone(row["warning_codes_json"])
 
 
 if __name__ == "__main__":
