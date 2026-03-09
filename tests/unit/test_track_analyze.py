@@ -85,6 +85,25 @@ class TestTrackAnalyze(unittest.TestCase):
                 tags = dbm.json_loads(tag_row["payload_json"])
                 scores = dbm.json_loads(score_row["payload_json"])
 
+                feature_meta = features.get("advanced_v1", {}).get("meta", {})
+                self.assertEqual(
+                    {
+                        "analyzer_version": feature_meta.get("analyzer_version"),
+                        "schema_version": feature_meta.get("schema_version"),
+                        "analyzed_at": feature_meta.get("analyzed_at"),
+                        "rollout_tier": feature_meta.get("rollout_tier"),
+                        "segment_policy": feature_meta.get("segment_policy"),
+                    },
+                    {
+                        "analyzer_version": "advanced_track_analyzer_v1.1",
+                        "schema_version": "advanced_v1",
+                        "analyzed_at": feature_meta.get("analyzed_at"),
+                        "rollout_tier": "s1",
+                        "segment_policy": "track_full",
+                    },
+                )
+                self.assertTrue(str(feature_meta.get("analyzed_at") or "").strip())
+
                 self.assertTrue(str(features.get("dominant_texture") or "").strip())
                 self.assertEqual(features.get("texture_backend"), "heuristic")
                 self.assertGreaterEqual(float(features.get("texture_confidence")), 0.0)
@@ -104,6 +123,59 @@ class TestTrackAnalyze(unittest.TestCase):
                 self.assertIn("prohibited_cues", tags)
                 self.assertIn("dsp_score_version", scores)
                 self.assertIn("dsp_components", scores)
+
+                legacy_feature_keys = {
+                    "duration_sec",
+                    "true_peak_dbfs",
+                    "spikes_found",
+                    "yamnet_top_classes",
+                    "yamnet_probabilities",
+                    "yamnet_agg",
+                    "voice_flag",
+                    "voice_flag_reason",
+                    "speech_flag",
+                    "speech_flag_reason",
+                    "dominant_texture",
+                    "texture_backend",
+                    "texture_confidence",
+                    "texture_reason",
+                    "analysis_status",
+                    "missing_fields",
+                }
+                legacy_tag_keys = {
+                    "yamnet_tags",
+                    "prohibited_cues_notes",
+                    "prohibited_cues",
+                    "analysis_status",
+                    "missing_fields",
+                }
+                legacy_score_keys = {
+                    "dsp_score",
+                    "dsp_score_version",
+                    "dsp_components",
+                    "dsp_notes",
+                    "analysis_status",
+                    "missing_fields",
+                }
+
+                self.assertTrue(legacy_feature_keys.issubset(features.keys()))
+                self.assertTrue(legacy_tag_keys.issubset(tags.keys()))
+                self.assertTrue(legacy_score_keys.issubset(scores.keys()))
+
+                for payload in (features, tags, scores):
+                    advanced_v1 = payload.get("advanced_v1")
+                    self.assertIsInstance(advanced_v1, dict)
+                    meta = advanced_v1.get("meta")
+                    self.assertIsInstance(meta, dict)
+                    self.assertEqual(meta.get("analyzer_version"), "advanced_track_analyzer_v1.1")
+                    self.assertEqual(meta.get("schema_version"), "advanced_v1")
+                    self.assertTrue(str(meta.get("analyzed_at") or "").strip())
+                    self.assertEqual(meta.get("rollout_tier"), "s1")
+                    self.assertEqual(meta.get("segment_policy"), "track_full")
+                    self.assertEqual(advanced_v1.get("profiles"), {})
+
+                self.assertEqual(features["advanced_v1"]["meta"]["analyzed_at"], tags["advanced_v1"]["meta"]["analyzed_at"])
+                self.assertEqual(features["advanced_v1"]["meta"]["analyzed_at"], scores["advanced_v1"]["meta"]["analyzed_at"])
 
                 tmp_track_dir = Path(td) / "tmp" / "track_analyzer" / "99" / "1"
                 self.assertFalse(tmp_track_dir.exists())
