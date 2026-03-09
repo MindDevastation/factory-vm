@@ -125,6 +125,30 @@ class TestTrackAnalysisReportService(unittest.TestCase):
         self.assertEqual(row["dsp_score"], 0.93)
         self.assertTrue(all("advanced_v1" not in str(col.get("source_path") or "") for col in report["columns"]))
 
+    def test_legacy_rows_without_advanced_v1_remain_readable(self) -> None:
+        track_pk = self._insert_track("001", "file-001")
+        self.conn.execute(
+            "INSERT INTO track_features(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
+            (track_pk, '{"analysis_status":"ok","voice_flag":true,"yamnet_agg":{"source":"top_classes"}}', 1010.0),
+        )
+        self.conn.execute(
+            "INSERT INTO track_tags(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
+            (track_pk, '{"yamnet_tags":["legacy-rain"]}', 1020.0),
+        )
+        self.conn.execute(
+            "INSERT INTO track_scores(track_pk, payload_json, computed_at) VALUES(?, ?, ?)",
+            (track_pk, '{"dsp_score":0.42}', 1030.0),
+        )
+
+        report = build_channel_report(self.conn, "darkwood-reverie")
+        self.assertEqual(report["summary"]["tracks_count"], 1)
+        row = report["rows"][0]
+        self.assertEqual(row["analysis_status"], "ok")
+        self.assertEqual(row["voice_flag"], True)
+        self.assertEqual(row["yamnet_tags"], "legacy-rain")
+        self.assertEqual(row["dsp_score"], 0.42)
+        self.assertTrue(all("advanced_v1" not in str(col.get("source_path") or "") for col in report["columns"]))
+
 
 if __name__ == "__main__":
     unittest.main()

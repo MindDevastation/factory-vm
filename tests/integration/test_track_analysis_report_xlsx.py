@@ -157,6 +157,29 @@ class TestTrackAnalysisReportXlsxApi(unittest.TestCase):
             columns = api_resp.json()["columns"]
             self.assertTrue(all("advanced_v1" not in str(col.get("source_path") or "") for col in columns))
 
+    def test_xlsx_legacy_rows_without_advanced_v1_remain_valid(self) -> None:
+        with temp_env() as (_, env):
+            self._seed_channel(env)
+            self._seed_tracks(env)
+            _, client = self._new_client()
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            xlsx_resp = client.get(
+                "/v1/track-catalog/analysis-report.xlsx",
+                params={"channel_slug": "darkwood-reverie"},
+                headers=auth,
+            )
+            self.assertEqual(xlsx_resp.status_code, 200)
+
+            wb = load_workbook(io.BytesIO(xlsx_resp.content))
+            ws = wb.active
+            header_to_col = {ws.cell(row=2, column=idx).value: idx for idx in range(1, ws.max_column + 1)}
+            self.assertEqual(ws.max_row - 2, 2)
+            self.assertEqual(ws.cell(row=3, column=header_to_col["analysis_status"]).value, "ok")
+            self.assertEqual(ws.cell(row=3, column=header_to_col["voice_flag"]).value, False)
+            self.assertEqual(ws.cell(row=3, column=header_to_col["yamnet_tags"]).value, "rain, wind")
+            self.assertEqual(ws.cell(row=3, column=header_to_col["dsp_score"]).value, 0.93)
+
 
 
 def _col(value: int) -> str:
