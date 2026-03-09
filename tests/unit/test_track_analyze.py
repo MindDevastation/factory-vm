@@ -299,6 +299,41 @@ class TestTrackAnalyze(unittest.TestCase):
 
                 similarity = features["advanced_v1"]["similarity"]
                 vector = similarity["normalized_feature_vector"]
+                self.assertEqual(
+                    SIMILARITY_VECTOR_ORDER,
+                    [
+                        "timbre.brightness",
+                        "timbre.warmth",
+                        "timbre.darkness",
+                        "timbre.spectral_centroid_mean",
+                        "timbre.spectral_rolloff_mean",
+                        "timbre.low_end_weight",
+                        "timbre.high_end_sharpness",
+                        "timbre.harmonic_density",
+                        "timbre.tonal_stability",
+                        "timbre.drone_presence",
+                        "timbre.pad_presence",
+                        "timbre.percussion_presence",
+                        "timbre.melodic_prominence",
+                        "timbre.texture_smoothness",
+                        "structure.intro_energy",
+                        "structure.early_section_energy",
+                        "structure.middle_section_energy",
+                        "structure.late_section_energy",
+                        "structure.outro_energy",
+                        "structure.intro_smoothness",
+                        "structure.outro_smoothness",
+                        "structure.structural_stability",
+                        "structure.climax_presence",
+                        "structure.abruptness_score",
+                        "structure.loop_friendliness",
+                        "structure.fade_friendliness",
+                        "voice.speech_probability",
+                        "voice.vocal_probability",
+                        "voice.spoken_word_density",
+                        "voice.human_presence_score",
+                    ],
+                )
                 self.assertEqual(len(vector), len(SIMILARITY_VECTOR_ORDER))
                 self.assertTrue(all(isinstance(v, float) for v in vector))
                 self.assertIn("diversity_penalty_base", similarity)
