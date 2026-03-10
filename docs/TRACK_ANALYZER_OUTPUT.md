@@ -1,106 +1,124 @@
-# Track Analyzer Output Notes
+# Track Analyzer Output Schema (Canonical)
 
-## Texture metadata
+This document defines the canonical analyzer payload contract currently written by `services/track_analyzer/analyze.py`.
 
-`track_features.payload_json` keeps `dominant_texture` for backward compatibility and includes:
+Compatibility policy:
 
-- `texture_backend`: one of `none`, `heuristic`, `model`, `fallback`
-- `texture_confidence`: float in `[0,1]` or `null`
-- `texture_reason`: one of `ok`, `low_confidence`, `exception`, `disabled`, `missing_model`, `unknown`
+- Top-level legacy keys remain present.
+- `advanced_v1` is additive and must not remove/rename legacy keys.
+- If `advanced_v1` exists, version markers are required at `advanced_v1.meta`:
+  - `analyzer_version`
+  - `schema_version`
 
-Current default implementation uses a lightweight waveform heuristic backend.
+Current values:
 
-### Heuristic texture labels (playlisting-safe)
+- `advanced_v1.meta.analyzer_version = "advanced_track_analyzer_v1.1"`
+- `advanced_v1.meta.schema_version = "advanced_v1"`
 
-`dominant_texture` is one of:
+---
 
-- `tonal_sustained`
-- `percussive_rhythmic`
-- `noisy_distorted`
-- `mixed`
+## 1) `track_features.payload_json`
 
-These labels are intentionally small/stable for playlist rules and automation. Suggested usage:
+### Legacy top-level keys (preserved)
 
-- Prefer `tonal_sustained` for ambient/bed playlists.
-- Prefer `percussive_rhythmic` for motion/trailer playlists.
-- Route `noisy_distorted` to aggressive/experimental bins.
-- Keep `mixed` as a fallback bucket when tracks do not present a clear dominant texture.
+- `duration_sec`
+- `true_peak_dbfs`
+- `spikes_found`
+- `yamnet_top_classes`
+- `yamnet_probabilities`
+- `yamnet_agg`
+- `voice_flag`
+- `voice_flag_reason`
+- `speech_flag`
+- `speech_flag_reason`
+- `dominant_texture`
+- `texture_backend`
+- `texture_confidence`
+- `texture_reason`
+- `analysis_status`
+- `missing_fields`
 
-If confidence is low (`< 0.35`), analyzer returns `dominant_texture = "mixed"` with `texture_reason = "low_confidence"`.
+### Additive `advanced_v1` keys
 
-If texture analysis raises an exception, payload becomes:
+- `advanced_v1.meta`
+  - `analyzer_version`
+  - `schema_version`
+  - `analyzed_at`
+  - `rollout_tier`
+  - `segment_policy`
+- `advanced_v1.profiles`
+  - `LONG_INSTRUMENTAL_AMBIENT` (object)
+  - `LONG_LYRICAL` (object)
+- `advanced_v1.quality`
+- `advanced_v1.dynamics`
+- `advanced_v1.timbre`
+- `advanced_v1.structure`
+- `advanced_v1.voice`
+- `advanced_v1.similarity`
 
-- `dominant_texture = "unknown texture"`
-- `texture_backend = "heuristic"`
-- `texture_confidence = null`
-- `texture_reason = "exception"`
+---
 
-## Voice/speech aggregation (`yamnet_agg`)
+## 2) `track_tags.payload_json`
 
-`track_features.payload_json` now includes a machine-readable YAMNet aggregation block:
+### Legacy top-level keys (preserved)
 
-- `yamnet_agg.voice_prob`: sum of YAMNet class scores for configurable `VOICE_LABELS` (includes `Singing`)
-- `yamnet_agg.speech_prob`: sum of class scores for configurable `SPEECH_LABELS`
-- `yamnet_agg.singing_prob`: score for `Singing` class (or `0` when absent)
-- `yamnet_agg.voice_labels_used`: labels that contributed to `voice_prob`
-- `yamnet_agg.speech_labels_used`: labels that contributed to `speech_prob`
-- `yamnet_agg.source`: `full_vector` when full per-label scores are available, otherwise `top_classes`
-- `yamnet_agg.top_classes_count`: number of entries in `yamnet_top_classes` used for readability
-- `yamnet_agg.total_labels_count`: present when `source = full_vector`
+- `yamnet_tags`
+- `prohibited_cues_notes`
+- `prohibited_cues`
+- `analysis_status`
+- `missing_fields`
 
-`yamnet_top_classes` remains backward compatible and now stores top `YAMNET_TOP_N = 20` labels by default.
-Legacy `yamnet_probabilities` and `yamnet_tags` are unchanged.
+### Additive `advanced_v1` keys
 
-Automation helpers:
+- `advanced_v1.meta` (same required markers as above)
+- `advanced_v1.profiles`
+- `advanced_v1.semantic`
+  - `mood_tags`
+  - `theme_tags`
+- `advanced_v1.voice_tags`
+- `advanced_v1.classifier_evidence`
+  - `yamnet_top_classes`
 
-- `voice_flag` (`bool`)
-- `voice_flag_reason` (`str`) with explicit threshold explanation
-- `speech_flag` (`bool`)
-- `speech_flag_reason` (`str`) with explicit threshold explanation
+---
 
-Current thresholds are constants in analyzer code:
+## 3) `track_scores.payload_json`
 
-- `VOICE_MIN_PROB = 0.20`
-- `SINGING_MIN_PROB = 0.08`
-- `SPEECH_MIN_PROB = 0.10`
+### Legacy top-level keys (preserved)
 
-## Prohibited cues structured output
+- `dsp_score`
+- `dsp_score_version`
+- `dsp_components`
+- `dsp_notes`
+- `analysis_status`
+- `missing_fields`
 
-`track_tags.payload_json` keeps `prohibited_cues_notes` and now also includes:
+### Additive `advanced_v1` keys
 
-- `prohibited_cues.backend`: `fallback` (or `primary` in future backends)
-- `prohibited_cues.checks_run`: ordered list of checks run
-- `prohibited_cues.flags`: boolean flags
-- `prohibited_cues.metrics`: numeric values for automation/debugging
+- `advanced_v1.meta` (same required markers as above)
+- `advanced_v1.profiles`
+- `advanced_v1.semantic.functional_scores`
+  - `focus`
+  - `energy`
+  - `narrative`
+  - `background_compatibility`
+- `advanced_v1.playlist_fit`
+- `advanced_v1.transition`
+- `advanced_v1.suitability`
+  - `content_type_fit_score`
+  - `channel_fit_score`
+  - `context_scores`
+- `advanced_v1.rule_trace`
+- `advanced_v1.final_decisions`
+  - `hard_veto`
+  - `soft_penalty_total`
+  - `warning_codes`
 
-Current fallback checks include:
+---
 
-- existing metrics: `true_peak_dbfs`, `spikes_found`
-- clipping detection (`clipping_detected`)
-- silence gap detection (`silence_gaps`)
-- abrupt frame-RMS jump detection (`abrupt_gain_jumps`)
+## 4) Compatibility assertions covered by tests
 
-All checks are deterministic and frame-based with lightweight numpy math.
+- Legacy keys remain readable/present for features, tags, and scores.
+- `advanced_v1` is additive and does not replace legacy keys.
+- `advanced_v1.meta.analyzer_version` and `advanced_v1.meta.schema_version` are written when `advanced_v1` is present.
+- Custom-tag `source_path` resolution supports both legacy paths and additive `advanced_v1` paths.
 
-## DSP score (`dsp_score`) v1
-
-`track_scores.payload_json` keeps legacy `dsp_score` and now includes:
-
-- `dsp_score_version = "v1"`
-- `dsp_components` (all normalized `0..1`)
-- `dsp_notes` (short explanation)
-
-`v1` components:
-
-- `headroom_component`: derived from `true_peak_dbfs` (more headroom -> higher)
-- `stability_component`: derived from frame RMS standard deviation (lower variance -> higher)
-- `spikes_component`: penalized when spikes are detected
-- `clipping_component`: penalized when clipping is detected
-- `silence_component`: penalized when silence gaps are detected
-
-`dsp_score` is a weighted sum of components, clamped to `[0,1]`.
-
-## `missing_fields` semantics
-
-`missing_fields` tracks **required scalar metrics only**.
-Texture is treated as optional enrichment for now, so `dominant_texture` is not added to `missing_fields`.

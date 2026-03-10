@@ -790,6 +790,45 @@ class TestTrackAnalyze(unittest.TestCase):
             required_advanced_list_paths=TAGS_REQUIRED_ADVANCED_LIST_PATHS,
         )
 
+    def test_validate_advanced_v1_payload_requires_version_markers_when_present(self) -> None:
+        for payload, kwargs in (
+            (
+                self._valid_features_payload(),
+                {
+                    "required_scalar_paths": ("duration_sec",),
+                    "allow_none_scalar_paths": ("duration_sec",),
+                    "required_advanced_scalar_paths": FEATURES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                    "required_advanced_object_paths": FEATURES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                    "required_advanced_list_paths": FEATURES_REQUIRED_ADVANCED_LIST_PATHS,
+                },
+            ),
+            (
+                self._valid_scores_payload(),
+                {
+                    "required_scalar_paths": ("dsp_score",),
+                    "required_advanced_scalar_paths": SCORES_REQUIRED_ADVANCED_SCALAR_PATHS,
+                    "required_advanced_object_paths": SCORES_REQUIRED_ADVANCED_OBJECT_PATHS,
+                    "required_advanced_list_paths": SCORES_REQUIRED_ADVANCED_LIST_PATHS,
+                },
+            ),
+            (
+                self._valid_tags_payload(),
+                {
+                    "required_advanced_object_paths": TAGS_REQUIRED_ADVANCED_OBJECT_PATHS,
+                    "required_advanced_list_paths": TAGS_REQUIRED_ADVANCED_LIST_PATHS,
+                },
+            ),
+        ):
+            _validate_advanced_v1_payload(payload, **kwargs)
+            payload["advanced_v1"]["meta"]["analyzer_version"] = None
+            with self.assertRaisesRegex(AnalyzeError, "meta.analyzer_version"):
+                _validate_advanced_v1_payload(payload, **kwargs)
+
+            payload["advanced_v1"]["meta"]["analyzer_version"] = "advanced_track_analyzer_v1.1"
+            payload["advanced_v1"]["meta"]["schema_version"] = None
+            with self.assertRaisesRegex(AnalyzeError, "meta.schema_version"):
+                _validate_advanced_v1_payload(payload, **kwargs)
+
     def test_analyze_requires_thresholds(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
