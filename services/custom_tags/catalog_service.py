@@ -347,3 +347,203 @@ def export_catalog(conn: sqlite3.Connection, seed_dir: str) -> dict[str, Any]:
         _write_json_atomic(file_path, payload)
 
     return {"exported": len(rows), "files": list(CATEGORY_TO_FILE.values())}
+
+
+def _normalize_bulk_item(item: dict[str, Any], *, index: int) -> dict[str, Any]:
+    category = _normalize_nonempty(item.get("category"), f"items[{index}].category").upper()
+    if category not in VALID_CATEGORIES:
+        raise InvalidInputError(
+            "category must be one of VISUAL, MOOD, THEME",
+            {"field": f"items[{index}].category"},
+        )
+    return {
+        "category": category,
+        "code": _validate_slug(item.get("slug"), field=f"items[{index}].slug"),
+        "label": _validate_seed_text(item.get("name"), field=f"items[{index}].name", max_len=100),
+        "description": (
+            None
+            if item.get("description") is None
+            else _validate_seed_text(
+                item.get("description"),
+                field=f"items[{index}].description",
+                max_len=500,
+                allow_empty=True,
+            )
+        ),
+        "is_active": _normalize_bool(item.get("is_active", True), field=f"items[{index}].is_active"),
+    }
+
+
+def preview_bulk_custom_tags(conn: sqlite3.Connection, items: list[dict[str, Any]]) -> dict[str, Any]:
+    existing_rows = conn.execute(
+        "SELECT category, code, label, description, is_active FROM custom_tags"
+    ).fetchall()
+    existing: dict[tuple[str, str], dict[str, Any]] = {
+        (str(row["category"]), str(row["code"])): {
+            "label": str(row["label"]),
+            "description": row["description"],
+            "is_active": int(row["is_active"]),
+        }
+        for row in existing_rows
+    }
+
+    seen: dict[tuple[str, str], tuple[int, dict[str, Any]]] = {}
+    item_results: list[dict[str, Any]] = []
+    valid_unique = 0
+    errors = 0
+    duplicates = 0
+    upserts_against_db = 0
+
+    for idx, raw in enumerate(items):
+        item_result: dict[str, Any] = {
+            "index": idx,
+            "action": "error",
+            "normalized": None,
+            "warnings": [],
+            "errors": [],
+        }
+        try:
+            normalized = _normalize_bulk_item(raw, index=idx)
+            key = (normalized["category"], normalized["code"])
+            item_result["normalized"] = {
+                "category": normalized["category"],
+                "slug": normalized["code"],
+                "name": normalized["label"],
+                "description": normalized["description"],
+                "is_active": bool(normalized["is_active"]),
+            }
+
+            prev = seen.get(key)
+            if prev is not None:
+                _prev_idx, prev_normalized = prev
+                if prev_normalized != normalized:
+                    errors += 1
+                    item_result["errors"].append(
+                        {
+                            "code": "CONFLICTING_DUPLICATE_KEY",
+                            "message": "conflicting payload values for category+slug",
+                            "details": {
+                                "category": normalized["category"],
+                                "slug": normalized["code"],
+                            },
+                        }
+                    )
+                else:
+                    duplicates += 1
+                    item_result["action"] = "deduplicated"
+                    item_result["warnings"].append(
+                        {
+                            "code": "DUPLICATE_IN_PAYLOAD",
+                            "message": "duplicate category+slug with identical normalized payload; deduplicated",
+                        }
+                    )
+                item_results.append(item_result)
+                continue
+
+            seen[key] = (idx, normalized)
+            existing_row = existing.get(key)
+            if existing_row is None:
+                item_result["action"] = "insert"
+            else:
+                upserts_against_db += 1
+                if (
+                    existing_row["label"] == normalized["label"]
+                    and existing_row["description"] == normalized["description"]
+                    and int(existing_row["is_active"]) == int(normalized["is_active"])
+                ):
+                    item_result["action"] = "unchanged"
+                else:
+                    item_result["action"] = "update"
+            valid_unique += 1
+        except CatalogError as err:
+            errors += 1
+            item_result["errors"].append({"code": err.code, "message": err.message, "details": err.details or {}})
+        item_results.append(item_result)
+
+    return {
+        "can_confirm": errors == 0,
+        "summary": {
+            "total": len(items),
+            "valid": valid_unique,
+            "errors": errors,
+            "duplicates_in_payload": duplicates,
+            "upserts_against_db": upserts_against_db,
+        },
+        "items": item_results,
+    }
+
+
+def confirm_bulk_custom_tags(conn: sqlite3.Connection, items: list[dict[str, Any]]) -> dict[str, Any]:
+    preview = preview_bulk_custom_tags(conn, items)
+    if not preview["can_confirm"]:
+        return {
+            "can_confirm": False,
+            "summary": preview["summary"],
+            "items": preview["items"],
+            "inserted": 0,
+            "updated": 0,
+            "unchanged": 0,
+        }
+
+    inserted = 0
+    updated = 0
+    unchanged = 0
+    now_text = _now_text()
+    to_apply = [item for item in preview["items"] if item["action"] in {"insert", "update", "unchanged"}]
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for item in to_apply:
+            normalized = item["normalized"]
+            assert isinstance(normalized, dict)
+            category = str(normalized["category"])
+            code = str(normalized["slug"])
+            label = str(normalized["name"])
+            description = normalized["description"]
+            is_active = _normalize_bool(normalized["is_active"])  # bool -> int
+
+            row = conn.execute(
+                "SELECT id, label, description, is_active FROM custom_tags WHERE category = ? AND code = ?",
+                (category, code),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO custom_tags(code, label, category, description, is_active, created_at, updated_at)
+                    VALUES(?,?,?,?,?,?,?)
+                    """,
+                    (code, label, category, description, is_active, now_text, now_text),
+                )
+                inserted += 1
+                continue
+
+            if (
+                str(row["label"]) == label
+                and row["description"] == description
+                and int(row["is_active"]) == int(is_active)
+            ):
+                unchanged += 1
+                continue
+
+            conn.execute(
+                """
+                UPDATE custom_tags
+                SET label = ?, description = ?, is_active = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (label, description, is_active, now_text, int(row["id"])),
+            )
+            updated += 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return {
+        "can_confirm": True,
+        "summary": preview["summary"],
+        "items": preview["items"],
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+    }

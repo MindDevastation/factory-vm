@@ -553,6 +553,20 @@ class CustomTagCatalogPatchRequest(BaseModel):
     category: str | None = None
 
 
+class CustomTagBulkCatalogItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    category: str
+    slug: str
+    name: str
+    description: str | None = None
+    is_active: bool = True
+
+
+class CustomTagBulkCatalogRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[CustomTagBulkCatalogItemRequest]
+
+
 class CustomTagRuleCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tag_id: int
@@ -997,6 +1011,8 @@ _CTA_CATALOG_ENDPOINTS = {
     ("PATCH", "/v1/track-catalog/custom-tags/catalog/{tag_id}"),
     ("POST", "/v1/track-catalog/custom-tags/catalog/import"),
     ("POST", "/v1/track-catalog/custom-tags/catalog/export"),
+    ("POST", "/v1/track-catalog/custom-tags/bulk/preview"),
+    ("POST", "/v1/track-catalog/custom-tags/bulk/confirm"),
     ("POST", "/v1/track-catalog/custom-tags/export-seed"),
     ("POST", "/v1/track-catalog/custom-tags/import-seed"),
     ("GET", "/v1/track-catalog/custom-tags/rules"),
@@ -1119,6 +1135,44 @@ def api_custom_tags_catalog_export(_: bool = Depends(require_basic_auth(env))):
     finally:
         conn.close()
     return {"ok": True, **result}
+
+
+@app.post("/v1/track-catalog/custom-tags/bulk/preview")
+def api_custom_tags_catalog_bulk_preview(payload: CustomTagBulkCatalogRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = catalog_service.preview_bulk_custom_tags(conn, items=[item.model_dump() for item in payload.items])
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags bulk preview failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/bulk/confirm")
+def api_custom_tags_catalog_bulk_confirm(payload: CustomTagBulkCatalogRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = catalog_service.confirm_bulk_custom_tags(conn, items=[item.model_dump() for item in payload.items])
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags bulk confirm failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
 
 
 
