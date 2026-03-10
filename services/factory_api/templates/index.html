@@ -59,6 +59,38 @@
   </tbody>
 </table>
 
+<h2>Jobs · Bulk JSON Editor</h2>
+<p class="muted">Preview and execute bulk job operations via existing UI contracts.</p>
+<p>
+  <label for="jobs-bulk-mode"><strong>Mode:</strong></label>
+  <select id="jobs-bulk-mode">
+    <option value="create_draft_jobs">create_draft_jobs</option>
+    <option value="create_and_enqueue">create_and_enqueue</option>
+    <option value="enqueue_existing_jobs">enqueue_existing_jobs</option>
+  </select>
+</p>
+<p>
+  <textarea id="jobs-bulk-json" rows="10" style="width:100%;" spellcheck="false"></textarea>
+</p>
+<p>
+  <button type="button" id="jobs-bulk-preview-btn">Preview</button>
+  <button type="button" id="jobs-bulk-execute-btn">Execute</button>
+  <span class="muted" id="jobs-bulk-note">Idle</span>
+</p>
+<p class="muted" id="jobs-bulk-summary">No preview or execute results yet.</p>
+<table id="jobs-bulk-results-table">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Status</th>
+      <th>Details</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td colspan="3" class="muted">No data.</td></tr>
+  </tbody>
+</table>
+
 <p>
     <label for="jobs-status-filter"><strong>Status filter:</strong></label>
     <select id="jobs-status-filter" multiple size="6" disabled></select>
@@ -134,6 +166,13 @@
   const jobsRenderSelectedBtn = document.getElementById('jobs-render-selected');
   const jobsSelectAllVisible = document.getElementById('jobs-select-all-visible');
   const jobsTableBody = document.querySelector('#jobs-table tbody');
+  const jobsBulkMode = document.getElementById('jobs-bulk-mode');
+  const jobsBulkJson = document.getElementById('jobs-bulk-json');
+  const jobsBulkPreviewBtn = document.getElementById('jobs-bulk-preview-btn');
+  const jobsBulkExecuteBtn = document.getElementById('jobs-bulk-execute-btn');
+  const jobsBulkNote = document.getElementById('jobs-bulk-note');
+  const jobsBulkSummary = document.getElementById('jobs-bulk-summary');
+  const jobsBulkResultsBody = document.querySelector('#jobs-bulk-results-table tbody');
   const selectedJobIds = new Set();
   const failedJobIds = new Set();
   let allJobs = [];
@@ -202,6 +241,120 @@
       jobsInlineMessage.classList.add('muted');
     }
     jobsInlineMessage.textContent = message;
+  }
+
+  function setJobsBulkState(message, tone) {
+    jobsBulkNote.classList.remove('muted');
+    jobsBulkNote.style.color = '';
+    if (tone === 'success') {
+      jobsBulkNote.style.color = '#166534';
+    } else if (tone === 'error') {
+      jobsBulkNote.style.color = '#b91c1c';
+    } else {
+      jobsBulkNote.classList.add('muted');
+    }
+    jobsBulkNote.textContent = message;
+  }
+
+  function jobsBulkSummaryText(mode, summary) {
+    if (!summary || typeof summary !== 'object') {
+      return 'No summary available.';
+    }
+    const parts = Object.keys(summary).map((key) => key + ': ' + summary[key]);
+    return (mode ? ('mode=' + mode + ' · ') : '') + parts.join(', ');
+  }
+
+  function jobsBulkStatus(item) {
+    if (item && item.error) {
+      return 'error';
+    }
+    if (item && item.valid === true) {
+      return 'valid';
+    }
+    if (item && item.created === true) {
+      return 'created';
+    }
+    if (item && (item.enqueued === true || item.enqueued === false)) {
+      return item.enqueued ? 'enqueued' : 'noop';
+    }
+    if (item && item.enqueue && (item.enqueue.enqueued === true || item.enqueue.enqueued === false)) {
+      return item.enqueue.enqueued ? 'enqueued' : 'noop';
+    }
+    return 'ok';
+  }
+
+  function renderJobsBulkResults(results) {
+    const rows = Array.isArray(results) ? results : [];
+    if (!rows.length) {
+      jobsBulkResultsBody.innerHTML = '<tr><td colspan="3" class="muted">Empty result set.</td></tr>';
+      return;
+    }
+    jobsBulkResultsBody.innerHTML = rows.map((item, idx) => {
+      const rowKey = item.index != null ? item.index : (item.job_id != null ? item.job_id : idx);
+      const details = item.error ? (item.error.message || JSON.stringify(item.error)) : JSON.stringify(item);
+      return '<tr>' +
+        '<td>' + esc(rowKey) + '</td>' +
+        '<td>' + esc(jobsBulkStatus(item)) + '</td>' +
+        '<td><code>' + esc(details) + '</code></td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  function parseJobsBulkPayload() {
+    let parsed;
+    try {
+      parsed = JSON.parse(jobsBulkJson.value || '{}');
+    } catch (_) {
+      return { error: 'Invalid JSON payload.' };
+    }
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    return {
+      payload: {
+        mode: String(jobsBulkMode.value || '').trim(),
+        items: items,
+      },
+    };
+  }
+
+  async function jobsBulkRequest(action) {
+    const parsed = parseJobsBulkPayload();
+    if (parsed.error) {
+      setJobsBulkState(parsed.error, 'error');
+      jobsBulkSummary.textContent = 'Validation error.';
+      renderJobsBulkResults([]);
+      return;
+    }
+
+    const isPreview = action === 'preview';
+    const endpoint = isPreview ? '/v1/ui/jobs/bulk-json/preview' : '/v1/ui/jobs/bulk-json/execute';
+    setJobsBulkState((isPreview ? 'Preview' : 'Execute') + ' in progress...', 'info');
+    jobsBulkPreviewBtn.disabled = true;
+    jobsBulkExecuteBtn.disabled = true;
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed.payload),
+      });
+      const body = await res.json();
+      if (!res.ok || body.error) {
+        const errorMessage = body.error ? body.error.message : ('Request failed with status ' + res.status);
+        setJobsBulkState(errorMessage, 'error');
+        jobsBulkSummary.textContent = 'Request/server error.';
+        renderJobsBulkResults([]);
+        return;
+      }
+      setJobsBulkState((isPreview ? 'Preview' : 'Execute') + ' completed.', 'success');
+      jobsBulkSummary.textContent = jobsBulkSummaryText(body.mode, body.summary);
+      renderJobsBulkResults(body.results);
+    } catch (err) {
+      setJobsBulkState((err && err.message) ? err.message : 'Request/server error.', 'error');
+      jobsBulkSummary.textContent = 'Request/server error.';
+      renderJobsBulkResults([]);
+    } finally {
+      jobsBulkPreviewBtn.disabled = false;
+      jobsBulkExecuteBtn.disabled = false;
+    }
   }
 
   function updateFailedRowHighlights() {
@@ -960,6 +1113,9 @@
     refreshAll();
   });
   refreshBtn.addEventListener('click', refreshAll);
+  jobsBulkPreviewBtn.addEventListener('click', () => jobsBulkRequest('preview'));
+  jobsBulkExecuteBtn.addEventListener('click', () => jobsBulkRequest('execute'));
+  jobsBulkJson.value = JSON.stringify({ mode: 'create_draft_jobs', items: [] }, null, 2);
   initJobsStatusFilter();
   refreshAll();
 })();
