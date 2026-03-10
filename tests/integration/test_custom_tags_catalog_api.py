@@ -24,9 +24,9 @@ class TestCustomTagsCatalogApi(unittest.TestCase):
             seed_dir = Path(td.name) / "seeds" / "custom-tags"
             seed_dir.mkdir(parents=True, exist_ok=True)
             import_payloads = {
-                "visual_tags.json": {"tags": [{"code": "solar", "label": "Solar", "description": "v", "is_active": True}]},
-                "mood_tags.json": {"tags": [{"code": "calm", "label": "Calm", "description": None, "is_active": False}]},
-                "theme_tags.json": {"tags": [{"code": "space", "label": "Space", "description": "t", "is_active": True}]},
+                "visual_tags.json": {"schema_version": "custom_tags_seed/1", "category": "VISUAL", "exported_at": "2026-01-01T00:00:00+00:00", "tags": [{"slug": "solar", "name": "Solar", "description": "v", "is_active": True}]},
+                "mood_tags.json": {"schema_version": "custom_tags_seed/1", "category": "MOOD", "exported_at": "2026-01-01T00:00:00+00:00", "tags": [{"slug": "calm", "name": "Calm", "description": None, "is_active": False}]},
+                "theme_tags.json": {"schema_version": "custom_tags_seed/1", "category": "THEME", "exported_at": "2026-01-01T00:00:00+00:00", "tags": [{"slug": "space", "name": "Space", "description": "t", "is_active": True}]},
             }
             for name, payload in import_payloads.items():
                 (seed_dir / name).write_text(json.dumps(payload), encoding="utf-8")
@@ -92,7 +92,7 @@ class TestCustomTagsCatalogApi(unittest.TestCase):
             self.assertFalse(mood_path.exists())
             export_dir.mkdir(parents=True, exist_ok=True)
             visual_path.write_text(
-                json.dumps({"tags": [{"code": "stale", "label": "Stale", "description": None, "is_active": True}]}),
+                json.dumps({"schema_version": "custom_tags_seed/1", "category": "VISUAL", "exported_at": "2026-01-01T00:00:00+00:00", "tags": [{"slug": "stale", "name": "Stale", "description": None, "is_active": True}]}),
                 encoding="utf-8",
             )
 
@@ -104,7 +104,7 @@ class TestCustomTagsCatalogApi(unittest.TestCase):
             self.assertTrue(visual_path.is_file())
             self.assertTrue(mood_path.is_file())
             visual = json.loads(visual_path.read_text(encoding="utf-8"))
-            self.assertEqual(sorted(tag["code"] for tag in visual["tags"]), ["mist", "solar"])
+            self.assertEqual(sorted(tag["slug"] for tag in visual["tags"]), ["mist", "solar"])
 
     def test_import_missing_file_returns_typed_error(self) -> None:
         with temp_env() as (td, _env0):
