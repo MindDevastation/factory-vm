@@ -1,25 +1,27 @@
 # Track Analyzer Output Schema (Canonical)
 
-This document defines the canonical analyzer payload contract currently written by `services/track_analyzer/analyze.py`.
+## Scope and compatibility note
 
-Compatibility policy:
+This document defines the analyzer payload contract written by `services/track_analyzer/analyze.py`.
 
-- Top-level legacy keys remain present.
-- `advanced_v1` is additive and must not remove/rename legacy keys.
-- If `advanced_v1` exists, version markers are required at `advanced_v1.meta`:
+Compatibility contract:
+
+- Legacy top-level keys remain present.
+- `advanced_v1` is additive and does not remove or rename legacy keys.
+- When `advanced_v1` is present, version markers are required in `advanced_v1.meta`:
   - `analyzer_version`
   - `schema_version`
 
-Current values:
+Current runtime marker values:
 
 - `advanced_v1.meta.analyzer_version = "advanced_track_analyzer_v1.1"`
 - `advanced_v1.meta.schema_version = "advanced_v1"`
 
 ---
 
-## 1) `track_features.payload_json`
+## `track_features.payload_json`
 
-### Legacy top-level keys (preserved)
+### Preserved legacy keys (runtime-emitted)
 
 - `duration_sec`
 - `true_peak_dbfs`
@@ -37,6 +39,11 @@ Current values:
 - `texture_reason`
 - `analysis_status`
 - `missing_fields`
+
+### Legacy compatibility-read keys (not analyzer-emitted in current runtime)
+
+- `scene`
+- `mood`
 
 ### Additive `advanced_v1` keys
 
@@ -58,15 +65,20 @@ Current values:
 
 ---
 
-## 2) `track_tags.payload_json`
+## `track_tags.payload_json`
 
-### Legacy top-level keys (preserved)
+### Preserved legacy keys (runtime-emitted)
 
 - `yamnet_tags`
 - `prohibited_cues_notes`
 - `prohibited_cues`
 - `analysis_status`
 - `missing_fields`
+
+### Legacy compatibility-read keys (not analyzer-emitted in current runtime)
+
+- `scene`
+- `mood`
 
 ### Additive `advanced_v1` keys
 
@@ -81,9 +93,9 @@ Current values:
 
 ---
 
-## 3) `track_scores.payload_json`
+## `track_scores.payload_json`
 
-### Legacy top-level keys (preserved)
+### Preserved legacy keys (runtime-emitted)
 
 - `dsp_score`
 - `dsp_score_version`
@@ -91,6 +103,11 @@ Current values:
 - `dsp_notes`
 - `analysis_status`
 - `missing_fields`
+
+### Legacy compatibility-read keys (not analyzer-emitted in current runtime)
+
+- `safety`
+- `scene_match`
 
 ### Additive `advanced_v1` keys
 
@@ -115,10 +132,25 @@ Current values:
 
 ---
 
-## 4) Compatibility assertions covered by tests
+## Required version markers
 
-- Legacy keys remain readable/present for features, tags, and scores.
-- `advanced_v1` is additive and does not replace legacy keys.
-- `advanced_v1.meta.analyzer_version` and `advanced_v1.meta.schema_version` are written when `advanced_v1` is present.
-- Custom-tag `source_path` resolution supports both legacy paths and additive `advanced_v1` paths.
+- For every payload that includes `advanced_v1`, `advanced_v1.meta.analyzer_version` is required.
+- For every payload that includes `advanced_v1`, `advanced_v1.meta.schema_version` is required.
 
+---
+
+## Compatibility guarantees
+
+- Existing legacy top-level keys remain available.
+- `advanced_v1` remains additive over legacy payloads.
+- Analyzer write path emits `analyzer_version` and `schema_version` whenever `advanced_v1` is present.
+- This document reflects actual runtime payload construction, not an aspirational future schema.
+
+---
+
+## Source-path compatibility notes
+
+- Existing source-path compatibility coverage remains valid for both:
+  - legacy top-level paths (for example, `track_features.payload_json.voice_flag`)
+  - additive `advanced_v1` paths (for example, `track_features.payload_json.advanced_v1.voice.human_presence_score`)
+- Historical legacy keys used by some downstream/report flows (`scene`, `mood`, `safety`, `scene_match`) remain documented as compatibility-read keys above.
