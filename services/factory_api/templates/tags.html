@@ -32,6 +32,29 @@
   </tbody>
 </table>
 
+<h2>Track Catalog → Custom Tags → Bulk JSON</h2>
+<p class="muted">Validate payload before import. Contract uses <code>{"items":[...]}</code>.</p>
+<p><textarea id="tags-bulk-json-editor" rows="12" style="width:100%;" spellcheck="false"></textarea></p>
+<p>
+  <button type="button" id="tags-bulk-preview-btn">Validate Preview</button>
+  <button type="button" id="tags-bulk-confirm-btn">Confirm Import</button>
+  <span class="muted" id="tags-bulk-json-note">Idle</span>
+</p>
+<p class="muted" id="tags-bulk-json-summary">No preview/import summary yet.</p>
+<table id="tags-bulk-preview-table">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Action</th>
+      <th>Warnings</th>
+      <th>Errors</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td colspan="4" class="muted">No data.</td></tr>
+  </tbody>
+</table>
+
 <dialog id="tag-editor-modal">
   <form method="dialog" id="tag-editor-form">
     <h3 id="tag-editor-title">Create Tag</h3>
@@ -98,6 +121,12 @@
   const bulkModal = document.getElementById('tags-bulk-modal');
   const bulkJson = document.getElementById('tags-bulk-json');
   const bulkNote = document.getElementById('tags-bulk-note');
+  const bulkJsonEditor = document.getElementById('tags-bulk-json-editor');
+  const bulkPreviewBtn = document.getElementById('tags-bulk-preview-btn');
+  const bulkConfirmBtn = document.getElementById('tags-bulk-confirm-btn');
+  const bulkJsonNote = document.getElementById('tags-bulk-json-note');
+  const bulkJsonSummary = document.getElementById('tags-bulk-json-summary');
+  const bulkPreviewTableBody = document.querySelector('#tags-bulk-preview-table tbody');
 
   function resolveApiPath(path) {
     const normalized = String(path || '').startsWith('/') ? String(path || '') : ('/' + String(path || ''));
@@ -122,6 +151,105 @@
   function setNote(message, isError) {
     note.style.color = isError ? '#b91c1c' : '';
     note.textContent = message;
+  }
+
+  function setBulkJsonState(message, tone) {
+    bulkJsonNote.classList.remove('muted');
+    bulkJsonNote.style.color = '';
+    if (tone === 'success') {
+      bulkJsonNote.style.color = '#166534';
+    } else if (tone === 'error') {
+      bulkJsonNote.style.color = '#b91c1c';
+    } else {
+      bulkJsonNote.classList.add('muted');
+    }
+    bulkJsonNote.textContent = message;
+  }
+
+  function renderBulkPreviewRows(items) {
+    const rows = Array.isArray(items) ? items : [];
+    if (!rows.length) {
+      bulkPreviewTableBody.innerHTML = '<tr><td colspan="4" class="muted">Empty preview/result set.</td></tr>';
+      return;
+    }
+    bulkPreviewTableBody.innerHTML = rows.map((item, idx) => {
+      const warnings = Array.isArray(item.warnings) ? item.warnings.map((w) => w.message).join('; ') : '';
+      const errors = Array.isArray(item.errors) ? item.errors.map((e) => e.message).join('; ') : '';
+      return '<tr>' +
+        '<td>' + esc(item.index == null ? idx : item.index) + '</td>' +
+        '<td>' + esc(item.action || '') + '</td>' +
+        '<td>' + esc(warnings || '-') + '</td>' +
+        '<td>' + esc(errors || '-') + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  function parseBulkEditorPayload() {
+    let parsed;
+    try {
+      parsed = JSON.parse(bulkJsonEditor.value || '{}');
+    } catch (_) {
+      return { error: 'Invalid JSON payload.' };
+    }
+    return { payload: { items: Array.isArray(parsed.items) ? parsed.items : [] } };
+  }
+
+  function bulkSummaryText(body) {
+    const summary = body && body.summary;
+    if (!summary || typeof summary !== 'object') {
+      return 'No summary available.';
+    }
+    const parts = Object.keys(summary).map((key) => key + ': ' + summary[key]);
+    if (body && (typeof body.inserted === 'number' || typeof body.updated === 'number' || typeof body.unchanged === 'number')) {
+      parts.push('inserted: ' + (body.inserted || 0));
+      parts.push('updated: ' + (body.updated || 0));
+      parts.push('unchanged: ' + (body.unchanged || 0));
+    }
+    parts.push('can_confirm: ' + Boolean(body && body.can_confirm));
+    return parts.join(', ');
+  }
+
+  async function runBulkJsonRequest(action) {
+    const parsed = parseBulkEditorPayload();
+    if (parsed.error) {
+      setBulkJsonState(parsed.error, 'error');
+      bulkJsonSummary.textContent = 'Validation error.';
+      renderBulkPreviewRows([]);
+      return;
+    }
+
+    const isPreview = action === 'preview';
+    const endpoint = isPreview ? '/track-catalog/custom-tags/bulk/preview' : '/track-catalog/custom-tags/bulk/confirm';
+    setBulkJsonState((isPreview ? 'Validate Preview' : 'Confirm Import') + ' in progress...', 'info');
+    bulkPreviewBtn.disabled = true;
+    bulkConfirmBtn.disabled = true;
+    try {
+      const r = await apiFetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed.payload),
+      });
+      const body = await r.json();
+      if (!r.ok || body.error) {
+        setBulkJsonState((body.error && body.error.message) || 'Request/server error.', 'error');
+        bulkJsonSummary.textContent = 'Request/server error.';
+        renderBulkPreviewRows([]);
+        return;
+      }
+      setBulkJsonState((isPreview ? 'Validate Preview' : 'Confirm Import') + ' completed.', 'success');
+      bulkJsonSummary.textContent = bulkSummaryText(body);
+      renderBulkPreviewRows(body.items);
+      if (!isPreview && body.can_confirm) {
+        await loadCatalog();
+      }
+    } catch (error) {
+      setBulkJsonState((error && error.message) ? error.message : 'Request/server error.', 'error');
+      bulkJsonSummary.textContent = 'Request/server error.';
+      renderBulkPreviewRows([]);
+    } finally {
+      bulkPreviewBtn.disabled = false;
+      bulkConfirmBtn.disabled = false;
+    }
   }
 
   async function loadCatalog() {
@@ -316,6 +444,14 @@
   document.getElementById('tag-editor-cancel').addEventListener('click', () => editorModal.close());
   document.getElementById('tags-bulk-run').addEventListener('click', runBulkCreate);
   document.getElementById('tags-bulk-cancel').addEventListener('click', () => bulkModal.close());
+  bulkPreviewBtn.addEventListener('click', () => runBulkJsonRequest('preview'));
+  bulkConfirmBtn.addEventListener('click', () => runBulkJsonRequest('confirm'));
+
+  bulkJsonEditor.value = JSON.stringify({
+    items: [
+      { category: 'VISUAL', slug: 'example_tag', name: 'Example Tag', description: '', is_active: true },
+    ],
+  }, null, 2);
 
   loadCatalog();
 })();

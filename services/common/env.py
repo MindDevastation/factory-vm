@@ -48,7 +48,7 @@ class Env:
     max_upload_attempts: int
 
     worker_sleep_sec: int
-    custom_tags_seed_dir: str = "configs/custom_tags"
+    custom_tags_seed_dir: str = "data/seeds/custom_tags"
     db_viewer_policy_path: str = ""
     db_viewer_privileged_users: str = ""
 
@@ -96,5 +96,5 @@ class Env:
             max_upload_attempts=int(os.environ.get("MAX_UPLOAD_ATTEMPTS", "3")),
 
             worker_sleep_sec=int(os.environ.get("WORKER_SLEEP_SEC", "5")),
-            custom_tags_seed_dir=os.environ.get("CUSTOM_TAGS_SEED_DIR", "configs/custom_tags"),
+            custom_tags_seed_dir=os.environ.get("CUSTOM_TAGS_SEED_DIR", "data/seeds/custom_tags"),
         )

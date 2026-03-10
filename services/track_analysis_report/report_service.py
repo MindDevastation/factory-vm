@@ -21,6 +21,32 @@ class ChannelNotFoundError(TrackAnalysisReportError):
     """Raised when channel slug is not present in channels table."""
 
 
+_FLAT_PRIMARY_COLUMN_BY_KEY: dict[str, str] = {
+    "analysis_status": "taf_analysis_status",
+    "true_peak_dbfs": "taf_true_peak_dbfs",
+    "spikes_found": "taf_spikes_found",
+    "voice_flag": "taf_voice_flag",
+    "voice_flag_reason": "taf_voice_flag_reason",
+    "speech_flag": "taf_speech_flag",
+    "speech_flag_reason": "taf_speech_flag_reason",
+    "yamnet_tags": "taf_yamnet_top_tags_text",
+    "dominant_texture": "taf_dominant_texture",
+    "texture_confidence": "taf_texture_confidence",
+    "texture_reason": "taf_texture_reason",
+    "dsp_score": "taf_dsp_score",
+    "analyzer_version": "taf_analyzer_version",
+    "schema_version": "taf_schema_version",
+}
+
+
+def _coerce_flat_value(column_key: str, value: Any) -> Any:
+    if value is None:
+        return None
+    if column_key in {"voice_flag", "speech_flag"}:
+        return bool(value)
+    return value
+
+
 def _parse_payload_json(value: Any) -> dict[str, Any]:
     if not isinstance(value, str) or not value:
         return {}
@@ -103,11 +129,26 @@ def build_channel_report(conn: sqlite3.Connection, channel_slug: str) -> dict[st
             tt.payload_json AS tt_payload_json,
             tt.computed_at AS tt_computed_at,
             ts.payload_json AS ts_payload_json,
-            ts.computed_at AS ts_computed_at
+            ts.computed_at AS ts_computed_at,
+            taf.analysis_status AS taf_analysis_status,
+            taf.true_peak_dbfs AS taf_true_peak_dbfs,
+            taf.spikes_found AS taf_spikes_found,
+            taf.voice_flag AS taf_voice_flag,
+            taf.voice_flag_reason AS taf_voice_flag_reason,
+            taf.speech_flag AS taf_speech_flag,
+            taf.speech_flag_reason AS taf_speech_flag_reason,
+            taf.yamnet_top_tags_text AS taf_yamnet_top_tags_text,
+            taf.dominant_texture AS taf_dominant_texture,
+            taf.texture_confidence AS taf_texture_confidence,
+            taf.texture_reason AS taf_texture_reason,
+            taf.dsp_score AS taf_dsp_score,
+            taf.analyzer_version AS taf_analyzer_version,
+            taf.schema_version AS taf_schema_version
         FROM tracks t
         LEFT JOIN track_features tf ON tf.track_pk = t.id
         LEFT JOIN track_tags tt ON tt.track_pk = t.id
         LEFT JOIN track_scores ts ON ts.track_pk = t.id
+        LEFT JOIN track_analysis_flat taf ON taf.track_pk = t.id
         WHERE t.channel_slug = ?
         ORDER BY t.id ASC
         """,
@@ -153,7 +194,10 @@ def build_channel_report(conn: sqlite3.Connection, channel_slug: str) -> dict[st
 
         flattened_row: dict[str, Any] = {}
         for entry in COLUMN_REGISTRY:
-            raw_value = resolve_source_path(sources, entry["source"], entry["path"])
+            flat_alias = _FLAT_PRIMARY_COLUMN_BY_KEY.get(entry["key"])
+            raw_value = _coerce_flat_value(entry["key"], db_row.get(flat_alias)) if flat_alias else None
+            if raw_value is None:
+                raw_value = resolve_source_path(sources, entry["source"], entry["path"])
             flattened_row[entry["key"]] = flatten_value(raw_value, entry["flatten"])
         report_rows.append(flattened_row)
 

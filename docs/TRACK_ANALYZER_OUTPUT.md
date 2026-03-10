@@ -1,106 +1,156 @@
-# Track Analyzer Output Notes
+# Track Analyzer Output Schema (Canonical)
 
-## Texture metadata
+## Scope and compatibility note
 
-`track_features.payload_json` keeps `dominant_texture` for backward compatibility and includes:
+This document defines the analyzer payload contract written by `services/track_analyzer/analyze.py`.
 
-- `texture_backend`: one of `none`, `heuristic`, `model`, `fallback`
-- `texture_confidence`: float in `[0,1]` or `null`
-- `texture_reason`: one of `ok`, `low_confidence`, `exception`, `disabled`, `missing_model`, `unknown`
+Compatibility contract:
 
-Current default implementation uses a lightweight waveform heuristic backend.
+- Legacy top-level keys remain present.
+- `advanced_v1` is additive and does not remove or rename legacy keys.
+- When `advanced_v1` is present, version markers are required in `advanced_v1.meta`:
+  - `analyzer_version`
+  - `schema_version`
 
-### Heuristic texture labels (playlisting-safe)
+Current runtime marker values:
 
-`dominant_texture` is one of:
+- `advanced_v1.meta.analyzer_version = "advanced_track_analyzer_v1.1"`
+- `advanced_v1.meta.schema_version = "advanced_v1"`
 
-- `tonal_sustained`
-- `percussive_rhythmic`
-- `noisy_distorted`
-- `mixed`
+---
 
-These labels are intentionally small/stable for playlist rules and automation. Suggested usage:
+## `track_features.payload_json`
 
-- Prefer `tonal_sustained` for ambient/bed playlists.
-- Prefer `percussive_rhythmic` for motion/trailer playlists.
-- Route `noisy_distorted` to aggressive/experimental bins.
-- Keep `mixed` as a fallback bucket when tracks do not present a clear dominant texture.
+### Preserved legacy keys (runtime-emitted)
 
-If confidence is low (`< 0.35`), analyzer returns `dominant_texture = "mixed"` with `texture_reason = "low_confidence"`.
+- `duration_sec`
+- `true_peak_dbfs`
+- `spikes_found`
+- `yamnet_top_classes`
+- `yamnet_probabilities`
+- `yamnet_agg`
+- `voice_flag`
+- `voice_flag_reason`
+- `speech_flag`
+- `speech_flag_reason`
+- `dominant_texture`
+- `texture_backend`
+- `texture_confidence`
+- `texture_reason`
+- `analysis_status`
+- `missing_fields`
 
-If texture analysis raises an exception, payload becomes:
+### Legacy compatibility-read keys (not analyzer-emitted in current runtime)
 
-- `dominant_texture = "unknown texture"`
-- `texture_backend = "heuristic"`
-- `texture_confidence = null`
-- `texture_reason = "exception"`
+- `scene`
+- `mood`
 
-## Voice/speech aggregation (`yamnet_agg`)
+### Additive `advanced_v1` keys
 
-`track_features.payload_json` now includes a machine-readable YAMNet aggregation block:
+- `advanced_v1.meta`
+  - `analyzer_version`
+  - `schema_version`
+  - `analyzed_at`
+  - `rollout_tier`
+  - `segment_policy`
+- `advanced_v1.profiles`
+  - `LONG_INSTRUMENTAL_AMBIENT` (object)
+  - `LONG_LYRICAL` (object)
+- `advanced_v1.quality`
+- `advanced_v1.dynamics`
+- `advanced_v1.timbre`
+- `advanced_v1.structure`
+- `advanced_v1.voice`
+- `advanced_v1.similarity`
 
-- `yamnet_agg.voice_prob`: sum of YAMNet class scores for configurable `VOICE_LABELS` (includes `Singing`)
-- `yamnet_agg.speech_prob`: sum of class scores for configurable `SPEECH_LABELS`
-- `yamnet_agg.singing_prob`: score for `Singing` class (or `0` when absent)
-- `yamnet_agg.voice_labels_used`: labels that contributed to `voice_prob`
-- `yamnet_agg.speech_labels_used`: labels that contributed to `speech_prob`
-- `yamnet_agg.source`: `full_vector` when full per-label scores are available, otherwise `top_classes`
-- `yamnet_agg.top_classes_count`: number of entries in `yamnet_top_classes` used for readability
-- `yamnet_agg.total_labels_count`: present when `source = full_vector`
+---
 
-`yamnet_top_classes` remains backward compatible and now stores top `YAMNET_TOP_N = 20` labels by default.
-Legacy `yamnet_probabilities` and `yamnet_tags` are unchanged.
+## `track_tags.payload_json`
 
-Automation helpers:
+### Preserved legacy keys (runtime-emitted)
 
-- `voice_flag` (`bool`)
-- `voice_flag_reason` (`str`) with explicit threshold explanation
-- `speech_flag` (`bool`)
-- `speech_flag_reason` (`str`) with explicit threshold explanation
+- `yamnet_tags`
+- `prohibited_cues_notes`
+- `prohibited_cues`
+- `analysis_status`
+- `missing_fields`
 
-Current thresholds are constants in analyzer code:
+### Legacy compatibility-read keys (not analyzer-emitted in current runtime)
 
-- `VOICE_MIN_PROB = 0.20`
-- `SINGING_MIN_PROB = 0.08`
-- `SPEECH_MIN_PROB = 0.10`
+- `scene`
+- `mood`
 
-## Prohibited cues structured output
+### Additive `advanced_v1` keys
 
-`track_tags.payload_json` keeps `prohibited_cues_notes` and now also includes:
+- `advanced_v1.meta` (same required markers as above)
+- `advanced_v1.profiles`
+- `advanced_v1.semantic`
+  - `mood_tags`
+  - `theme_tags`
+- `advanced_v1.voice_tags`
+- `advanced_v1.classifier_evidence`
+  - `yamnet_top_classes`
 
-- `prohibited_cues.backend`: `fallback` (or `primary` in future backends)
-- `prohibited_cues.checks_run`: ordered list of checks run
-- `prohibited_cues.flags`: boolean flags
-- `prohibited_cues.metrics`: numeric values for automation/debugging
+---
 
-Current fallback checks include:
+## `track_scores.payload_json`
 
-- existing metrics: `true_peak_dbfs`, `spikes_found`
-- clipping detection (`clipping_detected`)
-- silence gap detection (`silence_gaps`)
-- abrupt frame-RMS jump detection (`abrupt_gain_jumps`)
+### Preserved legacy keys (runtime-emitted)
 
-All checks are deterministic and frame-based with lightweight numpy math.
+- `dsp_score`
+- `dsp_score_version`
+- `dsp_components`
+- `dsp_notes`
+- `analysis_status`
+- `missing_fields`
 
-## DSP score (`dsp_score`) v1
+### Legacy compatibility-read keys (not analyzer-emitted in current runtime)
 
-`track_scores.payload_json` keeps legacy `dsp_score` and now includes:
+- `safety`
+- `scene_match`
 
-- `dsp_score_version = "v1"`
-- `dsp_components` (all normalized `0..1`)
-- `dsp_notes` (short explanation)
+### Additive `advanced_v1` keys
 
-`v1` components:
+- `advanced_v1.meta` (same required markers as above)
+- `advanced_v1.profiles`
+- `advanced_v1.semantic.functional_scores`
+  - `focus`
+  - `energy`
+  - `narrative`
+  - `background_compatibility`
+- `advanced_v1.playlist_fit`
+- `advanced_v1.transition`
+- `advanced_v1.suitability`
+  - `content_type_fit_score`
+  - `channel_fit_score`
+  - `context_scores`
+- `advanced_v1.rule_trace`
+- `advanced_v1.final_decisions`
+  - `hard_veto`
+  - `soft_penalty_total`
+  - `warning_codes`
 
-- `headroom_component`: derived from `true_peak_dbfs` (more headroom -> higher)
-- `stability_component`: derived from frame RMS standard deviation (lower variance -> higher)
-- `spikes_component`: penalized when spikes are detected
-- `clipping_component`: penalized when clipping is detected
-- `silence_component`: penalized when silence gaps are detected
+---
 
-`dsp_score` is a weighted sum of components, clamped to `[0,1]`.
+## Required version markers
 
-## `missing_fields` semantics
+- For every payload that includes `advanced_v1`, `advanced_v1.meta.analyzer_version` is required.
+- For every payload that includes `advanced_v1`, `advanced_v1.meta.schema_version` is required.
 
-`missing_fields` tracks **required scalar metrics only**.
-Texture is treated as optional enrichment for now, so `dominant_texture` is not added to `missing_fields`.
+---
+
+## Compatibility guarantees
+
+- Existing legacy top-level keys remain available.
+- `advanced_v1` remains additive over legacy payloads.
+- Analyzer write path emits `analyzer_version` and `schema_version` whenever `advanced_v1` is present.
+- This document reflects actual runtime payload construction, not an aspirational future schema.
+
+---
+
+## Source-path compatibility notes
+
+- Existing source-path compatibility coverage remains valid for both:
+  - legacy top-level paths (for example, `track_features.payload_json.voice_flag`)
+  - additive `advanced_v1` paths (for example, `track_features.payload_json.advanced_v1.voice.human_presence_score`)
+- Historical legacy keys used by some downstream/report flows (`scene`, `mood`, `safety`, `scene_match`) remain documented as compatibility-read keys above.

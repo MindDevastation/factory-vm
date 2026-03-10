@@ -553,6 +553,20 @@ class CustomTagCatalogPatchRequest(BaseModel):
     category: str | None = None
 
 
+class CustomTagBulkCatalogItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    category: str
+    slug: str
+    name: str
+    description: str | None = None
+    is_active: bool = True
+
+
+class CustomTagBulkCatalogRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[CustomTagBulkCatalogItemRequest]
+
+
 class CustomTagRuleCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tag_id: int
@@ -997,6 +1011,10 @@ _CTA_CATALOG_ENDPOINTS = {
     ("PATCH", "/v1/track-catalog/custom-tags/catalog/{tag_id}"),
     ("POST", "/v1/track-catalog/custom-tags/catalog/import"),
     ("POST", "/v1/track-catalog/custom-tags/catalog/export"),
+    ("POST", "/v1/track-catalog/custom-tags/bulk/preview"),
+    ("POST", "/v1/track-catalog/custom-tags/bulk/confirm"),
+    ("POST", "/v1/track-catalog/custom-tags/export-seed"),
+    ("POST", "/v1/track-catalog/custom-tags/import-seed"),
     ("GET", "/v1/track-catalog/custom-tags/rules"),
     ("POST", "/v1/track-catalog/custom-tags/rules"),
     ("PATCH", "/v1/track-catalog/custom-tags/rules/{rule_id}"),
@@ -1118,6 +1136,55 @@ def api_custom_tags_catalog_export(_: bool = Depends(require_basic_auth(env))):
         conn.close()
     return {"ok": True, **result}
 
+
+@app.post("/v1/track-catalog/custom-tags/bulk/preview")
+def api_custom_tags_catalog_bulk_preview(payload: CustomTagBulkCatalogRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = catalog_service.preview_bulk_custom_tags(conn, items=[item.model_dump() for item in payload.items])
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags bulk preview failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/bulk/confirm")
+def api_custom_tags_catalog_bulk_confirm(payload: CustomTagBulkCatalogRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = catalog_service.confirm_bulk_custom_tags(conn, items=[item.model_dump() for item in payload.items])
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags bulk confirm failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
+
+
+@app.post("/v1/track-catalog/custom-tags/export-seed")
+def api_custom_tags_export_seed(_: bool = Depends(require_basic_auth(env))):
+    return api_custom_tags_catalog_export(_)
+
+
+@app.post("/v1/track-catalog/custom-tags/import-seed")
+def api_custom_tags_import_seed(_: bool = Depends(require_basic_auth(env))):
+    return api_custom_tags_catalog_import(_)
 
 @app.get("/v1/track-catalog/custom-tags/rules")
 def api_custom_tag_rules(tag_id: int, _: bool = Depends(require_basic_auth(env))):
@@ -1515,6 +1582,11 @@ class UiJobsRenderSelectedPayload(BaseModel):
     job_ids: Optional[list[str]] = None
 
 
+class UiJobsBulkJsonPayload(BaseModel):
+    mode: str
+    items: list[dict[str, Any]]
+
+
 def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
     errors: Dict[str, List[str]] = {
         "project": [],
@@ -1535,6 +1607,71 @@ def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
     if "#" in payload.tags_csv:
         errors["tags"].append("tags must not contain #")
     return {k: v for k, v in errors.items() if v}
+
+
+def _bulk_json_invalid(message: str) -> JSONResponse:
+    return _uij_error(400, "UIJ_BULK_INVALID_INPUT", message)
+
+
+def _validate_create_item(conn: Any, item: dict[str, Any]) -> tuple[UiJobDraftPayload | None, dict[str, Any] | None]:
+    try:
+        payload = UiJobDraftPayload.model_validate(item)
+    except Exception as exc:
+        return None, {"code": "UIJ_INVALID_INPUT", "message": str(exc)}
+
+    field_errors = _ui_validate(payload)
+    if field_errors:
+        return None, {"code": "UIJ_INVALID_INPUT", "field_errors": field_errors}
+
+    ch = dbm.get_channel_by_id(conn, payload.channel_id)
+    if not ch:
+        return None, {"code": "UIJ_INVALID_INPUT", "field_errors": {"project": ["project does not exist"]}}
+    return payload, None
+
+
+def _preview_enqueue_existing_item(conn: Any, item: dict[str, Any]) -> dict[str, Any]:
+    job_id_value = item.get("job_id")
+    try:
+        job_id = int(job_id_value)
+    except (TypeError, ValueError):
+        return {"job_id": str(job_id_value), "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"}}
+
+    guard = check_ui_render_guard(conn, job_id=job_id)
+    if guard.reason == "not_found":
+        return {"job_id": str(job_id), "error": {"code": "UIJ_JOB_NOT_FOUND", "message": "UI job not found"}}
+    if guard.reason == "not_allowed":
+        return {"job_id": str(job_id), "error": {"code": "UIJ_RENDER_NOT_ALLOWED", "message": "Status not allowed"}}
+    if guard.reason == "already_in_progress":
+        return {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"}
+    return {"job_id": str(job_id), "enqueued": True}
+
+
+def _summary_from_enqueue_results(results: list[dict[str, Any]], requested: int) -> dict[str, int]:
+    return {
+        "requested": requested,
+        "enqueued": sum(1 for item in results if item.get("enqueued") is True),
+        "noop": sum(1 for item in results if item.get("enqueued") is False),
+        "failed": sum(1 for item in results if item.get("error")),
+    }
+
+
+def _bulk_render_selected_item(job_id_text: str) -> dict[str, Any]:
+    try:
+        return _render_selected_item(job_id_text)
+    except Exception:
+        return {
+            "job_id": str(job_id_text),
+            "error": {"code": "UIJ_INTERNAL", "message": "Internal error"},
+        }
+
+
+def _parse_bulk_payload(payload: UiJobsBulkJsonPayload) -> tuple[str | None, JSONResponse | None]:
+    mode = str(payload.mode or "").strip()
+    if mode not in {"create_draft_jobs", "create_and_enqueue", "enqueue_existing_jobs"}:
+        return None, _bulk_json_invalid("mode is invalid")
+    if not payload.items:
+        return None, _bulk_json_invalid("items is required and must be non-empty")
+    return mode, None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1563,6 +1700,7 @@ def ui_track_analysis_report_page(request: Request, _: bool = Depends(require_ba
 
 
 @app.get("/ui/tags", response_class=HTMLResponse)
+@app.get("/ui/track-catalog/custom-tags", response_class=HTMLResponse)
 def ui_tags_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("tags.html", {"request": request})
 
@@ -1794,6 +1932,116 @@ def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basi
     finally:
         conn.close()
     return {"ok": True, "job_id": job_id}
+
+
+@app.post("/v1/ui/jobs/bulk-json/preview")
+def api_ui_jobs_bulk_json_preview(payload: UiJobsBulkJsonPayload, _: bool = Depends(require_basic_auth(env))):
+    mode, error = _parse_bulk_payload(payload)
+    if error:
+        return error
+
+    conn = dbm.connect(env)
+    try:
+        results: list[dict[str, Any]] = []
+        if mode in {"create_draft_jobs", "create_and_enqueue"}:
+            for index, item in enumerate(payload.items):
+                _, item_error = _validate_create_item(conn, item)
+                if item_error:
+                    results.append({"index": index, "error": item_error})
+                else:
+                    results.append({"index": index, "valid": True})
+        else:
+            for item in payload.items:
+                if set(item.keys()) != {"job_id"}:
+                    results.append({"job_id": str(item.get("job_id")), "error": {"code": "UIJ_INVALID_INPUT", "message": "item must contain only job_id"}})
+                else:
+                    results.append(_preview_enqueue_existing_item(conn, item))
+        summary = {
+            "requested": len(payload.items),
+            "valid": sum(1 for item in results if item.get("valid") is True or item.get("enqueued") in {True, False}),
+            "failed": sum(1 for item in results if item.get("error")),
+        }
+        return {"mode": mode, "summary": summary, "results": results}
+    finally:
+        conn.close()
+
+
+@app.post("/v1/ui/jobs/bulk-json/execute")
+def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depends(require_basic_auth(env))):
+    mode, error = _parse_bulk_payload(payload)
+    if error:
+        return error
+
+    if mode == "enqueue_existing_jobs":
+        results = [_bulk_render_selected_item(str(item.get("job_id"))) for item in payload.items]
+        return {"mode": mode, "summary": _summary_from_enqueue_results(results, len(payload.items)), "results": results}
+
+    conn = dbm.connect(env)
+    created_job_ids: list[int] = []
+    tx_started = False
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        tx_started = True
+        validated: list[UiJobDraftPayload] = []
+        for item in payload.items:
+            parsed, item_error = _validate_create_item(conn, item)
+            if item_error:
+                conn.execute("ROLLBACK")
+                tx_started = False
+                return {"mode": mode, "summary": {"requested": len(payload.items), "created": 0, "failed": 1}, "results": [{"error": item_error}]}
+            assert parsed is not None
+            validated.append(parsed)
+
+        for item in validated:
+            job_id = dbm.create_ui_job_draft(
+                conn,
+                channel_id=item.channel_id,
+                title=item.title.strip(),
+                description=item.description.strip(),
+                tags_csv=item.tags_csv.strip(),
+                cover_name=item.cover_name.strip() or None,
+                cover_ext=item.cover_ext.strip() or None,
+                background_name=item.background_name.strip(),
+                background_ext=item.background_ext.strip(),
+                audio_ids_text=item.audio_ids_text.strip(),
+                job_type="UI",
+            )
+            created_job_ids.append(job_id)
+
+        conn.execute("COMMIT")
+        tx_started = False
+    except Exception:
+        if tx_started:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+
+    create_results = [{"index": idx, "job_id": str(job_id), "created": True} for idx, job_id in enumerate(created_job_ids)]
+    if mode == "create_draft_jobs":
+        return {
+            "mode": mode,
+            "summary": {"requested": len(payload.items), "created": len(created_job_ids), "failed": 0},
+            "results": create_results,
+        }
+
+    enqueue_results = [_bulk_render_selected_item(str(job_id)) for job_id in created_job_ids]
+    merged_results = [
+        {**create_result, "enqueue": enqueue_result}
+        for create_result, enqueue_result in zip(create_results, enqueue_results)
+    ]
+    enqueue_summary = _summary_from_enqueue_results(enqueue_results, len(payload.items))
+    return {
+        "mode": mode,
+        "summary": {
+            "requested": len(payload.items),
+            "created": len(created_job_ids),
+            "enqueued": enqueue_summary["enqueued"],
+            "noop": enqueue_summary["noop"],
+            "failed": enqueue_summary["failed"],
+        },
+        "results": merged_results,
+    }
 
 
 def _uij_error(status_code: int, code: str, message: str) -> JSONResponse:
