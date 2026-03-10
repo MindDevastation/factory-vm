@@ -997,6 +997,8 @@ _CTA_CATALOG_ENDPOINTS = {
     ("PATCH", "/v1/track-catalog/custom-tags/catalog/{tag_id}"),
     ("POST", "/v1/track-catalog/custom-tags/catalog/import"),
     ("POST", "/v1/track-catalog/custom-tags/catalog/export"),
+    ("POST", "/v1/track-catalog/custom-tags/export-seed"),
+    ("POST", "/v1/track-catalog/custom-tags/import-seed"),
     ("GET", "/v1/track-catalog/custom-tags/rules"),
     ("POST", "/v1/track-catalog/custom-tags/rules"),
     ("PATCH", "/v1/track-catalog/custom-tags/rules/{rule_id}"),
@@ -1118,6 +1120,17 @@ def api_custom_tags_catalog_export(_: bool = Depends(require_basic_auth(env))):
         conn.close()
     return {"ok": True, **result}
 
+
+
+
+@app.post("/v1/track-catalog/custom-tags/export-seed")
+def api_custom_tags_export_seed(_: bool = Depends(require_basic_auth(env))):
+    return api_custom_tags_catalog_export(_)
+
+
+@app.post("/v1/track-catalog/custom-tags/import-seed")
+def api_custom_tags_import_seed(_: bool = Depends(require_basic_auth(env))):
+    return api_custom_tags_catalog_import(_)
 
 @app.get("/v1/track-catalog/custom-tags/rules")
 def api_custom_tag_rules(tag_id: int, _: bool = Depends(require_basic_auth(env))):

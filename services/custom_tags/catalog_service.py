@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import tempfile
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ CATEGORY_TO_FILE = {
     "THEME": "theme_tags.json",
 }
 VALID_CATEGORIES = set(CATEGORY_TO_FILE.keys())
+SEED_SCHEMA_VERSION = "custom_tags_seed/1"
+SLUG_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
 
 
 @dataclass
@@ -55,6 +58,16 @@ class SeedValidationError(CatalogError):
         super().__init__(
             code="CTA_SEED_VALIDATION_FAILED",
             message=message,
+            status_code=400,
+            details={"file": file_name},
+        )
+
+
+class SeedNotFoundError(CatalogError):
+    def __init__(self, file_name: str):
+        super().__init__(
+            code="CTS_SEED_NOT_FOUND",
+            message=f"required seed file is missing: {file_name}",
             status_code=400,
             details={"file": file_name},
         )
@@ -178,10 +191,38 @@ def update_tag(conn: sqlite3.Connection, tag_id: int, payload: dict[str, Any]) -
     return _tag_row_to_dict(updated)
 
 
+def _validate_seed_text(value: Any, *, field: str, max_len: int, allow_empty: bool = False) -> str:
+    if not isinstance(value, str):
+        raise InvalidInputError(f"{field} must be a string", {"field": field})
+    out = value.strip()
+    if not allow_empty and not out:
+        raise InvalidInputError(f"{field} must not be empty", {"field": field})
+    if len(out) > max_len:
+        raise InvalidInputError(f"{field} must be at most {max_len} characters", {"field": field, "max_len": max_len})
+    return out
+
+
+def _validate_slug(value: Any, *, field: str) -> str:
+    slug = _validate_seed_text(value, field=field, max_len=100)
+    if not SLUG_RE.fullmatch(slug):
+        raise InvalidInputError(
+            f"{field} must match ^[a-z0-9]+(?:[-_][a-z0-9]+)*$",
+            {"field": field, "pattern": SLUG_RE.pattern},
+        )
+    return slug
+
+
+def _validate_seed_category(payload: dict[str, Any], *, category: str, file_name: str) -> None:
+    if payload.get("schema_version") != SEED_SCHEMA_VERSION:
+        raise SeedValidationError(file_name, f"schema_version must be {SEED_SCHEMA_VERSION}")
+    if payload.get("category") != category:
+        raise SeedValidationError(file_name, f"category must be {category}")
+
+
 def _load_seed_file(path: Path, category: str) -> list[dict[str, Any]]:
     file_name = path.name
     if not path.is_file():
-        raise SeedValidationError(file_name, f"seed file is missing: {file_name}")
+        raise SeedNotFoundError(file_name)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -189,15 +230,24 @@ def _load_seed_file(path: Path, category: str) -> list[dict[str, Any]]:
 
     if not isinstance(payload, dict) or not isinstance(payload.get("tags"), list):
         raise SeedValidationError(file_name, "payload must be an object with a tags array")
+    _validate_seed_category(payload, category=category, file_name=file_name)
 
     out: list[dict[str, Any]] = []
     for idx, item in enumerate(payload["tags"]):
         if not isinstance(item, dict):
             raise SeedValidationError(file_name, f"tags[{idx}] must be an object")
         try:
-            code = _normalize_nonempty(item.get("code"), f"tags[{idx}].code")
-            label = _normalize_nonempty(item.get("label"), f"tags[{idx}].label")
-            description = _normalize_description(item.get("description"))
+            code = _validate_slug(item.get("slug"), field=f"tags[{idx}].slug")
+            label = _validate_seed_text(item.get("name"), field=f"tags[{idx}].name", max_len=100)
+            description_raw = item.get("description")
+            if description_raw is None:
+                description = None
+            else:
+                description = _validate_seed_text(
+                    description_raw,
+                    field=f"tags[{idx}].description",
+                    max_len=500,
+                )
             is_active = _normalize_bool(item.get("is_active", True), field=f"tags[{idx}].is_active")
         except InvalidInputError as exc:
             raise SeedValidationError(file_name, exc.message) from exc
@@ -252,7 +302,6 @@ def import_catalog(conn: sqlite3.Connection, seed_dir: str) -> dict[str, Any]:
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=str(path.parent), delete=False) as fh:
         tmp_path = Path(fh.name)
         json.dump(payload, fh, ensure_ascii=False, indent=2)
@@ -271,15 +320,30 @@ def export_catalog(conn: sqlite3.Connection, seed_dir: str) -> dict[str, Any]:
             continue
         by_category[category].append(
             {
-                "code": str(row["code"]),
-                "label": str(row["label"]),
+                "slug": str(row["code"]),
+                "name": str(row["label"]),
                 "description": row.get("description"),
                 "is_active": bool(row.get("is_active", 0)),
             }
         )
 
     seed_root = Path(seed_dir)
+    seed_root.mkdir(parents=True, exist_ok=True)
+    exported_at = _now_text()
+    staged: list[tuple[Path, dict[str, Any]]] = []
     for category, filename in CATEGORY_TO_FILE.items():
-        _write_json_atomic(seed_root / filename, {"tags": by_category[category]})
+        staged.append(
+            (
+                seed_root / filename,
+                {
+                    "schema_version": SEED_SCHEMA_VERSION,
+                    "category": category,
+                    "exported_at": exported_at,
+                    "tags": by_category[category],
+                },
+            )
+        )
+    for file_path, payload in staged:
+        _write_json_atomic(file_path, payload)
 
     return {"exported": len(rows), "files": list(CATEGORY_TO_FILE.values())}
