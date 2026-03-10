@@ -63,6 +63,57 @@ class TestCleanupLocalArtifacts(unittest.TestCase):
         self.assertFalse(pydeps_dir.exists())
         self.assertTrue(db_file.exists())
 
+    def test_no_flags_exits_without_deletion(self) -> None:
+        qa_dir = self._mkdir("qa")
+        exports_dir = self._mkdir("exports")
+        pydeps_dir = self._mkdir("data/pydeps")
+        db_file = self._mkfile("data/factory.sqlite3")
+
+        with (
+            mock.patch.object(script, "REPO_ROOT", self.root),
+            mock.patch.object(script, "_parse_args", return_value=mock.Mock(qa=False, coverage=False, exports=False, pydeps=False, all_safe=False)),
+        ):
+            rc = script.main()
+
+        self.assertEqual(rc, 0)
+        self.assertTrue(qa_dir.exists())
+        self.assertTrue(exports_dir.exists())
+        self.assertTrue(pydeps_dir.exists())
+        self.assertTrue(db_file.exists())
+
+    def test_individual_safe_flags_remove_only_selected_group(self) -> None:
+        cases = [
+            ("qa", "qa", ["qa", "data/qa", ".qa_trace"], ["exports", "data/pydeps", "data/factory.sqlite3"]),
+            ("exports", "exports", ["exports", "data/exports"], ["qa", "data/pydeps", "data/factory.sqlite3"]),
+            ("pydeps", "pydeps", ["data/pydeps"], ["qa", "exports", "data/factory.sqlite3"]),
+        ]
+
+        for flag_name, attr_name, removed_paths, retained_paths in cases:
+            with self.subTest(flag=flag_name):
+                self.td.cleanup()
+                self.td = tempfile.TemporaryDirectory()
+                self.root = Path(self.td.name)
+
+                for rel in ["qa", "data/qa", "exports", "data/exports", "data/pydeps"]:
+                    self._mkdir(rel)
+                self._mkfile(".qa_trace")
+                self._mkfile("data/factory.sqlite3")
+
+                args = dict(qa=False, coverage=False, exports=False, pydeps=False, all_safe=False)
+                args[attr_name] = True
+
+                with (
+                    mock.patch.object(script, "REPO_ROOT", self.root),
+                    mock.patch.object(script, "_parse_args", return_value=mock.Mock(**args)),
+                ):
+                    rc = script.main()
+
+                self.assertEqual(rc, 0)
+                for rel in removed_paths:
+                    self.assertFalse((self.root / rel).exists())
+                for rel in retained_paths:
+                    self.assertTrue((self.root / rel).exists())
+
 
 if __name__ == "__main__":
     unittest.main()
