@@ -1655,6 +1655,16 @@ def _summary_from_enqueue_results(results: list[dict[str, Any]], requested: int)
     }
 
 
+def _bulk_render_selected_item(job_id_text: str) -> dict[str, Any]:
+    try:
+        return _render_selected_item(job_id_text)
+    except Exception:
+        return {
+            "job_id": str(job_id_text),
+            "error": {"code": "UIJ_INTERNAL", "message": "Internal error"},
+        }
+
+
 def _parse_bulk_payload(payload: UiJobsBulkJsonPayload) -> tuple[str | None, JSONResponse | None]:
     mode = str(payload.mode or "").strip()
     if mode not in {"create_draft_jobs", "create_and_enqueue", "enqueue_existing_jobs"}:
@@ -1962,7 +1972,7 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
         return error
 
     if mode == "enqueue_existing_jobs":
-        results = [_render_selected_item(str(item.get("job_id"))) for item in payload.items]
+        results = [_bulk_render_selected_item(str(item.get("job_id"))) for item in payload.items]
         return {"mode": mode, "summary": _summary_from_enqueue_results(results, len(payload.items)), "results": results}
 
     conn = dbm.connect(env)
@@ -2014,7 +2024,7 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
             "results": create_results,
         }
 
-    enqueue_results = [_render_selected_item(str(job_id)) for job_id in created_job_ids]
+    enqueue_results = [_bulk_render_selected_item(str(job_id)) for job_id in created_job_ids]
     merged_results = [
         {**create_result, "enqueue": enqueue_result}
         for create_result, enqueue_result in zip(create_results, enqueue_results)

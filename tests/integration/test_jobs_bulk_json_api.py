@@ -195,6 +195,90 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                 ],
             })
 
+    def test_execute_mode_c_runtime_exception_converted_to_item_error(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
+
+            ok_job = self._create_ui_draft(env, "mode c ok")
+            boom_job = self._create_ui_draft(env, "mode c boom")
+
+            token_path = oauth_token_path(base_dir=Env.load().gdrive_tokens_dir, channel_slug="darkwood-reverie")
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
+
+            mod, client = self._new_client()
+            mod._create_drive_client = lambda _env: object()
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
+
+            original_render_selected = mod._render_selected_item
+
+            def _raise_for_specific_job(job_id_text: str):
+                if int(job_id_text) == boom_job:
+                    raise RuntimeError("unexpected runtime crash")
+                return original_render_selected(job_id_text)
+
+            mod._render_selected_item = _raise_for_specific_job
+
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={"mode": "enqueue_existing_jobs", "items": [{"job_id": ok_job}, {"job_id": boom_job}]},
+            )
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json(), {
+                "mode": "enqueue_existing_jobs",
+                "summary": {"requested": 2, "enqueued": 1, "noop": 0, "failed": 1},
+                "results": [
+                    {"job_id": str(ok_job), "enqueued": True},
+                    {"job_id": str(boom_job), "error": {"code": "UIJ_INTERNAL", "message": "Internal error"}},
+                ],
+            })
+
+    def test_execute_mode_b_runtime_exception_converted_to_enqueue_item_error(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch is not None
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            token_path = oauth_token_path(base_dir=Env.load().gdrive_tokens_dir, channel_slug="darkwood-reverie")
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
+
+            mod, client = self._new_client()
+            mod._create_drive_client = lambda _env: object()
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
+            mod._render_selected_item = lambda _job_id_text: (_ for _ in ()).throw(RuntimeError("enqueue exploded"))
+
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={"mode": "create_and_enqueue", "items": [self._create_item(channel_id, title="B crash")]},
+            )
+            self.assertEqual(resp.status_code, 200)
+            payload = resp.json()
+            self.assertEqual(payload["mode"], "create_and_enqueue")
+            self.assertEqual(payload["summary"], {"requested": 1, "created": 1, "enqueued": 0, "noop": 0, "failed": 1})
+            self.assertEqual(payload["results"][0]["enqueue"], {"job_id": payload["results"][0]["job_id"], "error": {"code": "UIJ_INTERNAL", "message": "Internal error"}})
+
+            created_job_id = int(payload["results"][0]["job_id"])
+            conn = dbm.connect(env)
+            try:
+                job = dbm.get_job(conn, created_job_id)
+                self.assertIsNotNone(job)
+                self.assertEqual(job["state"], "DRAFT")
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()
