@@ -1700,6 +1700,7 @@ def ui_track_analysis_report_page(request: Request, _: bool = Depends(require_ba
 
 
 @app.get("/ui/tags", response_class=HTMLResponse)
+@app.get("/ui/track-catalog/custom-tags", response_class=HTMLResponse)
 def ui_tags_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("tags.html", {"request": request})
 
