@@ -9,12 +9,26 @@
 - Legacy alias (also reachable): `http://127.0.0.1:8091/ui/tags`
 
 ## Reviewer-facing smoke evidence
-- Screenshot (reachable page):
-  - `browser:/tmp/codex_browser_invocations/0d2dce8ecbf856fe/artifacts/artifacts/ctux_s9_custom_tags_smoke.png`
+- Screenshot note:
+  - Prior capture path `browser:/tmp/codex_browser_invocations/0d2dce8ecbf856fe/artifacts/artifacts/ctux_s9_custom_tags_smoke.png` was session-local and is not durable for other reviewers/CI clones.
+  - Durable reviewer evidence for this slice is the reproducible URL + curl checks + UI checklist below.
 - Visible in screenshot:
   - `Usage` column header in the Custom Tags table.
   - `Track Catalog → Custom Tags → Assignment Tools` section.
   - `Preview rule matches` UI entry point in Rule editor.
+
+### Durable reproducible evidence (primary)
+- Reachable URL (authenticated):
+  - `http://127.0.0.1:8091/ui/track-catalog/custom-tags`
+- Curl checks (exact):
+  - `curl -u admin:change_me http://127.0.0.1:8091/ui/track-catalog/custom-tags`
+  - `curl -u admin:change_me "http://127.0.0.1:8091/v1/track-catalog/custom-tags?include_usage=true"`
+- Exact UI elements verified:
+  - `Usage` column header in Custom Tags table.
+  - `Track Catalog → Custom Tags → Assignment Tools` helper text/section.
+  - `Preview rule matches` entry point in the rule editor flow.
+- Manual smoke checklist result:
+  - PASS: page route reachable, usage stats visible, dry-run preview executed, and preview response summary returned.
 
 ## Smoke notes
 - Usage stats smoke:
