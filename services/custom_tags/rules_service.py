@@ -39,6 +39,56 @@ class TagNotFoundError(RulesError):
         )
 
 
+class CtuTagNotFoundError(RulesError):
+    def __init__(self, tag_id: int):
+        super().__init__(
+            code="CTU_TAG_NOT_FOUND",
+            message="custom tag not found",
+            status_code=404,
+            details={"tag_id": tag_id},
+        )
+
+
+class CtuRuleNotFoundError(RulesError):
+    def __init__(self, tag_id: int, rule_id: int):
+        super().__init__(
+            code="CTU_RULE_NOT_FOUND",
+            message="custom tag rule not found",
+            status_code=404,
+            details={"tag_id": tag_id, "rule_id": rule_id},
+        )
+
+
+class CtuInvalidPayloadError(RulesError):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
+        super().__init__(
+            code="CTU_INVALID_PAYLOAD",
+            message=message,
+            status_code=400,
+            details=details,
+        )
+
+
+class CtuBindingNotAllowedForCategoryError(RulesError):
+    def __init__(self, tag_id: int, category: str):
+        super().__init__(
+            code="CTU_BINDING_NOT_ALLOWED_FOR_CATEGORY",
+            message="bindings are only allowed for VISUAL tags",
+            status_code=400,
+            details={"tag_id": tag_id, "category": category},
+        )
+
+
+class CtuReplaceAllRulesFailedError(RulesError):
+    def __init__(self, tag_id: int, reason: str):
+        super().__init__(
+            code="CTU_REPLACE_ALL_RULES_FAILED",
+            message="replace all rules failed",
+            status_code=400,
+            details={"tag_id": tag_id, "reason": reason},
+        )
+
+
 class InvalidInputError(RulesError):
     def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(code="CTA_INVALID_INPUT", message=message, status_code=400, details=details)
@@ -116,6 +166,21 @@ def _require_tag(conn: sqlite3.Connection, tag_id: int) -> dict[str, Any]:
     return row
 
 
+def _require_tag_ctu(conn: sqlite3.Connection, tag_id: int) -> dict[str, Any]:
+    row = conn.execute(
+        "SELECT id, category FROM custom_tags WHERE id = ?",
+        (tag_id,),
+    ).fetchone()
+    if row is None:
+        raise CtuTagNotFoundError(tag_id)
+    return row
+
+
+def _ctu_summary(row: dict[str, Any]) -> str:
+    state = "active" if bool(row["is_active"]) else "inactive"
+    return f"{state}: {row['source_path']} {row['operator']} {row['value_json']}"
+
+
 def _rule_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": int(row["id"]),
@@ -129,6 +194,22 @@ def _rule_row_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         "required": bool(row["required"]),
         "stop_after_match": bool(row["stop_after_match"]),
         "is_active": bool(row["is_active"]),
+        "summary": _ctu_summary(row),
+    }
+
+
+def _normalize_rule_payload(payload: dict[str, Any], *, tag_id: int) -> dict[str, Any]:
+    return {
+        "tag_id": tag_id,
+        "source_path": _normalize_nonempty(payload.get("source_path"), "source_path"),
+        "operator": _normalize_operator(payload.get("operator")),
+        "value_json": _normalize_value_json(payload.get("value_json")),
+        "match_mode": _normalize_match_mode(payload.get("match_mode", "ALL")),
+        "priority": _normalize_priority(payload.get("priority", 100)),
+        "weight": _normalize_weight(payload.get("weight")),
+        "required": bool(_normalize_bool(payload.get("required", False), "required")),
+        "stop_after_match": bool(_normalize_bool(payload.get("stop_after_match", False), "stop_after_match")),
+        "is_active": bool(_normalize_bool(payload.get("is_active", True), "is_active")),
     }
 
 
@@ -340,3 +421,106 @@ def delete_channel_binding(conn: sqlite3.Connection, binding_id: int) -> None:
     cur = conn.execute("DELETE FROM custom_tag_channel_bindings WHERE id = ?", (binding_id,))
     if cur.rowcount == 0:
         raise InvalidInputError("channel binding not found", {"binding_id": binding_id})
+
+
+def list_rules_for_modal(conn: sqlite3.Connection, tag_id: int) -> list[dict[str, Any]]:
+    _require_tag_ctu(conn, tag_id)
+    return list_rules(conn, tag_id)
+
+
+def create_rule_for_modal(conn: sqlite3.Connection, tag_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    _require_tag_ctu(conn, tag_id)
+    try:
+        normalized = _normalize_rule_payload(payload, tag_id=tag_id)
+    except InvalidInputError as exc:
+        raise CtuInvalidPayloadError(exc.message, exc.details) from exc
+    return create_rule(conn, normalized)
+
+
+def update_rule_for_modal(conn: sqlite3.Connection, tag_id: int, rule_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    _require_tag_ctu(conn, tag_id)
+    existing = conn.execute("SELECT id, tag_id FROM custom_tag_rules WHERE id = ?", (rule_id,)).fetchone()
+    if existing is None or int(existing["tag_id"]) != tag_id:
+        raise CtuRuleNotFoundError(tag_id, rule_id)
+    try:
+        return update_rule(conn, rule_id=rule_id, payload=payload)
+    except InvalidInputError as exc:
+        raise CtuInvalidPayloadError(exc.message, exc.details) from exc
+
+
+def delete_rule_for_modal(conn: sqlite3.Connection, tag_id: int, rule_id: int) -> None:
+    _require_tag_ctu(conn, tag_id)
+    existing = conn.execute("SELECT id, tag_id FROM custom_tag_rules WHERE id = ?", (rule_id,)).fetchone()
+    if existing is None or int(existing["tag_id"]) != tag_id:
+        raise CtuRuleNotFoundError(tag_id, rule_id)
+    conn.execute("DELETE FROM custom_tag_rules WHERE id = ?", (rule_id,))
+
+
+def replace_all_rules_for_modal(conn: sqlite3.Connection, tag_id: int, rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    _require_tag_ctu(conn, tag_id)
+    normalized_rules: list[dict[str, Any]] = []
+    try:
+        for item in rules:
+            normalized_rules.append(_normalize_rule_payload(item, tag_id=tag_id))
+    except InvalidInputError as exc:
+        raise CtuInvalidPayloadError(exc.message, exc.details) from exc
+
+    try:
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM custom_tag_rules WHERE tag_id = ?", (tag_id,))
+        for item in normalized_rules:
+            create_rule(conn, item)
+        conn.execute("COMMIT")
+    except RulesError:
+        conn.execute("ROLLBACK")
+        raise
+    except Exception as exc:
+        conn.execute("ROLLBACK")
+        raise CtuReplaceAllRulesFailedError(tag_id, str(exc)) from exc
+    return list_rules(conn, tag_id)
+
+
+def list_bindings_for_modal(conn: sqlite3.Connection, tag_id: int) -> list[dict[str, Any]]:
+    _require_tag_ctu(conn, tag_id)
+    return list_channel_bindings(conn, tag_id)
+
+
+def replace_bindings_for_modal(conn: sqlite3.Connection, tag_id: int, channel_slugs: list[str]) -> list[dict[str, Any]]:
+    tag = _require_tag_ctu(conn, tag_id)
+    if str(tag["category"]) != "VISUAL":
+        raise CtuBindingNotAllowedForCategoryError(tag_id, str(tag["category"]))
+
+    normalized_slugs: list[str] = []
+    seen: set[str] = set()
+    for slug in channel_slugs:
+        try:
+            normalized = _normalize_nonempty(slug, "channel_slug")
+        except InvalidInputError as exc:
+            raise CtuInvalidPayloadError(exc.message, exc.details) from exc
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_slugs.append(normalized)
+
+    missing = [
+        slug
+        for slug in normalized_slugs
+        if conn.execute("SELECT 1 FROM channels WHERE slug = ?", (slug,)).fetchone() is None
+    ]
+    if missing:
+        raise CtuInvalidPayloadError("channel_slug not found", {"channel_slugs": missing})
+
+    conn.execute("BEGIN")
+    try:
+        conn.execute("DELETE FROM custom_tag_channel_bindings WHERE tag_id = ?", (tag_id,))
+        now_text = _now_text()
+        for slug in normalized_slugs:
+            conn.execute(
+                "INSERT INTO custom_tag_channel_bindings(tag_id, channel_slug, created_at) VALUES(?,?,?)",
+                (tag_id, slug, now_text),
+            )
+        conn.execute("COMMIT")
+    except Exception as exc:
+        conn.execute("ROLLBACK")
+        raise CtuInvalidPayloadError("failed to replace bindings", {"error": str(exc)}) from exc
+    return list_channel_bindings(conn, tag_id)
