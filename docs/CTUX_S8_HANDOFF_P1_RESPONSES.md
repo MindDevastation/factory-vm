@@ -5,6 +5,12 @@
 - No code, backend, tests, routes, or runtime behavior changes.
 - Existing testing text remains intact.
 
+## Reviewable PR metadata
+- PR number: 238
+- Head branch: `codex/add-ctux-s8-handoff-artifacts`
+- Base branch: `codex/implement-p1-backend-features`
+- Visible remote commit: `62cab09`
+
 ## Response samples
 `POST /v1/track-catalog/custom-tags/rules/preview-matches`
 
