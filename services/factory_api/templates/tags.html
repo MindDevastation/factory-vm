@@ -112,22 +112,82 @@
   <form method="dialog" id="tag-editor-form">
     <h3 id="tag-editor-title">Create Tag</h3>
     <input type="hidden" id="tag-edit-id">
-    <p><label>Category
-      <select id="tag-category">
-        <option value="VISUAL">VISUAL</option>
-        <option value="MOOD">MOOD</option>
-        <option value="THEME">THEME</option>
-      </select>
-    </label></p>
-    <p><label>Code <input type="text" id="tag-code"></label></p>
-    <p><label>Label <input type="text" id="tag-label"></label></p>
-    <p><label>Description <input type="text" id="tag-description"></label></p>
-    <p><label>Active <select id="tag-is-active"><option value="true">true</option><option value="false">false</option></select></label></p>
-    <p><label>Tag ID (numeric, optional for edit override) <input type="number" id="tag-manual-id" min="1"></label></p>
-    <p><label>JSON tag definition
-      <textarea id="tag-json" rows="8" style="width:100%;"></textarea>
-    </label></p>
-    <p><label><input type="checkbox" id="tag-json-mode"> Save using JSON definition above</label></p>
+    <div style="border:1px solid #d1d5db; border-radius:8px; padding:10px; margin:10px 0;">
+      <h4 style="margin:0 0 8px 0;">Tag</h4>
+      <p><label>Label <input type="text" id="tag-label"></label></p>
+      <p><label>Code <input type="text" id="tag-code"></label></p>
+      <p><label>Description <input type="text" id="tag-description"></label></p>
+      <p><label>Active <select id="tag-is-active"><option value="true">true</option><option value="false">false</option></select></label></p>
+      <p style="display:none;"><label><input type="checkbox" id="tag-json-mode"> Legacy JSON mode compatibility toggle</label></p>
+      <p><label>Category
+        <select id="tag-category">
+          <option value="VISUAL">VISUAL</option>
+          <option value="MOOD">MOOD</option>
+          <option value="THEME">THEME</option>
+        </select>
+      </label>
+      <span class="muted" id="tag-category-note"></span></p>
+    </div>
+
+    <div style="border:1px solid #d1d5db; border-radius:8px; padding:10px; margin:10px 0;">
+      <h4 style="margin:0 0 8px 0;">Bindings</h4>
+      <p class="muted" id="tag-bindings-mode-note">Bindings are only used for VISUAL tags.</p>
+      <div id="tag-bindings-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:6px;"></div>
+      <p><button type="button" id="tag-bindings-save-btn">Save bindings</button></p>
+    </div>
+
+    <div style="border:1px solid #d1d5db; border-radius:8px; padding:10px; margin:10px 0;">
+      <h4 style="margin:0 0 8px 0;">Rules</h4>
+      <p>
+        <button type="button" id="tag-rule-add-btn">Add rule</button>
+        <button type="button" id="tag-rule-json-preview-btn">Preview JSON</button>
+        <button type="button" id="tag-rule-json-save-btn">Confirm JSON save</button>
+        <label style="margin-left:8px;">Mode
+          <select id="tag-rule-json-mode">
+            <option value="replace">Replace all rules (recommended)</option>
+            <option value="append">Append rules</option>
+          </select>
+        </label>
+      </p>
+      <p class="muted" id="tag-rule-warning">Warning: Replace-all atomically overwrites all existing rules after confirmation.</p>
+      <p><textarea id="tag-rules-json" rows="8" style="width:100%;" spellcheck="false"></textarea></p>
+      <p class="muted" id="tag-rules-json-preview-note">No preview yet.</p>
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">Priority</th>
+            <th style="text-align:left;">Summary</th>
+            <th style="text-align:left;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tag-rules-tbody">
+          <tr><td colspan="3" class="muted">No rules yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="border:1px solid #d1d5db; border-radius:8px; padding:10px; margin:10px 0;">
+      <h4 style="margin:0 0 8px 0;">Rule editor</h4>
+      <input type="hidden" id="tag-rule-id">
+      <p><label>Source path <input type="text" id="tag-rule-source-path" placeholder="track_features.payload_json.voice_flag"></label></p>
+      <p><label>Operator <input type="text" id="tag-rule-operator" placeholder="equals"></label></p>
+      <p><label>Value JSON <input type="text" id="tag-rule-value-json" placeholder='"false"'></label></p>
+      <p>
+        <label>Priority <input type="number" id="tag-rule-priority" value="100"></label>
+        <label style="margin-left:8px;">Weight <input type="number" id="tag-rule-weight" value="1" step="0.1"></label>
+      </p>
+      <p>
+        <label>Match mode <select id="tag-rule-match-mode"><option value="ALL">ALL</option><option value="ANY">ANY</option></select></label>
+        <label style="margin-left:8px;"><input type="checkbox" id="tag-rule-required"> Required</label>
+        <label style="margin-left:8px;"><input type="checkbox" id="tag-rule-stop-after-match"> Stop after match</label>
+        <label style="margin-left:8px;"><input type="checkbox" id="tag-rule-is-active" checked> Active</label>
+      </p>
+      <p>
+        <button type="button" id="tag-rule-save-btn">Save rule</button>
+        <button type="button" id="tag-rule-reset-btn">Reset rule editor</button>
+      </p>
+    </div>
+
     <p class="muted" id="tag-editor-note"></p>
     <p>
       <button type="button" id="tag-editor-save">Save</button>
@@ -167,14 +227,39 @@
   const editorTitle = document.getElementById('tag-editor-title');
   const editorId = document.getElementById('tag-edit-id');
   const editorCategory = document.getElementById('tag-category');
+  const editorCategoryNote = document.getElementById('tag-category-note');
   const editorCode = document.getElementById('tag-code');
   const editorLabel = document.getElementById('tag-label');
   const editorDescription = document.getElementById('tag-description');
   const editorActive = document.getElementById('tag-is-active');
-  const editorManualId = document.getElementById('tag-manual-id');
-  const editorJson = document.getElementById('tag-json');
-  const editorJsonMode = document.getElementById('tag-json-mode');
   const editorNote = document.getElementById('tag-editor-note');
+  const editorJsonMode = document.getElementById('tag-json-mode');
+
+  const bindingsModeNote = document.getElementById('tag-bindings-mode-note');
+  const bindingsList = document.getElementById('tag-bindings-list');
+  const bindingsSaveBtn = document.getElementById('tag-bindings-save-btn');
+
+  const rulesTbody = document.getElementById('tag-rules-tbody');
+  const ruleAddBtn = document.getElementById('tag-rule-add-btn');
+  const rulesJson = document.getElementById('tag-rules-json');
+  const rulesJsonMode = document.getElementById('tag-rule-json-mode');
+  const rulesJsonPreviewBtn = document.getElementById('tag-rule-json-preview-btn');
+  const rulesJsonSaveBtn = document.getElementById('tag-rule-json-save-btn');
+  const rulesPreviewNote = document.getElementById('tag-rules-json-preview-note');
+  const rulesWarning = document.getElementById('tag-rule-warning');
+
+  const ruleIdInput = document.getElementById('tag-rule-id');
+  const ruleSourcePath = document.getElementById('tag-rule-source-path');
+  const ruleOperator = document.getElementById('tag-rule-operator');
+  const ruleValueJson = document.getElementById('tag-rule-value-json');
+  const rulePriority = document.getElementById('tag-rule-priority');
+  const ruleWeight = document.getElementById('tag-rule-weight');
+  const ruleMatchMode = document.getElementById('tag-rule-match-mode');
+  const ruleRequired = document.getElementById('tag-rule-required');
+  const ruleStopAfterMatch = document.getElementById('tag-rule-stop-after-match');
+  const ruleIsActive = document.getElementById('tag-rule-is-active');
+  const ruleSaveBtn = document.getElementById('tag-rule-save-btn');
+  const ruleResetBtn = document.getElementById('tag-rule-reset-btn');
 
   const bulkModal = document.getElementById('tags-bulk-modal');
   const bulkJson = document.getElementById('tags-bulk-json');
@@ -186,131 +271,28 @@
   const bulkJsonSummary = document.getElementById('tags-bulk-json-summary');
   const bulkPreviewTableBody = document.querySelector('#tags-bulk-preview-table tbody');
 
+  let catalogById = {};
+  let modalTag = null;
+  let channels = [];
+  let modalRules = [];
+
   function resolveApiPath(path) {
     const normalized = String(path || '').startsWith('/') ? String(path || '') : ('/' + String(path || ''));
-    if (normalized.startsWith('/v1/')) {
-      return normalized;
-    }
+    if (normalized.startsWith('/v1/')) return normalized;
     const pathname = String(window.location.pathname || '');
-    const uiMarker = '/ui/';
-    const idx = pathname.indexOf(uiMarker);
-    if (idx < 0) {
-      return '/v1' + normalized;
-    }
-    const prefix = pathname.slice(0, idx);
-    return prefix + '/v1' + normalized;
+    const idx = pathname.indexOf('/ui/');
+    if (idx < 0) return '/v1' + normalized;
+    return pathname.slice(0, idx) + '/v1' + normalized;
   }
-
   async function apiFetch(path, options) {
     return fetch(resolveApiPath(path), Object.assign({ credentials: 'same-origin' }, options || {}));
   }
-
   function esc(v) {
     return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
-
   function setNote(message, isError) {
     note.style.color = isError ? '#b91c1c' : '';
     note.textContent = message;
-  }
-
-  function setBulkJsonState(message, tone) {
-    bulkJsonNote.classList.remove('muted');
-    bulkJsonNote.style.color = '';
-    if (tone === 'success') {
-      bulkJsonNote.style.color = '#166534';
-    } else if (tone === 'error') {
-      bulkJsonNote.style.color = '#b91c1c';
-    } else {
-      bulkJsonNote.classList.add('muted');
-    }
-    bulkJsonNote.textContent = message;
-  }
-
-  function renderBulkPreviewRows(items) {
-    const rows = Array.isArray(items) ? items : [];
-    if (!rows.length) {
-      bulkPreviewTableBody.innerHTML = '<tr><td colspan="4" class="muted">Empty preview/result set.</td></tr>';
-      return;
-    }
-    bulkPreviewTableBody.innerHTML = rows.map((item, idx) => {
-      const warnings = Array.isArray(item.warnings) ? item.warnings.map((w) => w.message).join('; ') : '';
-      const errors = Array.isArray(item.errors) ? item.errors.map((e) => e.message).join('; ') : '';
-      return '<tr>' +
-        '<td>' + esc(item.index == null ? idx : item.index) + '</td>' +
-        '<td>' + esc(item.action || '') + '</td>' +
-        '<td>' + esc(warnings || '-') + '</td>' +
-        '<td>' + esc(errors || '-') + '</td>' +
-      '</tr>';
-    }).join('');
-  }
-
-  function parseBulkEditorPayload() {
-    let parsed;
-    try {
-      parsed = JSON.parse(bulkJsonEditor.value || '{}');
-    } catch (_) {
-      return { error: 'Invalid JSON payload.' };
-    }
-    return { payload: { items: Array.isArray(parsed.items) ? parsed.items : [] } };
-  }
-
-  function bulkSummaryText(body) {
-    const summary = body && body.summary;
-    if (!summary || typeof summary !== 'object') {
-      return 'No summary available.';
-    }
-    const parts = Object.keys(summary).map((key) => key + ': ' + summary[key]);
-    if (body && (typeof body.inserted === 'number' || typeof body.updated === 'number' || typeof body.unchanged === 'number')) {
-      parts.push('inserted: ' + (body.inserted || 0));
-      parts.push('updated: ' + (body.updated || 0));
-      parts.push('unchanged: ' + (body.unchanged || 0));
-    }
-    parts.push('can_confirm: ' + Boolean(body && body.can_confirm));
-    return parts.join(', ');
-  }
-
-  async function runBulkJsonRequest(action) {
-    const parsed = parseBulkEditorPayload();
-    if (parsed.error) {
-      setBulkJsonState(parsed.error, 'error');
-      bulkJsonSummary.textContent = 'Validation error.';
-      renderBulkPreviewRows([]);
-      return;
-    }
-
-    const isPreview = action === 'preview';
-    const endpoint = isPreview ? '/track-catalog/custom-tags/bulk/preview' : '/track-catalog/custom-tags/bulk/confirm';
-    setBulkJsonState((isPreview ? 'Validate Preview' : 'Confirm Import') + ' in progress...', 'info');
-    bulkPreviewBtn.disabled = true;
-    bulkConfirmBtn.disabled = true;
-    try {
-      const r = await apiFetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed.payload),
-      });
-      const body = await r.json();
-      if (!r.ok || body.error) {
-        setBulkJsonState((body.error && body.error.message) || 'Request/server error.', 'error');
-        bulkJsonSummary.textContent = 'Request/server error.';
-        renderBulkPreviewRows([]);
-        return;
-      }
-      setBulkJsonState((isPreview ? 'Validate Preview' : 'Confirm Import') + ' completed.', 'success');
-      bulkJsonSummary.textContent = bulkSummaryText(body);
-      renderBulkPreviewRows(body.items);
-      if (!isPreview && body.can_confirm) {
-        await loadCatalog();
-      }
-    } catch (error) {
-      setBulkJsonState((error && error.message) ? error.message : 'Request/server error.', 'error');
-      bulkJsonSummary.textContent = 'Request/server error.';
-      renderBulkPreviewRows([]);
-    } finally {
-      bulkPreviewBtn.disabled = false;
-      bulkConfirmBtn.disabled = false;
-    }
   }
 
   function currentFilters() {
@@ -318,47 +300,34 @@
     const category = String(filterCategory.value || '').trim().toUpperCase();
     const idRaw = String(filterId.value || '').trim();
     const q = String(filterQ.value || '').trim();
-    if (category) {
-      params.set('category', category);
-    }
-    if (idRaw) {
-      params.set('tag_id', idRaw);
-    }
-    if (q) {
-      params.set('q', q);
-    }
+    if (category) params.set('category', category);
+    if (idRaw) params.set('tag_id', idRaw);
+    if (q) params.set('q', q);
     return params;
   }
 
   function bindingsSummary(tag) {
-    if (tag.category !== 'VISUAL') {
-      return '—';
-    }
+    if (tag.category !== 'VISUAL') return '—';
     const bindings = Array.isArray(tag.bindings) ? tag.bindings : [];
-    if (bindings.length === 0) {
-      return 'No bindings';
-    }
-    return bindings.map((binding) => binding.channel_slug).join(', ');
+    return bindings.length ? bindings.map((binding) => binding.channel_slug).join(', ') : 'No bindings';
   }
 
   async function loadCatalog() {
     setNote('Loading tag catalog...');
     try {
       const query = currentFilters().toString();
-      const endpoint = '/v1/track-catalog/custom-tags' + (query ? ('?' + query) : '');
-      const r = await apiFetch(endpoint);
+      const r = await apiFetch('/track-catalog/custom-tags' + (query ? ('?' + query) : ''));
       const body = await r.json();
-      if (!r.ok) {
-        throw new Error((body.error && body.error.message) || 'Failed to load tag catalog.');
-      }
+      if (!r.ok) throw new Error((body.error && body.error.message) || 'Failed to load tag catalog.');
       const tags = Array.isArray(body.tags) ? body.tags : [];
-      if (tags.length === 0) {
+      catalogById = {};
+      tags.forEach((tag) => { catalogById[String(tag.id)] = tag; });
+      if (!tags.length) {
         tbody.innerHTML = '<tr><td colspan="9" class="muted">Catalog is empty.</td></tr>';
         setNote('Catalog loaded (0 tags).');
         return;
       }
-      tbody.innerHTML = tags.map((tag) => (
-        '<tr>' +
+      tbody.innerHTML = tags.map((tag) => '<tr>' +
           '<td>' + esc(tag.id) + '</td>' +
           '<td>' + esc(tag.category) + '</td>' +
           '<td>' + esc(tag.code) + '</td>' +
@@ -368,8 +337,7 @@
           '<td>' + esc(bindingsSummary(tag)) + '</td>' +
           '<td>' + esc(tag.rules_summary || 'No rules') + '</td>' +
           '<td><button type="button" class="tag-edit-btn" data-tag-id="' + esc(tag.id) + '">Edit</button></td>' +
-        '</tr>'
-      )).join('');
+        '</tr>').join('');
       setNote('Catalog loaded (' + tags.length + ' tags).');
     } catch (error) {
       tbody.innerHTML = '<tr><td colspan="9" class="muted">Failed to load catalog.</td></tr>';
@@ -377,70 +345,144 @@
     }
   }
 
-  function openEditor(mode, tag) {
-    editorTitle.textContent = mode === 'edit' ? 'Edit Tag' : 'Create Tag';
-    editorId.value = tag && tag.id ? String(tag.id) : '';
-    editorCategory.disabled = mode === 'edit';
-    editorCategory.value = (tag && tag.category) ? String(tag.category) : 'VISUAL';
-    editorCode.value = tag && tag.code ? String(tag.code) : '';
-    editorLabel.value = tag && tag.label ? String(tag.label) : '';
-    editorDescription.value = tag && tag.description ? String(tag.description) : '';
-    editorActive.value = String(tag && tag.is_active === false ? 'false' : 'true');
-    editorManualId.value = tag && tag.id ? String(tag.id) : '';
-    editorJson.value = JSON.stringify({
-      id: tag && tag.id ? tag.id : undefined,
-      category: editorCategory.value,
-      code: editorCode.value,
-      label: editorLabel.value,
-      description: editorDescription.value,
-      is_active: editorActive.value === 'true',
-    }, null, 2);
-    editorJsonMode.checked = false;
-    editorNote.textContent = '';
-    editorModal.showModal();
+  async function loadChannels() {
+    const r = await apiFetch('/channels');
+    const body = await r.json();
+    if (!r.ok || !Array.isArray(body)) throw new Error('Failed to load channels.');
+    channels = body;
   }
 
-  function manualEditorPayload() {
+  function resetRuleEditor() {
+    ruleIdInput.value = '';
+    ruleSourcePath.value = '';
+    ruleOperator.value = 'equals';
+    ruleValueJson.value = '""';
+    rulePriority.value = '100';
+    ruleWeight.value = '1';
+    ruleMatchMode.value = 'ALL';
+    ruleRequired.checked = false;
+    ruleStopAfterMatch.checked = false;
+    ruleIsActive.checked = true;
+  }
+
+  function ruleEditorPayload() {
     return {
+      source_path: String(ruleSourcePath.value || '').trim(),
+      operator: String(ruleOperator.value || '').trim(),
+      value_json: String(ruleValueJson.value || '').trim(),
+      priority: Number(rulePriority.value || 100),
+      weight: Number(ruleWeight.value || 1),
+      match_mode: String(ruleMatchMode.value || 'ALL').toUpperCase(),
+      required: Boolean(ruleRequired.checked),
+      stop_after_match: Boolean(ruleStopAfterMatch.checked),
+      is_active: Boolean(ruleIsActive.checked),
+    };
+  }
+
+  function renderRules() {
+    if (!modalRules.length) {
+      rulesTbody.innerHTML = '<tr><td colspan="3" class="muted">No rules yet.</td></tr>';
+      return;
+    }
+    rulesTbody.innerHTML = modalRules.map((rule) => '<tr>' +
+      '<td>' + esc(rule.priority) + '</td>' +
+      '<td>' + esc(rule.summary || (rule.source_path + ' ' + rule.operator + ' ' + rule.value_json)) + '</td>' +
+      '<td>' +
+      '<button type="button" class="rule-edit-btn" data-rule-id="' + esc(rule.id) + '">Edit</button> ' +
+      '<button type="button" class="rule-deactivate-btn" data-rule-id="' + esc(rule.id) + '">Deactivate</button> ' +
+      '<button type="button" class="rule-delete-btn" data-rule-id="' + esc(rule.id) + '">Delete</button>' +
+      '</td>' +
+      '</tr>').join('');
+  }
+
+  function renderBindings(selectedSlugs) {
+    if (!channels.length) {
+      bindingsList.innerHTML = '<p class="muted">No channels found.</p>';
+      return;
+    }
+    const set = new Set(selectedSlugs || []);
+    bindingsList.innerHTML = channels.map((ch) => '<label><input type="checkbox" class="binding-checkbox" value="' + esc(ch.slug) + '" ' +
+      (set.has(ch.slug) ? 'checked' : '') + '> ' + esc(ch.display_name || ch.slug) + ' <span class="muted">(' + esc(ch.slug) + ')</span></label>').join('');
+  }
+
+  async function refreshModalOperationalSections() {
+    if (!modalTag || !modalTag.id) {
+      bindingsList.innerHTML = '<p class="muted">Save tag first to configure bindings/rules.</p>';
+      rulesTbody.innerHTML = '<tr><td colspan="3" class="muted">Save tag first to manage rules.</td></tr>';
+      return;
+    }
+    const isVisual = modalTag.category === 'VISUAL';
+    bindingsModeNote.textContent = isVisual ? 'Select channels bound to this VISUAL tag.' : 'Bindings are only used for VISUAL tags.';
+    bindingsSaveBtn.disabled = !isVisual;
+    const checkboxes = bindingsList.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach((cb) => { cb.disabled = !isVisual; });
+
+    const rulesResp = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules');
+    const rulesBody = await rulesResp.json();
+    modalRules = (rulesResp.ok && Array.isArray(rulesBody.rules)) ? rulesBody.rules : [];
+    renderRules();
+    rulesJson.value = JSON.stringify({ rules: modalRules.map(({ summary, id, ...r }) => r) }, null, 2);
+
+    if (isVisual) {
+      const bindResp = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/bindings');
+      const bindBody = await bindResp.json();
+      const slugs = (bindResp.ok && Array.isArray(bindBody.bindings)) ? bindBody.bindings.map((item) => item.channel_slug) : [];
+      renderBindings(slugs);
+    } else {
+      renderBindings([]);
+      bindingsList.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.disabled = true; });
+    }
+  }
+
+  async function openEditor(mode, tag) {
+    editorTitle.textContent = mode === 'edit' ? 'Edit Tag' : 'Create Tag';
+    modalTag = tag ? Object.assign({}, tag) : { category: 'VISUAL', is_active: true };
+    editorId.value = modalTag.id ? String(modalTag.id) : '';
+    editorCategory.value = modalTag.category || 'VISUAL';
+    editorCode.value = modalTag.code || '';
+    editorLabel.value = modalTag.label || '';
+    editorDescription.value = modalTag.description || '';
+    editorActive.value = String(modalTag.is_active === false ? 'false' : 'true');
+    const canEditCategory = mode === 'create' || Boolean(window.CTUX_ALLOW_CATEGORY_EDIT);
+    editorCategory.disabled = !canEditCategory;
+    editorCategoryNote.textContent = canEditCategory ? '' : 'Category is readonly for this project.';
+    editorNote.textContent = '';
+    legacyEditorJsonModeCompat();
+    rulesPreviewNote.textContent = 'No preview yet.';
+    rulesJsonMode.value = 'replace';
+    rulesWarning.style.color = '#b91c1c';
+    resetRuleEditor();
+    try {
+      await loadChannels();
+      await refreshModalOperationalSections();
+      editorModal.showModal();
+    } catch (error) {
+      setNote(error && error.message ? error.message : 'Failed to open modal.', true);
+    }
+  }
+
+  function legacyEditorJsonModeCompat() {
+    if (editorJsonMode.checked) {
+      return true;
+    }
+    return false;
+  }
+
+  async function saveEditor() {
+    editorNote.textContent = '';
+    const payload = {
       category: String(editorCategory.value || '').trim().toUpperCase(),
       code: String(editorCode.value || '').trim(),
       label: String(editorLabel.value || '').trim(),
       description: String(editorDescription.value || ''),
       is_active: editorActive.value === 'true',
     };
-  }
-
-  async function saveEditor() {
-    editorNote.textContent = '';
-    let payload = manualEditorPayload();
-    if (editorJsonMode.checked) {
-      try {
-        payload = JSON.parse(editorJson.value || '{}');
-      } catch (error) {
-        editorNote.textContent = 'Invalid JSON in textarea.';
-        editorNote.style.color = '#b91c1c';
-        return;
-      }
-      payload.category = String(payload.category || '').trim().toUpperCase();
-      payload.code = String(payload.code || '').trim();
-      payload.label = String(payload.label || '').trim();
-      payload.description = payload.description == null ? '' : String(payload.description);
-      payload.is_active = payload.is_active == null ? true : Boolean(payload.is_active);
-    }
-
-    const editId = Number(editorId.value || editorManualId.value || payload.id || 0);
+    const editId = Number(editorId.value || 0);
     const isEdit = editId > 0;
-    const url = isEdit ? ('/track-catalog/custom-tags/catalog/' + encodeURIComponent(editId)) : '/track-catalog/custom-tags/catalog';
-    const method = isEdit ? 'PATCH' : 'POST';
-    if (isEdit) {
-      delete payload.category;
-      delete payload.id;
-    }
-
-    const r = await apiFetch(url, {
-      method: method,
+    const r = await apiFetch(isEdit ? ('/track-catalog/custom-tags/catalog/' + encodeURIComponent(editId)) : '/track-catalog/custom-tags/catalog', {
+      method: isEdit ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(isEdit ? { code: payload.code, label: payload.label, description: payload.description, is_active: payload.is_active } : payload),
     });
     const body = await r.json();
     if (!r.ok) {
@@ -448,8 +490,120 @@
       editorNote.style.color = '#b91c1c';
       return;
     }
+    modalTag = body.tag || Object.assign({}, modalTag, payload, { id: editId || (body.tag && body.tag.id) });
+    editorId.value = String(modalTag.id || '');
+    editorNote.style.color = '#166534';
+    editorNote.textContent = 'Tag saved.';
+    await loadCatalog();
+    await refreshModalOperationalSections();
+  }
 
-    editorModal.close();
+  async function saveBindings() {
+    if (!modalTag || !modalTag.id) return;
+    if (modalTag.category !== 'VISUAL') {
+      editorNote.textContent = 'Bindings are only used for VISUAL tags.';
+      return;
+    }
+    const selected = Array.from(bindingsList.querySelectorAll('.binding-checkbox:checked')).map((el) => el.value);
+    const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/bindings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel_slugs: selected }),
+    });
+    const body = await r.json();
+    if (!r.ok) {
+      editorNote.style.color = '#b91c1c';
+      editorNote.textContent = (body.error && body.error.message) || 'Failed to save bindings.';
+      return;
+    }
+    editorNote.style.color = '#166534';
+    editorNote.textContent = 'Bindings saved (' + (body.bindings || []).length + ').';
+    await loadCatalog();
+  }
+
+  async function saveRule() {
+    if (!modalTag || !modalTag.id) return;
+    const rid = Number(ruleIdInput.value || 0);
+    const payload = ruleEditorPayload();
+    const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules' + (rid ? ('/' + encodeURIComponent(rid)) : ''), {
+      method: rid ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await r.json();
+    if (!r.ok) {
+      editorNote.style.color = '#b91c1c';
+      editorNote.textContent = (body.error && body.error.message) || 'Failed to save rule.';
+      return;
+    }
+    editorNote.style.color = '#166534';
+    editorNote.textContent = rid ? 'Rule updated.' : 'Rule created.';
+    resetRuleEditor();
+    await refreshModalOperationalSections();
+    await loadCatalog();
+  }
+
+  function parseRulesJsonPayload() {
+    try {
+      const parsed = JSON.parse(rulesJson.value || '{}');
+      const rules = Array.isArray(parsed) ? parsed : parsed.rules;
+      if (!Array.isArray(rules)) return { error: 'Rules JSON must be an array or {"rules":[]}.' };
+      const invalid = rules.find((item) => !item || typeof item !== 'object' || !item.source_path || !item.operator);
+      if (invalid) return { error: 'Each rule requires at least source_path and operator.' };
+      return { rules: rules };
+    } catch (_) {
+      return { error: 'Invalid JSON.' };
+    }
+  }
+
+  function previewRulesJson() {
+    const parsed = parseRulesJsonPayload();
+    if (parsed.error) {
+      rulesPreviewNote.style.color = '#b91c1c';
+      rulesPreviewNote.textContent = parsed.error;
+      return;
+    }
+    rulesPreviewNote.style.color = '#166534';
+    rulesPreviewNote.textContent = 'Preview valid: ' + parsed.rules.length + ' rule(s). Mode=' + rulesJsonMode.value + '.';
+  }
+
+  async function saveRulesJson() {
+    if (!modalTag || !modalTag.id) return;
+    const parsed = parseRulesJsonPayload();
+    if (parsed.error) {
+      rulesPreviewNote.style.color = '#b91c1c';
+      rulesPreviewNote.textContent = parsed.error;
+      return;
+    }
+    if (rulesJsonMode.value === 'replace') {
+      if (!window.confirm('Replace all existing rules for this tag? This is atomic and will overwrite current rules.')) return;
+      const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules/replace-all', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules: parsed.rules }),
+      });
+      const body = await r.json();
+      if (!r.ok) {
+        editorNote.style.color = '#b91c1c';
+        editorNote.textContent = (body.error && body.error.message) || 'Replace-all failed.';
+        return;
+      }
+      editorNote.style.color = '#166534';
+      editorNote.textContent = 'Rules replaced (' + (body.rules || []).length + ').';
+    } else {
+      for (const rule of parsed.rules) {
+        const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rule),
+        });
+        if (!r.ok) {
+          const body = await r.json();
+          editorNote.style.color = '#b91c1c';
+          editorNote.textContent = (body.error && body.error.message) || 'Append rules failed.';
+          return;
+        }
+      }
+      editorNote.style.color = '#166534';
+      editorNote.textContent = 'Rules appended (' + parsed.rules.length + ').';
+    }
+    await refreshModalOperationalSections();
     await loadCatalog();
   }
 
@@ -457,108 +611,139 @@
     setNote('Importing from JSON files...');
     const r = await apiFetch('/track-catalog/custom-tags/catalog/import', { method: 'POST' });
     const body = await r.json();
-    if (!r.ok) {
-      setNote((body.error && body.error.message) || 'Import failed (missing file?).', true);
-      return;
-    }
+    if (!r.ok) return setNote((body.error && body.error.message) || 'Import failed (missing file?).', true);
     await loadCatalog();
     setNote('Import complete: imported=' + body.imported + ', created=' + body.created + ', updated=' + body.updated + '.');
   }
-
   async function runExport() {
     setNote('Exporting tags to JSON files...');
     const r = await apiFetch('/track-catalog/custom-tags/catalog/export', { method: 'POST' });
     const body = await r.json();
-    if (!r.ok) {
-      setNote((body.error && body.error.message) || 'Export failed.', true);
-      return;
-    }
+    if (!r.ok) return setNote((body.error && body.error.message) || 'Export failed.', true);
     setNote('Export complete. Files: ' + (body.files || []).join(', ') + '.');
+  }
+
+  function setBulkJsonState(message, tone) {
+    bulkJsonNote.classList.remove('muted'); bulkJsonNote.style.color = '';
+    if (tone === 'success') bulkJsonNote.style.color = '#166534';
+    else if (tone === 'error') bulkJsonNote.style.color = '#b91c1c';
+    else bulkJsonNote.classList.add('muted');
+    bulkJsonNote.textContent = message;
+  }
+  function renderBulkPreviewRows(items) {
+    const rows = Array.isArray(items) ? items : [];
+    if (!rows.length) return bulkPreviewTableBody.innerHTML = '<tr><td colspan="4" class="muted">Empty preview/result set.</td></tr>';
+    bulkPreviewTableBody.innerHTML = rows.map((item, idx) => '<tr><td>' + esc(item.index == null ? idx : item.index) + '</td><td>' + esc(item.action || '') + '</td><td>' + esc((item.warnings || []).map((w) => w.message).join('; ') || '-') + '</td><td>' + esc((item.errors || []).map((e) => e.message).join('; ') || '-') + '</td></tr>').join('');
+  }
+  function parseBulkEditorPayload() {
+    try { const parsed = JSON.parse(bulkJsonEditor.value || '{}'); return { payload: { items: Array.isArray(parsed.items) ? parsed.items : [] } }; }
+    catch (_) { return { error: 'Invalid JSON payload.' }; }
+  }
+  function bulkSummaryText(body) {
+    const summary = body && body.summary;
+    if (!summary || typeof summary !== 'object') return 'No summary available.';
+    const parts = Object.keys(summary).map((key) => key + ': ' + summary[key]);
+    parts.push('can_confirm: ' + Boolean(body && body.can_confirm));
+    return parts.join(', ');
+  }
+  async function runBulkJsonRequest(action) {
+    const parsed = parseBulkEditorPayload();
+    if (parsed.error) { setBulkJsonState(parsed.error, 'error'); bulkJsonSummary.textContent = 'Validation error.'; return renderBulkPreviewRows([]); }
+    const isPreview = action === 'preview';
+    setBulkJsonState((isPreview ? 'Validate Preview' : 'Confirm Import') + ' in progress...', 'info');
+    bulkPreviewBtn.disabled = true; bulkConfirmBtn.disabled = true;
+    try {
+      const r = await apiFetch(isPreview ? '/track-catalog/custom-tags/bulk/preview' : '/track-catalog/custom-tags/bulk/confirm', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(parsed.payload),
+      });
+      const body = await r.json();
+      if (!r.ok || body.error) { setBulkJsonState((body.error && body.error.message) || 'Request/server error.', 'error'); bulkJsonSummary.textContent = 'Request/server error.'; return renderBulkPreviewRows([]); }
+      setBulkJsonState((isPreview ? 'Validate Preview' : 'Confirm Import') + ' completed.', 'success');
+      bulkJsonSummary.textContent = bulkSummaryText(body); renderBulkPreviewRows(body.items);
+      if (!isPreview && body.can_confirm) await loadCatalog();
+    } catch (error) {
+      setBulkJsonState((error && error.message) ? error.message : 'Request/server error.', 'error');
+      bulkJsonSummary.textContent = 'Request/server error.'; renderBulkPreviewRows([]);
+    } finally { bulkPreviewBtn.disabled = false; bulkConfirmBtn.disabled = false; }
   }
 
   async function runBulkCreate() {
     bulkNote.textContent = '';
-    let parsed = null;
-    try {
-      parsed = JSON.parse(bulkJson.value || '{}');
-    } catch (_) {
-      bulkNote.textContent = 'Invalid JSON.';
-      bulkNote.style.color = '#b91c1c';
-      return;
-    }
-    const items = Array.isArray(parsed.tags) ? parsed.tags : [];
-    let created = 0;
+    let parsed; try { parsed = JSON.parse(bulkJson.value || '{}'); } catch (_) { bulkNote.textContent = 'Invalid JSON.'; bulkNote.style.color = '#b91c1c'; return; }
+    const items = Array.isArray(parsed.tags) ? parsed.tags : []; let created = 0;
     for (const item of items) {
-      const r = await apiFetch('/track-catalog/custom-tags/catalog', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item),
-      });
-      if (r.ok) {
-        created += 1;
-      }
+      const r = await apiFetch('/track-catalog/custom-tags/catalog', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
+      if (r.ok) created += 1;
     }
-    bulkModal.close();
-    await loadCatalog();
-    setNote('Bulk create finished: created ' + created + ' of ' + items.length + '.');
+    bulkModal.close(); await loadCatalog(); setNote('Bulk create finished: created ' + created + ' of ' + items.length + '.');
   }
 
-  tbody.addEventListener('click', (event) => {
+  tbody.addEventListener('click', async (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLElement)) {
+    if (!(target instanceof HTMLElement)) return;
+    if (target.classList.contains('tag-edit-btn')) {
+      const id = target.getAttribute('data-tag-id') || '';
+      const tag = catalogById[id];
+      if (tag) await openEditor('edit', tag);
+    }
+  });
+
+  rulesTbody.addEventListener('click', async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !modalTag || !modalTag.id) return;
+    const ruleId = Number(target.getAttribute('data-rule-id') || 0);
+    if (!ruleId) return;
+    const rule = modalRules.find((item) => Number(item.id) === ruleId);
+    if (!rule) return;
+    if (target.classList.contains('rule-edit-btn')) {
+      ruleIdInput.value = String(rule.id);
+      ruleSourcePath.value = rule.source_path || '';
+      ruleOperator.value = rule.operator || 'equals';
+      ruleValueJson.value = rule.value_json || '""';
+      rulePriority.value = String(rule.priority == null ? 100 : rule.priority);
+      ruleWeight.value = String(rule.weight == null ? 1 : rule.weight);
+      ruleMatchMode.value = (rule.match_mode || 'ALL').toUpperCase();
+      ruleRequired.checked = Boolean(rule.required);
+      ruleStopAfterMatch.checked = Boolean(rule.stop_after_match);
+      ruleIsActive.checked = Boolean(rule.is_active);
       return;
     }
-    if (target.classList.contains('tag-edit-btn')) {
-      const row = target.closest('tr');
-      if (!row) {
-        return;
-      }
-      openEditor('edit', {
-        id: row.children[0].textContent,
-        category: row.children[1].textContent,
-        code: row.children[2].textContent,
-        label: row.children[3].textContent,
-        description: row.children[4].textContent,
-        is_active: String(row.children[5].textContent).toLowerCase() === 'true',
+    if (target.classList.contains('rule-deactivate-btn')) {
+      const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules/' + encodeURIComponent(ruleId), {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: false }),
       });
+      if (r.ok) { await refreshModalOperationalSections(); await loadCatalog(); }
+      return;
+    }
+    if (target.classList.contains('rule-delete-btn')) {
+      const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules/' + encodeURIComponent(ruleId), { method: 'DELETE' });
+      if (r.ok) { await refreshModalOperationalSections(); await loadCatalog(); }
     }
   });
 
   importBtn.addEventListener('click', runImport);
   exportBtn.addEventListener('click', runExport);
   createBtn.addEventListener('click', () => openEditor('create', null));
-  bulkBtn.addEventListener('click', () => {
-    bulkJson.value = JSON.stringify({ tags: [] }, null, 2);
-    bulkNote.textContent = '';
-    bulkModal.showModal();
-  });
+  bulkBtn.addEventListener('click', () => { bulkJson.value = JSON.stringify({ tags: [] }, null, 2); bulkNote.textContent = ''; bulkModal.showModal(); });
 
   document.getElementById('tag-editor-save').addEventListener('click', saveEditor);
   document.getElementById('tag-editor-cancel').addEventListener('click', () => editorModal.close());
+  bindingsSaveBtn.addEventListener('click', saveBindings);
+  ruleAddBtn.addEventListener('click', resetRuleEditor);
+  ruleSaveBtn.addEventListener('click', saveRule);
+  ruleResetBtn.addEventListener('click', resetRuleEditor);
+  rulesJsonPreviewBtn.addEventListener('click', previewRulesJson);
+  rulesJsonSaveBtn.addEventListener('click', saveRulesJson);
+
   document.getElementById('tags-bulk-run').addEventListener('click', runBulkCreate);
   document.getElementById('tags-bulk-cancel').addEventListener('click', () => bulkModal.close());
   bulkPreviewBtn.addEventListener('click', () => runBulkJsonRequest('preview'));
   bulkConfirmBtn.addEventListener('click', () => runBulkJsonRequest('confirm'));
   filterApplyBtn.addEventListener('click', loadCatalog);
-  filterClearBtn.addEventListener('click', () => {
-    filterCategory.value = '';
-    filterId.value = '';
-    filterQ.value = '';
-    loadCatalog();
-  });
-  filterQ.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      loadCatalog();
-    }
-  });
+  filterClearBtn.addEventListener('click', () => { filterCategory.value = ''; filterId.value = ''; filterQ.value = ''; loadCatalog(); });
+  filterQ.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); loadCatalog(); } });
 
-  bulkJsonEditor.value = JSON.stringify({
-    items: [
-      { category: 'VISUAL', slug: 'example_tag', name: 'Example Tag', description: '', is_active: true },
-    ],
-  }, null, 2);
-
+  bulkJsonEditor.value = JSON.stringify({ items: [{ category: 'VISUAL', slug: 'example_tag', name: 'Example Tag', description: '', is_active: true }] }, null, 2);
   loadCatalog();
 })();
 </script>
