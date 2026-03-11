@@ -1,10 +1,10 @@
-# CTUX-S4 follow-up handoff (PR #226 metadata alignment)
+# CTUX-S4 follow-up handoff (PR #227 metadata alignment)
 
 ## Actual reviewable PR state
-- PR number: `226`
-- Head branch: `codex/fix-/v1/channels-page-load-regression`
-- Base branch: `codex/upgrade-edit-tag-to-control-modal`
-- Visible remote commit in the PR: `b27846b`
+- PR number: `227`
+- Head branch: `codex/update-pr-#226-handoff-summary-text`
+- Base branch: `codex/fix-/v1/channels-page-load-regression`
+- Visible remote commit in the PR: `280355f`
 
 ## Scope
 - Cosmetic traceability cleanup only for PR-facing handoff/summary metadata.
