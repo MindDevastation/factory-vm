@@ -15,6 +15,57 @@
 </p>
 <p class="muted" id="tags-note">Loading tag catalog...</p>
 
+<p>
+  <label>Category
+    <select id="tags-filter-category">
+      <option value="">All</option>
+      <option value="VISUAL">VISUAL</option>
+      <option value="MOOD">MOOD</option>
+      <option value="THEME">THEME</option>
+    </select>
+  </label>
+  <label style="margin-left:12px;">ID
+    <input type="number" id="tags-filter-id" min="1" placeholder="Exact ID">
+  </label>
+  <label style="margin-left:12px;">Code/Label search
+    <input type="search" id="tags-filter-q" placeholder="code or label">
+  </label>
+  <button type="button" id="tags-filter-apply-btn" style="margin-left:12px;">Apply</button>
+  <button type="button" id="tags-filter-clear-btn">Clear</button>
+</p>
+
+<div style="border:1px solid #d1d5db; padding:12px; border-radius:8px; margin:12px 0; background:#f9fafb;">
+  <p style="margin:0 0 8px 0;"><strong>P0 operational hints</strong></p>
+  <ul style="margin:0 0 8px 18px; padding:0;">
+    <li><strong>VISUAL</strong> tags map detected visual channel context and need both channel bindings and rules.</li>
+    <li><strong>MOOD</strong>/<strong>THEME</strong> tags are rules-only classification and do not use channel bindings.</li>
+    <li>Changing tags, rules, or bindings does not retroactively update already analyzed tracks; rerun Analyze or wait for future recompute.</li>
+    <li><strong>Preview</strong> validates JSON and reports actions/errors without writing.</li>
+    <li><strong>Confirm</strong> applies validated changes to the catalog.</li>
+  </ul>
+  <details>
+    <summary>JSON examples</summary>
+    <pre style="white-space:pre-wrap; margin:8px 0 0 0;">{
+  "items": [
+    {
+      "category": "VISUAL",
+      "slug": "high_energy_scene",
+      "name": "High Energy Scene",
+      "description": "Fast motion and bright visuals",
+      "is_active": true
+    },
+    {
+      "category": "MOOD",
+      "slug": "uplifting",
+      "name": "Uplifting",
+      "description": "Positive, energetic emotional tone",
+      "is_active": true
+    }
+  ]
+}</pre>
+  </details>
+</div>
+
 <table id="tags-table">
   <thead>
     <tr>
@@ -24,11 +75,13 @@
       <th>Label</th>
       <th>Description</th>
       <th>Active</th>
+      <th>Bound Channels</th>
+      <th>Rules</th>
       <th>Actions</th>
     </tr>
   </thead>
   <tbody id="tags-tbody">
-    <tr><td colspan="7" class="muted">Loading...</td></tr>
+    <tr><td colspan="9" class="muted">Loading...</td></tr>
   </tbody>
 </table>
 
@@ -104,6 +157,11 @@
   const exportBtn = document.getElementById('tags-export-btn');
   const createBtn = document.getElementById('tags-create-btn');
   const bulkBtn = document.getElementById('tags-bulk-create-btn');
+  const filterCategory = document.getElementById('tags-filter-category');
+  const filterId = document.getElementById('tags-filter-id');
+  const filterQ = document.getElementById('tags-filter-q');
+  const filterApplyBtn = document.getElementById('tags-filter-apply-btn');
+  const filterClearBtn = document.getElementById('tags-filter-clear-btn');
 
   const editorModal = document.getElementById('tag-editor-modal');
   const editorTitle = document.getElementById('tag-editor-title');
@@ -130,6 +188,9 @@
 
   function resolveApiPath(path) {
     const normalized = String(path || '').startsWith('/') ? String(path || '') : ('/' + String(path || ''));
+    if (normalized.startsWith('/v1/')) {
+      return normalized;
+    }
     const pathname = String(window.location.pathname || '');
     const uiMarker = '/ui/';
     const idx = pathname.indexOf(uiMarker);
@@ -252,17 +313,47 @@
     }
   }
 
+  function currentFilters() {
+    const params = new URLSearchParams();
+    const category = String(filterCategory.value || '').trim().toUpperCase();
+    const idRaw = String(filterId.value || '').trim();
+    const q = String(filterQ.value || '').trim();
+    if (category) {
+      params.set('category', category);
+    }
+    if (idRaw) {
+      params.set('tag_id', idRaw);
+    }
+    if (q) {
+      params.set('q', q);
+    }
+    return params;
+  }
+
+  function bindingsSummary(tag) {
+    if (tag.category !== 'VISUAL') {
+      return '—';
+    }
+    const bindings = Array.isArray(tag.bindings) ? tag.bindings : [];
+    if (bindings.length === 0) {
+      return 'No bindings';
+    }
+    return bindings.map((binding) => binding.channel_slug).join(', ');
+  }
+
   async function loadCatalog() {
     setNote('Loading tag catalog...');
     try {
-      const r = await apiFetch('/track-catalog/custom-tags/catalog');
+      const query = currentFilters().toString();
+      const endpoint = '/v1/track-catalog/custom-tags' + (query ? ('?' + query) : '');
+      const r = await apiFetch(endpoint);
       const body = await r.json();
       if (!r.ok) {
         throw new Error((body.error && body.error.message) || 'Failed to load tag catalog.');
       }
       const tags = Array.isArray(body.tags) ? body.tags : [];
       if (tags.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="muted">Catalog is empty.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="muted">Catalog is empty.</td></tr>';
         setNote('Catalog loaded (0 tags).');
         return;
       }
@@ -274,12 +365,14 @@
           '<td>' + esc(tag.label) + '</td>' +
           '<td>' + esc(tag.description || '') + '</td>' +
           '<td>' + esc(tag.is_active) + '</td>' +
+          '<td>' + esc(bindingsSummary(tag)) + '</td>' +
+          '<td>' + esc(tag.rules_summary || 'No rules') + '</td>' +
           '<td><button type="button" class="tag-edit-btn" data-tag-id="' + esc(tag.id) + '">Edit</button></td>' +
         '</tr>'
       )).join('');
       setNote('Catalog loaded (' + tags.length + ' tags).');
     } catch (error) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted">Failed to load catalog.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="muted">Failed to load catalog.</td></tr>';
       setNote(error && error.message ? error.message : 'Failed to load tag catalog.', true);
     }
   }
@@ -446,6 +539,19 @@
   document.getElementById('tags-bulk-cancel').addEventListener('click', () => bulkModal.close());
   bulkPreviewBtn.addEventListener('click', () => runBulkJsonRequest('preview'));
   bulkConfirmBtn.addEventListener('click', () => runBulkJsonRequest('confirm'));
+  filterApplyBtn.addEventListener('click', loadCatalog);
+  filterClearBtn.addEventListener('click', () => {
+    filterCategory.value = '';
+    filterId.value = '';
+    filterQ.value = '';
+    loadCatalog();
+  });
+  filterQ.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      loadCatalog();
+    }
+  });
 
   bulkJsonEditor.value = JSON.stringify({
     items: [
