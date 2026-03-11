@@ -188,6 +188,9 @@
 
   function resolveApiPath(path) {
     const normalized = String(path || '').startsWith('/') ? String(path || '') : ('/' + String(path || ''));
+    if (normalized.startsWith('/v1/')) {
+      return normalized;
+    }
     const pathname = String(window.location.pathname || '');
     const uiMarker = '/ui/';
     const idx = pathname.indexOf(uiMarker);
@@ -342,7 +345,7 @@
     setNote('Loading tag catalog...');
     try {
       const query = currentFilters().toString();
-      const endpoint = '/track-catalog/custom-tags' + (query ? ('?' + query) : '');
+      const endpoint = '/v1/track-catalog/custom-tags' + (query ? ('?' + query) : '');
       const r = await apiFetch(endpoint);
       const body = await r.json();
       if (!r.ok) {
