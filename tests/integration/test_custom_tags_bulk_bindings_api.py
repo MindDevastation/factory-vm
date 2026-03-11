@@ -74,6 +74,70 @@ class TestCustomTagsBulkBindingsApi(unittest.TestCase):
             self.assertTrue(repeat_body["ok"])
             self.assertEqual(repeat_body["summary"], {"total": 2, "created": 0, "updated": 0, "noop": 2, "invalid": 0})
 
+    def test_duplicate_natural_key_payload_rejected_consistently(self) -> None:
+        with temp_env() as (_td, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                visual = catalog_service.create_tag(
+                    conn,
+                    {"code": "cyber_arena", "label": "Cyber Arena", "category": "VISUAL", "description": None, "is_active": True},
+                )
+                conn.execute(
+                    "INSERT INTO custom_tag_channel_bindings(tag_id, channel_slug, created_at) VALUES(?,?,?)",
+                    (int(visual["id"]), "darkwood-reverie", dbm.now_ts()),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            for items in (
+                [
+                    {"tag_code": "cyber_arena", "channel_slug": "titanwave-sonic", "is_active": True},
+                    {"tag_code": "cyber_arena", "channel_slug": "titanwave-sonic", "is_active": True},
+                ],
+                [
+                    {"tag_code": "cyber_arena", "channel_slug": "titanwave-sonic", "is_active": True},
+                    {"tag_code": "cyber_arena", "channel_slug": "titanwave-sonic", "is_active": False},
+                ],
+                [
+                    {"tag_code": "cyber_arena", "channel_slug": "darkwood-reverie", "is_active": False},
+                    {"tag_code": "cyber_arena", "channel_slug": "darkwood-reverie", "is_active": True},
+                ],
+            ):
+                payload = {"items": items}
+                preview = client.post("/v1/track-catalog/custom-tags/bulk-bindings/preview", headers=h, json=payload)
+                self.assertEqual(preview.status_code, 200)
+                preview_body = preview.json()
+                self.assertFalse(preview_body["can_confirm"])
+                self.assertEqual(preview_body["summary"]["invalid"], 2)
+                self.assertEqual(
+                    [i["errors"][-1]["code"] for i in preview_body["items"]],
+                    ["CTA_DUPLICATE_NATURAL_KEY", "CTA_DUPLICATE_NATURAL_KEY"],
+                )
+
+                confirm = client.post("/v1/track-catalog/custom-tags/bulk-bindings/confirm", headers=h, json=payload)
+                self.assertEqual(confirm.status_code, 200)
+                confirm_body = confirm.json()
+                self.assertFalse(confirm_body["ok"])
+                self.assertEqual(confirm_body["summary"]["invalid"], 2)
+
+            conn = dbm.connect(env)
+            try:
+                rows = conn.execute(
+                    "SELECT tag_id, channel_slug FROM custom_tag_channel_bindings ORDER BY channel_slug ASC"
+                ).fetchall()
+            finally:
+                conn.close()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["channel_slug"], "darkwood-reverie")
+
 
 if __name__ == "__main__":
     unittest.main()
