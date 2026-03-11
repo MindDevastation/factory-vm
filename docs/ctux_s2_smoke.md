@@ -8,6 +8,7 @@
 - Server: `uvicorn services.factory_api.app:app --host 0.0.0.0 --port 8091`
 - Basic auth: `admin:testpass`
 - API endpoint used by page: `/v1/track-catalog/custom-tags`
+- Screenshot artifact path: `browser:/tmp/codex_browser_invocations/a379c63693a60f6a/artifacts/artifacts/ctux_s2_custom_tags_smoke.png`
 
 ## Seeded local smoke data
 - VISUAL `neon-city` (with channel binding `darkwood-reverie` and one active rule)
