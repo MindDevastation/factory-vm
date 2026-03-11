@@ -274,15 +274,15 @@
       label: 'Bulk Bindings',
       previewPath: '/track-catalog/custom-tags/bulk-bindings/preview',
       confirmPath: '/track-catalog/custom-tags/bulk-bindings/confirm',
-      defaultPayload: { items: [{ tag_id: 1, channel_slugs: ['music_video'] }] },
-      contract: '{"items":[{"tag_id":1,"channel_slugs":["music_video"]}]}'
+      defaultPayload: { items: [{ tag_code: 'example_tag', channel_slug: 'music_video', is_active: true }] },
+      contract: '{"items":[{"tag_code":"example_tag","channel_slug":"music_video","is_active":true}]}'
     },
     rules: {
       label: 'Bulk Rules',
       previewPath: '/track-catalog/custom-tags/bulk-rules/preview',
       confirmPath: '/track-catalog/custom-tags/bulk-rules/confirm',
-      defaultPayload: { items: [{ tag_id: 1, mode: 'replace', rules: [{ source_path: 'track_features.payload_json.voice_flag', operator: 'equals', value_json: 'false', priority: 100, weight: 1, match_mode: 'ALL', required: false, stop_after_match: false, is_active: true }] }] },
-      contract: '{"items":[{"tag_id":1,"mode":"replace","rules":[...]}]}'
+      defaultPayload: { items: [{ tag_code: 'example_tag', source_path: 'track_features.payload_json.voice_flag', operator: 'equals', value_json: 'false', priority: 100, weight: 1, match_mode: 'ALL', required: false, stop_after_match: false, is_active: true }] },
+      contract: '{"items":[{"tag_code":"example_tag","source_path":"...","operator":"equals","value_json":"false"}]}'
     }
   };
 
