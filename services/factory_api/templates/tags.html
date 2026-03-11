@@ -12,6 +12,12 @@
   <button type="button" id="tags-export-btn">Export</button>
   <button type="button" id="tags-create-btn">Create Tag</button>
 </p>
+<p>
+  <label>Channel dashboard
+    <input type="text" id="tags-dashboard-channel" placeholder="deep-space">
+  </label>
+  <button type="button" id="tags-dashboard-open-btn">Open channel-scoped dashboard</button>
+</p>
 <details style="margin:8px 0 12px 0;">
   <summary><strong>Quick help</strong></summary>
   <ul style="margin:8px 0 0 18px; padding:0;">
@@ -92,6 +98,41 @@
     <tr><td colspan="10" class="muted">Loading...</td></tr>
   </tbody>
 </table>
+
+<h2>Track Catalog → Custom Tags → P2 clone / bulk / taxonomy</h2>
+<p class="muted">These are supporting utilities; the table + editor above remain the primary workflow.</p>
+<div style="border:1px solid #d1d5db; padding:12px; border-radius:8px; margin:12px 0; background:#f9fafb;">
+  <h3 style="margin-top:0;">Bulk enable / disable</h3>
+  <p>
+    <label>Tag IDs CSV <input type="text" id="tags-bulk-toggle-tag-ids" placeholder="1,2,3"></label>
+    <button type="button" id="tags-bulk-tags-enable-btn">Enable tags</button>
+    <button type="button" id="tags-bulk-tags-disable-btn">Disable tags</button>
+  </p>
+  <p>
+    <label>Rule IDs CSV <input type="text" id="tags-bulk-toggle-rule-ids" placeholder="10,11"></label>
+    <button type="button" id="tags-bulk-rules-enable-btn">Enable rules</button>
+    <button type="button" id="tags-bulk-rules-disable-btn">Disable rules</button>
+  </p>
+  <p>
+    <label>Binding tag ID <input type="number" id="tags-binding-tag-id" min="1" placeholder="1"></label>
+    <label style="margin-left:8px;">Channel slug <input type="text" id="tags-binding-channel-slug" placeholder="deep-space"></label>
+    <button type="button" id="tags-binding-enable-btn">Enable binding</button>
+    <button type="button" id="tags-binding-disable-btn">Disable binding</button>
+  </p>
+  <p class="muted" id="tags-p2-bulk-note">Idle</p>
+</div>
+
+<div style="border:1px solid #d1d5db; padding:12px; border-radius:8px; margin:12px 0; background:#f9fafb;">
+  <h3 style="margin-top:0;">Full taxonomy export/import</h3>
+  <p>
+    <button type="button" id="tags-taxonomy-export-btn">Export taxonomy JSON</button>
+    <button type="button" id="tags-taxonomy-preview-btn">Import preview</button>
+    <button type="button" id="tags-taxonomy-confirm-btn">Import confirm</button>
+  </p>
+  <p><textarea id="tags-taxonomy-json" rows="12" style="width:100%;" spellcheck="false"></textarea></p>
+  <p class="muted" id="tags-taxonomy-note">Idle</p>
+  <p class="muted" id="tags-taxonomy-summary">No taxonomy preview/confirm summary yet.</p>
+</div>
 
 <h2>Track Catalog → Custom Tags → Assignment Tools</h2>
 <p class="muted">Dry-run preview first, then execute recompute assignments. Leave fields blank for full scope.</p>
@@ -238,6 +279,8 @@
   const filterQ = document.getElementById('tags-filter-q');
   const filterApplyBtn = document.getElementById('tags-filter-apply-btn');
   const filterClearBtn = document.getElementById('tags-filter-clear-btn');
+  const dashboardChannel = document.getElementById('tags-dashboard-channel');
+  const dashboardOpenBtn = document.getElementById('tags-dashboard-open-btn');
 
   const editorModal = document.getElementById('tag-editor-modal');
   const editorTitle = document.getElementById('tag-editor-title');
@@ -298,6 +341,23 @@
   const bulkJsonNote = document.getElementById('tags-bulk-json-note');
   const bulkJsonSummary = document.getElementById('tags-bulk-json-summary');
   const bulkPreviewTableBody = document.querySelector('#tags-bulk-preview-table tbody');
+  const bulkToggleTagIds = document.getElementById('tags-bulk-toggle-tag-ids');
+  const bulkToggleRuleIds = document.getElementById('tags-bulk-toggle-rule-ids');
+  const bulkTagsEnableBtn = document.getElementById('tags-bulk-tags-enable-btn');
+  const bulkTagsDisableBtn = document.getElementById('tags-bulk-tags-disable-btn');
+  const bulkRulesEnableBtn = document.getElementById('tags-bulk-rules-enable-btn');
+  const bulkRulesDisableBtn = document.getElementById('tags-bulk-rules-disable-btn');
+  const bindingTagIdInput = document.getElementById('tags-binding-tag-id');
+  const bindingChannelSlugInput = document.getElementById('tags-binding-channel-slug');
+  const bindingEnableBtn = document.getElementById('tags-binding-enable-btn');
+  const bindingDisableBtn = document.getElementById('tags-binding-disable-btn');
+  const p2BulkNote = document.getElementById('tags-p2-bulk-note');
+  const taxonomyJson = document.getElementById('tags-taxonomy-json');
+  const taxonomyExportBtn = document.getElementById('tags-taxonomy-export-btn');
+  const taxonomyPreviewBtn = document.getElementById('tags-taxonomy-preview-btn');
+  const taxonomyConfirmBtn = document.getElementById('tags-taxonomy-confirm-btn');
+  const taxonomyNote = document.getElementById('tags-taxonomy-note');
+  const taxonomySummary = document.getElementById('tags-taxonomy-summary');
 
   const BULK_OPERATIONS = {
     tags: {
@@ -372,6 +432,20 @@
     return 'tracks: ' + Number(usage.tracks_count || 0) + ', rules: ' + Number(usage.rules_count || 0) + ', channels: ' + Number(usage.channels_count || 0);
   }
 
+  function parseCsvIds(value) {
+    return String(value || '').split(',').map((item) => Number(item.trim())).filter((item) => Number.isInteger(item) && item > 0);
+  }
+
+  function setP2BulkNote(message, isError) {
+    p2BulkNote.style.color = isError ? '#b91c1c' : '#166534';
+    p2BulkNote.textContent = message;
+  }
+
+  function setTaxonomyNote(message, tone) {
+    taxonomyNote.style.color = tone === 'error' ? '#b91c1c' : (tone === 'success' ? '#166534' : '');
+    taxonomyNote.textContent = message;
+  }
+
   async function loadCatalog() {
     setNote('Loading tag catalog...');
     try {
@@ -398,7 +472,11 @@
           '<td>' + esc(bindingsSummary(tag)) + '</td>' +
           '<td>' + esc(tag.rules_summary || 'No rules') + '</td>' +
           '<td>' + esc(usageSummary(tag)) + '</td>' +
-          '<td><button type="button" class="tag-edit-btn" data-tag-id="' + esc(tag.id) + '">Edit</button></td>' +
+          '<td>' +
+          '<button type="button" class="tag-edit-btn" data-tag-id="' + esc(tag.id) + '">Edit</button> ' +
+          '<button type="button" class="tag-clone-btn" data-tag-id="' + esc(tag.id) + '">Clone tag</button> ' +
+          '<button type="button" class="tag-clone-rules-btn" data-tag-id="' + esc(tag.id) + '">Clone rules → this</button>' +
+          '</td>' +
         '</tr>').join('');
       setNote('Catalog loaded (' + tags.length + ' tags).');
     } catch (error) {
@@ -769,6 +847,104 @@
     setNote('Export complete. Files: ' + (body.files || []).join(', ') + '.');
   }
 
+  async function runCloneTag(sourceTagId) {
+    const sourceTag = catalogById[String(sourceTagId)];
+    if (!sourceTag) return;
+    const nextCode = window.prompt('Clone code', String(sourceTag.code || '') + '_clone');
+    if (!nextCode) return;
+    const nextLabel = window.prompt('Clone label', String(sourceTag.label || '') + ' Clone');
+    if (!nextLabel) return;
+    const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(sourceTagId) + '/clone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: nextCode.trim(), label: nextLabel.trim(), description: sourceTag.description || '', include_rules: true, include_bindings: true, is_active: true }),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) throw new Error((body.error && body.error.message) || 'Clone tag failed.');
+    setNote('Tag cloned: id=' + body.tag.id + ', cloned_rules=' + Number(body.cloned_rules || 0) + ', cloned_bindings=' + Number(body.cloned_bindings || 0) + '.');
+    await loadCatalog();
+  }
+
+  async function runCloneRules(targetTagId) {
+    const sourceTagId = Number(window.prompt('Source tag ID for rule clone')); 
+    if (!Number.isInteger(sourceTagId) || sourceTagId <= 0) return;
+    const replaceAll = window.confirm('Replace all rules on target tag first?');
+    const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(targetTagId) + '/rules/clone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_tag_id: sourceTagId, replace_all: replaceAll }),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) throw new Error((body.error && body.error.message) || 'Clone rules failed.');
+    setNote('Rules cloned: ' + Number(body.cloned_rules || 0) + '.');
+    await loadCatalog();
+  }
+
+  async function runBulkSetActive(kind, isActive) {
+    const ids = parseCsvIds(kind === 'tags' ? bulkToggleTagIds.value : bulkToggleRuleIds.value);
+    if (!ids.length) return setP2BulkNote('Provide at least one valid ID.', true);
+    const endpoint = kind === 'tags' ? '/track-catalog/custom-tags/tags/bulk-set-active' : '/track-catalog/custom-tags/rules/bulk-set-active';
+    const r = await apiFetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids, is_active: isActive }),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) return setP2BulkNote((body.error && body.error.message) || 'Bulk set active failed.', true);
+    setP2BulkNote((kind === 'tags' ? 'Tags' : 'Rules') + ' updated=' + Number(body.updated || 0) + ', is_active=' + Boolean(body.is_active) + '.', false);
+    await loadCatalog();
+  }
+
+  async function runBindingSetEnabled(isEnabled) {
+    const tagId = Number(bindingTagIdInput.value || 0);
+    const channelSlug = String(bindingChannelSlugInput.value || '').trim();
+    if (!tagId || !channelSlug) return setP2BulkNote('Provide binding tag ID and channel slug.', true);
+    const r = await apiFetch('/track-catalog/custom-tags/bindings/bulk-set-enabled', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [{ tag_id: tagId, channel_slug: channelSlug, is_enabled: isEnabled }] }),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) return setP2BulkNote((body.error && body.error.message) || 'Binding toggle failed.', true);
+    setP2BulkNote('Bindings enabled=' + Number(body.enabled || 0) + ', disabled=' + Number(body.disabled || 0) + '.', false);
+    await loadCatalog();
+  }
+
+  function parseTaxonomyPayload() {
+    try {
+      return { payload: JSON.parse(taxonomyJson.value || '{}') };
+    } catch (_) {
+      return { error: 'Invalid taxonomy JSON.' };
+    }
+  }
+
+  async function exportTaxonomy() {
+    setTaxonomyNote('Exporting taxonomy...', 'info');
+    const r = await apiFetch('/track-catalog/custom-tags/taxonomy/export');
+    const body = await r.json();
+    if (!r.ok || body.error) return setTaxonomyNote((body.error && body.error.message) || 'Taxonomy export failed.', 'error');
+    taxonomyJson.value = JSON.stringify(body, null, 2);
+    taxonomySummary.textContent = 'Exported tags=' + (body.tags || []).length + ', bindings=' + (body.bindings || []).length + ', rules=' + (body.rules || []).length + '.';
+    setTaxonomyNote('Taxonomy exported. Review JSON then run preview.', 'success');
+  }
+
+  async function importTaxonomy(action) {
+    const parsed = parseTaxonomyPayload();
+    if (parsed.error) return setTaxonomyNote(parsed.error, 'error');
+    const isPreview = action === 'preview';
+    setTaxonomyNote('Taxonomy import ' + (isPreview ? 'preview' : 'confirm') + ' in progress...', 'info');
+    const r = await apiFetch('/track-catalog/custom-tags/taxonomy/import/' + (isPreview ? 'preview' : 'confirm'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parsed.payload),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) return setTaxonomyNote((body.error && body.error.message) || 'Taxonomy import failed.', 'error');
+    taxonomySummary.textContent = JSON.stringify(body.summary || {});
+    setTaxonomyNote('Taxonomy import ' + (isPreview ? 'preview' : 'confirm') + ' completed. can_confirm=' + Boolean(body.can_confirm) + '.', 'success');
+    if (!isPreview) await loadCatalog();
+  }
+
   function setBulkJsonState(message, tone) {
     bulkJsonNote.classList.remove('muted'); bulkJsonNote.style.color = '';
     if (tone === 'success') bulkJsonNote.style.color = '#166534';
@@ -833,6 +1009,18 @@
       const id = target.getAttribute('data-tag-id') || '';
       const tag = catalogById[id];
       if (tag) await openEditor('edit', tag);
+      return;
+    }
+    if (target.classList.contains('tag-clone-btn')) {
+      const id = Number(target.getAttribute('data-tag-id') || 0);
+      if (!id) return;
+      try { await runCloneTag(id); } catch (error) { setNote((error && error.message) ? error.message : 'Clone failed.', true); }
+      return;
+    }
+    if (target.classList.contains('tag-clone-rules-btn')) {
+      const id = Number(target.getAttribute('data-tag-id') || 0);
+      if (!id) return;
+      try { await runCloneRules(id); } catch (error) { setNote((error && error.message) ? error.message : 'Clone rules failed.', true); }
     }
   });
 
@@ -893,6 +1081,20 @@
   filterApplyBtn.addEventListener('click', loadCatalog);
   filterClearBtn.addEventListener('click', () => { filterCategory.value = ''; filterId.value = ''; filterQ.value = ''; loadCatalog(); });
   filterQ.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); loadCatalog(); } });
+  dashboardOpenBtn.addEventListener('click', () => {
+    const slug = String(dashboardChannel.value || '').trim();
+    if (!slug) return setNote('Provide a channel slug for dashboard.', true);
+    window.location.href = '/ui/track-catalog/custom-tags/dashboard/' + encodeURIComponent(slug);
+  });
+  bulkTagsEnableBtn.addEventListener('click', () => runBulkSetActive('tags', true));
+  bulkTagsDisableBtn.addEventListener('click', () => runBulkSetActive('tags', false));
+  bulkRulesEnableBtn.addEventListener('click', () => runBulkSetActive('rules', true));
+  bulkRulesDisableBtn.addEventListener('click', () => runBulkSetActive('rules', false));
+  bindingEnableBtn.addEventListener('click', () => runBindingSetEnabled(true));
+  bindingDisableBtn.addEventListener('click', () => runBindingSetEnabled(false));
+  taxonomyExportBtn.addEventListener('click', exportTaxonomy);
+  taxonomyPreviewBtn.addEventListener('click', () => importTaxonomy('preview'));
+  taxonomyConfirmBtn.addEventListener('click', () => importTaxonomy('confirm'));
 
   setBulkOperation('tags');
   loadCatalog();
