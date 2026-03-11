@@ -45,7 +45,7 @@ from services.track_analysis_report.report_service import (
 from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes, sanitize_sheet_name
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
-from services.custom_tags import assignment_service, catalog_service, rules_service
+from services.custom_tags import assignment_service, bulk_bindings_service, catalog_service, rules_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -567,6 +567,18 @@ class CustomTagBulkCatalogRequest(BaseModel):
     items: list[CustomTagBulkCatalogItemRequest]
 
 
+class CustomTagBulkBindingsItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_code: str
+    channel_slug: str
+    is_active: bool
+
+
+class CustomTagBulkBindingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[CustomTagBulkBindingsItemRequest]
+
+
 class CustomTagRuleCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tag_id: int
@@ -1003,7 +1015,7 @@ def api_track_catalog_track_detail(track_pk: int, _: bool = Depends(require_basi
 
 
 
-def _cta_error_response(err: catalog_service.CatalogError | rules_service.RulesError | assignment_service.AssignmentError) -> JSONResponse:
+def _cta_error_response(err: catalog_service.CatalogError | rules_service.RulesError | assignment_service.AssignmentError | bulk_bindings_service.BulkBindingsError) -> JSONResponse:
     return JSONResponse(
         status_code=err.status_code,
         content={"error": {"code": err.code, "message": err.message, "details": err.details or {}}},
@@ -1026,6 +1038,8 @@ _CTA_CATALOG_ENDPOINTS = {
     ("POST", "/v1/track-catalog/custom-tags/catalog/export"),
     ("POST", "/v1/track-catalog/custom-tags/bulk/preview"),
     ("POST", "/v1/track-catalog/custom-tags/bulk/confirm"),
+    ("POST", "/v1/track-catalog/custom-tags/bulk-bindings/preview"),
+    ("POST", "/v1/track-catalog/custom-tags/bulk-bindings/confirm"),
     ("POST", "/v1/track-catalog/custom-tags/export-seed"),
     ("POST", "/v1/track-catalog/custom-tags/import-seed"),
     ("GET", "/v1/track-catalog/custom-tags/rules"),
@@ -1239,6 +1253,46 @@ def api_custom_tags_catalog_bulk_confirm(payload: CustomTagBulkCatalogRequest, _
     return result
 
 
+
+
+
+
+@app.post("/v1/track-catalog/custom-tags/bulk-bindings/preview")
+def api_custom_tags_bulk_bindings_preview(payload: CustomTagBulkBindingsRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = bulk_bindings_service.preview_bulk_bindings(conn, items=[item.model_dump() for item in payload.items])
+        except bulk_bindings_service.BulkBindingsError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags bulk bindings preview failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/bulk-bindings/confirm")
+def api_custom_tags_bulk_bindings_confirm(payload: CustomTagBulkBindingsRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = bulk_bindings_service.confirm_bulk_bindings(conn, items=[item.model_dump() for item in payload.items])
+        except bulk_bindings_service.BulkBindingsError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags bulk bindings confirm failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
 
 
 @app.post("/v1/track-catalog/custom-tags/export-seed")
