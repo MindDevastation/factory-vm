@@ -161,6 +161,18 @@ class TestCustomTagsP2Backend(unittest.TestCase):
             clone_visual_b = next(item for item in payload_b["visual_tags"] if item["code"] == "neon_clone")
             self.assertEqual(clone_visual_b["tracks_count"], 1)
 
+            by_channel = client.get("/v1/track-catalog/custom-tags/bindings/by-channel/ctux-ch", headers=h)
+            self.assertEqual(by_channel.status_code, 200)
+            by_channel_body = by_channel.json()
+            self.assertEqual(by_channel_body["channel_slug"], "ctux-ch")
+            self.assertGreaterEqual(len(by_channel_body["bindings"]), 1)
+            self.assertTrue(all(item["tag_category"] == "VISUAL" for item in by_channel_body["bindings"]))
+            self.assertTrue(all(item["channel_slug"] == "ctux-ch" for item in by_channel_body["bindings"]))
+
+            missing_channel = client.get("/v1/track-catalog/custom-tags/bindings/by-channel/nope", headers=h)
+            self.assertEqual(missing_channel.status_code, 400)
+            self.assertEqual(missing_channel.json().get("error", {}).get("code"), "CTA_INVALID_INPUT")
+
 
 if __name__ == "__main__":
     unittest.main()
