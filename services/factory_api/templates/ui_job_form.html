@@ -2,6 +2,14 @@
 {% block body %}
 <p><a href="/">← назад</a></p>
 <h1>{% if mode == 'create' %}Create Job{% else %}Edit Job #{{ job_id }}{% endif %}</h1>
+<details style="margin:8px 0 12px 0;">
+  <summary><strong>Quick help</strong></summary>
+  <ul style="margin:8px 0 0 18px; padding:0;">
+    <li>Keep jobs in DRAFT until metadata and render inputs are complete.</li>
+    <li>Use space-separated audio IDs (example: <code>101 102 103</code>).</li>
+    <li>For batch creation, use Dashboard → Jobs Bulk JSON Editor.</li>
+  </ul>
+</details>
 
 {% if locked %}<p style="color:#b91c1c"><b>Editing is disabled: job is not in DRAFT.</b></p>{% endif %}
 

@@ -12,6 +12,14 @@
   <button type="button" id="import-open">Import</button>
   <button type="button" id="bulk-delete-btn" disabled>Delete selected</button>
 </p>
+<details style="margin:8px 0 12px 0;">
+  <summary><strong>Quick help</strong></summary>
+  <ul style="margin:8px 0 0 18px; padding:0;">
+    <li>Always run <strong>Import Preview</strong> before confirm actions.</li>
+    <li><strong>Strict</strong> blocks conflicts, <strong>Replace</strong> overwrites conflicts.</li>
+    <li>Filter by <code>channel_slug</code> and <code>content_type</code> for safe batch edits.</li>
+  </ul>
+</details>
 
 <div style="display:flex; gap:12px; flex-wrap:wrap; margin: 10px 0;">
   <label>Channel <input id="filter-channel" placeholder="channel slug"></label>

@@ -59,7 +59,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="channels-table"', r.text)
             self.assertIn('href="/ui/db-viewer"', r.text)
             self.assertIn('href="/ui/planner"', r.text)
-            self.assertIn('href="/ui/tags"', r.text)
+            self.assertIn('href="/ui/track-catalog/custom-tags"', r.text)
             self.assertIn('href="/ui/track-catalog/analysis-report"', r.text)
 
             r = client.get("/ui/db-viewer", headers=h)
@@ -87,12 +87,24 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="tar-tag-add-btn"', r.text)
             self.assertIn('tagEditorGroups.addEventListener', r.text)
 
+
+            r = client.get("/ui/track-catalog/custom-tags", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn('id="tags-table"', r.text)
+
             r = client.get("/ui/tags", headers=h)
             self.assertEqual(r.status_code, 200)
+            self.assertIn("TAGS", r.text)
+
             self.assertIn("TAGS", r.text)
             self.assertIn('id="tags-table"', r.text)
             self.assertIn('id="tags-import-btn"', r.text)
             self.assertIn('id="tags-export-btn"', r.text)
+            self.assertIn('id="tags-dashboard-open-btn"', r.text)
+            self.assertIn('id="tags-taxonomy-preview-btn"', r.text)
+            self.assertIn('id="tags-taxonomy-confirm-btn"', r.text)
+            self.assertIn('id="tags-bulk-tags-enable-btn"', r.text)
+            self.assertIn('id="tags-bulk-rules-disable-btn"', r.text)
             self.assertIn('id="tag-editor-modal"', r.text)
             self.assertIn('id="tag-json-mode"', r.text)
             self.assertIn('if (editorJsonMode.checked)', r.text)
@@ -102,6 +114,13 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertNotIn("fetch('/v1/track-catalog/custom-tags/catalog')", r.text)
             self.assertNotIn('payload.code || editorCode.value', r.text)
             self.assertNotIn('payload.label || editorLabel.value', r.text)
+
+            r = client.get("/ui/track-catalog/custom-tags/dashboard/darkwood-reverie", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("Custom Tags · Channel Dashboard", r.text)
+            self.assertIn('id="tags-dash-visual-table"', r.text)
+            self.assertIn('id="tags-dash-rules-table"', r.text)
+            self.assertIn('id="tags-dash-usage-table"', r.text)
 
             r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
             self.assertEqual(r.status_code, 200)

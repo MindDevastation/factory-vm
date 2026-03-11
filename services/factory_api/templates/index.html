@@ -2,6 +2,14 @@
 {% block body %}
 <h1>Factory VM</h1>
 <p class="muted">Последние 200 jobs</p>
+<details style="margin:8px 0 12px 0;">
+  <summary><strong>Quick help</strong></summary>
+  <ul style="margin:8px 0 0 18px; padding:0;">
+    <li>Jobs flow: create draft → preview bulk action → execute.</li>
+    <li>For tag operations, use <a href="/ui/track-catalog/custom-tags">Custom Tags</a> as the main control center.</li>
+    <li>JSON editor accepts <code>{"items":[...]}</code> payloads you can copy/paste.</li>
+  </ul>
+</details>
 <p>
   <form method="post" action="/ui/jobs/render_all" style="display:inline-block;margin-right:12px;">
     <button type="submit">Render All</button>
@@ -12,7 +20,7 @@
   <span class="muted" style="margin:0 8px;">|</span>
   <a href="/ui/planner">Planner</a>
   <span class="muted" style="margin:0 8px;">|</span>
-  <a href="/ui/tags">TAGS</a>
+  <a href="/ui/track-catalog/custom-tags">TAGS</a>
   <span class="muted" style="margin:0 8px;">|</span>
   <a href="/ui/track-catalog/analysis-report">Track Catalog · Analysis Report</a>
 </p>
@@ -61,6 +69,7 @@
 
 <h2>Jobs · Bulk JSON Editor</h2>
 <p class="muted">Preview and execute bulk job operations via existing UI contracts.</p>
+<p class="muted">Example item: <code>{"channel_slug":"deep-space","release_title":"Night Ride"}</code></p>
 <p>
   <label for="jobs-bulk-mode"><strong>Mode:</strong></label>
   <select id="jobs-bulk-mode">

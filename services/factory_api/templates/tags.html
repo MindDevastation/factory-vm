@@ -11,9 +11,73 @@
   <button type="button" id="tags-import-btn">Import</button>
   <button type="button" id="tags-export-btn">Export</button>
   <button type="button" id="tags-create-btn">Create Tag</button>
-  <button type="button" id="tags-bulk-create-btn">Bulk Create (JSON)</button>
 </p>
+<p>
+  <label>Channel dashboard
+    <input type="text" id="tags-dashboard-channel" placeholder="deep-space">
+  </label>
+  <button type="button" id="tags-dashboard-open-btn">Open channel-scoped dashboard</button>
+</p>
+<details style="margin:8px 0 12px 0;">
+  <summary><strong>Quick help</strong></summary>
+  <ul style="margin:8px 0 0 18px; padding:0;">
+    <li>Run <strong>Preview</strong> first, then <strong>Confirm/Execute</strong>.</li>
+    <li>Use channel scope to test safely on one channel.</li>
+    <li>Copy-friendly examples: <code>deep-space</code>, <code>cyber_arena</code>.</li>
+  </ul>
+</details>
 <p class="muted" id="tags-note">Loading tag catalog...</p>
+
+<p>
+  <label>Category
+    <select id="tags-filter-category">
+      <option value="">All</option>
+      <option value="VISUAL">VISUAL</option>
+      <option value="MOOD">MOOD</option>
+      <option value="THEME">THEME</option>
+    </select>
+  </label>
+  <label style="margin-left:12px;">ID
+    <input type="number" id="tags-filter-id" min="1" placeholder="Exact ID">
+  </label>
+  <label style="margin-left:12px;">Code/Label search
+    <input type="search" id="tags-filter-q" placeholder="code or label">
+  </label>
+  <button type="button" id="tags-filter-apply-btn" style="margin-left:12px;">Apply</button>
+  <button type="button" id="tags-filter-clear-btn">Clear</button>
+</p>
+
+<div style="border:1px solid #d1d5db; padding:12px; border-radius:8px; margin:12px 0; background:#f9fafb;">
+  <p style="margin:0 0 8px 0;"><strong>P0 operational hints</strong></p>
+  <ul style="margin:0 0 8px 18px; padding:0;">
+    <li><strong>VISUAL</strong> tags map detected visual channel context and need both channel bindings and rules.</li>
+    <li><strong>MOOD</strong>/<strong>THEME</strong> tags are rules-only classification and do not use channel bindings.</li>
+    <li>Changing tags, rules, or bindings does not retroactively update already analyzed tracks; rerun Analyze or wait for future recompute.</li>
+    <li><strong>Preview</strong> validates JSON and reports actions/errors without writing.</li>
+    <li><strong>Confirm</strong> applies validated changes to the catalog.</li>
+  </ul>
+  <details>
+    <summary>JSON examples</summary>
+    <pre style="white-space:pre-wrap; margin:8px 0 0 0;">{
+  "items": [
+    {
+      "category": "VISUAL",
+      "slug": "high_energy_scene",
+      "name": "High Energy Scene",
+      "description": "Fast motion and bright visuals",
+      "is_active": true
+    },
+    {
+      "category": "MOOD",
+      "slug": "uplifting",
+      "name": "Uplifting",
+      "description": "Positive, energetic emotional tone",
+      "is_active": true
+    }
+  ]
+}</pre>
+  </details>
+</div>
 
 <table id="tags-table">
   <thead>
@@ -24,23 +88,80 @@
       <th>Label</th>
       <th>Description</th>
       <th>Active</th>
+      <th>Bound Channels</th>
+      <th>Rules</th>
+      <th>Usage</th>
       <th>Actions</th>
     </tr>
   </thead>
   <tbody id="tags-tbody">
-    <tr><td colspan="7" class="muted">Loading...</td></tr>
+    <tr><td colspan="10" class="muted">Loading...</td></tr>
   </tbody>
 </table>
 
-<h2>Track Catalog → Custom Tags → Bulk JSON</h2>
-<p class="muted">Validate payload before import. Contract uses <code>{"items":[...]}</code>.</p>
+<h2>Track Catalog → Custom Tags → P2 clone / bulk / taxonomy</h2>
+<p class="muted">These are supporting utilities; the table + editor above remain the primary workflow.</p>
+<div style="border:1px solid #d1d5db; padding:12px; border-radius:8px; margin:12px 0; background:#f9fafb;">
+  <h3 style="margin-top:0;">Bulk enable / disable</h3>
+  <p>
+    <label>Tag IDs CSV <input type="text" id="tags-bulk-toggle-tag-ids" placeholder="1,2,3"></label>
+    <button type="button" id="tags-bulk-tags-enable-btn">Enable tags</button>
+    <button type="button" id="tags-bulk-tags-disable-btn">Disable tags</button>
+  </p>
+  <p>
+    <label>Rule IDs CSV <input type="text" id="tags-bulk-toggle-rule-ids" placeholder="10,11"></label>
+    <button type="button" id="tags-bulk-rules-enable-btn">Enable rules</button>
+    <button type="button" id="tags-bulk-rules-disable-btn">Disable rules</button>
+  </p>
+  <p>
+    <label>Binding tag ID <input type="number" id="tags-binding-tag-id" min="1" placeholder="1"></label>
+    <label style="margin-left:8px;">Channel slug <input type="text" id="tags-binding-channel-slug" placeholder="deep-space"></label>
+    <button type="button" id="tags-binding-enable-btn">Enable binding</button>
+    <button type="button" id="tags-binding-disable-btn">Disable binding</button>
+  </p>
+  <p class="muted" id="tags-p2-bulk-note">Idle</p>
+</div>
+
+<div style="border:1px solid #d1d5db; padding:12px; border-radius:8px; margin:12px 0; background:#f9fafb;">
+  <h3 style="margin-top:0;">Full taxonomy export/import</h3>
+  <p>
+    <button type="button" id="tags-taxonomy-export-btn">Export taxonomy JSON</button>
+    <button type="button" id="tags-taxonomy-preview-btn">Import preview</button>
+    <button type="button" id="tags-taxonomy-confirm-btn">Import confirm</button>
+  </p>
+  <p><textarea id="tags-taxonomy-json" rows="12" style="width:100%;" spellcheck="false"></textarea></p>
+  <p class="muted" id="tags-taxonomy-note">Idle</p>
+  <p class="muted" id="tags-taxonomy-summary">No taxonomy preview/confirm summary yet.</p>
+</div>
+
+<h2>Track Catalog → Custom Tags → Assignment Tools</h2>
+<p class="muted">Dry-run preview first, then execute recompute assignments. Leave fields blank for full scope.</p>
+<p>
+  <label>Channel scope <input type="text" id="tags-ops-channel" placeholder="deep-space"></label>
+  <label style="margin-left:12px;">Tag code <input type="text" id="tags-ops-tag-code" placeholder="cyber_arena"></label>
+</p>
+<p>
+  <button type="button" id="tags-reassign-preview-btn">Dry-run reassign preview</button>
+  <button type="button" id="tags-reassign-execute-btn">Recompute assignments (execute)</button>
+  <span class="muted" id="tags-ops-note">Idle</span>
+</p>
+<p class="muted" id="tags-ops-summary">No preview/execute summary yet.</p>
+<pre id="tags-ops-json" class="muted" style="max-height:200px; overflow:auto;">No data.</pre>
+
+<h2>Track Catalog → Custom Tags → Bulk Operations</h2>
+<p>
+  <button type="button" id="tags-bulk-tags-btn">Bulk Tags</button>
+  <button type="button" id="tags-bulk-bindings-btn">Bulk Bindings</button>
+  <button type="button" id="tags-bulk-rules-btn">Bulk Rules</button>
+</p>
+<p class="muted" id="tags-bulk-operation-note">Selected operation: Bulk Tags. Contract uses <code>{"items":[...]}</code>.</p>
 <p><textarea id="tags-bulk-json-editor" rows="12" style="width:100%;" spellcheck="false"></textarea></p>
 <p>
-  <button type="button" id="tags-bulk-preview-btn">Validate Preview</button>
-  <button type="button" id="tags-bulk-confirm-btn">Confirm Import</button>
+  <button type="button" id="tags-bulk-preview-btn">Preview</button>
+  <button type="button" id="tags-bulk-confirm-btn">Confirm</button>
   <span class="muted" id="tags-bulk-json-note">Idle</span>
 </p>
-<p class="muted" id="tags-bulk-json-summary">No preview/import summary yet.</p>
+<p class="muted" id="tags-bulk-json-summary">No preview/confirm summary yet.</p>
 <table id="tags-bulk-preview-table">
   <thead>
     <tr>
@@ -59,39 +180,89 @@
   <form method="dialog" id="tag-editor-form">
     <h3 id="tag-editor-title">Create Tag</h3>
     <input type="hidden" id="tag-edit-id">
-    <p><label>Category
-      <select id="tag-category">
-        <option value="VISUAL">VISUAL</option>
-        <option value="MOOD">MOOD</option>
-        <option value="THEME">THEME</option>
-      </select>
-    </label></p>
-    <p><label>Code <input type="text" id="tag-code"></label></p>
-    <p><label>Label <input type="text" id="tag-label"></label></p>
-    <p><label>Description <input type="text" id="tag-description"></label></p>
-    <p><label>Active <select id="tag-is-active"><option value="true">true</option><option value="false">false</option></select></label></p>
-    <p><label>Tag ID (numeric, optional for edit override) <input type="number" id="tag-manual-id" min="1"></label></p>
-    <p><label>JSON tag definition
-      <textarea id="tag-json" rows="8" style="width:100%;"></textarea>
-    </label></p>
-    <p><label><input type="checkbox" id="tag-json-mode"> Save using JSON definition above</label></p>
+    <div style="border:1px solid #d1d5db; border-radius:8px; padding:10px; margin:10px 0;">
+      <h4 style="margin:0 0 8px 0;">Tag</h4>
+      <p><label>Label <input type="text" id="tag-label"></label></p>
+      <p><label>Code <input type="text" id="tag-code"></label></p>
+      <p><label>Description <input type="text" id="tag-description"></label></p>
+      <p><label>Active <select id="tag-is-active"><option value="true">true</option><option value="false">false</option></select></label></p>
+      <p style="display:none;"><label><input type="checkbox" id="tag-json-mode"> Legacy JSON mode compatibility toggle</label></p>
+      <p><label>Category
+        <select id="tag-category">
+          <option value="VISUAL">VISUAL</option>
+          <option value="MOOD">MOOD</option>
+          <option value="THEME">THEME</option>
+        </select>
+      </label>
+      <span class="muted" id="tag-category-note"></span></p>
+    </div>
+
+    <div style="border:1px solid #d1d5db; border-radius:8px; padding:10px; margin:10px 0;">
+      <h4 style="margin:0 0 8px 0;">Bindings</h4>
+      <p class="muted" id="tag-bindings-mode-note">Bindings are only used for VISUAL tags.</p>
+      <div id="tag-bindings-list" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:6px;"></div>
+      <p><button type="button" id="tag-bindings-save-btn">Save bindings</button></p>
+    </div>
+
+    <div style="border:1px solid #d1d5db; border-radius:8px; padding:10px; margin:10px 0;">
+      <h4 style="margin:0 0 8px 0;">Rules</h4>
+      <p>
+        <button type="button" id="tag-rule-add-btn">Add rule</button>
+        <button type="button" id="tag-rule-json-preview-btn">Preview JSON</button>
+        <button type="button" id="tag-rule-json-save-btn">Confirm JSON save</button>
+        <label style="margin-left:8px;">Mode
+          <select id="tag-rule-json-mode">
+            <option value="replace">Replace all rules (recommended)</option>
+            <option value="append">Append rules</option>
+          </select>
+        </label>
+      </p>
+      <p class="muted" id="tag-rule-warning">Warning: Replace-all atomically overwrites all existing rules after confirmation.</p>
+      <p><textarea id="tag-rules-json" rows="8" style="width:100%;" spellcheck="false"></textarea></p>
+      <p class="muted" id="tag-rules-json-preview-note">No preview yet.</p>
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">Priority</th>
+            <th style="text-align:left;">Summary</th>
+            <th style="text-align:left;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tag-rules-tbody">
+          <tr><td colspan="3" class="muted">No rules yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="border:1px solid #d1d5db; border-radius:8px; padding:10px; margin:10px 0;">
+      <h4 style="margin:0 0 8px 0;">Rule editor</h4>
+      <input type="hidden" id="tag-rule-id">
+      <p><label>Source path <input type="text" id="tag-rule-source-path" placeholder="track_features.payload_json.voice_flag"></label></p>
+      <p><label>Operator <input type="text" id="tag-rule-operator" placeholder="equals"></label></p>
+      <p><label>Value JSON <input type="text" id="tag-rule-value-json" placeholder='"false"'></label></p>
+      <p>
+        <label>Priority <input type="number" id="tag-rule-priority" value="100"></label>
+        <label style="margin-left:8px;">Weight <input type="number" id="tag-rule-weight" value="1" step="0.1"></label>
+      </p>
+      <p>
+        <label>Match mode <select id="tag-rule-match-mode"><option value="ALL">ALL</option><option value="ANY">ANY</option></select></label>
+        <label style="margin-left:8px;"><input type="checkbox" id="tag-rule-required"> Required</label>
+        <label style="margin-left:8px;"><input type="checkbox" id="tag-rule-stop-after-match"> Stop after match</label>
+        <label style="margin-left:8px;"><input type="checkbox" id="tag-rule-is-active" checked> Active</label>
+      </p>
+      <p>
+        <button type="button" id="tag-rule-save-btn">Save rule</button>
+        <button type="button" id="tag-rule-preview-matches-btn">Preview rule matches</button>
+        <button type="button" id="tag-rule-reset-btn">Reset rule editor</button>
+      </p>
+      <p class="muted" id="tag-rule-preview-matches-note">No rule match preview yet.</p>
+      <pre id="tag-rule-preview-matches-json" class="muted" style="max-height:180px; overflow:auto;">No data.</pre>
+    </div>
+
     <p class="muted" id="tag-editor-note"></p>
     <p>
       <button type="button" id="tag-editor-save">Save</button>
       <button type="button" id="tag-editor-cancel">Cancel</button>
-    </p>
-  </form>
-</dialog>
-
-<dialog id="tags-bulk-modal">
-  <form method="dialog">
-    <h3>Bulk Create Tags (JSON)</h3>
-    <p class="muted">JSON format: {"tags":[{"category":"VISUAL","code":"...","label":"..."}]}</p>
-    <p><textarea id="tags-bulk-json" rows="12" style="width:100%;"></textarea></p>
-    <p class="muted" id="tags-bulk-note"></p>
-    <p>
-      <button type="button" id="tags-bulk-run">Create</button>
-      <button type="button" id="tags-bulk-cancel">Cancel</button>
     </p>
   </form>
 </dialog>
@@ -103,251 +274,470 @@
   const importBtn = document.getElementById('tags-import-btn');
   const exportBtn = document.getElementById('tags-export-btn');
   const createBtn = document.getElementById('tags-create-btn');
-  const bulkBtn = document.getElementById('tags-bulk-create-btn');
+  const filterCategory = document.getElementById('tags-filter-category');
+  const filterId = document.getElementById('tags-filter-id');
+  const filterQ = document.getElementById('tags-filter-q');
+  const filterApplyBtn = document.getElementById('tags-filter-apply-btn');
+  const filterClearBtn = document.getElementById('tags-filter-clear-btn');
+  const dashboardChannel = document.getElementById('tags-dashboard-channel');
+  const dashboardOpenBtn = document.getElementById('tags-dashboard-open-btn');
 
   const editorModal = document.getElementById('tag-editor-modal');
   const editorTitle = document.getElementById('tag-editor-title');
   const editorId = document.getElementById('tag-edit-id');
   const editorCategory = document.getElementById('tag-category');
+  const editorCategoryNote = document.getElementById('tag-category-note');
   const editorCode = document.getElementById('tag-code');
   const editorLabel = document.getElementById('tag-label');
   const editorDescription = document.getElementById('tag-description');
   const editorActive = document.getElementById('tag-is-active');
-  const editorManualId = document.getElementById('tag-manual-id');
-  const editorJson = document.getElementById('tag-json');
-  const editorJsonMode = document.getElementById('tag-json-mode');
   const editorNote = document.getElementById('tag-editor-note');
+  const editorJsonMode = document.getElementById('tag-json-mode');
 
-  const bulkModal = document.getElementById('tags-bulk-modal');
-  const bulkJson = document.getElementById('tags-bulk-json');
-  const bulkNote = document.getElementById('tags-bulk-note');
+  const bindingsModeNote = document.getElementById('tag-bindings-mode-note');
+  const bindingsList = document.getElementById('tag-bindings-list');
+  const bindingsSaveBtn = document.getElementById('tag-bindings-save-btn');
+
+  const rulesTbody = document.getElementById('tag-rules-tbody');
+  const ruleAddBtn = document.getElementById('tag-rule-add-btn');
+  const rulesJson = document.getElementById('tag-rules-json');
+  const rulesJsonMode = document.getElementById('tag-rule-json-mode');
+  const rulesJsonPreviewBtn = document.getElementById('tag-rule-json-preview-btn');
+  const rulesJsonSaveBtn = document.getElementById('tag-rule-json-save-btn');
+  const rulesPreviewNote = document.getElementById('tag-rules-json-preview-note');
+  const rulesWarning = document.getElementById('tag-rule-warning');
+
+  const ruleIdInput = document.getElementById('tag-rule-id');
+  const ruleSourcePath = document.getElementById('tag-rule-source-path');
+  const ruleOperator = document.getElementById('tag-rule-operator');
+  const ruleValueJson = document.getElementById('tag-rule-value-json');
+  const rulePriority = document.getElementById('tag-rule-priority');
+  const ruleWeight = document.getElementById('tag-rule-weight');
+  const ruleMatchMode = document.getElementById('tag-rule-match-mode');
+  const ruleRequired = document.getElementById('tag-rule-required');
+  const ruleStopAfterMatch = document.getElementById('tag-rule-stop-after-match');
+  const ruleIsActive = document.getElementById('tag-rule-is-active');
+  const ruleSaveBtn = document.getElementById('tag-rule-save-btn');
+  const rulePreviewMatchesBtn = document.getElementById('tag-rule-preview-matches-btn');
+  const ruleResetBtn = document.getElementById('tag-rule-reset-btn');
+  const rulePreviewMatchesNote = document.getElementById('tag-rule-preview-matches-note');
+  const rulePreviewMatchesJson = document.getElementById('tag-rule-preview-matches-json');
+
+  const opsChannel = document.getElementById('tags-ops-channel');
+  const opsTagCode = document.getElementById('tags-ops-tag-code');
+  const reassignPreviewBtn = document.getElementById('tags-reassign-preview-btn');
+  const reassignExecuteBtn = document.getElementById('tags-reassign-execute-btn');
+  const opsNote = document.getElementById('tags-ops-note');
+  const opsSummary = document.getElementById('tags-ops-summary');
+  const opsJson = document.getElementById('tags-ops-json');
+
+  const bulkTagsBtn = document.getElementById('tags-bulk-tags-btn');
+  const bulkBindingsBtn = document.getElementById('tags-bulk-bindings-btn');
+  const bulkRulesBtn = document.getElementById('tags-bulk-rules-btn');
+  const bulkOperationNote = document.getElementById('tags-bulk-operation-note');
   const bulkJsonEditor = document.getElementById('tags-bulk-json-editor');
   const bulkPreviewBtn = document.getElementById('tags-bulk-preview-btn');
   const bulkConfirmBtn = document.getElementById('tags-bulk-confirm-btn');
   const bulkJsonNote = document.getElementById('tags-bulk-json-note');
   const bulkJsonSummary = document.getElementById('tags-bulk-json-summary');
   const bulkPreviewTableBody = document.querySelector('#tags-bulk-preview-table tbody');
+  const bulkToggleTagIds = document.getElementById('tags-bulk-toggle-tag-ids');
+  const bulkToggleRuleIds = document.getElementById('tags-bulk-toggle-rule-ids');
+  const bulkTagsEnableBtn = document.getElementById('tags-bulk-tags-enable-btn');
+  const bulkTagsDisableBtn = document.getElementById('tags-bulk-tags-disable-btn');
+  const bulkRulesEnableBtn = document.getElementById('tags-bulk-rules-enable-btn');
+  const bulkRulesDisableBtn = document.getElementById('tags-bulk-rules-disable-btn');
+  const bindingTagIdInput = document.getElementById('tags-binding-tag-id');
+  const bindingChannelSlugInput = document.getElementById('tags-binding-channel-slug');
+  const bindingEnableBtn = document.getElementById('tags-binding-enable-btn');
+  const bindingDisableBtn = document.getElementById('tags-binding-disable-btn');
+  const p2BulkNote = document.getElementById('tags-p2-bulk-note');
+  const taxonomyJson = document.getElementById('tags-taxonomy-json');
+  const taxonomyExportBtn = document.getElementById('tags-taxonomy-export-btn');
+  const taxonomyPreviewBtn = document.getElementById('tags-taxonomy-preview-btn');
+  const taxonomyConfirmBtn = document.getElementById('tags-taxonomy-confirm-btn');
+  const taxonomyNote = document.getElementById('tags-taxonomy-note');
+  const taxonomySummary = document.getElementById('tags-taxonomy-summary');
+
+  const BULK_OPERATIONS = {
+    tags: {
+      label: 'Bulk Tags',
+      previewPath: '/track-catalog/custom-tags/bulk/preview',
+      confirmPath: '/track-catalog/custom-tags/bulk/confirm',
+      defaultPayload: { items: [{ category: 'VISUAL', slug: 'example_tag', name: 'Example Tag', description: '', is_active: true }] },
+      contract: '{"items":[{"category":"VISUAL","slug":"example_tag","name":"Example Tag"}]}'
+    },
+    bindings: {
+      label: 'Bulk Bindings',
+      previewPath: '/track-catalog/custom-tags/bulk-bindings/preview',
+      confirmPath: '/track-catalog/custom-tags/bulk-bindings/confirm',
+      defaultPayload: { items: [{ tag_code: 'example_tag', channel_slug: 'music_video', is_active: true }] },
+      contract: '{"items":[{"tag_code":"example_tag","channel_slug":"music_video","is_active":true}]}'
+    },
+    rules: {
+      label: 'Bulk Rules',
+      previewPath: '/track-catalog/custom-tags/bulk-rules/preview',
+      confirmPath: '/track-catalog/custom-tags/bulk-rules/confirm',
+      defaultPayload: { items: [{ tag_code: 'example_tag', source_path: 'track_features.payload_json.voice_flag', operator: 'equals', value_json: 'false', priority: 100, weight: 1, match_mode: 'ALL', required: false, stop_after_match: false, is_active: true }] },
+      contract: '{"items":[{"tag_code":"example_tag","source_path":"...","operator":"equals","value_json":"false"}]}'
+    }
+  };
+
+  let selectedBulkOperation = 'tags';
+  let catalogById = {};
+  let modalTag = null;
+  let channels = [];
+  let channelsLoaded = false;
+  let modalRules = [];
 
   function resolveApiPath(path) {
     const normalized = String(path || '').startsWith('/') ? String(path || '') : ('/' + String(path || ''));
-    const pathname = String(window.location.pathname || '');
-    const uiMarker = '/ui/';
-    const idx = pathname.indexOf(uiMarker);
-    if (idx < 0) {
-      return '/v1' + normalized;
-    }
-    const prefix = pathname.slice(0, idx);
-    return prefix + '/v1' + normalized;
+    const apiPath = normalized.startsWith('/v1/') ? normalized : (() => {
+      const pathname = String(window.location.pathname || '');
+      const idx = pathname.indexOf('/ui/');
+      if (idx < 0) return '/v1' + normalized;
+      return pathname.slice(0, idx) + '/v1' + normalized;
+    })();
+    return new URL(apiPath, window.location.origin).toString();
   }
-
   async function apiFetch(path, options) {
     return fetch(resolveApiPath(path), Object.assign({ credentials: 'same-origin' }, options || {}));
   }
-
+  async function parseApiBody(response) {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const rawText = await response.text();
+    if (!rawText) return { data: null, text: '', isJson: contentType.includes('application/json') };
+    const prefersJson = contentType.includes('application/json') || rawText.trim().startsWith('{') || rawText.trim().startsWith('[');
+    if (!prefersJson) return { data: null, text: rawText, isJson: false };
+    try {
+      return { data: JSON.parse(rawText), text: rawText, isJson: true };
+    } catch (_) {
+      return { data: null, text: rawText, isJson: false };
+    }
+  }
+  function responseErrorMessage(response, parsedBody, fallbackMessage) {
+    const body = parsedBody && typeof parsedBody === 'object' ? parsedBody : null;
+    if (body && body.error && body.error.message) return String(body.error.message);
+    if (body && body.message) return String(body.message);
+    if (!response.ok) {
+      return fallbackMessage + ' (HTTP ' + response.status + ').';
+    }
+    return fallbackMessage;
+  }
   function esc(v) {
     return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
-
   function setNote(message, isError) {
     note.style.color = isError ? '#b91c1c' : '';
     note.textContent = message;
   }
 
-  function setBulkJsonState(message, tone) {
-    bulkJsonNote.classList.remove('muted');
-    bulkJsonNote.style.color = '';
-    if (tone === 'success') {
-      bulkJsonNote.style.color = '#166534';
-    } else if (tone === 'error') {
-      bulkJsonNote.style.color = '#b91c1c';
-    } else {
-      bulkJsonNote.classList.add('muted');
-    }
-    bulkJsonNote.textContent = message;
+  function currentFilters() {
+    const params = new URLSearchParams();
+    const category = String(filterCategory.value || '').trim().toUpperCase();
+    const idRaw = String(filterId.value || '').trim();
+    const q = String(filterQ.value || '').trim();
+    if (category) params.set('category', category);
+    if (idRaw) params.set('tag_id', idRaw);
+    if (q) params.set('q', q);
+    return params;
   }
 
-  function renderBulkPreviewRows(items) {
-    const rows = Array.isArray(items) ? items : [];
-    if (!rows.length) {
-      bulkPreviewTableBody.innerHTML = '<tr><td colspan="4" class="muted">Empty preview/result set.</td></tr>';
-      return;
-    }
-    bulkPreviewTableBody.innerHTML = rows.map((item, idx) => {
-      const warnings = Array.isArray(item.warnings) ? item.warnings.map((w) => w.message).join('; ') : '';
-      const errors = Array.isArray(item.errors) ? item.errors.map((e) => e.message).join('; ') : '';
-      return '<tr>' +
-        '<td>' + esc(item.index == null ? idx : item.index) + '</td>' +
-        '<td>' + esc(item.action || '') + '</td>' +
-        '<td>' + esc(warnings || '-') + '</td>' +
-        '<td>' + esc(errors || '-') + '</td>' +
-      '</tr>';
-    }).join('');
+  function bindingsSummary(tag) {
+    if (tag.category !== 'VISUAL') return '—';
+    const bindings = Array.isArray(tag.bindings) ? tag.bindings : [];
+    return bindings.length ? bindings.map((binding) => binding.channel_slug).join(', ') : 'No bindings';
+  }
+  function usageSummary(tag) {
+    const usage = tag && typeof tag.usage === 'object' ? tag.usage : {};
+    return 'tracks: ' + Number(usage.tracks_count || 0) + ', rules: ' + Number(usage.rules_count || 0) + ', channels: ' + Number(usage.channels_count || 0);
   }
 
-  function parseBulkEditorPayload() {
-    let parsed;
-    try {
-      parsed = JSON.parse(bulkJsonEditor.value || '{}');
-    } catch (_) {
-      return { error: 'Invalid JSON payload.' };
-    }
-    return { payload: { items: Array.isArray(parsed.items) ? parsed.items : [] } };
+  function parseCsvIds(value) {
+    return String(value || '').split(',').map((item) => Number(item.trim())).filter((item) => Number.isInteger(item) && item > 0);
   }
 
-  function bulkSummaryText(body) {
-    const summary = body && body.summary;
-    if (!summary || typeof summary !== 'object') {
-      return 'No summary available.';
-    }
-    const parts = Object.keys(summary).map((key) => key + ': ' + summary[key]);
-    if (body && (typeof body.inserted === 'number' || typeof body.updated === 'number' || typeof body.unchanged === 'number')) {
-      parts.push('inserted: ' + (body.inserted || 0));
-      parts.push('updated: ' + (body.updated || 0));
-      parts.push('unchanged: ' + (body.unchanged || 0));
-    }
-    parts.push('can_confirm: ' + Boolean(body && body.can_confirm));
-    return parts.join(', ');
+  function setP2BulkNote(message, isError) {
+    p2BulkNote.style.color = isError ? '#b91c1c' : '#166534';
+    p2BulkNote.textContent = message;
   }
 
-  async function runBulkJsonRequest(action) {
-    const parsed = parseBulkEditorPayload();
-    if (parsed.error) {
-      setBulkJsonState(parsed.error, 'error');
-      bulkJsonSummary.textContent = 'Validation error.';
-      renderBulkPreviewRows([]);
-      return;
-    }
-
-    const isPreview = action === 'preview';
-    const endpoint = isPreview ? '/track-catalog/custom-tags/bulk/preview' : '/track-catalog/custom-tags/bulk/confirm';
-    setBulkJsonState((isPreview ? 'Validate Preview' : 'Confirm Import') + ' in progress...', 'info');
-    bulkPreviewBtn.disabled = true;
-    bulkConfirmBtn.disabled = true;
-    try {
-      const r = await apiFetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed.payload),
-      });
-      const body = await r.json();
-      if (!r.ok || body.error) {
-        setBulkJsonState((body.error && body.error.message) || 'Request/server error.', 'error');
-        bulkJsonSummary.textContent = 'Request/server error.';
-        renderBulkPreviewRows([]);
-        return;
-      }
-      setBulkJsonState((isPreview ? 'Validate Preview' : 'Confirm Import') + ' completed.', 'success');
-      bulkJsonSummary.textContent = bulkSummaryText(body);
-      renderBulkPreviewRows(body.items);
-      if (!isPreview && body.can_confirm) {
-        await loadCatalog();
-      }
-    } catch (error) {
-      setBulkJsonState((error && error.message) ? error.message : 'Request/server error.', 'error');
-      bulkJsonSummary.textContent = 'Request/server error.';
-      renderBulkPreviewRows([]);
-    } finally {
-      bulkPreviewBtn.disabled = false;
-      bulkConfirmBtn.disabled = false;
-    }
+  function setTaxonomyNote(message, tone) {
+    taxonomyNote.style.color = tone === 'error' ? '#b91c1c' : (tone === 'success' ? '#166534' : '');
+    taxonomyNote.textContent = message;
   }
 
   async function loadCatalog() {
     setNote('Loading tag catalog...');
     try {
-      const r = await apiFetch('/track-catalog/custom-tags/catalog');
-      const body = await r.json();
-      if (!r.ok) {
-        throw new Error((body.error && body.error.message) || 'Failed to load tag catalog.');
+      const query = currentFilters().toString();
+      const suffix = query ? ('?' + query + '&include_usage=true') : '?include_usage=true';
+      let r = await apiFetch('/track-catalog/custom-tags' + suffix);
+      let parsed = await parseApiBody(r);
+      let body = parsed.data;
+      const usageFailed = !r.ok || !body || !Array.isArray(body.tags);
+      if (usageFailed) {
+        const fallbackSuffix = query ? ('?' + query) : '';
+        r = await apiFetch('/track-catalog/custom-tags' + fallbackSuffix);
+        parsed = await parseApiBody(r);
+        body = parsed.data;
+      }
+      if (!r.ok || !body || !Array.isArray(body.tags)) {
+        throw new Error(responseErrorMessage(r, body, 'Failed to load tag catalog.'));
       }
       const tags = Array.isArray(body.tags) ? body.tags : [];
-      if (tags.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="muted">Catalog is empty.</td></tr>';
+      catalogById = {};
+      tags.forEach((tag) => { catalogById[String(tag.id)] = tag; });
+      if (!tags.length) {
+        tbody.innerHTML = '<tr><td colspan="10" class="muted">Catalog is empty.</td></tr>';
         setNote('Catalog loaded (0 tags).');
         return;
       }
-      tbody.innerHTML = tags.map((tag) => (
-        '<tr>' +
+      tbody.innerHTML = tags.map((tag) => '<tr>' +
           '<td>' + esc(tag.id) + '</td>' +
           '<td>' + esc(tag.category) + '</td>' +
           '<td>' + esc(tag.code) + '</td>' +
           '<td>' + esc(tag.label) + '</td>' +
           '<td>' + esc(tag.description || '') + '</td>' +
           '<td>' + esc(tag.is_active) + '</td>' +
-          '<td><button type="button" class="tag-edit-btn" data-tag-id="' + esc(tag.id) + '">Edit</button></td>' +
-        '</tr>'
-      )).join('');
+          '<td>' + esc(bindingsSummary(tag)) + '</td>' +
+          '<td>' + esc(tag.rules_summary || 'No rules') + '</td>' +
+          '<td>' + esc(usageSummary(tag)) + '</td>' +
+          '<td>' +
+          '<button type="button" class="tag-edit-btn" data-tag-id="' + esc(tag.id) + '">Edit</button> ' +
+          '<button type="button" class="tag-clone-btn" data-tag-id="' + esc(tag.id) + '">Clone tag</button> ' +
+          '<button type="button" class="tag-clone-rules-btn" data-tag-id="' + esc(tag.id) + '">Clone rules → this</button>' +
+          '</td>' +
+        '</tr>').join('');
       setNote('Catalog loaded (' + tags.length + ' tags).');
     } catch (error) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted">Failed to load catalog.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="muted">Failed to load catalog.</td></tr>';
       setNote(error && error.message ? error.message : 'Failed to load tag catalog.', true);
     }
   }
 
-  function openEditor(mode, tag) {
-    editorTitle.textContent = mode === 'edit' ? 'Edit Tag' : 'Create Tag';
-    editorId.value = tag && tag.id ? String(tag.id) : '';
-    editorCategory.disabled = mode === 'edit';
-    editorCategory.value = (tag && tag.category) ? String(tag.category) : 'VISUAL';
-    editorCode.value = tag && tag.code ? String(tag.code) : '';
-    editorLabel.value = tag && tag.label ? String(tag.label) : '';
-    editorDescription.value = tag && tag.description ? String(tag.description) : '';
-    editorActive.value = String(tag && tag.is_active === false ? 'false' : 'true');
-    editorManualId.value = tag && tag.id ? String(tag.id) : '';
-    editorJson.value = JSON.stringify({
-      id: tag && tag.id ? tag.id : undefined,
-      category: editorCategory.value,
-      code: editorCode.value,
-      label: editorLabel.value,
-      description: editorDescription.value,
-      is_active: editorActive.value === 'true',
-    }, null, 2);
-    editorJsonMode.checked = false;
-    editorNote.textContent = '';
-    editorModal.showModal();
+  async function loadChannels() {
+    if (channelsLoaded) return;
+    const r = await apiFetch('/channels');
+    const body = await r.json();
+    if (!r.ok || !Array.isArray(body)) throw new Error('Failed to load channels.');
+    channels = body;
+    channelsLoaded = true;
   }
 
-  function manualEditorPayload() {
+  function resetRuleEditor() {
+    ruleIdInput.value = '';
+    ruleSourcePath.value = '';
+    ruleOperator.value = 'equals';
+    ruleValueJson.value = '""';
+    rulePriority.value = '100';
+    ruleWeight.value = '1';
+    ruleMatchMode.value = 'ALL';
+    ruleRequired.checked = false;
+    ruleStopAfterMatch.checked = false;
+    ruleIsActive.checked = true;
+    rulePreviewMatchesNote.style.color = '';
+    rulePreviewMatchesNote.textContent = 'No rule match preview yet.';
+    rulePreviewMatchesJson.textContent = 'No data.';
+  }
+
+  function setOpsState(message, tone) {
+    opsNote.classList.remove('muted');
+    opsNote.style.color = '';
+    if (tone === 'success') opsNote.style.color = '#166534';
+    else if (tone === 'error') opsNote.style.color = '#b91c1c';
+    else opsNote.classList.add('muted');
+    opsNote.textContent = message;
+  }
+
+  function opsPayload() {
     return {
+      channel_slug: String(opsChannel.value || '').trim() || null,
+      tag_code: String(opsTagCode.value || '').trim() || null,
+    };
+  }
+
+  async function runReassign(action) {
+    const isPreview = action === 'preview';
+    setOpsState((isPreview ? 'Preview' : 'Execute') + ' in progress...', 'info');
+    reassignPreviewBtn.disabled = true;
+    reassignExecuteBtn.disabled = true;
+    try {
+      const r = await apiFetch('/track-catalog/custom-tags/reassign/' + (isPreview ? 'preview' : 'execute'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opsPayload()),
+      });
+      const body = await r.json();
+      if (!r.ok || body.error) throw new Error((body.error && body.error.message) || 'Request/server error.');
+      setOpsState((isPreview ? 'Preview' : 'Execute') + ' completed.', 'success');
+      opsSummary.textContent = 'Summary: ' + JSON.stringify(body.summary || {});
+      opsJson.textContent = JSON.stringify(body, null, 2);
+      if (!isPreview) await loadCatalog();
+    } catch (error) {
+      setOpsState((error && error.message) ? error.message : 'Request/server error.', 'error');
+      opsSummary.textContent = 'Request/server error.';
+      opsJson.textContent = 'No data.';
+    } finally {
+      reassignPreviewBtn.disabled = false;
+      reassignExecuteBtn.disabled = false;
+    }
+  }
+
+  async function previewRuleMatches() {
+    if (!modalTag || !modalTag.code) {
+      rulePreviewMatchesNote.style.color = '#b91c1c';
+      rulePreviewMatchesNote.textContent = 'Open a saved tag first.';
+      return;
+    }
+    rulePreviewMatchesBtn.disabled = true;
+    rulePreviewMatchesNote.style.color = '';
+    rulePreviewMatchesNote.textContent = 'Previewing matches...';
+    try {
+      const r = await apiFetch('/track-catalog/custom-tags/rules/preview-matches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tag_code: modalTag.code,
+          rule: ruleEditorPayload(),
+          scope: { channel_slug: String(opsChannel.value || '').trim() || null },
+        }),
+      });
+      const body = await r.json();
+      if (!r.ok || body.error) throw new Error((body.error && body.error.message) || 'Preview failed.');
+      rulePreviewMatchesNote.style.color = '#166534';
+      rulePreviewMatchesNote.textContent = 'Matched tracks: ' + Number(body.matched_tracks_count || 0) + '.';
+      rulePreviewMatchesJson.textContent = JSON.stringify(body, null, 2);
+    } catch (error) {
+      rulePreviewMatchesNote.style.color = '#b91c1c';
+      rulePreviewMatchesNote.textContent = (error && error.message) ? error.message : 'Preview failed.';
+      rulePreviewMatchesJson.textContent = 'No data.';
+    } finally {
+      rulePreviewMatchesBtn.disabled = false;
+    }
+  }
+
+  function ruleEditorPayload() {
+    return {
+      source_path: String(ruleSourcePath.value || '').trim(),
+      operator: String(ruleOperator.value || '').trim(),
+      value_json: String(ruleValueJson.value || '').trim(),
+      priority: Number(rulePriority.value || 100),
+      weight: Number(ruleWeight.value || 1),
+      match_mode: String(ruleMatchMode.value || 'ALL').toUpperCase(),
+      required: Boolean(ruleRequired.checked),
+      stop_after_match: Boolean(ruleStopAfterMatch.checked),
+      is_active: Boolean(ruleIsActive.checked),
+    };
+  }
+
+  function renderRules() {
+    if (!modalRules.length) {
+      rulesTbody.innerHTML = '<tr><td colspan="3" class="muted">No rules yet.</td></tr>';
+      return;
+    }
+    rulesTbody.innerHTML = modalRules.map((rule) => '<tr>' +
+      '<td>' + esc(rule.priority) + '</td>' +
+      '<td>' + esc(rule.summary || (rule.source_path + ' ' + rule.operator + ' ' + rule.value_json)) + '</td>' +
+      '<td>' +
+      '<button type="button" class="rule-edit-btn" data-rule-id="' + esc(rule.id) + '">Edit</button> ' +
+      '<button type="button" class="rule-deactivate-btn" data-rule-id="' + esc(rule.id) + '">Deactivate</button> ' +
+      '<button type="button" class="rule-delete-btn" data-rule-id="' + esc(rule.id) + '">Delete</button>' +
+      '</td>' +
+      '</tr>').join('');
+  }
+
+  function renderBindings(selectedSlugs) {
+    if (!channels.length) {
+      bindingsList.innerHTML = '<p class="muted">No channels found.</p>';
+      return;
+    }
+    const set = new Set(selectedSlugs || []);
+    bindingsList.innerHTML = channels.map((ch) => '<label><input type="checkbox" class="binding-checkbox" value="' + esc(ch.slug) + '" ' +
+      (set.has(ch.slug) ? 'checked' : '') + '> ' + esc(ch.display_name || ch.slug) + ' <span class="muted">(' + esc(ch.slug) + ')</span></label>').join('');
+  }
+
+  async function refreshModalOperationalSections() {
+    if (!modalTag || !modalTag.id) {
+      bindingsList.innerHTML = '<p class="muted">Save tag first to configure bindings/rules.</p>';
+      rulesTbody.innerHTML = '<tr><td colspan="3" class="muted">Save tag first to manage rules.</td></tr>';
+      return;
+    }
+    const isVisual = modalTag.category === 'VISUAL';
+    bindingsModeNote.textContent = isVisual ? 'Select channels bound to this VISUAL tag.' : 'Bindings are only used for VISUAL tags.';
+    bindingsSaveBtn.disabled = !isVisual;
+    const checkboxes = bindingsList.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach((cb) => { cb.disabled = !isVisual; });
+
+    const rulesResp = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules');
+    const rulesBody = await rulesResp.json();
+    modalRules = (rulesResp.ok && Array.isArray(rulesBody.rules)) ? rulesBody.rules : [];
+    renderRules();
+    rulesJson.value = JSON.stringify({ rules: modalRules.map(({ summary, id, ...r }) => r) }, null, 2);
+
+    if (isVisual) {
+      try {
+        await loadChannels();
+        const bindResp = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/bindings');
+        const bindBody = await bindResp.json();
+        const slugs = (bindResp.ok && Array.isArray(bindBody.bindings)) ? bindBody.bindings.map((item) => item.channel_slug) : [];
+        renderBindings(slugs);
+      } catch (_) {
+        renderBindings([]);
+        bindingsList.innerHTML = '<p class="muted" style="color:#b91c1c;">Failed to load channel bindings. Tag and rules remain available.</p>';
+      }
+    } else {
+      renderBindings([]);
+      bindingsList.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.disabled = true; });
+    }
+  }
+
+  async function openEditor(mode, tag) {
+    editorTitle.textContent = mode === 'edit' ? 'Edit Tag' : 'Create Tag';
+    modalTag = tag ? Object.assign({}, tag) : { category: 'VISUAL', is_active: true };
+    editorId.value = modalTag.id ? String(modalTag.id) : '';
+    editorCategory.value = modalTag.category || 'VISUAL';
+    editorCode.value = modalTag.code || '';
+    editorLabel.value = modalTag.label || '';
+    editorDescription.value = modalTag.description || '';
+    editorActive.value = String(modalTag.is_active === false ? 'false' : 'true');
+    const canEditCategory = mode === 'create' || Boolean(window.CTUX_ALLOW_CATEGORY_EDIT);
+    editorCategory.disabled = !canEditCategory;
+    editorCategoryNote.textContent = canEditCategory ? '' : 'Category is readonly for this project.';
+    editorNote.textContent = '';
+    legacyEditorJsonModeCompat();
+    rulesPreviewNote.textContent = 'No preview yet.';
+    rulesJsonMode.value = 'replace';
+    rulesWarning.style.color = '#b91c1c';
+    resetRuleEditor();
+    editorModal.showModal();
+    try {
+      await refreshModalOperationalSections();
+    } catch (error) {
+      setNote(error && error.message ? error.message : 'Failed to load modal details.', true);
+    }
+  }
+
+  function legacyEditorJsonModeCompat() {
+    if (editorJsonMode.checked) {
+      return true;
+    }
+    return false;
+  }
+
+  async function saveEditor() {
+    editorNote.textContent = '';
+    const payload = {
       category: String(editorCategory.value || '').trim().toUpperCase(),
       code: String(editorCode.value || '').trim(),
       label: String(editorLabel.value || '').trim(),
       description: String(editorDescription.value || ''),
       is_active: editorActive.value === 'true',
     };
-  }
-
-  async function saveEditor() {
-    editorNote.textContent = '';
-    let payload = manualEditorPayload();
-    if (editorJsonMode.checked) {
-      try {
-        payload = JSON.parse(editorJson.value || '{}');
-      } catch (error) {
-        editorNote.textContent = 'Invalid JSON in textarea.';
-        editorNote.style.color = '#b91c1c';
-        return;
-      }
-      payload.category = String(payload.category || '').trim().toUpperCase();
-      payload.code = String(payload.code || '').trim();
-      payload.label = String(payload.label || '').trim();
-      payload.description = payload.description == null ? '' : String(payload.description);
-      payload.is_active = payload.is_active == null ? true : Boolean(payload.is_active);
-    }
-
-    const editId = Number(editorId.value || editorManualId.value || payload.id || 0);
+    const editId = Number(editorId.value || 0);
     const isEdit = editId > 0;
-    const url = isEdit ? ('/track-catalog/custom-tags/catalog/' + encodeURIComponent(editId)) : '/track-catalog/custom-tags/catalog';
-    const method = isEdit ? 'PATCH' : 'POST';
-    if (isEdit) {
-      delete payload.category;
-      delete payload.id;
-    }
-
-    const r = await apiFetch(url, {
-      method: method,
+    const r = await apiFetch(isEdit ? ('/track-catalog/custom-tags/catalog/' + encodeURIComponent(editId)) : '/track-catalog/custom-tags/catalog', {
+      method: isEdit ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(isEdit ? { code: payload.code, label: payload.label, description: payload.description, is_active: payload.is_active } : payload),
     });
     const body = await r.json();
     if (!r.ok) {
@@ -355,8 +745,120 @@
       editorNote.style.color = '#b91c1c';
       return;
     }
+    modalTag = body.tag || Object.assign({}, modalTag, payload, { id: editId || (body.tag && body.tag.id) });
+    editorId.value = String(modalTag.id || '');
+    editorNote.style.color = '#166534';
+    editorNote.textContent = 'Tag saved.';
+    await loadCatalog();
+    await refreshModalOperationalSections();
+  }
 
-    editorModal.close();
+  async function saveBindings() {
+    if (!modalTag || !modalTag.id) return;
+    if (modalTag.category !== 'VISUAL') {
+      editorNote.textContent = 'Bindings are only used for VISUAL tags.';
+      return;
+    }
+    const selected = Array.from(bindingsList.querySelectorAll('.binding-checkbox:checked')).map((el) => el.value);
+    const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/bindings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel_slugs: selected }),
+    });
+    const body = await r.json();
+    if (!r.ok) {
+      editorNote.style.color = '#b91c1c';
+      editorNote.textContent = (body.error && body.error.message) || 'Failed to save bindings.';
+      return;
+    }
+    editorNote.style.color = '#166534';
+    editorNote.textContent = 'Bindings saved (' + (body.bindings || []).length + ').';
+    await loadCatalog();
+  }
+
+  async function saveRule() {
+    if (!modalTag || !modalTag.id) return;
+    const rid = Number(ruleIdInput.value || 0);
+    const payload = ruleEditorPayload();
+    const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules' + (rid ? ('/' + encodeURIComponent(rid)) : ''), {
+      method: rid ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await r.json();
+    if (!r.ok) {
+      editorNote.style.color = '#b91c1c';
+      editorNote.textContent = (body.error && body.error.message) || 'Failed to save rule.';
+      return;
+    }
+    editorNote.style.color = '#166534';
+    editorNote.textContent = rid ? 'Rule updated.' : 'Rule created.';
+    resetRuleEditor();
+    await refreshModalOperationalSections();
+    await loadCatalog();
+  }
+
+  function parseRulesJsonPayload() {
+    try {
+      const parsed = JSON.parse(rulesJson.value || '{}');
+      const rules = Array.isArray(parsed) ? parsed : parsed.rules;
+      if (!Array.isArray(rules)) return { error: 'Rules JSON must be an array or {"rules":[]}.' };
+      const invalid = rules.find((item) => !item || typeof item !== 'object' || !item.source_path || !item.operator);
+      if (invalid) return { error: 'Each rule requires at least source_path and operator.' };
+      return { rules: rules };
+    } catch (_) {
+      return { error: 'Invalid JSON.' };
+    }
+  }
+
+  function previewRulesJson() {
+    const parsed = parseRulesJsonPayload();
+    if (parsed.error) {
+      rulesPreviewNote.style.color = '#b91c1c';
+      rulesPreviewNote.textContent = parsed.error;
+      return;
+    }
+    rulesPreviewNote.style.color = '#166534';
+    rulesPreviewNote.textContent = 'Preview valid: ' + parsed.rules.length + ' rule(s). Mode=' + rulesJsonMode.value + '.';
+  }
+
+  async function saveRulesJson() {
+    if (!modalTag || !modalTag.id) return;
+    const parsed = parseRulesJsonPayload();
+    if (parsed.error) {
+      rulesPreviewNote.style.color = '#b91c1c';
+      rulesPreviewNote.textContent = parsed.error;
+      return;
+    }
+    if (rulesJsonMode.value === 'replace') {
+      if (!window.confirm('Replace all existing rules for this tag? This is atomic and will overwrite current rules.')) return;
+      const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules/replace-all', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules: parsed.rules }),
+      });
+      const body = await r.json();
+      if (!r.ok) {
+        editorNote.style.color = '#b91c1c';
+        editorNote.textContent = (body.error && body.error.message) || 'Replace-all failed.';
+        return;
+      }
+      editorNote.style.color = '#166534';
+      editorNote.textContent = 'Rules replaced (' + (body.rules || []).length + ').';
+    } else {
+      for (const rule of parsed.rules) {
+        const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rule),
+        });
+        if (!r.ok) {
+          const body = await r.json();
+          editorNote.style.color = '#b91c1c';
+          editorNote.textContent = (body.error && body.error.message) || 'Append rules failed.';
+          return;
+        }
+      }
+      editorNote.style.color = '#166534';
+      editorNote.textContent = 'Rules appended (' + parsed.rules.length + ').';
+    }
+    await refreshModalOperationalSections();
     await loadCatalog();
   }
 
@@ -364,95 +866,268 @@
     setNote('Importing from JSON files...');
     const r = await apiFetch('/track-catalog/custom-tags/catalog/import', { method: 'POST' });
     const body = await r.json();
-    if (!r.ok) {
-      setNote((body.error && body.error.message) || 'Import failed (missing file?).', true);
-      return;
-    }
+    if (!r.ok) return setNote((body.error && body.error.message) || 'Import failed (missing file?).', true);
     await loadCatalog();
     setNote('Import complete: imported=' + body.imported + ', created=' + body.created + ', updated=' + body.updated + '.');
   }
-
   async function runExport() {
     setNote('Exporting tags to JSON files...');
     const r = await apiFetch('/track-catalog/custom-tags/catalog/export', { method: 'POST' });
     const body = await r.json();
-    if (!r.ok) {
-      setNote((body.error && body.error.message) || 'Export failed.', true);
-      return;
-    }
+    if (!r.ok) return setNote((body.error && body.error.message) || 'Export failed.', true);
     setNote('Export complete. Files: ' + (body.files || []).join(', ') + '.');
   }
 
-  async function runBulkCreate() {
-    bulkNote.textContent = '';
-    let parsed = null;
-    try {
-      parsed = JSON.parse(bulkJson.value || '{}');
-    } catch (_) {
-      bulkNote.textContent = 'Invalid JSON.';
-      bulkNote.style.color = '#b91c1c';
-      return;
-    }
-    const items = Array.isArray(parsed.tags) ? parsed.tags : [];
-    let created = 0;
-    for (const item of items) {
-      const r = await apiFetch('/track-catalog/custom-tags/catalog', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item),
-      });
-      if (r.ok) {
-        created += 1;
-      }
-    }
-    bulkModal.close();
+  async function runCloneTag(sourceTagId) {
+    const sourceTag = catalogById[String(sourceTagId)];
+    if (!sourceTag) return;
+    const nextCode = window.prompt('Clone code', String(sourceTag.code || '') + '_clone');
+    if (!nextCode) return;
+    const nextLabel = window.prompt('Clone label', String(sourceTag.label || '') + ' Clone');
+    if (!nextLabel) return;
+    const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(sourceTagId) + '/clone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: nextCode.trim(), label: nextLabel.trim(), description: sourceTag.description || '', include_rules: true, include_bindings: true, is_active: true }),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) throw new Error((body.error && body.error.message) || 'Clone tag failed.');
+    setNote('Tag cloned: id=' + body.tag.id + ', cloned_rules=' + Number(body.cloned_rules || 0) + ', cloned_bindings=' + Number(body.cloned_bindings || 0) + '.');
     await loadCatalog();
-    setNote('Bulk create finished: created ' + created + ' of ' + items.length + '.');
   }
 
-  tbody.addEventListener('click', (event) => {
+  async function runCloneRules(targetTagId) {
+    const sourceTagId = Number(window.prompt('Source tag ID for rule clone')); 
+    if (!Number.isInteger(sourceTagId) || sourceTagId <= 0) return;
+    const replaceAll = window.confirm('Replace all rules on target tag first?');
+    const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(targetTagId) + '/rules/clone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_tag_id: sourceTagId, replace_all: replaceAll }),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) throw new Error((body.error && body.error.message) || 'Clone rules failed.');
+    setNote('Rules cloned: ' + Number(body.cloned_rules || 0) + '.');
+    await loadCatalog();
+  }
+
+  async function runBulkSetActive(kind, isActive) {
+    const ids = parseCsvIds(kind === 'tags' ? bulkToggleTagIds.value : bulkToggleRuleIds.value);
+    if (!ids.length) return setP2BulkNote('Provide at least one valid ID.', true);
+    const endpoint = kind === 'tags' ? '/track-catalog/custom-tags/tags/bulk-set-active' : '/track-catalog/custom-tags/rules/bulk-set-active';
+    const r = await apiFetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids, is_active: isActive }),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) return setP2BulkNote((body.error && body.error.message) || 'Bulk set active failed.', true);
+    setP2BulkNote((kind === 'tags' ? 'Tags' : 'Rules') + ' updated=' + Number(body.updated || 0) + ', is_active=' + Boolean(body.is_active) + '.', false);
+    await loadCatalog();
+  }
+
+  async function runBindingSetEnabled(isEnabled) {
+    const tagId = Number(bindingTagIdInput.value || 0);
+    const channelSlug = String(bindingChannelSlugInput.value || '').trim();
+    if (!tagId || !channelSlug) return setP2BulkNote('Provide binding tag ID and channel slug.', true);
+    const r = await apiFetch('/track-catalog/custom-tags/bindings/bulk-set-enabled', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [{ tag_id: tagId, channel_slug: channelSlug, is_enabled: isEnabled }] }),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) return setP2BulkNote((body.error && body.error.message) || 'Binding toggle failed.', true);
+    setP2BulkNote('Bindings enabled=' + Number(body.enabled || 0) + ', disabled=' + Number(body.disabled || 0) + '.', false);
+    await loadCatalog();
+  }
+
+  function parseTaxonomyPayload() {
+    try {
+      return { payload: JSON.parse(taxonomyJson.value || '{}') };
+    } catch (_) {
+      return { error: 'Invalid taxonomy JSON.' };
+    }
+  }
+
+  async function exportTaxonomy() {
+    setTaxonomyNote('Exporting taxonomy...', 'info');
+    const r = await apiFetch('/track-catalog/custom-tags/taxonomy/export');
+    const body = await r.json();
+    if (!r.ok || body.error) return setTaxonomyNote((body.error && body.error.message) || 'Taxonomy export failed.', 'error');
+    taxonomyJson.value = JSON.stringify(body, null, 2);
+    taxonomySummary.textContent = 'Exported tags=' + (body.tags || []).length + ', bindings=' + (body.bindings || []).length + ', rules=' + (body.rules || []).length + '.';
+    setTaxonomyNote('Taxonomy exported. Review JSON then run preview.', 'success');
+  }
+
+  async function importTaxonomy(action) {
+    const parsed = parseTaxonomyPayload();
+    if (parsed.error) return setTaxonomyNote(parsed.error, 'error');
+    const isPreview = action === 'preview';
+    setTaxonomyNote('Taxonomy import ' + (isPreview ? 'preview' : 'confirm') + ' in progress...', 'info');
+    const r = await apiFetch('/track-catalog/custom-tags/taxonomy/import/' + (isPreview ? 'preview' : 'confirm'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(parsed.payload),
+    });
+    const body = await r.json();
+    if (!r.ok || body.error) return setTaxonomyNote((body.error && body.error.message) || 'Taxonomy import failed.', 'error');
+    taxonomySummary.textContent = JSON.stringify(body.summary || {});
+    setTaxonomyNote('Taxonomy import ' + (isPreview ? 'preview' : 'confirm') + ' completed. can_confirm=' + Boolean(body.can_confirm) + '.', 'success');
+    if (!isPreview) await loadCatalog();
+  }
+
+  function setBulkJsonState(message, tone) {
+    bulkJsonNote.classList.remove('muted'); bulkJsonNote.style.color = '';
+    if (tone === 'success') bulkJsonNote.style.color = '#166534';
+    else if (tone === 'error') bulkJsonNote.style.color = '#b91c1c';
+    else bulkJsonNote.classList.add('muted');
+    bulkJsonNote.textContent = message;
+  }
+  function renderBulkPreviewRows(items) {
+    const rows = Array.isArray(items) ? items : [];
+    if (!rows.length) return bulkPreviewTableBody.innerHTML = '<tr><td colspan="4" class="muted">Empty preview/result set.</td></tr>';
+    bulkPreviewTableBody.innerHTML = rows.map((item, idx) => '<tr><td>' + esc(item.index == null ? idx : item.index) + '</td><td>' + esc(item.action || '') + '</td><td>' + esc((item.warnings || []).map((w) => w.message).join('; ') || '-') + '</td><td>' + esc((item.errors || []).map((e) => e.message).join('; ') || '-') + '</td></tr>').join('');
+  }
+  function parseBulkEditorPayload() {
+    try { const parsed = JSON.parse(bulkJsonEditor.value || '{}'); return { payload: { items: Array.isArray(parsed.items) ? parsed.items : [] } }; }
+    catch (_) { return { error: 'Invalid JSON payload.' }; }
+  }
+  function setBulkOperation(opKey) {
+    const operation = BULK_OPERATIONS[opKey] || BULK_OPERATIONS.tags;
+    selectedBulkOperation = BULK_OPERATIONS[opKey] ? opKey : 'tags';
+    bulkTagsBtn.disabled = selectedBulkOperation === 'tags';
+    bulkBindingsBtn.disabled = selectedBulkOperation === 'bindings';
+    bulkRulesBtn.disabled = selectedBulkOperation === 'rules';
+    bulkOperationNote.textContent = 'Selected operation: ' + operation.label + '. Contract uses ' + operation.contract + '.';
+    bulkJsonEditor.value = JSON.stringify(operation.defaultPayload, null, 2);
+    bulkJsonSummary.textContent = operation.label + ': no preview/confirm summary yet.';
+    setBulkJsonState('Idle', 'info');
+    renderBulkPreviewRows([]);
+  }
+  function bulkSummaryText(body) {
+    const summary = body && body.summary;
+    if (!summary || typeof summary !== 'object') return 'No summary available.';
+    const parts = Object.keys(summary).map((key) => key + ': ' + summary[key]);
+    parts.push('can_confirm: ' + Boolean(body && body.can_confirm));
+    return parts.join(', ');
+  }
+  async function runBulkJsonRequest(action) {
+    const parsed = parseBulkEditorPayload();
+    if (parsed.error) { setBulkJsonState(parsed.error, 'error'); bulkJsonSummary.textContent = 'Validation error.'; return renderBulkPreviewRows([]); }
+    const operation = BULK_OPERATIONS[selectedBulkOperation] || BULK_OPERATIONS.tags;
+    const isPreview = action === 'preview';
+    setBulkJsonState(operation.label + ' ' + (isPreview ? 'preview' : 'confirm') + ' in progress...', 'info');
+    bulkPreviewBtn.disabled = true; bulkConfirmBtn.disabled = true;
+    try {
+      const r = await apiFetch(isPreview ? operation.previewPath : operation.confirmPath, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(parsed.payload),
+      });
+      const body = await r.json();
+      if (!r.ok || body.error) { setBulkJsonState((body.error && body.error.message) || 'Request/server error.', 'error'); bulkJsonSummary.textContent = 'Request/server error.'; return renderBulkPreviewRows([]); }
+      setBulkJsonState(operation.label + ' ' + (isPreview ? 'preview' : 'confirm') + ' completed.', 'success');
+      bulkJsonSummary.textContent = bulkSummaryText(body); renderBulkPreviewRows(body.items);
+      if (!isPreview && body.can_confirm) await loadCatalog();
+    } catch (error) {
+      setBulkJsonState((error && error.message) ? error.message : 'Request/server error.', 'error');
+      bulkJsonSummary.textContent = 'Request/server error.'; renderBulkPreviewRows([]);
+    } finally { bulkPreviewBtn.disabled = false; bulkConfirmBtn.disabled = false; }
+  }
+
+  tbody.addEventListener('click', async (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLElement)) {
+    if (!(target instanceof HTMLElement)) return;
+    if (target.classList.contains('tag-edit-btn')) {
+      const id = target.getAttribute('data-tag-id') || '';
+      const tag = catalogById[id];
+      if (tag) await openEditor('edit', tag);
       return;
     }
-    if (target.classList.contains('tag-edit-btn')) {
-      const row = target.closest('tr');
-      if (!row) {
-        return;
-      }
-      openEditor('edit', {
-        id: row.children[0].textContent,
-        category: row.children[1].textContent,
-        code: row.children[2].textContent,
-        label: row.children[3].textContent,
-        description: row.children[4].textContent,
-        is_active: String(row.children[5].textContent).toLowerCase() === 'true',
+    if (target.classList.contains('tag-clone-btn')) {
+      const id = Number(target.getAttribute('data-tag-id') || 0);
+      if (!id) return;
+      try { await runCloneTag(id); } catch (error) { setNote((error && error.message) ? error.message : 'Clone failed.', true); }
+      return;
+    }
+    if (target.classList.contains('tag-clone-rules-btn')) {
+      const id = Number(target.getAttribute('data-tag-id') || 0);
+      if (!id) return;
+      try { await runCloneRules(id); } catch (error) { setNote((error && error.message) ? error.message : 'Clone rules failed.', true); }
+    }
+  });
+
+  rulesTbody.addEventListener('click', async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !modalTag || !modalTag.id) return;
+    const ruleId = Number(target.getAttribute('data-rule-id') || 0);
+    if (!ruleId) return;
+    const rule = modalRules.find((item) => Number(item.id) === ruleId);
+    if (!rule) return;
+    if (target.classList.contains('rule-edit-btn')) {
+      ruleIdInput.value = String(rule.id);
+      ruleSourcePath.value = rule.source_path || '';
+      ruleOperator.value = rule.operator || 'equals';
+      ruleValueJson.value = rule.value_json || '""';
+      rulePriority.value = String(rule.priority == null ? 100 : rule.priority);
+      ruleWeight.value = String(rule.weight == null ? 1 : rule.weight);
+      ruleMatchMode.value = (rule.match_mode || 'ALL').toUpperCase();
+      ruleRequired.checked = Boolean(rule.required);
+      ruleStopAfterMatch.checked = Boolean(rule.stop_after_match);
+      ruleIsActive.checked = Boolean(rule.is_active);
+      return;
+    }
+    if (target.classList.contains('rule-deactivate-btn')) {
+      const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules/' + encodeURIComponent(ruleId), {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: false }),
       });
+      if (r.ok) { await refreshModalOperationalSections(); await loadCatalog(); }
+      return;
+    }
+    if (target.classList.contains('rule-delete-btn')) {
+      const r = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/rules/' + encodeURIComponent(ruleId), { method: 'DELETE' });
+      if (r.ok) { await refreshModalOperationalSections(); await loadCatalog(); }
     }
   });
 
   importBtn.addEventListener('click', runImport);
   exportBtn.addEventListener('click', runExport);
   createBtn.addEventListener('click', () => openEditor('create', null));
-  bulkBtn.addEventListener('click', () => {
-    bulkJson.value = JSON.stringify({ tags: [] }, null, 2);
-    bulkNote.textContent = '';
-    bulkModal.showModal();
-  });
 
   document.getElementById('tag-editor-save').addEventListener('click', saveEditor);
   document.getElementById('tag-editor-cancel').addEventListener('click', () => editorModal.close());
-  document.getElementById('tags-bulk-run').addEventListener('click', runBulkCreate);
-  document.getElementById('tags-bulk-cancel').addEventListener('click', () => bulkModal.close());
+  bindingsSaveBtn.addEventListener('click', saveBindings);
+  ruleAddBtn.addEventListener('click', resetRuleEditor);
+  ruleSaveBtn.addEventListener('click', saveRule);
+  rulePreviewMatchesBtn.addEventListener('click', previewRuleMatches);
+  ruleResetBtn.addEventListener('click', resetRuleEditor);
+  rulesJsonPreviewBtn.addEventListener('click', previewRulesJson);
+  rulesJsonSaveBtn.addEventListener('click', saveRulesJson);
+
+  bulkTagsBtn.addEventListener('click', () => setBulkOperation('tags'));
+  bulkBindingsBtn.addEventListener('click', () => setBulkOperation('bindings'));
+  bulkRulesBtn.addEventListener('click', () => setBulkOperation('rules'));
   bulkPreviewBtn.addEventListener('click', () => runBulkJsonRequest('preview'));
   bulkConfirmBtn.addEventListener('click', () => runBulkJsonRequest('confirm'));
+  reassignPreviewBtn.addEventListener('click', () => runReassign('preview'));
+  reassignExecuteBtn.addEventListener('click', () => runReassign('execute'));
+  filterApplyBtn.addEventListener('click', loadCatalog);
+  filterClearBtn.addEventListener('click', () => { filterCategory.value = ''; filterId.value = ''; filterQ.value = ''; loadCatalog(); });
+  filterQ.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); loadCatalog(); } });
+  dashboardOpenBtn.addEventListener('click', () => {
+    const slug = String(dashboardChannel.value || '').trim();
+    if (!slug) return setNote('Provide a channel slug for dashboard.', true);
+    window.location.href = '/ui/track-catalog/custom-tags/dashboard/' + encodeURIComponent(slug);
+  });
+  bulkTagsEnableBtn.addEventListener('click', () => runBulkSetActive('tags', true));
+  bulkTagsDisableBtn.addEventListener('click', () => runBulkSetActive('tags', false));
+  bulkRulesEnableBtn.addEventListener('click', () => runBulkSetActive('rules', true));
+  bulkRulesDisableBtn.addEventListener('click', () => runBulkSetActive('rules', false));
+  bindingEnableBtn.addEventListener('click', () => runBindingSetEnabled(true));
+  bindingDisableBtn.addEventListener('click', () => runBindingSetEnabled(false));
+  taxonomyExportBtn.addEventListener('click', exportTaxonomy);
+  taxonomyPreviewBtn.addEventListener('click', () => importTaxonomy('preview'));
+  taxonomyConfirmBtn.addEventListener('click', () => importTaxonomy('confirm'));
 
-  bulkJsonEditor.value = JSON.stringify({
-    items: [
-      { category: 'VISUAL', slug: 'example_tag', name: 'Example Tag', description: '', is_active: true },
-    ],
-  }, null, 2);
-
+  setBulkOperation('tags');
   loadCatalog();
 })();
 </script>
