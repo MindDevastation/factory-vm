@@ -274,15 +274,18 @@
   let catalogById = {};
   let modalTag = null;
   let channels = [];
+  let channelsLoaded = false;
   let modalRules = [];
 
   function resolveApiPath(path) {
     const normalized = String(path || '').startsWith('/') ? String(path || '') : ('/' + String(path || ''));
-    if (normalized.startsWith('/v1/')) return normalized;
-    const pathname = String(window.location.pathname || '');
-    const idx = pathname.indexOf('/ui/');
-    if (idx < 0) return '/v1' + normalized;
-    return pathname.slice(0, idx) + '/v1' + normalized;
+    const apiPath = normalized.startsWith('/v1/') ? normalized : (() => {
+      const pathname = String(window.location.pathname || '');
+      const idx = pathname.indexOf('/ui/');
+      if (idx < 0) return '/v1' + normalized;
+      return pathname.slice(0, idx) + '/v1' + normalized;
+    })();
+    return new URL(apiPath, window.location.origin).toString();
   }
   async function apiFetch(path, options) {
     return fetch(resolveApiPath(path), Object.assign({ credentials: 'same-origin' }, options || {}));
@@ -346,10 +349,12 @@
   }
 
   async function loadChannels() {
+    if (channelsLoaded) return;
     const r = await apiFetch('/channels');
     const body = await r.json();
     if (!r.ok || !Array.isArray(body)) throw new Error('Failed to load channels.');
     channels = body;
+    channelsLoaded = true;
   }
 
   function resetRuleEditor() {
@@ -424,10 +429,16 @@
     rulesJson.value = JSON.stringify({ rules: modalRules.map(({ summary, id, ...r }) => r) }, null, 2);
 
     if (isVisual) {
-      const bindResp = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/bindings');
-      const bindBody = await bindResp.json();
-      const slugs = (bindResp.ok && Array.isArray(bindBody.bindings)) ? bindBody.bindings.map((item) => item.channel_slug) : [];
-      renderBindings(slugs);
+      try {
+        await loadChannels();
+        const bindResp = await apiFetch('/track-catalog/custom-tags/' + encodeURIComponent(modalTag.id) + '/bindings');
+        const bindBody = await bindResp.json();
+        const slugs = (bindResp.ok && Array.isArray(bindBody.bindings)) ? bindBody.bindings.map((item) => item.channel_slug) : [];
+        renderBindings(slugs);
+      } catch (_) {
+        renderBindings([]);
+        bindingsList.innerHTML = '<p class="muted" style="color:#b91c1c;">Failed to load channel bindings. Tag and rules remain available.</p>';
+      }
     } else {
       renderBindings([]);
       bindingsList.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.disabled = true; });
@@ -452,12 +463,11 @@
     rulesJsonMode.value = 'replace';
     rulesWarning.style.color = '#b91c1c';
     resetRuleEditor();
+    editorModal.showModal();
     try {
-      await loadChannels();
       await refreshModalOperationalSections();
-      editorModal.showModal();
     } catch (error) {
-      setNote(error && error.message ? error.message : 'Failed to open modal.', true);
+      setNote(error && error.message ? error.message : 'Failed to load modal details.', true);
     }
   }
 
