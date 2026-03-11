@@ -12,6 +12,14 @@
   <button type="button" id="tags-export-btn">Export</button>
   <button type="button" id="tags-create-btn">Create Tag</button>
 </p>
+<details style="margin:8px 0 12px 0;">
+  <summary><strong>Quick help</strong></summary>
+  <ul style="margin:8px 0 0 18px; padding:0;">
+    <li>Run <strong>Preview</strong> first, then <strong>Confirm/Execute</strong>.</li>
+    <li>Use channel scope to test safely on one channel.</li>
+    <li>Copy-friendly examples: <code>deep-space</code>, <code>cyber_arena</code>.</li>
+  </ul>
+</details>
 <p class="muted" id="tags-note">Loading tag catalog...</p>
 
 <p>
@@ -76,13 +84,28 @@
       <th>Active</th>
       <th>Bound Channels</th>
       <th>Rules</th>
+      <th>Usage</th>
       <th>Actions</th>
     </tr>
   </thead>
   <tbody id="tags-tbody">
-    <tr><td colspan="9" class="muted">Loading...</td></tr>
+    <tr><td colspan="10" class="muted">Loading...</td></tr>
   </tbody>
 </table>
+
+<h2>Track Catalog → Custom Tags → Assignment Tools</h2>
+<p class="muted">Dry-run preview first, then execute recompute assignments. Leave fields blank for full scope.</p>
+<p>
+  <label>Channel scope <input type="text" id="tags-ops-channel" placeholder="deep-space"></label>
+  <label style="margin-left:12px;">Tag code <input type="text" id="tags-ops-tag-code" placeholder="cyber_arena"></label>
+</p>
+<p>
+  <button type="button" id="tags-reassign-preview-btn">Dry-run reassign preview</button>
+  <button type="button" id="tags-reassign-execute-btn">Recompute assignments (execute)</button>
+  <span class="muted" id="tags-ops-note">Idle</span>
+</p>
+<p class="muted" id="tags-ops-summary">No preview/execute summary yet.</p>
+<pre id="tags-ops-json" class="muted" style="max-height:200px; overflow:auto;">No data.</pre>
 
 <h2>Track Catalog → Custom Tags → Bulk Operations</h2>
 <p>
@@ -188,8 +211,11 @@
       </p>
       <p>
         <button type="button" id="tag-rule-save-btn">Save rule</button>
+        <button type="button" id="tag-rule-preview-matches-btn">Preview rule matches</button>
         <button type="button" id="tag-rule-reset-btn">Reset rule editor</button>
       </p>
+      <p class="muted" id="tag-rule-preview-matches-note">No rule match preview yet.</p>
+      <pre id="tag-rule-preview-matches-json" class="muted" style="max-height:180px; overflow:auto;">No data.</pre>
     </div>
 
     <p class="muted" id="tag-editor-note"></p>
@@ -249,7 +275,18 @@
   const ruleStopAfterMatch = document.getElementById('tag-rule-stop-after-match');
   const ruleIsActive = document.getElementById('tag-rule-is-active');
   const ruleSaveBtn = document.getElementById('tag-rule-save-btn');
+  const rulePreviewMatchesBtn = document.getElementById('tag-rule-preview-matches-btn');
   const ruleResetBtn = document.getElementById('tag-rule-reset-btn');
+  const rulePreviewMatchesNote = document.getElementById('tag-rule-preview-matches-note');
+  const rulePreviewMatchesJson = document.getElementById('tag-rule-preview-matches-json');
+
+  const opsChannel = document.getElementById('tags-ops-channel');
+  const opsTagCode = document.getElementById('tags-ops-tag-code');
+  const reassignPreviewBtn = document.getElementById('tags-reassign-preview-btn');
+  const reassignExecuteBtn = document.getElementById('tags-reassign-execute-btn');
+  const opsNote = document.getElementById('tags-ops-note');
+  const opsSummary = document.getElementById('tags-ops-summary');
+  const opsJson = document.getElementById('tags-ops-json');
 
   const bulkTagsBtn = document.getElementById('tags-bulk-tags-btn');
   const bulkBindingsBtn = document.getElementById('tags-bulk-bindings-btn');
@@ -330,19 +367,24 @@
     const bindings = Array.isArray(tag.bindings) ? tag.bindings : [];
     return bindings.length ? bindings.map((binding) => binding.channel_slug).join(', ') : 'No bindings';
   }
+  function usageSummary(tag) {
+    const usage = tag && typeof tag.usage === 'object' ? tag.usage : {};
+    return 'tracks: ' + Number(usage.tracks_count || 0) + ', rules: ' + Number(usage.rules_count || 0) + ', channels: ' + Number(usage.channels_count || 0);
+  }
 
   async function loadCatalog() {
     setNote('Loading tag catalog...');
     try {
       const query = currentFilters().toString();
-      const r = await apiFetch('/track-catalog/custom-tags' + (query ? ('?' + query) : ''));
+      const suffix = query ? ('?' + query + '&include_usage=true') : '?include_usage=true';
+      const r = await apiFetch('/track-catalog/custom-tags' + suffix);
       const body = await r.json();
       if (!r.ok) throw new Error((body.error && body.error.message) || 'Failed to load tag catalog.');
       const tags = Array.isArray(body.tags) ? body.tags : [];
       catalogById = {};
       tags.forEach((tag) => { catalogById[String(tag.id)] = tag; });
       if (!tags.length) {
-        tbody.innerHTML = '<tr><td colspan="9" class="muted">Catalog is empty.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="muted">Catalog is empty.</td></tr>';
         setNote('Catalog loaded (0 tags).');
         return;
       }
@@ -355,11 +397,12 @@
           '<td>' + esc(tag.is_active) + '</td>' +
           '<td>' + esc(bindingsSummary(tag)) + '</td>' +
           '<td>' + esc(tag.rules_summary || 'No rules') + '</td>' +
+          '<td>' + esc(usageSummary(tag)) + '</td>' +
           '<td><button type="button" class="tag-edit-btn" data-tag-id="' + esc(tag.id) + '">Edit</button></td>' +
         '</tr>').join('');
       setNote('Catalog loaded (' + tags.length + ' tags).');
     } catch (error) {
-      tbody.innerHTML = '<tr><td colspan="9" class="muted">Failed to load catalog.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="muted">Failed to load catalog.</td></tr>';
       setNote(error && error.message ? error.message : 'Failed to load tag catalog.', true);
     }
   }
@@ -384,6 +427,83 @@
     ruleRequired.checked = false;
     ruleStopAfterMatch.checked = false;
     ruleIsActive.checked = true;
+    rulePreviewMatchesNote.style.color = '';
+    rulePreviewMatchesNote.textContent = 'No rule match preview yet.';
+    rulePreviewMatchesJson.textContent = 'No data.';
+  }
+
+  function setOpsState(message, tone) {
+    opsNote.classList.remove('muted');
+    opsNote.style.color = '';
+    if (tone === 'success') opsNote.style.color = '#166534';
+    else if (tone === 'error') opsNote.style.color = '#b91c1c';
+    else opsNote.classList.add('muted');
+    opsNote.textContent = message;
+  }
+
+  function opsPayload() {
+    return {
+      channel_slug: String(opsChannel.value || '').trim() || null,
+      tag_code: String(opsTagCode.value || '').trim() || null,
+    };
+  }
+
+  async function runReassign(action) {
+    const isPreview = action === 'preview';
+    setOpsState((isPreview ? 'Preview' : 'Execute') + ' in progress...', 'info');
+    reassignPreviewBtn.disabled = true;
+    reassignExecuteBtn.disabled = true;
+    try {
+      const r = await apiFetch('/track-catalog/custom-tags/reassign/' + (isPreview ? 'preview' : 'execute'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opsPayload()),
+      });
+      const body = await r.json();
+      if (!r.ok || body.error) throw new Error((body.error && body.error.message) || 'Request/server error.');
+      setOpsState((isPreview ? 'Preview' : 'Execute') + ' completed.', 'success');
+      opsSummary.textContent = 'Summary: ' + JSON.stringify(body.summary || {});
+      opsJson.textContent = JSON.stringify(body, null, 2);
+      if (!isPreview) await loadCatalog();
+    } catch (error) {
+      setOpsState((error && error.message) ? error.message : 'Request/server error.', 'error');
+      opsSummary.textContent = 'Request/server error.';
+      opsJson.textContent = 'No data.';
+    } finally {
+      reassignPreviewBtn.disabled = false;
+      reassignExecuteBtn.disabled = false;
+    }
+  }
+
+  async function previewRuleMatches() {
+    if (!modalTag || !modalTag.code) {
+      rulePreviewMatchesNote.style.color = '#b91c1c';
+      rulePreviewMatchesNote.textContent = 'Open a saved tag first.';
+      return;
+    }
+    rulePreviewMatchesBtn.disabled = true;
+    rulePreviewMatchesNote.style.color = '';
+    rulePreviewMatchesNote.textContent = 'Previewing matches...';
+    try {
+      const r = await apiFetch('/track-catalog/custom-tags/rules/preview-matches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tag_code: modalTag.code,
+          rule: ruleEditorPayload(),
+          scope: { channel_slug: String(opsChannel.value || '').trim() || null },
+        }),
+      });
+      const body = await r.json();
+      if (!r.ok || body.error) throw new Error((body.error && body.error.message) || 'Preview failed.');
+      rulePreviewMatchesNote.style.color = '#166534';
+      rulePreviewMatchesNote.textContent = 'Matched tracks: ' + Number(body.matched_tracks_count || 0) + '.';
+      rulePreviewMatchesJson.textContent = JSON.stringify(body, null, 2);
+    } catch (error) {
+      rulePreviewMatchesNote.style.color = '#b91c1c';
+      rulePreviewMatchesNote.textContent = (error && error.message) ? error.message : 'Preview failed.';
+      rulePreviewMatchesJson.textContent = 'No data.';
+    } finally {
+      rulePreviewMatchesBtn.disabled = false;
+    }
   }
 
   function ruleEditorPayload() {
@@ -758,6 +878,7 @@
   bindingsSaveBtn.addEventListener('click', saveBindings);
   ruleAddBtn.addEventListener('click', resetRuleEditor);
   ruleSaveBtn.addEventListener('click', saveRule);
+  rulePreviewMatchesBtn.addEventListener('click', previewRuleMatches);
   ruleResetBtn.addEventListener('click', resetRuleEditor);
   rulesJsonPreviewBtn.addEventListener('click', previewRulesJson);
   rulesJsonSaveBtn.addEventListener('click', saveRulesJson);
@@ -767,6 +888,8 @@
   bulkRulesBtn.addEventListener('click', () => setBulkOperation('rules'));
   bulkPreviewBtn.addEventListener('click', () => runBulkJsonRequest('preview'));
   bulkConfirmBtn.addEventListener('click', () => runBulkJsonRequest('confirm'));
+  reassignPreviewBtn.addEventListener('click', () => runReassign('preview'));
+  reassignExecuteBtn.addEventListener('click', () => runReassign('execute'));
   filterApplyBtn.addEventListener('click', loadCatalog);
   filterClearBtn.addEventListener('click', () => { filterCategory.value = ''; filterId.value = ''; filterQ.value = ''; loadCatalog(); });
   filterQ.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); loadCatalog(); } });
