@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Custom Tags · Channel Dashboard</h1>
+<p>
+  <a href="/ui/track-catalog/custom-tags">← Back to Custom Tags control center</a>
+</p>
+<p>
+  <label>Channel slug <input type="text" id="tags-dash-channel" value="{{ channel_slug }}" placeholder="deep-space"></label>
+  <button type="button" id="tags-dash-load-btn">Load</button>
+</p>
+<p class="muted" id="tags-dash-note">Loading dashboard...</p>
+
+<h2>VISUAL tags available to channel</h2>
+<table id="tags-dash-visual-table">
+  <thead><tr><th>Code</th><th>Label</th><th>Active</th><th>Tracks with tag</th></tr></thead>
+  <tbody><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
+</table>
+
+<h2>Active MOOD/THEME rules</h2>
+<table id="tags-dash-rules-table">
+  <thead><tr><th>Category</th><th>Tag</th><th>Rule</th><th>Priority</th><th>Tracks with tag</th></tr></thead>
+  <tbody><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
+</table>
+
+<h2>Tag usage (tracks per tag in channel)</h2>
+<table id="tags-dash-usage-table">
+  <thead><tr><th>Category</th><th>Tag</th><th>Tracks with tag</th></tr></thead>
+  <tbody><tr><td colspan="3" class="muted">Loading...</td></tr></tbody>
+</table>
+
+<script>
+(function () {
+  const channelInput = document.getElementById('tags-dash-channel');
+  const loadBtn = document.getElementById('tags-dash-load-btn');
+  const note = document.getElementById('tags-dash-note');
+  const visualTbody = document.querySelector('#tags-dash-visual-table tbody');
+  const rulesTbody = document.querySelector('#tags-dash-rules-table tbody');
+  const usageTbody = document.querySelector('#tags-dash-usage-table tbody');
+
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function resolveApiPath(path) {
+    const normalized = String(path || '').startsWith('/') ? String(path || '') : ('/' + String(path || ''));
+    const apiPath = normalized.startsWith('/v1/') ? normalized : (() => {
+      const pathname = String(window.location.pathname || '');
+      const idx = pathname.indexOf('/ui/');
+      if (idx < 0) return '/v1' + normalized;
+      return pathname.slice(0, idx) + '/v1' + normalized;
+    })();
+    return new URL(apiPath, window.location.origin).toString();
+  }
+
+  async function parseDashboardResponse(response) {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const rawText = await response.text();
+    if (!rawText) return { body: null, text: '', isJson: contentType.includes('application/json') };
+    const prefersJson = contentType.includes('application/json') || rawText.trim().startsWith('{') || rawText.trim().startsWith('[');
+    if (!prefersJson) return { body: null, text: rawText, isJson: false };
+    try {
+      return { body: JSON.parse(rawText), text: rawText, isJson: true };
+    } catch (_) {
+      return { body: null, text: rawText, isJson: false };
+    }
+  }
+
+  function dashboardErrorMessage(response, body) {
+    if (body && body.error && body.error.message) return String(body.error.message);
+    if (body && body.message) return String(body.message);
+    if (!response.ok) return 'Failed to load dashboard (HTTP ' + response.status + ').';
+    return 'Failed to load dashboard.';
+  }
+
+  async function loadDashboard() {
+    const slug = String(channelInput.value || '').trim();
+    if (!slug) {
+      note.style.color = '#b91c1c';
+      note.textContent = 'Provide a channel slug.';
+      return;
+    }
+    note.style.color = '';
+    note.textContent = 'Loading dashboard...';
+    try {
+      const r = await fetch(resolveApiPath('/track-catalog/custom-tags/dashboard/' + encodeURIComponent(slug)), { credentials: 'same-origin' });
+      const parsed = await parseDashboardResponse(r);
+      const body = parsed.body;
+      if (!r.ok || !body || body.error) throw new Error(dashboardErrorMessage(r, body));
+
+      const visual = Array.isArray(body.visual_tags) ? body.visual_tags : [];
+      visualTbody.innerHTML = visual.length
+        ? visual.map((item) => '<tr><td>' + esc(item.code) + '</td><td>' + esc(item.label) + '</td><td>' + esc(item.is_active) + '</td><td>' + esc(item.tracks_count) + '</td></tr>').join('')
+        : '<tr><td colspan="4" class="muted">No VISUAL tags bound to this channel.</td></tr>';
+
+      const rules = Array.isArray(body.active_rules) ? body.active_rules : [];
+      rulesTbody.innerHTML = rules.length
+        ? rules.map((item) => '<tr><td>' + esc(item.tag_category) + '</td><td>' + esc(item.tag_code) + '</td><td>' + esc(item.source_path + ' ' + item.operator + ' ' + item.value_json) + '</td><td>' + esc(item.priority) + '</td><td>' + esc(item.tracks_count) + '</td></tr>').join('')
+        : '<tr><td colspan="5" class="muted">No active MOOD/THEME rules.</td></tr>';
+
+      const usage = Array.isArray(body.tag_usage) ? body.tag_usage : [];
+      usageTbody.innerHTML = usage.length
+        ? usage.map((item) => '<tr><td>' + esc(item.tag_category) + '</td><td>' + esc(item.tag_code) + '</td><td>' + esc(item.tracks_count) + '</td></tr>').join('')
+        : '<tr><td colspan="3" class="muted">No tag usage data.</td></tr>';
+
+      note.style.color = '#166534';
+      note.textContent = 'Dashboard loaded for ' + body.channel_slug + '.';
+    } catch (error) {
+      visualTbody.innerHTML = '<tr><td colspan="4" class="muted">Failed to load.</td></tr>';
+      rulesTbody.innerHTML = '<tr><td colspan="5" class="muted">Failed to load.</td></tr>';
+      usageTbody.innerHTML = '<tr><td colspan="3" class="muted">Failed to load.</td></tr>';
+      note.style.color = '#b91c1c';
+      note.textContent = (error && error.message) ? error.message : 'Failed to load dashboard.';
+    }
+  }
+
+  loadBtn.addEventListener('click', loadDashboard);
+  channelInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      loadDashboard();
+    }
+  });
+
+  loadDashboard();
+})();
+</script>
+{% endblock %}
