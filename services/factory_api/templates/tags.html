@@ -167,12 +167,13 @@
     <tr>
       <th>#</th>
       <th>Action</th>
+      <th>Summary</th>
       <th>Warnings</th>
       <th>Errors</th>
     </tr>
   </thead>
   <tbody>
-    <tr><td colspan="4" class="muted">No data.</td></tr>
+    <tr><td colspan="5" class="muted">No data.</td></tr>
   </tbody>
 </table>
 
@@ -985,8 +986,8 @@
   }
   function renderBulkPreviewRows(items) {
     const rows = Array.isArray(items) ? items : [];
-    if (!rows.length) return bulkPreviewTableBody.innerHTML = '<tr><td colspan="4" class="muted">Empty preview/result set.</td></tr>';
-    bulkPreviewTableBody.innerHTML = rows.map((item, idx) => '<tr><td>' + esc(item.index == null ? idx : item.index) + '</td><td>' + esc(item.action || '') + '</td><td>' + esc((item.warnings || []).map((w) => w.message).join('; ') || '-') + '</td><td>' + esc((item.errors || []).map((e) => e.message).join('; ') || '-') + '</td></tr>').join('');
+    if (!rows.length) return bulkPreviewTableBody.innerHTML = '<tr><td colspan="5" class="muted">Empty preview/result set.</td></tr>';
+    bulkPreviewTableBody.innerHTML = rows.map((item, idx) => '<tr><td>' + esc(item.index == null ? idx : item.index) + '</td><td>' + esc(item.action || '') + '</td><td>' + esc(item.summary || '-') + '</td><td>' + esc((item.warnings || []).map((w) => w.message).join('; ') || '-') + '</td><td>' + esc((item.errors || []).map((e) => e.message).join('; ') || '-') + '</td></tr>').join('');
   }
   function parseBulkEditorPayload() {
     try { const parsed = JSON.parse(bulkJsonEditor.value || '{}'); return { payload: { items: Array.isArray(parsed.items) ? parsed.items : [] } }; }

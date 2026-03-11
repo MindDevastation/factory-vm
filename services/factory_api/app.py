@@ -1726,6 +1726,25 @@ def api_custom_tag_channel_bindings(tag_id: int, _: bool = Depends(require_basic
     return {"bindings": bindings}
 
 
+@app.get("/v1/track-catalog/custom-tags/bindings/by-channel/{channel_slug}")
+def api_custom_tag_channel_bindings_by_channel(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            bindings = rules_service.list_bindings_by_channel(conn, channel_slug=channel_slug)
+        except rules_service.RulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags channel bindings by channel failed", extra={"channel_slug": channel_slug})
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"channel_slug": channel_slug, "bindings": bindings}
+
+
 @app.post("/v1/track-catalog/custom-tags/channel-bindings")
 def api_custom_tag_channel_bindings_create(
     payload: CustomTagChannelBindingCreateRequest,

@@ -105,6 +105,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="tags-taxonomy-confirm-btn"', r.text)
             self.assertIn('id="tags-bulk-tags-enable-btn"', r.text)
             self.assertIn('id="tags-bulk-rules-disable-btn"', r.text)
+            self.assertIn('<th>Summary</th>', r.text)
             self.assertIn('id="tag-editor-modal"', r.text)
             self.assertIn('id="tag-json-mode"', r.text)
             self.assertIn('if (editorJsonMode.checked)', r.text)
@@ -118,6 +119,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             r = client.get("/ui/track-catalog/custom-tags/dashboard/darkwood-reverie", headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Custom Tags · Channel Dashboard", r.text)
+            self.assertIn('<summary><strong>Quick help</strong></summary>', r.text)
             self.assertIn('id="tags-dash-visual-table"', r.text)
             self.assertIn('id="tags-dash-rules-table"', r.text)
             self.assertIn('id="tags-dash-usage-table"', r.text)
@@ -125,6 +127,10 @@ class TestUiPagesSlice4(unittest.TestCase):
             r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Edit Job", r.text)
+
+            r = client.get(f"/jobs/{job_id}", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn('<summary><strong>Quick help</strong></summary>', r.text)
 
             r = client.post(
                 "/ui/jobs/create",
