@@ -403,6 +403,27 @@
   async function apiFetch(path, options) {
     return fetch(resolveApiPath(path), Object.assign({ credentials: 'same-origin' }, options || {}));
   }
+  async function parseApiBody(response) {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const rawText = await response.text();
+    if (!rawText) return { data: null, text: '', isJson: contentType.includes('application/json') };
+    const prefersJson = contentType.includes('application/json') || rawText.trim().startsWith('{') || rawText.trim().startsWith('[');
+    if (!prefersJson) return { data: null, text: rawText, isJson: false };
+    try {
+      return { data: JSON.parse(rawText), text: rawText, isJson: true };
+    } catch (_) {
+      return { data: null, text: rawText, isJson: false };
+    }
+  }
+  function responseErrorMessage(response, parsedBody, fallbackMessage) {
+    const body = parsedBody && typeof parsedBody === 'object' ? parsedBody : null;
+    if (body && body.error && body.error.message) return String(body.error.message);
+    if (body && body.message) return String(body.message);
+    if (!response.ok) {
+      return fallbackMessage + ' (HTTP ' + response.status + ').';
+    }
+    return fallbackMessage;
+  }
   function esc(v) {
     return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
@@ -451,9 +472,19 @@
     try {
       const query = currentFilters().toString();
       const suffix = query ? ('?' + query + '&include_usage=true') : '?include_usage=true';
-      const r = await apiFetch('/track-catalog/custom-tags' + suffix);
-      const body = await r.json();
-      if (!r.ok) throw new Error((body.error && body.error.message) || 'Failed to load tag catalog.');
+      let r = await apiFetch('/track-catalog/custom-tags' + suffix);
+      let parsed = await parseApiBody(r);
+      let body = parsed.data;
+      const usageFailed = !r.ok || !body || !Array.isArray(body.tags);
+      if (usageFailed) {
+        const fallbackSuffix = query ? ('?' + query) : '';
+        r = await apiFetch('/track-catalog/custom-tags' + fallbackSuffix);
+        parsed = await parseApiBody(r);
+        body = parsed.data;
+      }
+      if (!r.ok || !body || !Array.isArray(body.tags)) {
+        throw new Error(responseErrorMessage(r, body, 'Failed to load tag catalog.'));
+      }
       const tags = Array.isArray(body.tags) ? body.tags : [];
       catalogById = {};
       tags.forEach((tag) => { catalogById[String(tag.id)] = tag; });

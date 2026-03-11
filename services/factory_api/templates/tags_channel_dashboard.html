@@ -52,6 +52,26 @@
     return new URL(apiPath, window.location.origin).toString();
   }
 
+  async function parseDashboardResponse(response) {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const rawText = await response.text();
+    if (!rawText) return { body: null, text: '', isJson: contentType.includes('application/json') };
+    const prefersJson = contentType.includes('application/json') || rawText.trim().startsWith('{') || rawText.trim().startsWith('[');
+    if (!prefersJson) return { body: null, text: rawText, isJson: false };
+    try {
+      return { body: JSON.parse(rawText), text: rawText, isJson: true };
+    } catch (_) {
+      return { body: null, text: rawText, isJson: false };
+    }
+  }
+
+  function dashboardErrorMessage(response, body) {
+    if (body && body.error && body.error.message) return String(body.error.message);
+    if (body && body.message) return String(body.message);
+    if (!response.ok) return 'Failed to load dashboard (HTTP ' + response.status + ').';
+    return 'Failed to load dashboard.';
+  }
+
   async function loadDashboard() {
     const slug = String(channelInput.value || '').trim();
     if (!slug) {
@@ -63,8 +83,9 @@
     note.textContent = 'Loading dashboard...';
     try {
       const r = await fetch(resolveApiPath('/track-catalog/custom-tags/dashboard/' + encodeURIComponent(slug)), { credentials: 'same-origin' });
-      const body = await r.json();
-      if (!r.ok || body.error) throw new Error((body.error && body.error.message) || 'Failed to load dashboard.');
+      const parsed = await parseDashboardResponse(r);
+      const body = parsed.body;
+      if (!r.ok || !body || body.error) throw new Error(dashboardErrorMessage(r, body));
 
       const visual = Array.isArray(body.visual_tags) ? body.visual_tags : [];
       visualTbody.innerHTML = visual.length
