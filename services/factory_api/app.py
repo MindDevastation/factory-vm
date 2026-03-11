@@ -45,7 +45,7 @@ from services.track_analysis_report.report_service import (
 from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes, sanitize_sheet_name
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
-from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, rules_service
+from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -644,6 +644,24 @@ class CustomTagAssignmentUpsertRequest(BaseModel):
     category: str | None = None
 
 
+class CustomTagRulePreviewScopeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    channel_slug: str | None = None
+
+
+class CustomTagRulePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_code: str
+    rule: dict[str, Any]
+    scope: CustomTagRulePreviewScopeRequest | None = None
+
+
+class CustomTagReassignScopeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    channel_slug: str | None = None
+    tag_code: str | None = None
+
+
 def _normalize_display_name(value: str) -> str:
     return value.strip()
 
@@ -1039,7 +1057,8 @@ def _cta_error_response(
     | rules_service.RulesError
     | assignment_service.AssignmentError
     | bulk_bindings_service.BulkBindingsError
-    | bulk_rules_service.BulkRulesError,
+    | bulk_rules_service.BulkRulesError
+    | reassign_service.ReassignError,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=err.status_code,
@@ -1086,6 +1105,9 @@ _CTA_CATALOG_ENDPOINTS = {
     ("GET", "/v1/track-catalog/tracks/{track_pk}/custom-tags"),
     ("POST", "/v1/track-catalog/tracks/{track_pk}/custom-tags"),
     ("DELETE", "/v1/track-catalog/tracks/{track_pk}/custom-tags/{tag_id}"),
+    ("POST", "/v1/track-catalog/custom-tags/rules/preview-matches"),
+    ("POST", "/v1/track-catalog/custom-tags/reassign/preview"),
+    ("POST", "/v1/track-catalog/custom-tags/reassign/execute"),
 }
 
 
@@ -1368,6 +1390,68 @@ def api_custom_tags_export_seed(_: bool = Depends(require_basic_auth(env))):
 @app.post("/v1/track-catalog/custom-tags/import-seed")
 def api_custom_tags_import_seed(_: bool = Depends(require_basic_auth(env))):
     return api_custom_tags_catalog_import(_)
+
+
+@app.post("/v1/track-catalog/custom-tags/rules/preview-matches")
+def api_custom_tags_rule_preview_matches(payload: CustomTagRulePreviewRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = reassign_service.preview_rule_matches(
+                conn,
+                tag_code=payload.tag_code,
+                rule=payload.rule,
+                channel_slug=payload.scope.channel_slug if payload.scope is not None else None,
+            )
+        except reassign_service.ReassignError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags rule preview matches failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/reassign/preview")
+def api_custom_tags_reassign_preview(payload: CustomTagReassignScopeRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = reassign_service.preview_reassign(conn, channel_slug=payload.channel_slug, tag_code=payload.tag_code)
+        except reassign_service.ReassignError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags reassign preview failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/reassign/execute")
+def api_custom_tags_reassign_execute(payload: CustomTagReassignScopeRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = reassign_service.execute_reassign(conn, channel_slug=payload.channel_slug, tag_code=payload.tag_code)
+        except reassign_service.ReassignError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags reassign execute failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
 
 @app.get("/v1/track-catalog/custom-tags/rules")
 def api_custom_tag_rules(tag_id: int, _: bool = Depends(require_basic_auth(env))):
