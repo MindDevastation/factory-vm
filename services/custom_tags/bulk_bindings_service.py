@@ -47,7 +47,7 @@ def _normalize_item(item: dict[str, Any], *, index: int) -> dict[str, Any]:
 
 
 def preview_bulk_bindings(conn: sqlite3.Connection, items: list[dict[str, Any]]) -> dict[str, Any]:
-    results: list[dict[str, Any]] = []
+    draft_results: list[dict[str, Any]] = []
     counts = {"CREATE": 0, "UPDATE": 0, "NOOP": 0, "INVALID": 0}
 
     for idx, raw in enumerate(items):
@@ -108,8 +108,7 @@ def preview_bulk_bindings(conn: sqlite3.Connection, items: list[dict[str, Any]])
             action = "INVALID"
             summary = err.message
 
-        counts[action] += 1
-        results.append(
+        draft_results.append(
             {
                 "index": idx,
                 "normalized": normalized,
@@ -119,6 +118,43 @@ def preview_bulk_bindings(conn: sqlite3.Connection, items: list[dict[str, Any]])
                 "errors": errors,
             }
         )
+
+    key_to_indices: dict[tuple[int, str], list[int]] = {}
+    for item in draft_results:
+        resolved = item["resolved"]
+        tag_id = resolved.get("tag_id")
+        channel_slug = resolved.get("channel_slug")
+        if isinstance(tag_id, int) and isinstance(channel_slug, str):
+            key = (tag_id, channel_slug)
+            key_to_indices.setdefault(key, []).append(int(item["index"]))
+
+    duplicate_indices: set[int] = set()
+    for indices in key_to_indices.values():
+        if len(indices) > 1:
+            duplicate_indices.update(indices)
+
+    results: list[dict[str, Any]] = []
+    for item in draft_results:
+        if int(item["index"]) in duplicate_indices:
+            normalized = item["normalized"]
+            details: dict[str, Any] = {}
+            if isinstance(normalized, dict):
+                details = {
+                    "tag_code": normalized.get("tag_code"),
+                    "channel_slug": normalized.get("channel_slug"),
+                }
+            item["errors"].append(
+                {
+                    "code": "CTA_DUPLICATE_NATURAL_KEY",
+                    "message": "duplicate binding item for natural key (tag_id, channel_slug)",
+                    "details": details,
+                }
+            )
+            item["action"] = "INVALID"
+            item["summary"] = "duplicate natural key in payload"
+
+        counts[item["action"]] += 1
+        results.append(item)
 
     return {
         "can_confirm": counts["INVALID"] == 0,
