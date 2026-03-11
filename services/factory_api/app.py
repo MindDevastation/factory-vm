@@ -2314,6 +2314,11 @@ def ui_tags_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("tags.html", {"request": request})
 
 
+@app.get("/ui/track-catalog/custom-tags/dashboard", response_class=HTMLResponse)
+def ui_tags_channel_dashboard_root_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("tags_channel_dashboard.html", {"request": request, "channel_slug": ""})
+
+
 @app.get("/ui/track-catalog/custom-tags/dashboard/{channel_slug}", response_class=HTMLResponse)
 def ui_tags_channel_dashboard_page(channel_slug: str, request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("tags_channel_dashboard.html", {"request": request, "channel_slug": channel_slug})
