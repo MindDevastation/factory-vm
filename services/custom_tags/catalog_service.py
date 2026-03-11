@@ -122,6 +122,133 @@ def list_catalog(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [_tag_row_to_dict(row) for row in rows]
 
 
+def _format_rule_value(value_json: str) -> str:
+    try:
+        parsed = json.loads(value_json)
+    except json.JSONDecodeError:
+        return value_json
+    if isinstance(parsed, str):
+        return parsed
+    if isinstance(parsed, bool):
+        return "true" if parsed else "false"
+    if parsed is None:
+        return "null"
+    return str(parsed)
+
+
+def _format_rule_condition(row: dict[str, Any]) -> str:
+    field = str(row["source_path"]).split(".")[-1]
+    value = _format_rule_value(str(row["value_json"]))
+    operator = str(row["operator"])
+    if operator == "equals":
+        return f"{field}={value}"
+    if operator == "not_equals":
+        return f"{field}!={value}"
+    op_map = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
+    if operator in op_map:
+        return f"{field}{op_map[operator]}{value}"
+    return f"{field} {operator} {value}"
+
+
+def build_rules_summary(rules: list[dict[str, Any]]) -> str:
+    count = len(rules)
+    if count == 0:
+        return "No rules"
+    conditions = [_format_rule_condition(rule) for rule in rules[:3]]
+    suffix = "" if count <= 3 else "; …"
+    return f"{count} active rules: {'; '.join(conditions)}{suffix}"
+
+
+def list_custom_tags_enriched(
+    conn: sqlite3.Connection,
+    *,
+    category: str | None = None,
+    tag_id: int | None = None,
+    q: str | None = None,
+    include_bindings: bool = True,
+    include_rules_summary: bool = True,
+    include_usage: bool = False,
+) -> list[dict[str, Any]]:
+    if category is not None and category not in VALID_CATEGORIES:
+        raise InvalidInputError("category must be one of VISUAL, MOOD, THEME", {"field": "category"})
+
+    where: list[str] = []
+    params: list[Any] = []
+    if category is not None:
+        where.append("category = ?")
+        params.append(category)
+    if tag_id is not None:
+        where.append("id = ?")
+        params.append(tag_id)
+    if q:
+        needle = f"%{q.strip().lower()}%"
+        where.append("(LOWER(code) LIKE ? OR LOWER(label) LIKE ?)")
+        params.extend([needle, needle])
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    tags = conn.execute(
+        f"""
+        SELECT id, code, label, category, description, is_active
+        FROM custom_tags
+        {where_sql}
+        ORDER BY category ASC, code ASC, id ASC
+        """,
+        tuple(params),
+    ).fetchall()
+
+    tag_ids = [int(row["id"]) for row in tags]
+    bindings_by_tag: dict[int, list[dict[str, Any]]] = {}
+    rules_by_tag: dict[int, list[dict[str, Any]]] = {}
+
+    if include_bindings and tag_ids:
+        placeholders = ",".join("?" for _ in tag_ids)
+        rows = conn.execute(
+            f"""
+            SELECT id, tag_id, channel_slug
+            FROM custom_tag_channel_bindings
+            WHERE tag_id IN ({placeholders})
+            ORDER BY id ASC
+            """,
+            tuple(tag_ids),
+        ).fetchall()
+        for row in rows:
+            row_tag_id = int(row["tag_id"])
+            bindings_by_tag.setdefault(row_tag_id, []).append(
+                {
+                    "id": int(row["id"]),
+                    "tag_id": row_tag_id,
+                    "channel_slug": str(row["channel_slug"]),
+                }
+            )
+
+    if include_rules_summary and tag_ids:
+        placeholders = ",".join("?" for _ in tag_ids)
+        rows = conn.execute(
+            f"""
+            SELECT id, tag_id, source_path, operator, value_json, priority
+            FROM custom_tag_rules
+            WHERE tag_id IN ({placeholders}) AND is_active = 1
+            ORDER BY tag_id ASC, priority DESC, id ASC
+            """,
+            tuple(tag_ids),
+        ).fetchall()
+        for row in rows:
+            row_tag_id = int(row["tag_id"])
+            rules_by_tag.setdefault(row_tag_id, []).append(dict(row))
+
+    payload: list[dict[str, Any]] = []
+    for row in tags:
+        item = _tag_row_to_dict(dict(row))
+        item["bindings"] = bindings_by_tag.get(item["id"], []) if item["category"] == "VISUAL" and include_bindings else []
+        active_rules = rules_by_tag.get(item["id"], []) if include_rules_summary else []
+        item["rules_count"] = len(active_rules)
+        item["rules_summary"] = build_rules_summary(active_rules) if include_rules_summary else "No rules"
+        if include_usage:
+            item["usage"] = None
+        payload.append(item)
+    return payload
+
+
 def create_tag(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, Any]:
     code = _normalize_nonempty(payload.get("code"), "code")
     label = _normalize_nonempty(payload.get("label"), "label")

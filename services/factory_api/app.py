@@ -1006,6 +1006,7 @@ def _cta_error_response(err: catalog_service.CatalogError | rules_service.RulesE
 
 
 _CTA_CATALOG_ENDPOINTS = {
+    ("GET", "/v1/track-catalog/custom-tags"),
     ("GET", "/v1/track-catalog/custom-tags/catalog"),
     ("POST", "/v1/track-catalog/custom-tags/catalog"),
     ("PATCH", "/v1/track-catalog/custom-tags/catalog/{tag_id}"),
@@ -1050,6 +1051,50 @@ async def _handle_request_validation_error(request: Request, exc: RequestValidat
         )
     return await request_validation_exception_handler(request, exc)
 
+
+
+
+@app.get("/v1/track-catalog/custom-tags")
+def api_custom_tags_listing(
+    category: str | None = None,
+    tag_id: str | None = None,
+    q: str | None = None,
+    include_bindings: bool = True,
+    include_rules_summary: bool = True,
+    include_usage: bool = False,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    category_norm = category.strip().upper() if isinstance(category, str) and category.strip() else None
+    if tag_id is not None:
+        if not str(tag_id).isdigit():
+            return _cta_error_response(catalog_service.InvalidInputError("tag_id must be numeric", {"field": "tag_id"}))
+        tag_id_norm = int(tag_id)
+    else:
+        tag_id_norm = None
+
+    conn = dbm.connect(env)
+    try:
+        try:
+            tags = catalog_service.list_custom_tags_enriched(
+                conn,
+                category=category_norm,
+                tag_id=tag_id_norm,
+                q=q,
+                include_bindings=include_bindings,
+                include_rules_summary=include_rules_summary,
+                include_usage=include_usage,
+            )
+        except catalog_service.CatalogError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags enriched list failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return {"tags": tags}
 
 @app.get("/v1/track-catalog/custom-tags/catalog")
 def api_custom_tags_catalog(_: bool = Depends(require_basic_auth(env))):
