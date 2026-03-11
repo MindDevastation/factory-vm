@@ -2,6 +2,14 @@
 {% block body %}
 <p><a href="/">← назад</a></p>
 <h1>Job #{{ job.id }}</h1>
+<details style="margin:8px 0 12px 0;">
+  <summary><strong>Quick help</strong></summary>
+  <ul style="margin:8px 0 0 18px; padding:0;">
+    <li>Use this page to monitor stage/progress and inspect logs for recent failures.</li>
+    <li>Cancel is available only while the job is not in a terminal state.</li>
+    <li>Open the edit page for payload adjustments; keep this page for runtime troubleshooting.</li>
+  </ul>
+</details>
 
 <div class="grid">
   <div>

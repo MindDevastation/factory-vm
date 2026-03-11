@@ -384,6 +384,35 @@ def list_channel_bindings(conn: sqlite3.Connection, tag_id: int) -> list[dict[st
     return [_binding_row_to_dict(row) for row in rows]
 
 
+def list_bindings_by_channel(conn: sqlite3.Connection, channel_slug: str) -> list[dict[str, Any]]:
+    normalized_slug = _normalize_nonempty(channel_slug, "channel_slug")
+    exists = conn.execute("SELECT 1 FROM channels WHERE slug = ?", (normalized_slug,)).fetchone()
+    if exists is None:
+        raise InvalidInputError("channel_slug not found", {"field": "channel_slug", "channel_slug": normalized_slug})
+    rows = conn.execute(
+        """
+        SELECT b.id, b.tag_id, b.channel_slug, t.code, t.label, t.category, t.is_active
+        FROM custom_tag_channel_bindings b
+        JOIN custom_tags t ON t.id = b.tag_id
+        WHERE b.channel_slug = ?
+        ORDER BY t.code ASC, b.id ASC
+        """,
+        (normalized_slug,),
+    ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "tag_id": int(row["tag_id"]),
+            "channel_slug": str(row["channel_slug"]),
+            "tag_code": str(row["code"]),
+            "tag_label": str(row["label"]),
+            "tag_category": str(row["category"]),
+            "tag_is_active": bool(row["is_active"]),
+        }
+        for row in rows
+    ]
+
+
 def create_channel_binding(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, Any]:
     tag_id = payload.get("tag_id")
     if not isinstance(tag_id, int) or isinstance(tag_id, bool):
