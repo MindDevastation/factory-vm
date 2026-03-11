@@ -460,7 +460,9 @@ def replace_all_rules_for_modal(conn: sqlite3.Connection, tag_id: int, rules: li
     _require_tag_ctu(conn, tag_id)
     normalized_rules: list[dict[str, Any]] = []
     try:
-        for item in rules:
+        for idx, item in enumerate(rules):
+            if not isinstance(item, dict):
+                raise CtuInvalidPayloadError("each rule must be an object", {"field": "rules", "index": idx})
             normalized_rules.append(_normalize_rule_payload(item, tag_id=tag_id))
     except InvalidInputError as exc:
         raise CtuInvalidPayloadError(exc.message, exc.details) from exc

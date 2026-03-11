@@ -124,6 +124,19 @@ class TestCustomTagsEditModalBackend(unittest.TestCase):
             self.assertEqual(len(listed_after_invalid.json()["rules"]), 1)
             self.assertEqual(int(listed_after_invalid.json()["rules"][0]["id"]), rule_id)
 
+            malformed_item_replace = client.put(
+                f"/v1/track-catalog/custom-tags/{tag_id}/rules/replace-all",
+                headers=h,
+                json={"rules": ["bad"]},
+            )
+            self.assertEqual(malformed_item_replace.status_code, 400)
+            self.assertEqual(malformed_item_replace.json()["error"]["code"], "CTU_INVALID_PAYLOAD")
+
+            listed_after_malformed = client.get(f"/v1/track-catalog/custom-tags/{tag_id}/rules", headers=h)
+            self.assertEqual(listed_after_malformed.status_code, 200)
+            self.assertEqual(len(listed_after_malformed.json()["rules"]), 1)
+            self.assertEqual(int(listed_after_malformed.json()["rules"][0]["id"]), rule_id)
+
             valid_replace = client.put(
                 f"/v1/track-catalog/custom-tags/{tag_id}/rules/replace-all",
                 headers=h,
