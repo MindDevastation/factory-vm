@@ -115,6 +115,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertNotIn("fetch('/v1/track-catalog/custom-tags/catalog')", r.text)
             self.assertNotIn('payload.code || editorCode.value', r.text)
             self.assertNotIn('payload.label || editorLabel.value', r.text)
+            self.assertIn("window.location.href = '/ui/track-catalog/custom-tags/dashboard/'", r.text)
 
             r = client.get("/ui/track-catalog/custom-tags/dashboard/darkwood-reverie", headers=h)
             self.assertEqual(r.status_code, 200)
@@ -123,6 +124,11 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="tags-dash-visual-table"', r.text)
             self.assertIn('id="tags-dash-rules-table"', r.text)
             self.assertIn('id="tags-dash-usage-table"', r.text)
+
+            r = client.get("/ui/track-catalog/custom-tags/dashboard", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("Custom Tags · Channel Dashboard", r.text)
+            self.assertIn('id="tags-dash-channel"', r.text)
 
             r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
             self.assertEqual(r.status_code, 200)
