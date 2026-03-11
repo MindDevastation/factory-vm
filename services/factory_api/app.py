@@ -45,7 +45,7 @@ from services.track_analysis_report.report_service import (
 from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes, sanitize_sheet_name
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
-from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service
+from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -644,6 +644,50 @@ class CustomTagAssignmentUpsertRequest(BaseModel):
     category: str | None = None
 
 
+
+
+class CustomTagCloneRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str
+    label: str
+    description: str | None = None
+    include_rules: bool = True
+    include_bindings: bool = True
+    is_active: bool = True
+
+
+class CustomTagRulesCloneRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_tag_id: int
+    replace_all: bool = False
+
+
+class CustomTagBulkSetActiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ids: list[int]
+    is_active: bool
+
+
+class CustomTagBulkBindingsSetEnabledItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_id: int
+    channel_slug: str
+    is_enabled: bool
+
+
+class CustomTagBulkBindingsSetEnabledRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[CustomTagBulkBindingsSetEnabledItem]
+
+
+class CustomTagTaxonomyImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: str
+    exported_at: str | None = None
+    tags: list[dict[str, Any]]
+    bindings: list[dict[str, Any]]
+    rules: list[dict[str, Any]]
+
 class CustomTagRulePreviewScopeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     channel_slug: str | None = None
@@ -1058,7 +1102,8 @@ def _cta_error_response(
     | assignment_service.AssignmentError
     | bulk_bindings_service.BulkBindingsError
     | bulk_rules_service.BulkRulesError
-    | reassign_service.ReassignError,
+    | reassign_service.ReassignError
+    | taxonomy_service.TaxonomyError,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=err.status_code,
@@ -1108,6 +1153,15 @@ _CTA_CATALOG_ENDPOINTS = {
     ("POST", "/v1/track-catalog/custom-tags/rules/preview-matches"),
     ("POST", "/v1/track-catalog/custom-tags/reassign/preview"),
     ("POST", "/v1/track-catalog/custom-tags/reassign/execute"),
+    ("POST", "/v1/track-catalog/custom-tags/{tag_id}/clone"),
+    ("POST", "/v1/track-catalog/custom-tags/{tag_id}/rules/clone"),
+    ("POST", "/v1/track-catalog/custom-tags/tags/bulk-set-active"),
+    ("POST", "/v1/track-catalog/custom-tags/rules/bulk-set-active"),
+    ("POST", "/v1/track-catalog/custom-tags/bindings/bulk-set-enabled"),
+    ("GET", "/v1/track-catalog/custom-tags/taxonomy/export"),
+    ("POST", "/v1/track-catalog/custom-tags/taxonomy/import/preview"),
+    ("POST", "/v1/track-catalog/custom-tags/taxonomy/import/confirm"),
+    ("GET", "/v1/track-catalog/custom-tags/dashboard/{channel_slug}"),
 }
 
 
@@ -1449,6 +1503,130 @@ def api_custom_tags_reassign_execute(payload: CustomTagReassignScopeRequest, _: 
                 status_code=500,
                 content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
             )
+    finally:
+        conn.close()
+    return result
+
+
+
+@app.post("/v1/track-catalog/custom-tags/{tag_id}/clone")
+def api_custom_tag_clone(tag_id: int, payload: CustomTagCloneRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = taxonomy_service.clone_tag(conn, source_tag_id=tag_id, **payload.model_dump())
+        except taxonomy_service.TaxonomyError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags clone failed", extra={"tag_id": tag_id})
+            return JSONResponse(status_code=500, content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}})
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/{tag_id}/rules/clone")
+def api_custom_tag_rules_clone(tag_id: int, payload: CustomTagRulesCloneRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = taxonomy_service.clone_rules(conn, source_tag_id=payload.source_tag_id, target_tag_id=tag_id, replace_all=payload.replace_all)
+        except taxonomy_service.TaxonomyError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags rules clone failed", extra={"tag_id": tag_id})
+            return JSONResponse(status_code=500, content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}})
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/tags/bulk-set-active")
+def api_custom_tags_bulk_set_active(payload: CustomTagBulkSetActiveRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = taxonomy_service.bulk_set_tags_active(conn, tag_ids=payload.ids, is_active=payload.is_active)
+        except taxonomy_service.TaxonomyError as err:
+            return _cta_error_response(err)
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/rules/bulk-set-active")
+def api_custom_tag_rules_bulk_set_active(payload: CustomTagBulkSetActiveRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = taxonomy_service.bulk_set_rules_active(conn, rule_ids=payload.ids, is_active=payload.is_active)
+        except taxonomy_service.TaxonomyError as err:
+            return _cta_error_response(err)
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/bindings/bulk-set-enabled")
+def api_custom_tag_bindings_bulk_set_enabled(payload: CustomTagBulkBindingsSetEnabledRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = taxonomy_service.bulk_set_bindings_enabled(conn, items=[item.model_dump() for item in payload.items])
+        except taxonomy_service.TaxonomyError as err:
+            return _cta_error_response(err)
+    finally:
+        conn.close()
+    return result
+
+
+@app.get("/v1/track-catalog/custom-tags/taxonomy/export")
+def api_custom_tags_taxonomy_export(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = taxonomy_service.export_taxonomy(conn)
+        except taxonomy_service.TaxonomyError as err:
+            return _cta_error_response(err)
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/taxonomy/import/preview")
+def api_custom_tags_taxonomy_import_preview(payload: CustomTagTaxonomyImportRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = taxonomy_service.import_taxonomy_preview(conn, payload=payload.model_dump())
+        except taxonomy_service.TaxonomyError as err:
+            return _cta_error_response(err)
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/taxonomy/import/confirm")
+def api_custom_tags_taxonomy_import_confirm(payload: CustomTagTaxonomyImportRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = taxonomy_service.import_taxonomy_confirm(conn, payload=payload.model_dump())
+        except taxonomy_service.TaxonomyError as err:
+            return _cta_error_response(err)
+    finally:
+        conn.close()
+    return result
+
+
+@app.get("/v1/track-catalog/custom-tags/dashboard/{channel_slug}")
+def api_custom_tags_dashboard(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = taxonomy_service.channel_dashboard(conn, channel_slug=channel_slug)
+        except taxonomy_service.TaxonomyError as err:
+            return _cta_error_response(err)
     finally:
         conn.close()
     return result
