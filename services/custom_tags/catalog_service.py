@@ -236,6 +236,45 @@ def list_custom_tags_enriched(
             row_tag_id = int(row["tag_id"])
             rules_by_tag.setdefault(row_tag_id, []).append(dict(row))
 
+    usage_by_tag: dict[int, dict[str, int]] = {}
+    if include_usage and tag_ids:
+        placeholders = ",".join("?" for _ in tag_ids)
+        binding_rows = conn.execute(
+            f"""
+            SELECT tag_id, COUNT(DISTINCT channel_slug) AS channels_count
+            FROM custom_tag_channel_bindings
+            WHERE tag_id IN ({placeholders})
+            GROUP BY tag_id
+            """,
+            tuple(tag_ids),
+        ).fetchall()
+        for row in binding_rows:
+            usage_by_tag.setdefault(int(row["tag_id"]), {})["channels_count"] = int(row["channels_count"])
+
+        rule_rows = conn.execute(
+            f"""
+            SELECT tag_id, COUNT(*) AS rules_count
+            FROM custom_tag_rules
+            WHERE tag_id IN ({placeholders}) AND is_active = 1
+            GROUP BY tag_id
+            """,
+            tuple(tag_ids),
+        ).fetchall()
+        for row in rule_rows:
+            usage_by_tag.setdefault(int(row["tag_id"]), {})["rules_count"] = int(row["rules_count"])
+
+        track_rows = conn.execute(
+            f"""
+            SELECT tag_id, COUNT(DISTINCT track_pk) AS tracks_count
+            FROM track_custom_tag_assignments
+            WHERE tag_id IN ({placeholders}) AND state IN ('AUTO', 'MANUAL')
+            GROUP BY tag_id
+            """,
+            tuple(tag_ids),
+        ).fetchall()
+        for row in track_rows:
+            usage_by_tag.setdefault(int(row["tag_id"]), {})["tracks_count"] = int(row["tracks_count"])
+
     payload: list[dict[str, Any]] = []
     for row in tags:
         item = _tag_row_to_dict(dict(row))
@@ -244,7 +283,11 @@ def list_custom_tags_enriched(
         item["rules_count"] = len(active_rules)
         item["rules_summary"] = build_rules_summary(active_rules) if include_rules_summary else "No rules"
         if include_usage:
-            item["usage"] = None
+            item["usage"] = {
+                "channels_count": int(usage_by_tag.get(item["id"], {}).get("channels_count", 0)),
+                "rules_count": int(usage_by_tag.get(item["id"], {}).get("rules_count", 0)),
+                "tracks_count": int(usage_by_tag.get(item["id"], {}).get("tracks_count", 0)),
+            }
         payload.append(item)
     return payload
 
