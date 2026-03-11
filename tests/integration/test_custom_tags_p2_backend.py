@@ -128,45 +128,38 @@ class TestCustomTagsP2Backend(unittest.TestCase):
             self.assertIn("bindings", body)
             self.assertIn("rules", body)
 
-            # use natural keys for import payload
-            import_payload = {
-                "schema_version": body["schema_version"],
-                "tags": body["tags"],
-                "bindings": [
-                    {"tag_category": "VISUAL", "tag_code": "neon_clone", "channel_slug": "ctux-ch"},
-                ],
-                "rules": [
-                    {
-                        "tag_category": "VISUAL",
-                        "tag_code": "neon_clone",
-                        "source_path": "track_scores.payload_json.energy",
-                        "operator": "gte",
-                        "value_json": "0.8",
-                        "match_mode": "ALL",
-                        "priority": 80,
-                        "weight": None,
-                        "required": False,
-                        "stop_after_match": False,
-                        "is_active": True,
-                    }
-                ],
-            }
-
-            preview = client.post("/v1/track-catalog/custom-tags/taxonomy/import/preview", headers=h, json=import_payload)
+            preview = client.post("/v1/track-catalog/custom-tags/taxonomy/import/preview", headers=h, json=body)
             self.assertEqual(preview.status_code, 200)
             self.assertTrue(preview.json()["can_confirm"])
 
-            confirm = client.post("/v1/track-catalog/custom-tags/taxonomy/import/confirm", headers=h, json=import_payload)
+            confirm = client.post("/v1/track-catalog/custom-tags/taxonomy/import/confirm", headers=h, json=body)
             self.assertEqual(confirm.status_code, 200)
             self.assertTrue(confirm.json()["can_confirm"])
 
+            client.post("/v1/channels", headers=h, json={"slug": "ctux-ch-b", "display_name": "CTUX Channel B"})
+            client.post(
+                "/v1/track-catalog/custom-tags/channel-bindings",
+                headers=h,
+                json={"tag_id": clone_id, "channel_slug": "ctux-ch-b"},
+            )
+
             self._seed_track(env, channel_slug="ctux-ch", track_id="t-a", tag_id=clone_id)
+            self._seed_track(env, channel_slug="ctux-ch-b", track_id="t-b", tag_id=clone_id)
             dash = client.get("/v1/track-catalog/custom-tags/dashboard/ctux-ch", headers=h)
             self.assertEqual(dash.status_code, 200)
             payload = dash.json()
             self.assertEqual(payload["channel_slug"], "ctux-ch")
             self.assertTrue(any(item["code"] == "neon_clone" for item in payload["visual_tags"]))
-            self.assertTrue(any(item["tracks_count"] >= 1 for item in payload["tag_usage"]))
+            clone_visual = next(item for item in payload["visual_tags"] if item["code"] == "neon_clone")
+            self.assertEqual(clone_visual["tracks_count"], 1)
+            clone_usage = next(item for item in payload["tag_usage"] if item["tag_code"] == "neon_clone")
+            self.assertEqual(clone_usage["tracks_count"], 1)
+
+            dash_b = client.get("/v1/track-catalog/custom-tags/dashboard/ctux-ch-b", headers=h)
+            self.assertEqual(dash_b.status_code, 200)
+            payload_b = dash_b.json()
+            clone_visual_b = next(item for item in payload_b["visual_tags"] if item["code"] == "neon_clone")
+            self.assertEqual(clone_visual_b["tracks_count"], 1)
 
 
 if __name__ == "__main__":

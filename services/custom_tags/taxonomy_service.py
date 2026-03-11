@@ -266,6 +266,43 @@ def import_taxonomy_preview(conn: sqlite3.Connection, *, payload: dict[str, Any]
     bindings = payload["bindings"]
     rules = payload["rules"]
 
+    tag_key_by_id: dict[int, tuple[str, str]] = {}
+    for tag in tags:
+        tag_id = tag.get("id")
+        if isinstance(tag_id, int) and not isinstance(tag_id, bool):
+            tag_key_by_id[tag_id] = (str(tag["category"]), str(tag["code"]))
+
+    normalized_bindings: list[dict[str, Any]] = []
+    for binding in bindings:
+        if "tag_category" in binding and "tag_code" in binding:
+            normalized_bindings.append(binding)
+            continue
+        tag_id = binding.get("tag_id")
+        key = tag_key_by_id.get(tag_id) if isinstance(tag_id, int) and not isinstance(tag_id, bool) else None
+        if key is None:
+            raise InvalidInputError("binding must include tag_category+tag_code or a known tag_id", {"binding": binding})
+        normalized_bindings.append(
+            {
+                "tag_category": key[0],
+                "tag_code": key[1],
+                "channel_slug": binding.get("channel_slug"),
+            }
+        )
+
+    normalized_rules: list[dict[str, Any]] = []
+    for rule in rules:
+        if "tag_category" in rule and "tag_code" in rule:
+            normalized_rules.append(rule)
+            continue
+        tag_id = rule.get("tag_id")
+        key = tag_key_by_id.get(tag_id) if isinstance(tag_id, int) and not isinstance(tag_id, bool) else None
+        if key is None:
+            raise InvalidInputError("rule must include tag_category+tag_code or a known tag_id", {"rule": rule})
+        normalized_rule = dict(rule)
+        normalized_rule["tag_category"] = key[0]
+        normalized_rule["tag_code"] = key[1]
+        normalized_rules.append(normalized_rule)
+
     existing_tags = {
         (str(row["category"]), str(row["code"])): row
         for row in conn.execute("SELECT id, category, code, label, description, is_active FROM custom_tags").fetchall()
@@ -295,8 +332,8 @@ def import_taxonomy_preview(conn: sqlite3.Connection, *, payload: dict[str, Any]
             "tag_inserts": inserts,
             "tag_updates": updates,
             "tag_unchanged": unchanged,
-            "bindings_replace_count": len(bindings),
-            "rules_replace_count": len(rules),
+            "bindings_replace_count": len(normalized_bindings),
+            "rules_replace_count": len(normalized_rules),
         },
     }
 
@@ -307,6 +344,43 @@ def import_taxonomy_confirm(conn: sqlite3.Connection, *, payload: dict[str, Any]
     bindings = payload["bindings"]
     rules = payload["rules"]
     now_text = _now_text()
+
+    tag_key_by_id: dict[int, tuple[str, str]] = {}
+    for tag in tags:
+        tag_id = tag.get("id")
+        if isinstance(tag_id, int) and not isinstance(tag_id, bool):
+            tag_key_by_id[tag_id] = (str(tag["category"]), str(tag["code"]))
+
+    normalized_bindings: list[dict[str, Any]] = []
+    for binding in bindings:
+        if "tag_category" in binding and "tag_code" in binding:
+            normalized_bindings.append(binding)
+            continue
+        tag_id = binding.get("tag_id")
+        key = tag_key_by_id.get(tag_id) if isinstance(tag_id, int) and not isinstance(tag_id, bool) else None
+        if key is None:
+            raise InvalidInputError("binding must include tag_category+tag_code or a known tag_id", {"binding": binding})
+        normalized_bindings.append(
+            {
+                "tag_category": key[0],
+                "tag_code": key[1],
+                "channel_slug": binding.get("channel_slug"),
+            }
+        )
+
+    normalized_rules: list[dict[str, Any]] = []
+    for rule in rules:
+        if "tag_category" in rule and "tag_code" in rule:
+            normalized_rules.append(rule)
+            continue
+        tag_id = rule.get("tag_id")
+        key = tag_key_by_id.get(tag_id) if isinstance(tag_id, int) and not isinstance(tag_id, bool) else None
+        if key is None:
+            raise InvalidInputError("rule must include tag_category+tag_code or a known tag_id", {"rule": rule})
+        normalized_rule = dict(rule)
+        normalized_rule["tag_category"] = key[0]
+        normalized_rule["tag_code"] = key[1]
+        normalized_rules.append(normalized_rule)
 
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -335,7 +409,7 @@ def import_taxonomy_confirm(conn: sqlite3.Connection, *, payload: dict[str, Any]
             conn.execute(f"DELETE FROM custom_tag_channel_bindings WHERE tag_id IN ({placeholders})", included_tag_ids)
             conn.execute(f"DELETE FROM custom_tag_rules WHERE tag_id IN ({placeholders})", included_tag_ids)
 
-        for binding in bindings:
+        for binding in normalized_bindings:
             category = str(binding["tag_category"])
             code = str(binding["tag_code"])
             tag_id = tag_id_by_key.get((category, code))
@@ -346,7 +420,7 @@ def import_taxonomy_confirm(conn: sqlite3.Connection, *, payload: dict[str, Any]
                 (tag_id, str(binding["channel_slug"]), now_text),
             )
 
-        for rule in rules:
+        for rule in normalized_rules:
             category = str(rule["tag_category"])
             code = str(rule["tag_code"])
             tag_id = tag_id_by_key.get((category, code))
@@ -406,12 +480,14 @@ def channel_dashboard(conn: sqlite3.Connection, *, channel_slug: str) -> dict[st
 
     counts_rows = conn.execute(
         """
-        SELECT t.id AS tag_id, t.code, t.category, COUNT(DISTINCT a.track_pk) AS tracks_count
+        SELECT t.id AS tag_id, t.code, t.category, COUNT(DISTINCT tr.id) AS tracks_count
         FROM custom_tags t
         LEFT JOIN track_custom_tag_assignments a ON a.tag_id = t.id AND a.state IN ('AUTO','MANUAL')
+        LEFT JOIN tracks tr ON tr.id = a.track_pk AND tr.channel_slug = ?
         GROUP BY t.id, t.code, t.category
         ORDER BY t.category ASC, t.code ASC
-        """
+        """,
+        (channel_slug,),
     ).fetchall()
     counts_by_tag_id = {int(row["tag_id"]): int(row["tracks_count"]) for row in counts_rows}
 

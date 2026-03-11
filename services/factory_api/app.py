@@ -683,6 +683,7 @@ class CustomTagBulkBindingsSetEnabledRequest(BaseModel):
 class CustomTagTaxonomyImportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: str
+    exported_at: str | None = None
     tags: list[dict[str, Any]]
     bindings: list[dict[str, Any]]
     rules: list[dict[str, Any]]
