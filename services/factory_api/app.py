@@ -45,7 +45,7 @@ from services.track_analysis_report.report_service import (
 from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes, sanitize_sheet_name
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
-from services.custom_tags import assignment_service, bulk_bindings_service, catalog_service, rules_service
+from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, rules_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -579,6 +579,25 @@ class CustomTagBulkBindingsRequest(BaseModel):
     items: list[CustomTagBulkBindingsItemRequest]
 
 
+class CustomTagBulkRulesItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag_code: str
+    source_path: str
+    operator: str
+    value_json: str
+    priority: int = 100
+    weight: float | None = None
+    required: bool = False
+    stop_after_match: bool = False
+    is_active: bool = True
+    match_mode: str = "ALL"
+
+
+class CustomTagBulkRulesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[CustomTagBulkRulesItemRequest]
+
+
 class CustomTagRuleCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tag_id: int
@@ -1015,7 +1034,13 @@ def api_track_catalog_track_detail(track_pk: int, _: bool = Depends(require_basi
 
 
 
-def _cta_error_response(err: catalog_service.CatalogError | rules_service.RulesError | assignment_service.AssignmentError | bulk_bindings_service.BulkBindingsError) -> JSONResponse:
+def _cta_error_response(
+    err: catalog_service.CatalogError
+    | rules_service.RulesError
+    | assignment_service.AssignmentError
+    | bulk_bindings_service.BulkBindingsError
+    | bulk_rules_service.BulkRulesError,
+) -> JSONResponse:
     return JSONResponse(
         status_code=err.status_code,
         content={"error": {"code": err.code, "message": err.message, "details": err.details or {}}},
@@ -1040,6 +1065,8 @@ _CTA_CATALOG_ENDPOINTS = {
     ("POST", "/v1/track-catalog/custom-tags/bulk/confirm"),
     ("POST", "/v1/track-catalog/custom-tags/bulk-bindings/preview"),
     ("POST", "/v1/track-catalog/custom-tags/bulk-bindings/confirm"),
+    ("POST", "/v1/track-catalog/custom-tags/bulk-rules/preview"),
+    ("POST", "/v1/track-catalog/custom-tags/bulk-rules/confirm"),
     ("POST", "/v1/track-catalog/custom-tags/export-seed"),
     ("POST", "/v1/track-catalog/custom-tags/import-seed"),
     ("GET", "/v1/track-catalog/custom-tags/rules"),
@@ -1286,6 +1313,44 @@ def api_custom_tags_bulk_bindings_confirm(payload: CustomTagBulkBindingsRequest,
             return _cta_error_response(err)
         except Exception:
             logger.exception("custom-tags bulk bindings confirm failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/bulk-rules/preview")
+def api_custom_tags_bulk_rules_preview(payload: CustomTagBulkRulesRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = bulk_rules_service.preview_bulk_rules(conn, items=[item.model_dump() for item in payload.items])
+        except bulk_rules_service.BulkRulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags bulk rules preview failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
+            )
+    finally:
+        conn.close()
+    return result
+
+
+@app.post("/v1/track-catalog/custom-tags/bulk-rules/confirm")
+def api_custom_tags_bulk_rules_confirm(payload: CustomTagBulkRulesRequest, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = bulk_rules_service.confirm_bulk_rules(conn, items=[item.model_dump() for item in payload.items])
+        except bulk_rules_service.BulkRulesError as err:
+            return _cta_error_response(err)
+        except Exception:
+            logger.exception("custom-tags bulk rules confirm failed")
             return JSONResponse(
                 status_code=500,
                 content={"error": {"code": "CTA_INTERNAL", "message": "internal error", "details": {}}},
