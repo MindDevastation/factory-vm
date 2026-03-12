@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timedelta
 
 from services.common import db as dbm
-from services.playlist_builder.composition import _attempt_swaps, compose_safe, compose_smart, list_safe_candidates
+from services.playlist_builder.composition import CuratedOptimizationLimitExceeded, _attempt_swaps, compose_curated, compose_safe, compose_smart, list_safe_candidates
 from services.playlist_builder.constraints import relaxed_brief_variants
 from services.playlist_builder.history import (
     batch_distribution_overlap,
@@ -16,7 +16,7 @@ from services.playlist_builder.history import (
     track_set_overlap,
 )
 from services.playlist_builder.models import PlaylistBrief, TrackCandidate
-from services.playlist_builder.sequencing import sequence_safe, sequence_smart
+from services.playlist_builder.sequencing import CuratedSequencingLimitExceeded, sequence_curated, sequence_safe, sequence_smart
 from tests._helpers import temp_env, seed_minimal_db
 
 
@@ -183,6 +183,49 @@ class PlaylistBuilderP0SafeTest(unittest.TestCase):
         self.assertEqual(len(ordered), len(selected))
         self.assertIn("bounded local reorder refinement", rationale)
         self.assertIn("accepted local reorder swap", rationale)
+
+    def test_curated_composition_runs_seeded_deeper_refinement(self) -> None:
+        for spec in (
+            (1, 260.0, "2024-01", "smooth", 0.20),
+            (2, 260.0, "2024-01", "smooth", 0.25),
+            (3, 260.0, "2024-01", "smooth", 0.30),
+            (4, 160.0, "2024-02", "rough", 0.82),
+            (5, 180.0, "2024-02", "grain", 0.78),
+            (6, 170.0, "2024-03", "airy", 0.72),
+            (7, 190.0, "2024-03", "dense", 0.68),
+        ):
+            self._insert_track(pk=spec[0], track_id=f"t{spec[0]}", duration=spec[1], batch=spec[2], texture=spec[3], dsp=spec[4], tags="ambient,calm")
+
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="curated", min_duration_min=10, max_duration_min=10, preferred_month_batch="2024-02")
+        candidates = list_safe_candidates(self.conn, brief)
+        curated_selected, _, _, curated_summary = compose_curated(brief, candidates, history=[])
+        self.assertGreaterEqual(len(curated_selected), 3)
+        self.assertIn("best-of-", curated_summary)
+        self.assertIn("accepted replacements", curated_summary)
+
+    def test_curated_sequencing_uses_beam_like_search_summary(self) -> None:
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="curated", min_duration_min=8, max_duration_min=10)
+        selected = [
+            TrackCandidate(1, "t1", "darkwood-reverie", 180.0, "2024-01", frozenset({"a"}), False, False, "smooth", 0.10),
+            TrackCandidate(2, "t2", "darkwood-reverie", 180.0, "2024-02", frozenset({"b"}), False, False, "smooth", 0.95),
+            TrackCandidate(3, "t3", "darkwood-reverie", 180.0, "2024-03", frozenset({"c"}), False, False, "rough", 0.20),
+            TrackCandidate(4, "t4", "darkwood-reverie", 180.0, "2024-04", frozenset({"d"}), False, False, "rough", 0.82),
+        ]
+        ordered, rationale = sequence_curated(brief, selected, history=[])
+        self.assertEqual(len(ordered), len(selected))
+        self.assertIn("beam-like bounded local search", rationale)
+
+    def test_curated_guardrails_raise_explicit_failure(self) -> None:
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="curated", min_duration_min=8, max_duration_min=10)
+        selected = [
+            TrackCandidate(1, "t1", "darkwood-reverie", 180.0, "2024-01", frozenset(), False, False, "smooth", 0.10),
+            TrackCandidate(2, "t2", "darkwood-reverie", 180.0, "2024-02", frozenset(), False, False, "smooth", 0.95),
+            TrackCandidate(3, "t3", "darkwood-reverie", 180.0, "2024-03", frozenset(), False, False, "rough", 0.20),
+        ]
+        with self.assertRaises(CuratedOptimizationLimitExceeded):
+            compose_curated(brief, selected, history=[], max_iterations=0)
+        with self.assertRaises(CuratedSequencingLimitExceeded):
+            sequence_curated(brief, selected, history=[], max_iterations=0)
 
 
 if __name__ == "__main__":

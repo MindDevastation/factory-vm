@@ -141,6 +141,58 @@ class TestPlaylistBuilderPreviewApplyApi(unittest.TestCase):
             self.assertEqual(summary["generation_mode"], "smart")
             self.assertTrue(any("top-" in w for w in summary.get("warnings", [])))
 
+    def test_preview_curated_mode_contract_and_apply_flow(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            self._seed_tracks()
+            job_id = self._create_ui_draft(channel_slug="darkwood-reverie", title="plb-curated")
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            preview = client.post(
+                f"/v1/playlist-builder/jobs/{job_id}/preview",
+                headers=headers,
+                json={"override": {"generation_mode": "curated", "min_duration_min": 10, "max_duration_min": 15}},
+            )
+            self.assertEqual(preview.status_code, 200)
+            body = preview.json()
+            self.assertEqual(body["summary"]["generation_mode"], "curated")
+            self.assertGreater(len(body.get("tracks", [])), 0)
+            self.assertTrue(any("best-of-" in w for w in body["summary"].get("warnings", [])))
+
+            apply_resp = client.post(
+                f"/v1/playlist-builder/jobs/{job_id}/apply",
+                headers=headers,
+                json={"preview_id": body["preview_id"]},
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+            self.assertTrue(apply_resp.json()["playlist_applied"])
+
+    def test_preview_curated_guardrail_returns_explicit_failure(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            self._seed_tracks()
+            job_id = self._create_ui_draft(channel_slug="darkwood-reverie", title="plb-curated-limit")
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            from services.playlist_builder.composition import CuratedOptimizationLimitExceeded
+
+            with patch(
+                "services.playlist_builder.core.compose_curated",
+                side_effect=CuratedOptimizationLimitExceeded("Curated composition exceeded guardrail: max_iterations=360"),
+            ):
+                preview = client.post(
+                    f"/v1/playlist-builder/jobs/{job_id}/preview",
+                    headers=headers,
+                    json={"override": {"generation_mode": "curated", "min_duration_min": 10, "max_duration_min": 15}},
+                )
+
+            self.assertEqual(preview.status_code, 422)
+            payload = preview.json()
+            self.assertEqual(payload["error"]["code"], "PLB_CURATED_LIMIT_EXCEEDED")
+            self.assertIn("guardrail", payload["error"]["message"].lower())
+
     def test_preview_expired_cannot_apply(self) -> None:
         with temp_env() as (_, self.env):
             seed_minimal_db(self.env)

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from services.common import db as dbm
-from services.playlist_builder.core import PlaylistBuilder, resolve_effective_brief_for_job
+from services.playlist_builder.core import CuratedModeLimitExceeded, PlaylistBuilder, resolve_effective_brief_for_job
 from services.playlist_builder.history import batch_distribution_overlap, list_effective_history, novelty_against_previous
 from services.playlist_builder.models import PlaylistBrief, PlaylistPreviewResult
 
@@ -97,7 +97,10 @@ def create_preview(conn: object, *, job_id: int, override: dict[str, Any] | None
     except Exception as exc:
         raise PlaylistBuilderApiError("PLB_INVALID_BRIEF", str(exc)) from exc
 
-    result = PlaylistBuilder().generate_preview(conn, brief)
+    try:
+        result = PlaylistBuilder().generate_preview(conn, brief)
+    except CuratedModeLimitExceeded as exc:
+        raise PlaylistBuilderApiError("PLB_CURATED_LIMIT_EXCEEDED", str(exc)) from exc
     if result.status == "empty":
         warnings_joined = " ".join(result.warnings).lower()
         if "no eligible analyzed candidates" in warnings_joined:

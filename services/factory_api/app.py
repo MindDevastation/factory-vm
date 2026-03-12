@@ -323,6 +323,7 @@ def api_playlist_builder_preview_post(
             "PLB_JOB_NOT_FOUND": 404,
             "PLB_NO_CANDIDATES": 422,
             "PLB_NO_VALID_PLAYLIST": 422,
+            "PLB_CURATED_LIMIT_EXCEEDED": 422,
         }.get(exc.code, 409)
         return _plb_error(status, exc.code, exc.message)
     finally:
