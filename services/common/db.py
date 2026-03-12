@@ -12,6 +12,29 @@ from typing import Any, Dict, List, Optional, Tuple
 from services.common.env import Env
 
 
+# Canonical UI/render jobs state domain used by Jobs page filtering.
+# Keep this list ordered for stable API/UI presentation.
+UI_JOB_STATES: tuple[str, ...] = (
+    "DRAFT",
+    "WAITING_INPUTS",
+    "FETCHING_INPUTS",
+    "READY_FOR_RENDER",
+    "RENDERING",
+    "RENDER_FAILED",
+    "FAILED",
+    "QA_RUNNING",
+    "QA_FAILED",
+    "UPLOADING",
+    "UPLOAD_FAILED",
+    "WAIT_APPROVAL",
+    "APPROVED",
+    "REJECTED",
+    "PUBLISHED",
+    "CANCELLED",
+    "CLEANED",
+)
+
+
 def _dict_factory(cursor: sqlite3.Cursor, row: Tuple[Any, ...]) -> Dict[str, Any]:
     return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
 
@@ -760,6 +783,24 @@ def list_jobs(conn: sqlite3.Connection, state: Optional[str] = None, limit: int 
             (limit,),
         )
     return cur.fetchall()
+
+
+def list_jobs_state_domain(conn: sqlite3.Connection) -> list[str]:
+    """Return ordered Jobs-page status domain.
+
+    Starts from canonical project states and appends unknown states currently
+    present in DB for backward compatibility with existing rows.
+    """
+
+    ordered: list[str] = list(UI_JOB_STATES)
+    known = set(ordered)
+    rows = conn.execute("SELECT DISTINCT state FROM jobs ORDER BY state ASC").fetchall()
+    for row in rows:
+        state = str(row.get("state") or "").strip()
+        if state and state not in known:
+            ordered.append(state)
+            known.add(state)
+    return ordered
 
 
 def get_job(conn: sqlite3.Connection, job_id: int) -> Optional[Dict[str, Any]]:

@@ -2512,10 +2512,11 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
 
 @app.get("/v1/ui/jobs/statuses")
 def api_ui_jobs_statuses(_: bool = Depends(require_basic_auth(env))):
-    ordered_statuses: list[str] = []
-    for status in track_jobs_db.RUNNING_STATUSES + track_jobs_db.TERMINAL_STATUSES:
-        if status not in ordered_statuses:
-            ordered_statuses.append(status)
+    conn = dbm.connect(env)
+    try:
+        ordered_statuses = dbm.list_jobs_state_domain(conn)
+    finally:
+        conn.close()
     return {"statuses": ordered_statuses}
 
 
