@@ -249,10 +249,82 @@ def migrate(conn: sqlite3.Connection) -> None:
             background_name TEXT NOT NULL,
             background_ext TEXT NOT NULL,
             audio_ids_text TEXT NOT NULL,
+            playlist_builder_override_json TEXT,
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL,
             FOREIGN KEY(job_id) REFERENCES jobs(id),
             FOREIGN KEY(channel_id) REFERENCES channels(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS playlist_builder_channel_settings (
+            channel_slug TEXT PRIMARY KEY,
+            default_generation_mode TEXT NOT NULL,
+            min_duration_min INTEGER NOT NULL,
+            max_duration_min INTEGER NOT NULL,
+            tolerance_min INTEGER NOT NULL,
+            preferred_month_batch TEXT,
+            preferred_batch_ratio INTEGER NOT NULL DEFAULT 70,
+            allow_cross_channel INTEGER NOT NULL DEFAULT 0,
+            novelty_target_min REAL NOT NULL DEFAULT 0.50,
+            novelty_target_max REAL NOT NULL DEFAULT 0.80,
+            position_memory_window INTEGER NOT NULL DEFAULT 20,
+            strictness_mode TEXT NOT NULL DEFAULT 'balanced',
+            vocal_policy TEXT NOT NULL,
+            reuse_policy TEXT NOT NULL DEFAULT 'avoid_recent',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS playlist_history (
+            id INTEGER PRIMARY KEY,
+            channel_slug TEXT NOT NULL,
+            job_id INTEGER,
+            history_stage TEXT NOT NULL,
+            source_preview_id TEXT,
+            generation_mode TEXT NOT NULL,
+            strictness_mode TEXT NOT NULL,
+            playlist_duration_sec REAL NOT NULL,
+            tracks_count INTEGER NOT NULL,
+            set_fingerprint TEXT NOT NULL,
+            ordered_fingerprint TEXT NOT NULL,
+            prefix_fingerprint_n3 TEXT NOT NULL,
+            prefix_fingerprint_n5 TEXT NOT NULL,
+            novelty_against_prev REAL,
+            batch_overlap_score REAL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_playlist_history_channel_stage_created
+            ON playlist_history(channel_slug, history_stage, created_at);
+
+        CREATE TABLE IF NOT EXISTS playlist_history_items (
+            id INTEGER PRIMARY KEY,
+            history_id INTEGER NOT NULL,
+            position_index INTEGER NOT NULL,
+            track_pk INTEGER NOT NULL,
+            month_batch TEXT,
+            duration_sec REAL,
+            channel_slug TEXT NOT NULL,
+            FOREIGN KEY(history_id) REFERENCES playlist_history(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_playlist_history_items_track_pos
+            ON playlist_history_items(track_pk, position_index);
+
+        CREATE INDEX IF NOT EXISTS idx_playlist_history_items_history_pos
+            ON playlist_history_items(history_id, position_index);
+
+        CREATE TABLE IF NOT EXISTS playlist_build_previews (
+            id TEXT PRIMARY KEY,
+            job_id INTEGER,
+            channel_slug TEXT NOT NULL,
+            effective_brief_json TEXT NOT NULL,
+            preview_result_json TEXT NOT NULL,
+            created_by TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            status TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS canon_channels (
@@ -290,6 +362,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             title TEXT,
             artist TEXT,
             duration_sec REAL,
+            month_batch TEXT,
             discovered_at REAL NOT NULL,
             analyzed_at REAL
         );
@@ -469,6 +542,8 @@ def migrate(conn: sqlite3.Connection) -> None:
     # Backward-compatible additive migrations for older DBs (SQLite doesn't support IF NOT EXISTS for ADD COLUMN).
     _ensure_jobs_columns(conn)
     _ensure_channels_columns(conn)
+    _ensure_ui_job_drafts_columns(conn)
+    _ensure_tracks_columns(conn)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -645,6 +720,20 @@ def _ensure_channels_columns(conn: sqlite3.Connection) -> None:
             WHERE youtube_channel_id IS NOT NULL;
             """
         )
+
+
+def _ensure_ui_job_drafts_columns(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "ui_job_drafts")
+    if "playlist_builder_override_json" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE ui_job_drafts ADD COLUMN playlist_builder_override_json TEXT;")
+
+
+def _ensure_tracks_columns(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "tracks")
+    if "month_batch" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE tracks ADD COLUMN month_batch TEXT;")
 
 
 def now_ts() -> float:
