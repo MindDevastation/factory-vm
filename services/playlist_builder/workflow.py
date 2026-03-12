@@ -9,7 +9,7 @@ from typing import Any
 
 from services.common import db as dbm
 from services.playlist_builder.core import PlaylistBuilder, resolve_effective_brief_for_job
-from services.playlist_builder.history import batch_distribution_overlap, novelty_against_previous
+from services.playlist_builder.history import batch_distribution_overlap, list_effective_history, novelty_against_previous
 from services.playlist_builder.models import PlaylistBrief, PlaylistPreviewResult
 
 PREVIEW_TTL_HOURS = 72
@@ -257,6 +257,121 @@ def _insert_draft_history(conn: object, *, preview_id: str, brief: PlaylistBrief
                 str(track.get("channel_slug") or brief.channel_slug),
             ),
         )
+    return history_id
+
+
+def write_committed_history_for_published(conn: object, *, job_id: int) -> int | None:
+    draft = dbm.get_ui_job_draft(conn, job_id)
+    if draft is None:
+        return None
+
+    existing = conn.execute(
+        "SELECT id FROM playlist_history WHERE job_id = ? AND history_stage = 'COMMITTED' ORDER BY id DESC LIMIT 1",
+        (job_id,),
+    ).fetchone()
+    if existing:
+        return int(existing["id"])
+
+    draft_history = conn.execute(
+        """
+        SELECT *
+        FROM playlist_history
+        WHERE job_id = ? AND history_stage = 'DRAFT' AND is_active = 1
+        ORDER BY datetime(created_at) DESC, id DESC
+        LIMIT 1
+        """,
+        (job_id,),
+    ).fetchone()
+    if draft_history is None:
+        raise PlaylistBuilderApiError("PLB_COMMITTED_HISTORY_MISSING_DRAFT", f"No active draft playlist history found for job_id={job_id}")
+
+    draft_items = conn.execute(
+        """
+        SELECT position_index, track_pk, month_batch, duration_sec, channel_slug
+        FROM playlist_history_items
+        WHERE history_id = ?
+        ORDER BY position_index ASC
+        """,
+        (int(draft_history["id"]),),
+    ).fetchall()
+    if not draft_items:
+        raise PlaylistBuilderApiError("PLB_COMMITTED_HISTORY_MISSING_ITEMS", f"No draft playlist history items found for job_id={job_id}")
+
+    draft_audio_ids = [int(x) for x in str(draft.get("audio_ids_text") or "").replace(",", " ").split() if x.strip()]
+    if not draft_audio_ids:
+        raise PlaylistBuilderApiError(
+            "PLB_COMMITTED_HISTORY_PLAYLIST_MISMATCH",
+            f"Draft playlist is empty or invalid for job_id={job_id}",
+        )
+
+    current_tracks = _fetch_tracks(conn, draft_audio_ids)
+    if len(current_tracks) != len(draft_audio_ids):
+        raise PlaylistBuilderApiError(
+            "PLB_COMMITTED_HISTORY_PLAYLIST_MISMATCH",
+            f"Draft playlist has missing track metadata for job_id={job_id}",
+        )
+
+    current_ordered = [int(t["track_pk"]) for t in current_tracks]
+    draft_history_ordered = [int(item["track_pk"]) for item in draft_items]
+    if current_ordered != draft_history_ordered:
+        raise PlaylistBuilderApiError(
+            "PLB_COMMITTED_HISTORY_PLAYLIST_MISMATCH",
+            f"Draft playlist no longer matches active draft history for job_id={job_id}",
+        )
+
+    effective = list_effective_history(conn, channel_slug=str(draft_history["channel_slug"]), window=200)
+    prev = next((entry for entry in effective if int(entry.job_id or -1) != int(job_id)), None)
+
+    current_batches = [t.get("month_batch") for t in current_tracks]
+    novelty = novelty_against_previous(current_ordered, prev.tracks) if prev else None
+    batch_overlap = batch_distribution_overlap(current_batches, prev.month_batches) if prev else None
+    playlist_duration_sec = sum(float(t.get("duration_sec") or 0.0) for t in current_tracks)
+
+    cur = conn.execute(
+        """
+        INSERT INTO playlist_history(
+            channel_slug, job_id, history_stage, source_preview_id, generation_mode,
+            strictness_mode, playlist_duration_sec, tracks_count, set_fingerprint,
+            ordered_fingerprint, prefix_fingerprint_n3, prefix_fingerprint_n5,
+            novelty_against_prev, batch_overlap_score, is_active, created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
+        """,
+        (
+            draft_history["channel_slug"],
+            int(draft_history["job_id"]),
+            "COMMITTED",
+            draft_history["source_preview_id"],
+            draft_history["generation_mode"],
+            draft_history["strictness_mode"],
+            float(playlist_duration_sec),
+            len(current_ordered),
+            _fingerprint(sorted(current_ordered)),
+            _fingerprint(current_ordered),
+            _fingerprint(current_ordered[:3]),
+            _fingerprint(current_ordered[:5]),
+            novelty,
+            batch_overlap,
+            _iso(_now_utc()),
+        ),
+    )
+    history_id = int(cur.lastrowid)
+
+    for pos, track in enumerate(current_tracks):
+        conn.execute(
+            """
+            INSERT INTO playlist_history_items(history_id, position_index, track_pk, month_batch, duration_sec, channel_slug)
+            VALUES(?,?,?,?,?,?)
+            """,
+            (
+                history_id,
+                pos,
+                int(track["track_pk"]),
+                track.get("month_batch"),
+                float(track.get("duration_sec") or 0.0),
+                track.get("channel_slug") or draft_history["channel_slug"],
+            ),
+        )
+
     return history_id
 
 

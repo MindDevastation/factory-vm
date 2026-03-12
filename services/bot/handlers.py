@@ -15,9 +15,12 @@ from aiogram.types import FSInputFile, ForceReply
 from services.common.env import Env
 from services.common import db as dbm
 from services.common.paths import preview_path, qa_path, logs_path, outbox_dir
+from services.common.logging_setup import get_logger
+from services.playlist_builder.workflow import write_committed_history_for_published
 
 
 router = Router()
+log = get_logger("bot")
 
 
 def _kb(job_id: int) -> InlineKeyboardBuilder:
@@ -149,7 +152,16 @@ async def cb_published(call: CallbackQuery):
     try:
         ts = dbm.now_ts()
         delete_at = ts + 48 * 3600
-        dbm.update_job_state(conn, job_id, state="PUBLISHED", stage="APPROVAL", published_at=ts, delete_mp4_at=delete_at)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            dbm.update_job_state(conn, job_id, state="PUBLISHED", stage="APPROVAL", published_at=ts, delete_mp4_at=delete_at)
+            history_id = write_committed_history_for_published(conn, job_id=job_id)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        if history_id is not None:
+            log.info("playlist_builder.history.committed_written", extra={"job_id": job_id, "history_id": history_id})
     finally:
         conn.close()
     await call.message.answer(f"✅ Mark Published: job {job_id}. MP4 удалится через 48 часов.")
