@@ -203,6 +203,91 @@ def compose_safe(brief: PlaylistBrief, candidates: list[TrackCandidate], history
     return best_selected, best_scores, relaxations
 
 
+def _selection_diversity(selected: list[TrackCandidate]) -> float:
+    if len(selected) <= 1:
+        return 0.5
+    textures = {c.dominant_texture for c in selected if c.dominant_texture}
+    batches = {c.month_batch for c in selected if c.month_batch}
+    tags = {tag for c in selected for tag in c.tags}
+    texture_ratio = len(textures) / max(len(selected), 1)
+    batch_ratio = len(batches) / max(len(selected), 1)
+    tag_ratio = len(tags) / max(len(selected) * 2, 1)
+    return min(1.0, 0.45 * texture_ratio + 0.30 * batch_ratio + 0.25 * tag_ratio)
+
+
+def _selection_objective(brief: PlaylistBrief, selected: list[TrackCandidate], history: list[PlaylistHistoryEntry]) -> float:
+    if not selected:
+        return -1.0
+    target_sec = brief.target_duration_min * 60.0
+    duration_sec = sum(c.duration_sec for c in selected)
+    duration_fit = max(0.0, 1.0 - (abs(duration_sec - target_sec) / max(target_sec, 1.0)))
+    novelty = achieved_novelty(selected, history)
+    batch_fit = achieved_batch_ratio(selected, brief.preferred_month_batch)
+    diversity = _selection_diversity(selected)
+    context_fit = sum(1.0 if c.channel_slug == brief.channel_slug else 0.6 for c in selected) / len(selected)
+    return (0.33 * duration_fit) + (0.23 * novelty) + (0.16 * batch_fit) + (0.16 * diversity) + (0.12 * context_fit)
+
+
+def compose_smart(
+    brief: PlaylistBrief,
+    candidates: list[TrackCandidate],
+    history: list[PlaylistHistoryEntry],
+) -> tuple[list[TrackCandidate], list[CandidateScore], list[str], str]:
+    initial_selected, initial_scores, relaxations = compose_safe(brief, candidates, history)
+    if not initial_selected:
+        return initial_selected, initial_scores, relaxations, "Smart mode did not run refinement because Safe composition yielded no seed set."
+
+    scored = score_candidates(brief, candidates, history)
+    score_map = {s.track_pk: s for s in scored}
+    ranked_pool = sorted(
+        candidates,
+        key=lambda c: (
+            score_map[c.track_pk].base_fit,
+            score_map[c.track_pk].novelty_contribution,
+            score_map[c.track_pk].context_fit,
+            -c.track_pk,
+        ),
+        reverse=True,
+    )
+    top_k = min(len(ranked_pool), max(len(initial_selected) * 4, 12))
+    pool = ranked_pool[:top_k]
+    pool_by_pk = {c.track_pk: c for c in pool}
+    current = [pool_by_pk.get(c.track_pk, c) for c in initial_selected]
+    current_ids = {c.track_pk for c in current}
+
+    min_sec, _, max_sec = duration_band_sec(brief)
+    passes = 0
+    improvements = 0
+    improved = True
+    while improved and passes < 3:
+        improved = False
+        passes += 1
+        current_obj = _selection_objective(brief, current, history)
+        for idx, out in enumerate(list(current)):
+            for cand in pool:
+                if cand.track_pk in current_ids:
+                    continue
+                proposal = list(current)
+                proposal[idx] = cand
+                proposal_duration = sum(c.duration_sec for c in proposal)
+                if proposal_duration > max_sec + 1e-6:
+                    continue
+                if proposal_duration < min_sec and sum(c.duration_sec for c in current) >= min_sec:
+                    continue
+                proposal_obj = _selection_objective(brief, proposal, history)
+                if proposal_obj > current_obj + 1e-6:
+                    current = proposal
+                    current_ids.remove(out.track_pk)
+                    current_ids.add(cand.track_pk)
+                    current_obj = proposal_obj
+                    improvements += 1
+                    improved = True
+
+    final_scores = [score_map.get(c.track_pk) for c in current if score_map.get(c.track_pk)]
+    summary = f"Smart composition used top-{top_k} pool with {passes} pass(es) and {improvements} accepted swap refinement(s)."
+    return current, final_scores, relaxations, summary
+
+
 def _attempt_swaps(selected: list[TrackCandidate], ranked: list[TrackCandidate], target_sec: float) -> list[TrackCandidate]:
     current = list(selected)
     curr_err = abs(sum(c.duration_sec for c in current) - target_sec)
