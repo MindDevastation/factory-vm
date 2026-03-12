@@ -9,7 +9,7 @@ from typing import Any
 
 from services.common import db as dbm
 from services.playlist_builder.core import PlaylistBuilder, resolve_effective_brief_for_job
-from services.playlist_builder.history import batch_distribution_overlap, novelty_against_previous
+from services.playlist_builder.history import batch_distribution_overlap, list_effective_history, novelty_against_previous
 from services.playlist_builder.models import PlaylistBrief, PlaylistPreviewResult
 
 PREVIEW_TTL_HOURS = 72
@@ -297,6 +297,36 @@ def write_committed_history_for_published(conn: object, *, job_id: int) -> int |
     if not draft_items:
         raise PlaylistBuilderApiError("PLB_COMMITTED_HISTORY_MISSING_ITEMS", f"No draft playlist history items found for job_id={job_id}")
 
+    draft_audio_ids = [int(x) for x in str(draft.get("audio_ids_text") or "").replace(",", " ").split() if x.strip()]
+    if not draft_audio_ids:
+        raise PlaylistBuilderApiError(
+            "PLB_COMMITTED_HISTORY_PLAYLIST_MISMATCH",
+            f"Draft playlist is empty or invalid for job_id={job_id}",
+        )
+
+    current_tracks = _fetch_tracks(conn, draft_audio_ids)
+    if len(current_tracks) != len(draft_audio_ids):
+        raise PlaylistBuilderApiError(
+            "PLB_COMMITTED_HISTORY_PLAYLIST_MISMATCH",
+            f"Draft playlist has missing track metadata for job_id={job_id}",
+        )
+
+    current_ordered = [int(t["track_pk"]) for t in current_tracks]
+    draft_history_ordered = [int(item["track_pk"]) for item in draft_items]
+    if current_ordered != draft_history_ordered:
+        raise PlaylistBuilderApiError(
+            "PLB_COMMITTED_HISTORY_PLAYLIST_MISMATCH",
+            f"Draft playlist no longer matches active draft history for job_id={job_id}",
+        )
+
+    effective = list_effective_history(conn, channel_slug=str(draft_history["channel_slug"]), window=200)
+    prev = next((entry for entry in effective if int(entry.job_id or -1) != int(job_id)), None)
+
+    current_batches = [t.get("month_batch") for t in current_tracks]
+    novelty = novelty_against_previous(current_ordered, prev.tracks) if prev else None
+    batch_overlap = batch_distribution_overlap(current_batches, prev.month_batches) if prev else None
+    playlist_duration_sec = sum(float(t.get("duration_sec") or 0.0) for t in current_tracks)
+
     cur = conn.execute(
         """
         INSERT INTO playlist_history(
@@ -313,20 +343,20 @@ def write_committed_history_for_published(conn: object, *, job_id: int) -> int |
             draft_history["source_preview_id"],
             draft_history["generation_mode"],
             draft_history["strictness_mode"],
-            float(draft_history["playlist_duration_sec"]),
-            int(draft_history["tracks_count"]),
-            draft_history["set_fingerprint"],
-            draft_history["ordered_fingerprint"],
-            draft_history["prefix_fingerprint_n3"],
-            draft_history["prefix_fingerprint_n5"],
-            draft_history["novelty_against_prev"],
-            draft_history["batch_overlap_score"],
+            float(playlist_duration_sec),
+            len(current_ordered),
+            _fingerprint(sorted(current_ordered)),
+            _fingerprint(current_ordered),
+            _fingerprint(current_ordered[:3]),
+            _fingerprint(current_ordered[:5]),
+            novelty,
+            batch_overlap,
             _iso(_now_utc()),
         ),
     )
     history_id = int(cur.lastrowid)
 
-    for item in draft_items:
+    for pos, track in enumerate(current_tracks):
         conn.execute(
             """
             INSERT INTO playlist_history_items(history_id, position_index, track_pk, month_batch, duration_sec, channel_slug)
@@ -334,11 +364,11 @@ def write_committed_history_for_published(conn: object, *, job_id: int) -> int |
             """,
             (
                 history_id,
-                int(item["position_index"]),
-                int(item["track_pk"]),
-                item["month_batch"],
-                float(item["duration_sec"] or 0.0),
-                item["channel_slug"],
+                pos,
+                int(track["track_pk"]),
+                track.get("month_batch"),
+                float(track.get("duration_sec") or 0.0),
+                track.get("channel_slug") or draft_history["channel_slug"],
             ),
         )
 

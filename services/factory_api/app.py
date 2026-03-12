@@ -2760,6 +2760,7 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
         status = {
             "PLB_COMMITTED_HISTORY_MISSING_DRAFT": 409,
             "PLB_COMMITTED_HISTORY_MISSING_ITEMS": 409,
+            "PLB_COMMITTED_HISTORY_PLAYLIST_MISMATCH": 409,
         }.get(exc.code, 409)
         return _plb_error(status, exc.code, exc.message)
     finally:
