@@ -921,6 +921,97 @@ def get_ui_job_draft(conn: sqlite3.Connection, job_id: int) -> Optional[Dict[str
     return cur.fetchone()
 
 
+def get_playlist_builder_channel_settings(conn: sqlite3.Connection, channel_slug: str) -> Optional[Dict[str, Any]]:
+    cur = conn.execute(
+        """
+        SELECT *
+        FROM playlist_builder_channel_settings
+        WHERE channel_slug = ?
+        """,
+        (channel_slug,),
+    )
+    return cur.fetchone()
+
+
+def upsert_playlist_builder_channel_settings(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    default_generation_mode: str,
+    min_duration_min: int,
+    max_duration_min: int,
+    tolerance_min: int,
+    preferred_month_batch: Optional[str],
+    preferred_batch_ratio: int,
+    allow_cross_channel: bool,
+    novelty_target_min: float,
+    novelty_target_max: float,
+    position_memory_window: int,
+    strictness_mode: str,
+    vocal_policy: str,
+) -> None:
+    ts = now_ts()
+    conn.execute(
+        """
+        INSERT INTO playlist_builder_channel_settings(
+            channel_slug, default_generation_mode, min_duration_min, max_duration_min,
+            tolerance_min, preferred_month_batch, preferred_batch_ratio, allow_cross_channel,
+            novelty_target_min, novelty_target_max, position_memory_window,
+            strictness_mode, vocal_policy, reuse_policy, created_at, updated_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'avoid_recent', ?, ?)
+        ON CONFLICT(channel_slug) DO UPDATE SET
+            default_generation_mode = excluded.default_generation_mode,
+            min_duration_min = excluded.min_duration_min,
+            max_duration_min = excluded.max_duration_min,
+            tolerance_min = excluded.tolerance_min,
+            preferred_month_batch = excluded.preferred_month_batch,
+            preferred_batch_ratio = excluded.preferred_batch_ratio,
+            allow_cross_channel = excluded.allow_cross_channel,
+            novelty_target_min = excluded.novelty_target_min,
+            novelty_target_max = excluded.novelty_target_max,
+            position_memory_window = excluded.position_memory_window,
+            strictness_mode = excluded.strictness_mode,
+            vocal_policy = excluded.vocal_policy,
+            updated_at = excluded.updated_at
+        """,
+        (
+            channel_slug,
+            default_generation_mode,
+            min_duration_min,
+            max_duration_min,
+            tolerance_min,
+            preferred_month_batch,
+            preferred_batch_ratio,
+            int(allow_cross_channel),
+            novelty_target_min,
+            novelty_target_max,
+            position_memory_window,
+            strictness_mode,
+            vocal_policy,
+            ts,
+            ts,
+        ),
+    )
+
+
+def update_ui_job_playlist_builder_override_json(
+    conn: sqlite3.Connection,
+    *,
+    job_id: int,
+    playlist_builder_override_json: Optional[str],
+) -> bool:
+    ts = now_ts()
+    cur = conn.execute(
+        """
+        UPDATE ui_job_drafts
+        SET playlist_builder_override_json = ?, updated_at = ?
+        WHERE job_id = ?
+        """,
+        (playlist_builder_override_json, ts, job_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
 def _next_job_id(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM jobs").fetchone()
     assert row is not None
