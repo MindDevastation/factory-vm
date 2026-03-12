@@ -89,8 +89,13 @@ class TestPlaylistBuilderCommittedHistoryPublish(unittest.TestCase):
             self._preview_apply(client, headers, job_id)
             self._set_wait_approval(job_id)
 
-            published = client.post(f"/v1/jobs/{job_id}/mark_published", headers=headers, json={})
+            with self.assertLogs("services.factory_api.app", level="INFO") as captured:
+                published = client.post(f"/v1/jobs/{job_id}/mark_published", headers=headers, json={})
             self.assertEqual(published.status_code, 200)
+            self.assertTrue(
+                any("playlist_builder.history.committed_written" in line for line in captured.output),
+                "expected committed history observability log on successful publish",
+            )
             published_again = client.post(f"/v1/jobs/{job_id}/mark_published", headers=headers, json={})
             self.assertEqual(published_again.status_code, 409)
 
