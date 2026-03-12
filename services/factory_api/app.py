@@ -31,6 +31,21 @@ from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
+from services.playlist_builder.api_adapter import (
+    PlaylistBuilderValidationError,
+    build_channel_settings_payload,
+    channel_settings_row_to_patch,
+    parse_override_json,
+    resolve_playlist_brief,
+)
+from services.playlist_builder.models import PlaylistBriefOverrides, PlaylistChannelSettingsPatch
+from services.playlist_builder.workflow import (
+    PlaylistBuilderApiError,
+    apply_preview,
+    build_preview_response,
+    create_preview,
+    write_committed_history_for_published,
+)
 from services.ui_jobs import (
     UiJobRetryNotFoundError,
     UiJobRetryStatusError,
@@ -119,6 +134,234 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
     finally:
         conn.close()
     return rows
+
+
+def _plb_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+@app.get("/v1/playlist-builder/channels/{channel_slug}/settings")
+def api_playlist_builder_channel_settings_get(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        row = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
+    finally:
+        conn.close()
+    if not row:
+        return _plb_error(404, "PLB_CHANNEL_SETTINGS_NOT_FOUND", "Playlist builder channel settings not found")
+    return build_channel_settings_payload(channel_slug=channel_slug, row=row)
+
+
+@app.put("/v1/playlist-builder/channels/{channel_slug}/settings")
+def api_playlist_builder_channel_settings_put(
+    channel_slug: str,
+    payload: PlaylistChannelSettingsPatch,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_slug(conn, channel_slug)
+        if not channel:
+            return _plb_error(404, "PLB_CHANNEL_SETTINGS_NOT_FOUND", "Playlist builder channel settings not found")
+        existing = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
+        merged_patch = {
+            **channel_settings_row_to_patch(existing),
+            **payload.as_patch_dict(),
+        }
+        brief = resolve_playlist_brief(
+            channel_slug=channel_slug,
+            job_id=None,
+            channel_settings=merged_patch,
+            job_override=None,
+            request_override=None,
+        )
+        dbm.upsert_playlist_builder_channel_settings(
+            conn,
+            channel_slug=channel_slug,
+            default_generation_mode=brief.generation_mode,
+            min_duration_min=brief.min_duration_min,
+            max_duration_min=brief.max_duration_min,
+            tolerance_min=brief.tolerance_min,
+            preferred_month_batch=brief.preferred_month_batch,
+            preferred_batch_ratio=brief.preferred_batch_ratio,
+            allow_cross_channel=brief.allow_cross_channel,
+            novelty_target_min=brief.novelty_target_min,
+            novelty_target_max=brief.novelty_target_max,
+            position_memory_window=brief.position_memory_window,
+            strictness_mode=brief.strictness_mode,
+            vocal_policy=brief.vocal_policy,
+        )
+        conn.commit()
+        saved = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
+    except PlaylistBuilderValidationError as exc:
+        return _plb_error(422, "PLB_INVALID_BRIEF", str(exc))
+    finally:
+        conn.close()
+    assert saved is not None
+    return build_channel_settings_payload(channel_slug=channel_slug, row=saved)
+
+
+@app.get("/v1/playlist-builder/jobs/{job_id}/brief")
+def api_playlist_builder_job_brief_get(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        draft = dbm.get_ui_job_draft(conn, job_id)
+        if not job or not draft:
+            return _plb_error(404, "PLB_JOB_NOT_FOUND", "UI job not found")
+
+        channel_slug = str(job.get("channel_slug") or "")
+        settings_row = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
+        settings_patch = channel_settings_row_to_patch(settings_row)
+        job_override = parse_override_json(draft.get("playlist_builder_override_json"))
+        brief = resolve_playlist_brief(
+            channel_slug=channel_slug,
+            job_id=job_id,
+            channel_settings=settings_patch,
+            job_override=job_override,
+            request_override=None,
+        )
+    except PlaylistBuilderValidationError as exc:
+        return _plb_error(422, "PLB_INVALID_BRIEF", str(exc))
+    finally:
+        conn.close()
+
+    return {"brief": brief.to_api_dict()}
+
+
+@app.patch("/v1/ui/jobs/{job_id}/playlist-builder/override")
+def api_playlist_builder_job_override_patch(
+    job_id: int,
+    payload: PlaylistBriefOverrides,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        draft = dbm.get_ui_job_draft(conn, job_id)
+        if not job or not draft:
+            return _plb_error(404, "PLB_JOB_NOT_FOUND", "UI job not found")
+        channel_slug = str(job.get("channel_slug") or "")
+        settings_row = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
+        settings_patch = channel_settings_row_to_patch(settings_row)
+
+        existing_override = parse_override_json(draft.get("playlist_builder_override_json"))
+        override_patch = payload.as_patch_dict()
+        merged_override = {
+            **existing_override,
+            **override_patch,
+        }
+        resolve_playlist_brief(
+            channel_slug=channel_slug,
+            job_id=job_id,
+            channel_settings=settings_patch,
+            job_override=merged_override,
+            request_override=None,
+        )
+
+        dbm.update_ui_job_playlist_builder_override_json(
+            conn,
+            job_id=job_id,
+            playlist_builder_override_json=json.dumps(merged_override, sort_keys=True),
+        )
+        conn.commit()
+    except PlaylistBuilderValidationError as exc:
+        return _plb_error(422, "PLB_INVALID_BRIEF", str(exc))
+    finally:
+        conn.close()
+
+    return {"job_id": str(job_id), "override": merged_override}
+
+
+class PlaylistBuilderPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    override: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlaylistBuilderApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preview_id: str
+
+
+@app.post("/v1/playlist-builder/jobs/{job_id}/preview")
+def api_playlist_builder_preview_post(
+    job_id: int,
+    payload: PlaylistBuilderPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        logger.info("playlist_builder.preview.started", extra={"job_id": job_id})
+        envelope = create_preview(conn, job_id=job_id, override=payload.override, created_by=env.basic_user)
+        response = build_preview_response(envelope)
+        conn.commit()
+        logger.info(
+            "playlist_builder.preview.completed",
+            extra={
+                "job_id": job_id,
+                "channel_slug": envelope.brief.channel_slug,
+                "generation_mode": envelope.brief.generation_mode,
+                "strictness_mode": envelope.brief.strictness_mode,
+                "candidate_pool_size": None,
+                "selected_tracks_count": len(envelope.tracks),
+                "achieved_duration": envelope.preview_result.achieved_duration_sec,
+                "achieved_novelty": envelope.preview_result.achieved_novelty,
+                "achieved_batch_ratio": envelope.preview_result.achieved_batch_ratio,
+                "relaxations": envelope.preview_result.relaxations,
+                "warnings": envelope.preview_result.warnings,
+            },
+        )
+        for relaxation in envelope.preview_result.relaxations:
+            logger.info("playlist_builder.relaxation.applied", extra={"job_id": job_id, "relaxation": relaxation})
+        return response
+    except PlaylistBuilderApiError as exc:
+        conn.rollback()
+        status = {
+            "PLB_INVALID_BRIEF": 422,
+            "PLB_JOB_NOT_FOUND": 404,
+            "PLB_NO_CANDIDATES": 422,
+            "PLB_NO_VALID_PLAYLIST": 422,
+            "PLB_CURATED_LIMIT_EXCEEDED": 422,
+        }.get(exc.code, 409)
+        return _plb_error(status, exc.code, exc.message)
+    finally:
+        conn.close()
+
+
+@app.post("/v1/playlist-builder/jobs/{job_id}/apply")
+def api_playlist_builder_apply_post(
+    job_id: int,
+    payload: PlaylistBuilderApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        applied = apply_preview(conn, job_id=job_id, preview_id=payload.preview_id)
+        logger.info("playlist_builder.apply.completed", extra={"job_id": job_id, "preview_id": payload.preview_id})
+        if applied.get("history_written"):
+            logger.info(
+                "playlist_builder.history.draft_written",
+                extra={"job_id": job_id, "preview_id": payload.preview_id, "draft_history_id": applied["draft_history_id"]},
+            )
+        return {
+            "job_id": applied["job_id"],
+            "playlist_applied": applied["playlist_applied"],
+            "draft_history_id": applied["draft_history_id"],
+        }
+    except PlaylistBuilderApiError as exc:
+        conn.rollback()
+        status = {
+            "PLB_JOB_NOT_FOUND": 404,
+            "PLB_PREVIEW_NOT_FOUND": 404,
+            "PLB_PREVIEW_EXPIRED": 409,
+            "PLB_APPLY_CONFLICT": 409,
+            "PLB_HISTORY_WRITE_FAILED": 500,
+        }.get(exc.code, 409)
+        return _plb_error(status, exc.code, exc.message)
+    finally:
+        conn.close()
 
 
 def _require_channel(channel_slug: str) -> None:
@@ -2504,7 +2747,23 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
             raise HTTPException(409, "job is not in APPROVED/WAIT_APPROVAL")
         ts = dbm.now_ts()
         delete_at = ts + 48 * 3600
-        dbm.update_job_state(conn, job_id, state="PUBLISHED", stage="APPROVAL", published_at=ts, delete_mp4_at=delete_at)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            dbm.update_job_state(conn, job_id, state="PUBLISHED", stage="APPROVAL", published_at=ts, delete_mp4_at=delete_at)
+            history_id = write_committed_history_for_published(conn, job_id=job_id)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        if history_id is not None:
+            logger.info("playlist_builder.history.committed_written", extra={"job_id": job_id, "history_id": history_id})
+    except PlaylistBuilderApiError as exc:
+        status = {
+            "PLB_COMMITTED_HISTORY_MISSING_DRAFT": 409,
+            "PLB_COMMITTED_HISTORY_MISSING_ITEMS": 409,
+            "PLB_COMMITTED_HISTORY_PLAYLIST_MISMATCH": 409,
+        }.get(exc.code, 409)
+        return _plb_error(status, exc.code, exc.message)
     finally:
         conn.close()
     return {"ok": True, "delete_mp4_at": delete_at}
@@ -2512,10 +2771,11 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
 
 @app.get("/v1/ui/jobs/statuses")
 def api_ui_jobs_statuses(_: bool = Depends(require_basic_auth(env))):
-    ordered_statuses: list[str] = []
-    for status in track_jobs_db.RUNNING_STATUSES + track_jobs_db.TERMINAL_STATUSES:
-        if status not in ordered_statuses:
-            ordered_statuses.append(status)
+    conn = dbm.connect(env)
+    try:
+        ordered_statuses = dbm.list_jobs_state_domain(conn)
+    finally:
+        conn.close()
     return {"statuses": ordered_statuses}
 
 

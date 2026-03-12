@@ -38,7 +38,11 @@
   {% if field_errors.cover %}<p style="color:#b91c1c">{{ field_errors.cover|join('; ') }}</p>{% endif %}
 
   <h3>B) Render inputs</h3>
-  <p><label>Audio IDs* (space-separated) <input name="audio_ids_text" value="{{ form.audio_ids_text|default('') }}" {% if locked %}disabled{% endif %}></label></p>
+  <p>
+    <label>Audio IDs* (space-separated) <input id="audio-ids-input" name="audio_ids_text" value="{{ form.audio_ids_text|default('') }}" {% if locked %}disabled{% endif %}></label>
+    <button id="playlist-builder-open-btn" type="button" {% if locked %}disabled{% endif %}>Generate Automatically</button>
+  </p>
+  <p id="playlist-overwrite-warning" style="color:#92400e; {% if not form.audio_ids_text %}display:none;{% endif %}"><b>Warning:</b> existing playlist will be replaced only after Apply.</p>
   {% if field_errors.audio %}<p style="color:#b91c1c">{{ field_errors.audio|join('; ') }}</p>{% endif %}
 
   <p><label>Background name* <input name="background_name" value="{{ form.background_name|default('') }}" {% if locked %}disabled{% endif %}></label>
@@ -47,4 +51,281 @@
 
   {% if not locked %}<p><button type="submit">Save DRAFT</button></p>{% endif %}
 </form>
+
+<dialog id="playlist-builder-modal" style="width:min(980px,95vw)">
+  <h3>Playlist Builder</h3>
+  <p id="playlist-builder-save-first" style="color:#92400e; display:none;"><b>Save this job first to generate/apply playlist.</b> Create flow supports settings only until the first save.</p>
+
+  <fieldset>
+    <legend>Mode</legend>
+    <label>Generation mode
+      <select id="plb-generation-mode">
+        <option value="safe">safe</option>
+        <option value="smart" selected>smart</option>
+        <option value="curated">curated</option>
+      </select>
+    </label>
+    <label>Strictness
+      <select id="plb-strictness-mode">
+        <option value="strict">strict</option>
+        <option value="balanced" selected>balanced</option>
+        <option value="flexible">flexible</option>
+      </select>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Duration</legend>
+    <label>Min (min) <input id="plb-min-duration" type="number" min="1" value="30"></label>
+    <label>Max (min) <input id="plb-max-duration" type="number" min="1" value="60"></label>
+    <label>Tolerance (min) <input id="plb-tolerance" type="number" min="0" value="5"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Source scope</legend>
+    <label><input id="plb-allow-cross-channel" type="checkbox"> Allow cross-channel</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Month/Batch</legend>
+    <label>Preferred month_batch <input id="plb-preferred-month-batch" placeholder="YYYY-MM"></label>
+    <label>Target preferred batch ratio % <input id="plb-preferred-batch-ratio" type="number" min="0" max="100" value="70"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Novelty</legend>
+    <label>Target novelty min <input id="plb-novelty-min" type="number" step="0.01" min="0" max="1" value="0.5"></label>
+    <label>Target novelty max <input id="plb-novelty-max" type="number" step="0.01" min="0" max="1" value="0.8"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Voice/tags</legend>
+    <label>Vocal policy
+      <select id="plb-vocal-policy">
+        <option value="allow_any" selected>allow_any</option>
+        <option value="prefer_instrumental">prefer_instrumental</option>
+        <option value="require_instrumental">require_instrumental</option>
+        <option value="prefer_lyrical">prefer_lyrical</option>
+        <option value="require_lyrical">require_lyrical</option>
+        <option value="exclude_speech">exclude_speech</option>
+      </select>
+    </label>
+    <label>Required tags (comma-separated) <input id="plb-required-tags"></label>
+    <label>Excluded tags (comma-separated) <input id="plb-excluded-tags"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Advanced notes</legend>
+    <label>Notes <textarea id="plb-notes"></textarea></label>
+  </fieldset>
+
+  <p>
+    <button id="plb-preview-btn" type="button">Preview</button>
+    <button id="plb-apply-btn" type="button" disabled>Apply</button>
+    <button id="plb-close-btn" type="button">Close</button>
+  </p>
+  <p id="plb-status" style="min-height:1.4em"></p>
+
+  <section id="plb-preview-summary" style="display:none; border:1px solid #ddd; padding:8px; margin:8px 0;"></section>
+  <section id="plb-preview-tracks" style="display:none; max-height:260px; overflow:auto;"></section>
+</dialog>
+
+<script>
+(function () {
+  const mode = '{{ mode }}';
+  const jobId = {{ job_id if job_id else 'null' }};
+  const modal = document.getElementById('playlist-builder-modal');
+  const openBtn = document.getElementById('playlist-builder-open-btn');
+  const closeBtn = document.getElementById('plb-close-btn');
+  const previewBtn = document.getElementById('plb-preview-btn');
+  const applyBtn = document.getElementById('plb-apply-btn');
+  const saveFirst = document.getElementById('playlist-builder-save-first');
+  const status = document.getElementById('plb-status');
+  const summary = document.getElementById('plb-preview-summary');
+  const tracks = document.getElementById('plb-preview-tracks');
+  const audioIdsInput = document.getElementById('audio-ids-input');
+
+  if (!modal || !openBtn || !closeBtn || !previewBtn || !applyBtn || !status || !summary || !tracks || !audioIdsInput) return;
+
+  let lastPreviewId = null;
+  let lastTrackPks = [];
+  let lastPreviewOverrideSnapshot = null;
+  const canRun = Number.isInteger(jobId);
+
+  const previewStateInputIds = [
+    'plb-generation-mode',
+    'plb-strictness-mode',
+    'plb-min-duration',
+    'plb-max-duration',
+    'plb-tolerance',
+    'plb-allow-cross-channel',
+    'plb-preferred-month-batch',
+    'plb-preferred-batch-ratio',
+    'plb-novelty-min',
+    'plb-novelty-max',
+    'plb-vocal-policy',
+    'plb-required-tags',
+    'plb-excluded-tags',
+    'plb-notes',
+  ];
+
+  function toNumber(id) {
+    const value = Number(document.getElementById(id).value);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function splitTags(id) {
+    return document.getElementById(id).value.split(',').map((v) => v.trim()).filter(Boolean);
+  }
+
+  function buildOverride() {
+    const preferredMonthBatch = document.getElementById('plb-preferred-month-batch').value.trim();
+    return {
+      generation_mode: document.getElementById('plb-generation-mode').value,
+      strictness_mode: document.getElementById('plb-strictness-mode').value,
+      min_duration_min: toNumber('plb-min-duration'),
+      max_duration_min: toNumber('plb-max-duration'),
+      tolerance_min: toNumber('plb-tolerance'),
+      allow_cross_channel: document.getElementById('plb-allow-cross-channel').checked,
+      preferred_month_batch: preferredMonthBatch || null,
+      preferred_batch_ratio: toNumber('plb-preferred-batch-ratio'),
+      novelty_target_min: toNumber('plb-novelty-min'),
+      novelty_target_max: toNumber('plb-novelty-max'),
+      vocal_policy: document.getElementById('plb-vocal-policy').value,
+      required_tags: splitTags('plb-required-tags'),
+      excluded_tags: splitTags('plb-excluded-tags'),
+      notes: document.getElementById('plb-notes').value.trim() || null,
+    };
+  }
+
+  function invalidatePreviewState() {
+    const hadPreview = Boolean(lastPreviewId);
+    lastPreviewId = null;
+    lastTrackPks = [];
+    lastPreviewOverrideSnapshot = null;
+    applyBtn.disabled = true;
+    summary.innerHTML = '';
+    tracks.innerHTML = '';
+    summary.style.display = 'none';
+    tracks.style.display = 'none';
+    if (hadPreview) {
+      status.textContent = 'Preview outdated; run Preview again';
+    }
+  }
+
+  function renderPreview(payload) {
+    const s = payload.summary || {};
+    const d = s.duration || {};
+    const b = s.batch_ratio || {};
+    const n = s.novelty || {};
+    summary.innerHTML = `
+      <p><b>generation mode:</b> ${s.generation_mode || ''} · <b>strictness mode:</b> ${s.strictness_mode || ''}</p>
+      <p><b>duration min/target/max/tolerance:</b> ${d.min || 0} / ${d.target || 0} / ${d.max || 0} / ${d.tolerance || 0} sec</p>
+      <p><b>achieved duration:</b> ${d.achieved || 0} sec · <b>number of tracks:</b> ${s.tracks_count || 0}</p>
+      <p><b>target batch ratio:</b> ${b.target_preferred ?? ''} · <b>achieved batch ratio:</b> ${b.achieved_preferred ?? ''}</p>
+      <p><b>target novelty:</b> ${n.target_min ?? ''} - ${n.target_max ?? ''} · <b>achieved novelty:</b> ${n.achieved ?? ''}</p>
+      <p><b>warnings:</b> ${(s.warnings || []).join('; ') || '-'}</p>
+      <p><b>relaxations:</b> ${(s.relaxations || []).join('; ') || '-'}</p>
+    `;
+    summary.style.display = 'block';
+
+    const rows = (payload.tracks || []).map((t) => `<tr>
+      <td>${t.position ?? ''}</td>
+      <td>${t.track_pk ?? ''} ${t.track_id ? `(${t.track_id})` : ''}</td>
+      <td>${t.title || '-'}</td>
+      <td>${t.month_batch || '-'}</td>
+      <td>${t.duration_sec ?? ''}</td>
+      <td>${t.channel_slug || '-'}</td>
+      <td>${(t.tags || []).join(', ') || '-'}</td>
+      <td>${t.voice_flag === null || t.voice_flag === undefined ? '-' : (t.voice_flag ? 'vocal' : 'instrumental')}</td>
+      <td>${t.fit_note || '-'}</td>
+    </tr>`).join('');
+    tracks.innerHTML = `
+      <table border="1" cellpadding="4" cellspacing="0" style="width:100%">
+        <thead>
+          <tr><th>position</th><th>track_pk / track_id</th><th>title / filename</th><th>month_batch</th><th>duration</th><th>channel_slug</th><th>key tags</th><th>voice/vocal</th><th>fit/explanation</th></tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="9">No tracks</td></tr>'}</tbody>
+      </table>
+    `;
+    tracks.style.display = 'block';
+  }
+
+  openBtn.addEventListener('click', () => {
+    status.textContent = '';
+    if (!canRun) {
+      saveFirst.style.display = 'block';
+      previewBtn.disabled = true;
+      applyBtn.disabled = true;
+    } else {
+      saveFirst.style.display = 'none';
+      previewBtn.disabled = false;
+      applyBtn.disabled = !lastPreviewId;
+    }
+    modal.showModal();
+  });
+
+  closeBtn.addEventListener('click', () => modal.close());
+
+  previewStateInputIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', invalidatePreviewState);
+    el.addEventListener('change', invalidatePreviewState);
+  });
+
+  previewBtn.addEventListener('click', async () => {
+    if (!canRun) return;
+    status.textContent = 'Previewing...';
+    applyBtn.disabled = true;
+    const override = buildOverride();
+    const resp = await fetch(`/v1/playlist-builder/jobs/${jobId}/preview`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ override }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      status.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Preview failed';
+      return;
+    }
+    lastPreviewId = payload.preview_id;
+    lastPreviewOverrideSnapshot = override;
+    lastTrackPks = (payload.tracks || []).map((t) => t.track_pk).filter((v) => Number.isInteger(v));
+    renderPreview(payload);
+    status.textContent = `Preview ready: ${lastPreviewId}`;
+    applyBtn.disabled = false;
+  });
+
+  applyBtn.addEventListener('click', async () => {
+    if (!canRun || !lastPreviewId) return;
+    status.textContent = 'Applying...';
+    const applyResp = await fetch(`/v1/playlist-builder/jobs/${jobId}/apply`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preview_id: lastPreviewId }),
+    });
+    const applyPayload = await applyResp.json();
+    if (!applyResp.ok) {
+      status.textContent = (applyPayload.error && applyPayload.error.message) ? applyPayload.error.message : 'Apply failed';
+      return;
+    }
+
+    if (lastPreviewOverrideSnapshot) {
+      await fetch(`/v1/ui/jobs/${jobId}/playlist-builder/override`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(lastPreviewOverrideSnapshot),
+      });
+    }
+
+    audioIdsInput.value = lastTrackPks.join(' ');
+    document.getElementById('playlist-overwrite-warning').style.display = audioIdsInput.value.trim() ? 'block' : 'none';
+    status.textContent = `Applied. Draft history #${applyPayload.draft_history_id}`;
+  });
+})();
+</script>
 {% endblock %}
