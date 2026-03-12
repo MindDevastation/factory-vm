@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from services.common import db as dbm
 from services.playlist_builder.history import list_effective_history
+from services.playlist_builder.workflow import write_committed_history_for_published
 
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
@@ -309,6 +311,36 @@ class TestPlaylistBuilderCommittedHistoryPublish(unittest.TestCase):
                 self.assertIsNotNone(committed_a)
                 self.assertAlmostEqual(float(committed_a["novelty_against_prev"]), 1.0 / 3.0, places=6)
                 self.assertAlmostEqual(float(committed_a["batch_overlap_score"]), 2.0 / 3.0, places=6)
+            finally:
+                conn.close()
+
+
+    def test_mark_published_metrics_use_effective_history_window_20(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            self._seed_tracks()
+            job_id = self._create_ui_draft()
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            self._preview_apply(client, headers, job_id)
+            self._set_wait_approval(job_id)
+
+            with patch("services.playlist_builder.workflow.list_effective_history", return_value=[]) as mocked_history:
+                published = client.post(f"/v1/jobs/{job_id}/mark_published", headers=headers, json={})
+            self.assertEqual(published.status_code, 200)
+            mocked_history.assert_called_once()
+            self.assertEqual(mocked_history.call_args.kwargs.get("window"), 20)
+
+            conn = dbm.connect(self.env)
+            try:
+                committed = conn.execute(
+                    "SELECT novelty_against_prev, batch_overlap_score FROM playlist_history WHERE job_id = ? AND history_stage = 'COMMITTED' ORDER BY id DESC LIMIT 1",
+                    (job_id,),
+                ).fetchone()
+                self.assertIsNotNone(committed)
+                self.assertIsNone(committed["novelty_against_prev"])
+                self.assertIsNone(committed["batch_overlap_score"])
             finally:
                 conn.close()
 

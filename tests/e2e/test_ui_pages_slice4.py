@@ -107,7 +107,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="plb-preview-btn"', r.text)
             self.assertIn('id="plb-apply-btn"', r.text)
             self.assertIn('id="playlist-builder-save-first"', r.text)
-            self.assertIn('Save this job first to generate/apply playlist', r.text)
+            self.assertIn('Draft will be auto-created on first Preview.', r.text)
             self.assertIn('name="background_name"', r.text)
             self.assertIn('name="background_ext"', r.text)
 
@@ -199,6 +199,8 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("Edit Job", r.text)
             self.assertIn('id="playlist-builder-open-btn"', r.text)
             self.assertIn('/v1/playlist-builder/jobs/${jobId}/preview', r.text)
+            self.assertIn("async function ensureJobIdForPlaylistBuilder()", r.text)
+            self.assertIn("window.history.replaceState(null, '', `/ui/jobs/${activeJobId}/edit`);", r.text)
             self.assertIn('/v1/playlist-builder/jobs/${jobId}/apply', r.text)
             self.assertIn('existing playlist will be replaced only after Apply', r.text)
             self.assertIn('<th>month_batch</th>', r.text)
