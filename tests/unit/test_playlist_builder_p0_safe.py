@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timedelta
 
 from services.common import db as dbm
-from services.playlist_builder.composition import _attempt_swaps, compose_safe, list_safe_candidates
+from services.playlist_builder.composition import _attempt_swaps, compose_safe, compose_smart, list_safe_candidates
 from services.playlist_builder.constraints import relaxed_brief_variants
 from services.playlist_builder.history import (
     batch_distribution_overlap,
@@ -16,7 +16,7 @@ from services.playlist_builder.history import (
     track_set_overlap,
 )
 from services.playlist_builder.models import PlaylistBrief, TrackCandidate
-from services.playlist_builder.sequencing import sequence_safe
+from services.playlist_builder.sequencing import sequence_safe, sequence_smart
 from tests._helpers import temp_env, seed_minimal_db
 
 
@@ -148,6 +148,41 @@ class PlaylistBuilderP0SafeTest(unittest.TestCase):
         ordered, rationale = sequence_safe(brief, selected, history=[])
         self.assertEqual(len(ordered), len(selected))
         self.assertIn("Greedy pair_score sequencing", rationale)
+
+    def test_smart_composition_refines_with_top_k_passes(self) -> None:
+        for spec in (
+            (1, 260.0, "2024-01", "smooth", 0.20),
+            (2, 260.0, "2024-01", "smooth", 0.25),
+            (3, 260.0, "2024-01", "smooth", 0.30),
+            (4, 160.0, "2024-02", "rough", 0.80),
+            (5, 180.0, "2024-02", "grain", 0.76),
+            (6, 170.0, "2024-03", "airy", 0.72),
+        ):
+            self._insert_track(pk=spec[0], track_id=f"t{spec[0]}", duration=spec[1], batch=spec[2], texture=spec[3], dsp=spec[4], tags="ambient,calm")
+
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="smart", min_duration_min=10, max_duration_min=10, preferred_month_batch="2024-02")
+        candidates = list_safe_candidates(self.conn, brief)
+        safe_selected, _, _ = compose_safe(brief, candidates, history=[])
+        smart_selected, _, _, smart_summary = compose_smart(brief, candidates, history=[])
+
+        safe_err = abs(sum(c.duration_sec for c in safe_selected) - 600.0)
+        smart_err = abs(sum(c.duration_sec for c in smart_selected) - 600.0)
+        self.assertLessEqual(smart_err, safe_err)
+        self.assertIn("top-", smart_summary)
+        self.assertIn("accepted swap refinement", smart_summary)
+
+    def test_smart_sequence_runs_local_reorder_refinement(self) -> None:
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="smart", min_duration_min=8, max_duration_min=10)
+        selected = [
+            TrackCandidate(1, "t1", "darkwood-reverie", 180.0, "2024-01", frozenset({"a"}), False, False, "smooth", 0.10),
+            TrackCandidate(2, "t2", "darkwood-reverie", 180.0, "2024-02", frozenset({"b"}), False, False, "smooth", 0.95),
+            TrackCandidate(3, "t3", "darkwood-reverie", 180.0, "2024-03", frozenset({"c"}), False, False, "rough", 0.20),
+            TrackCandidate(4, "t4", "darkwood-reverie", 180.0, "2024-04", frozenset({"d"}), False, False, "rough", 0.82),
+        ]
+        ordered, rationale = sequence_smart(brief, selected, history=[])
+        self.assertEqual(len(ordered), len(selected))
+        self.assertIn("bounded local reorder refinement", rationale)
+        self.assertIn("accepted local reorder swap", rationale)
 
 
 if __name__ == "__main__":
