@@ -70,6 +70,85 @@ class TestPlaylistBuilderApi(unittest.TestCase):
             self.assertEqual(get_resp.status_code, 200)
             self.assertEqual(get_resp.json(), payload)
 
+    def test_channel_settings_put_rejects_unknown_field(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            resp = client.put(
+                "/v1/playlist-builder/channels/darkwood-reverie/settings",
+                headers=headers,
+                json={"generation_mode": "safe", "unexpected_field": True},
+            )
+            self.assertEqual(resp.status_code, 422)
+
+    def test_job_override_patch_rejects_unknown_field(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            job_id = self._create_ui_draft(channel_slug="darkwood-reverie", title="plb")
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            resp = client.patch(
+                f"/v1/ui/jobs/{job_id}/playlist-builder/override",
+                headers=headers,
+                json={"generation_mode": "curated", "unexpected_field": 123},
+            )
+            self.assertEqual(resp.status_code, 422)
+
+    def test_job_brief_rejects_stored_override_with_unknown_field(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            job_id = self._create_ui_draft(channel_slug="darkwood-reverie", title="plb")
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            conn = dbm.connect(self.env)
+            try:
+                dbm.update_ui_job_playlist_builder_override_json(
+                    conn,
+                    job_id=job_id,
+                    playlist_builder_override_json='{"generation_mode":"safe","unknown_key":"x"}',
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            resp = client.get(f"/v1/playlist-builder/jobs/{job_id}/brief", headers=headers)
+            self.assertEqual(resp.status_code, 422)
+            self.assertEqual(resp.json()["error"]["code"], "PLB_INVALID_BRIEF")
+
+    def test_job_override_patch_merges_with_existing_override(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            job_id = self._create_ui_draft(channel_slug="darkwood-reverie", title="plb")
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            first = client.patch(
+                f"/v1/ui/jobs/{job_id}/playlist-builder/override",
+                headers=headers,
+                json={"generation_mode": "curated"},
+            )
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(first.json()["override"]["generation_mode"], "curated")
+
+            second = client.patch(
+                f"/v1/ui/jobs/{job_id}/playlist-builder/override",
+                headers=headers,
+                json={"max_duration_min": 75},
+            )
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(second.json()["override"]["generation_mode"], "curated")
+            self.assertEqual(second.json()["override"]["max_duration_min"], 75)
+
+            brief_resp = client.get(f"/v1/playlist-builder/jobs/{job_id}/brief", headers=headers)
+            self.assertEqual(brief_resp.status_code, 200)
+            brief = brief_resp.json()["brief"]
+            self.assertEqual(brief["generation_mode"], "curated")
+            self.assertEqual(brief["max_duration_min"], 75)
+
     def test_job_brief_resolution_and_invalid_override(self) -> None:
         with temp_env() as (_, self.env):
             seed_minimal_db(self.env)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 GenerationMode = Literal["safe", "smart", "curated"]
@@ -18,6 +18,8 @@ VocalPolicy = Literal[
 
 
 class PlaylistBrief(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     channel_slug: str
     job_id: Optional[int] = None
     content_type: Optional[str] = None
@@ -72,6 +74,8 @@ class PlaylistBrief(BaseModel):
 
 
 class PlaylistBriefOverrides(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content_type: Optional[str] = None
     generation_mode: Optional[GenerationMode] = None
     strictness_mode: Optional[StrictnessMode] = None
@@ -98,6 +102,8 @@ class PlaylistBriefOverrides(BaseModel):
 
 
 class PlaylistChannelSettingsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     generation_mode: Optional[GenerationMode] = None
     strictness_mode: Optional[StrictnessMode] = None
     min_duration_min: Optional[int] = None
