@@ -39,6 +39,7 @@ from services.playlist_builder.api_adapter import (
     resolve_playlist_brief,
 )
 from services.playlist_builder.models import PlaylistBriefOverrides, PlaylistChannelSettingsPatch
+from services.playlist_builder.workflow import PlaylistBuilderApiError, apply_preview, build_preview_response, create_preview
 from services.ui_jobs import (
     UiJobRetryNotFoundError,
     UiJobRetryStatusError,
@@ -264,6 +265,96 @@ def api_playlist_builder_job_override_patch(
         conn.close()
 
     return {"job_id": str(job_id), "override": merged_override}
+
+
+class PlaylistBuilderPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    override: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlaylistBuilderApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preview_id: str
+
+
+@app.post("/v1/playlist-builder/jobs/{job_id}/preview")
+def api_playlist_builder_preview_post(
+    job_id: int,
+    payload: PlaylistBuilderPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        logger.info("playlist_builder.preview.started", extra={"job_id": job_id})
+        envelope = create_preview(conn, job_id=job_id, override=payload.override, created_by=env.basic_user)
+        response = build_preview_response(envelope)
+        conn.commit()
+        logger.info(
+            "playlist_builder.preview.completed",
+            extra={
+                "job_id": job_id,
+                "channel_slug": envelope.brief.channel_slug,
+                "generation_mode": envelope.brief.generation_mode,
+                "strictness_mode": envelope.brief.strictness_mode,
+                "candidate_pool_size": None,
+                "selected_tracks_count": len(envelope.tracks),
+                "achieved_duration": envelope.preview_result.achieved_duration_sec,
+                "achieved_novelty": envelope.preview_result.achieved_novelty,
+                "achieved_batch_ratio": envelope.preview_result.achieved_batch_ratio,
+                "relaxations": envelope.preview_result.relaxations,
+                "warnings": envelope.preview_result.warnings,
+            },
+        )
+        for relaxation in envelope.preview_result.relaxations:
+            logger.info("playlist_builder.relaxation.applied", extra={"job_id": job_id, "relaxation": relaxation})
+        return response
+    except PlaylistBuilderApiError as exc:
+        conn.rollback()
+        status = {
+            "PLB_INVALID_BRIEF": 422,
+            "PLB_JOB_NOT_FOUND": 404,
+            "PLB_NO_CANDIDATES": 422,
+            "PLB_NO_VALID_PLAYLIST": 422,
+        }.get(exc.code, 409)
+        return _plb_error(status, exc.code, exc.message)
+    finally:
+        conn.close()
+
+
+@app.post("/v1/playlist-builder/jobs/{job_id}/apply")
+def api_playlist_builder_apply_post(
+    job_id: int,
+    payload: PlaylistBuilderApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        applied = apply_preview(conn, job_id=job_id, preview_id=payload.preview_id)
+        logger.info("playlist_builder.apply.completed", extra={"job_id": job_id, "preview_id": payload.preview_id})
+        if applied.get("history_written"):
+            logger.info(
+                "playlist_builder.history.draft_written",
+                extra={"job_id": job_id, "preview_id": payload.preview_id, "draft_history_id": applied["draft_history_id"]},
+            )
+        return {
+            "job_id": applied["job_id"],
+            "playlist_applied": applied["playlist_applied"],
+            "draft_history_id": applied["draft_history_id"],
+        }
+    except PlaylistBuilderApiError as exc:
+        conn.rollback()
+        status = {
+            "PLB_JOB_NOT_FOUND": 404,
+            "PLB_PREVIEW_NOT_FOUND": 404,
+            "PLB_PREVIEW_EXPIRED": 409,
+            "PLB_APPLY_CONFLICT": 409,
+            "PLB_HISTORY_WRITE_FAILED": 500,
+        }.get(exc.code, 409)
+        return _plb_error(status, exc.code, exc.message)
+    finally:
+        conn.close()
 
 
 def _require_channel(channel_slug: str) -> None:
