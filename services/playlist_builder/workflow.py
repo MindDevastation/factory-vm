@@ -260,6 +260,91 @@ def _insert_draft_history(conn: object, *, preview_id: str, brief: PlaylistBrief
     return history_id
 
 
+def write_committed_history_for_published(conn: object, *, job_id: int) -> int | None:
+    draft = dbm.get_ui_job_draft(conn, job_id)
+    if draft is None:
+        return None
+
+    existing = conn.execute(
+        "SELECT id FROM playlist_history WHERE job_id = ? AND history_stage = 'COMMITTED' ORDER BY id DESC LIMIT 1",
+        (job_id,),
+    ).fetchone()
+    if existing:
+        return int(existing["id"])
+
+    draft_history = conn.execute(
+        """
+        SELECT *
+        FROM playlist_history
+        WHERE job_id = ? AND history_stage = 'DRAFT' AND is_active = 1
+        ORDER BY datetime(created_at) DESC, id DESC
+        LIMIT 1
+        """,
+        (job_id,),
+    ).fetchone()
+    if draft_history is None:
+        raise PlaylistBuilderApiError("PLB_COMMITTED_HISTORY_MISSING_DRAFT", f"No active draft playlist history found for job_id={job_id}")
+
+    draft_items = conn.execute(
+        """
+        SELECT position_index, track_pk, month_batch, duration_sec, channel_slug
+        FROM playlist_history_items
+        WHERE history_id = ?
+        ORDER BY position_index ASC
+        """,
+        (int(draft_history["id"]),),
+    ).fetchall()
+    if not draft_items:
+        raise PlaylistBuilderApiError("PLB_COMMITTED_HISTORY_MISSING_ITEMS", f"No draft playlist history items found for job_id={job_id}")
+
+    cur = conn.execute(
+        """
+        INSERT INTO playlist_history(
+            channel_slug, job_id, history_stage, source_preview_id, generation_mode,
+            strictness_mode, playlist_duration_sec, tracks_count, set_fingerprint,
+            ordered_fingerprint, prefix_fingerprint_n3, prefix_fingerprint_n5,
+            novelty_against_prev, batch_overlap_score, is_active, created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
+        """,
+        (
+            draft_history["channel_slug"],
+            int(draft_history["job_id"]),
+            "COMMITTED",
+            draft_history["source_preview_id"],
+            draft_history["generation_mode"],
+            draft_history["strictness_mode"],
+            float(draft_history["playlist_duration_sec"]),
+            int(draft_history["tracks_count"]),
+            draft_history["set_fingerprint"],
+            draft_history["ordered_fingerprint"],
+            draft_history["prefix_fingerprint_n3"],
+            draft_history["prefix_fingerprint_n5"],
+            draft_history["novelty_against_prev"],
+            draft_history["batch_overlap_score"],
+            _iso(_now_utc()),
+        ),
+    )
+    history_id = int(cur.lastrowid)
+
+    for item in draft_items:
+        conn.execute(
+            """
+            INSERT INTO playlist_history_items(history_id, position_index, track_pk, month_batch, duration_sec, channel_slug)
+            VALUES(?,?,?,?,?,?)
+            """,
+            (
+                history_id,
+                int(item["position_index"]),
+                int(item["track_pk"]),
+                item["month_batch"],
+                float(item["duration_sec"] or 0.0),
+                item["channel_slug"],
+            ),
+        )
+
+    return history_id
+
+
 def apply_preview(conn: object, *, job_id: int, preview_id: str) -> dict[str, Any]:
     job = dbm.get_job(conn, job_id)
     draft = dbm.get_ui_job_draft(conn, job_id)

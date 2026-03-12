@@ -39,7 +39,13 @@ from services.playlist_builder.api_adapter import (
     resolve_playlist_brief,
 )
 from services.playlist_builder.models import PlaylistBriefOverrides, PlaylistChannelSettingsPatch
-from services.playlist_builder.workflow import PlaylistBuilderApiError, apply_preview, build_preview_response, create_preview
+from services.playlist_builder.workflow import (
+    PlaylistBuilderApiError,
+    apply_preview,
+    build_preview_response,
+    create_preview,
+    write_committed_history_for_published,
+)
 from services.ui_jobs import (
     UiJobRetryNotFoundError,
     UiJobRetryStatusError,
@@ -2740,7 +2746,22 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
             raise HTTPException(409, "job is not in APPROVED/WAIT_APPROVAL")
         ts = dbm.now_ts()
         delete_at = ts + 48 * 3600
-        dbm.update_job_state(conn, job_id, state="PUBLISHED", stage="APPROVAL", published_at=ts, delete_mp4_at=delete_at)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            dbm.update_job_state(conn, job_id, state="PUBLISHED", stage="APPROVAL", published_at=ts, delete_mp4_at=delete_at)
+            history_id = write_committed_history_for_published(conn, job_id=job_id)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        if history_id is not None:
+            logger.info("playlist_builder.history.committed_written", extra={"job_id": job_id, "history_id": history_id})
+    except PlaylistBuilderApiError as exc:
+        status = {
+            "PLB_COMMITTED_HISTORY_MISSING_DRAFT": 409,
+            "PLB_COMMITTED_HISTORY_MISSING_ITEMS": 409,
+        }.get(exc.code, 409)
+        return _plb_error(status, exc.code, exc.message)
     finally:
         conn.close()
     return {"ok": True, "delete_mp4_at": delete_at}
