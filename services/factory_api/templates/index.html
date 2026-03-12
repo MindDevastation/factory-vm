@@ -101,8 +101,11 @@
 </table>
 
 <p>
-    <label for="jobs-status-filter"><strong>Status filter:</strong></label>
-    <select id="jobs-status-filter" multiple size="6" disabled></select>
+    <strong>Status filter:</strong>
+    <details id="jobs-status-filter-dropdown" style="display:inline-block;position:relative;">
+      <summary id="jobs-status-filter-summary" style="cursor:pointer;display:inline-block;">All statuses</summary>
+      <div id="jobs-status-filter" style="position:absolute;z-index:10;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:8px;min-width:180px;max-height:220px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,0.12);"></div>
+    </details>
     <button type="button" id="jobs-status-clear" disabled>Clear</button>
     <button type="button" id="jobs-render-selected" disabled>Render selected</button>
     <span class="muted" id="jobs-status-note">Loading statuses...</span>
@@ -168,6 +171,7 @@
   const oauthTableBody = document.querySelector('#oauth-status-table tbody');
   const trackJobStatusBySlug = {};
   const trackJobPollTimers = {};
+  const jobsStatusFilterSummary = document.getElementById('jobs-status-filter-summary');
   const jobsStatusFilter = document.getElementById('jobs-status-filter');
   const jobsStatusClear = document.getElementById('jobs-status-clear');
   const jobsStatusNote = document.getElementById('jobs-status-note');
@@ -184,6 +188,7 @@
   const jobsBulkResultsBody = document.querySelector('#jobs-bulk-results-table tbody');
   const selectedJobIds = new Set();
   const failedJobIds = new Set();
+  let jobsStatusSource = [];
   let allJobs = [];
   let pollCount = 0;
 
@@ -642,23 +647,53 @@
   updateFailedRowHighlights();
 
   function selectedStatusesFromUi() {
-    return new Set(Array.from(jobsStatusFilter.selectedOptions).map((option) => option.value));
+    return new Set(
+      Array.from(jobsStatusFilter.querySelectorAll('input[type="checkbox"][data-status]'))
+        .filter((checkbox) => checkbox.checked)
+        .map((checkbox) => checkbox.getAttribute('data-status') || '')
+        .filter((status) => Boolean(status))
+    );
+  }
+
+  function updateStatusSummaryLabel(selectedSet) {
+    if (!selectedSet || selectedSet.size === 0) {
+      jobsStatusFilterSummary.textContent = 'All statuses';
+      return;
+    }
+    if (selectedSet.size <= 2) {
+      jobsStatusFilterSummary.textContent = Array.from(selectedSet).join(', ');
+      return;
+    }
+    jobsStatusFilterSummary.textContent = selectedSet.size + ' statuses selected';
+  }
+
+  function renderStatusCheckboxes(sourceStatuses, selectedSet) {
+    jobsStatusFilter.innerHTML = sourceStatuses.map((status) => {
+      const checked = selectedSet.has(status) ? ' checked' : '';
+      return '<label style="display:block;margin-bottom:4px;white-space:nowrap;">' +
+        '<input type="checkbox" data-status="' + esc(status) + '"' + checked + '> ' + esc(status) +
+      '</label>';
+    }).join('');
+    updateStatusSummaryLabel(selectedSet);
   }
 
   function syncStatusFilterOptionsFromJobs(jobs) {
-    const known = new Set(Array.from(jobsStatusFilter.options).map((option) => option.value));
+    const known = new Set(jobsStatusSource);
+    let changed = false;
     jobs.forEach((job) => {
       const status = normalizeStatus(job && (job.state || job.status));
       if (!status || known.has(status)) {
         return;
       }
-      const option = document.createElement('option');
-      option.value = status;
-      option.textContent = status;
-      option.selected = true;
-      jobsStatusFilter.appendChild(option);
+      jobsStatusSource.push(status);
       known.add(status);
+      changed = true;
     });
+    if (!changed) {
+      return;
+    }
+    const selectedStatuses = selectedStatusesFromUi();
+    renderStatusCheckboxes(jobsStatusSource, selectedStatuses);
   }
 
   async function initJobsStatusFilter() {
@@ -668,44 +703,39 @@
         throw new Error('failed to load statuses (' + res.status + ')');
       }
       const data = await res.json();
-      const sourceStatuses = Array.isArray(data.statuses) ? data.statuses : [];
+      jobsStatusSource = Array.isArray(data.statuses) ? data.statuses : [];
 
-      jobsStatusFilter.innerHTML = sourceStatuses.map((status) => {
-        return '<option value="' + esc(status) + '">' + esc(status) + '</option>';
-      }).join('');
-
-      const parsedStatuses = parseStatusesFromQuery(sourceStatuses);
-      const selectedStatuses = parsedStatuses.size ? parsedStatuses : new Set(sourceStatuses);
-
-      Array.from(jobsStatusFilter.options).forEach((option) => {
-        option.selected = selectedStatuses.has(option.value);
-      });
+      const selectedStatuses = parseStatusesFromQuery(jobsStatusSource);
+      renderStatusCheckboxes(jobsStatusSource, selectedStatuses);
 
       applyJobsFilter(selectedStatuses);
-      updateStatusesQuery(selectedStatuses, sourceStatuses);
+      updateStatusesQuery(selectedStatuses, jobsStatusSource);
 
-      jobsStatusFilter.disabled = false;
       jobsStatusClear.disabled = false;
       jobsStatusNote.textContent = '';
 
-      jobsStatusFilter.addEventListener('change', () => {
+      jobsStatusFilter.addEventListener('change', (event) => {
+        const target = event.target;
+        if (!target || target.matches('input[type="checkbox"][data-status]') !== true) {
+          return;
+        }
         const uiSelected = selectedStatusesFromUi();
-        const effectiveSelected = uiSelected.size ? uiSelected : new Set(sourceStatuses);
-        applyJobsFilter(effectiveSelected);
-        updateStatusesQuery(effectiveSelected, sourceStatuses);
+        applyJobsFilter(uiSelected);
+        updateStatusesQuery(uiSelected, jobsStatusSource);
+        updateStatusSummaryLabel(uiSelected);
       });
 
       jobsStatusClear.addEventListener('click', () => {
-        Array.from(jobsStatusFilter.options).forEach((option) => {
-          option.selected = true;
+        jobsStatusFilter.querySelectorAll('input[type="checkbox"][data-status]').forEach((checkbox) => {
+          checkbox.checked = false;
         });
-        const allSelected = new Set(sourceStatuses);
-        applyJobsFilter(allSelected);
-        updateStatusesQuery(allSelected, sourceStatuses);
+        const noneSelected = new Set();
+        applyJobsFilter(noneSelected);
+        updateStatusesQuery(noneSelected, jobsStatusSource);
+        updateStatusSummaryLabel(noneSelected);
       });
     } catch (err) {
       console.warn('jobs status filter unavailable:', err);
-      jobsStatusFilter.disabled = true;
       jobsStatusClear.disabled = true;
       jobsStatusNote.textContent = 'Status filter unavailable';
       applyJobsFilter(new Set());
