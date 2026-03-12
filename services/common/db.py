@@ -298,6 +298,10 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_playlist_history_channel_stage_created
             ON playlist_history(channel_slug, history_stage, created_at);
 
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_playlist_history_unique_draft_preview
+            ON playlist_history(source_preview_id)
+            WHERE history_stage = 'DRAFT' AND source_preview_id IS NOT NULL;
+
         CREATE TABLE IF NOT EXISTS playlist_history_items (
             id INTEGER PRIMARY KEY,
             history_id INTEGER NOT NULL,

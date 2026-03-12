@@ -266,46 +266,88 @@ def apply_preview(conn: object, *, job_id: int, preview_id: str) -> dict[str, An
     if not job or not draft:
         raise PlaylistBuilderApiError("PLB_JOB_NOT_FOUND", "UI job not found")
 
-    row = get_preview_row(conn, preview_id=preview_id)
-    if not row or int(row.get("job_id") or -1) != job_id:
-        raise PlaylistBuilderApiError("PLB_PREVIEW_NOT_FOUND", "Preview not found for this job")
-
-    existing_history = _find_preview_draft_history(conn, preview_id=preview_id)
-    if str(row.get("status") or "").upper() == "APPLIED" and existing_history:
-        return {"job_id": str(job_id), "playlist_applied": True, "draft_history_id": int(existing_history["id"]), "history_written": False}
-
-    expires_at = _parse_iso(str(row["expires_at"]))
-    if _now_utc() > expires_at:
-        conn.execute("UPDATE playlist_build_previews SET status = 'EXPIRED' WHERE id = ?", (preview_id,))
-        raise PlaylistBuilderApiError("PLB_PREVIEW_EXPIRED", "Preview expired")
-
-    if str(row.get("status") or "").upper() != "PREVIEW":
-        raise PlaylistBuilderApiError("PLB_APPLY_CONFLICT", "Preview cannot be applied in current state")
-
-    brief, result = _load_preview_payload(row)
-    tracks = _fetch_tracks(conn, result.ordered_track_pks)
-    if not tracks:
-        raise PlaylistBuilderApiError("PLB_APPLY_CONFLICT", "Preview payload has no applicable tracks")
+    post_commit_error: PlaylistBuilderApiError | None = None
+    response: dict[str, Any] | None = None
 
     conn.execute("BEGIN IMMEDIATE")
     try:
-        audio_ids = ",".join(str(t["track_pk"]) for t in tracks)
-        updated = conn.execute(
-            "UPDATE ui_job_drafts SET audio_ids_text = ?, updated_at = ? WHERE job_id = ?",
-            (audio_ids, dbm.now_ts(), job_id),
-        )
-        if int(updated.rowcount or 0) == 0:
-            raise PlaylistBuilderApiError("PLB_JOB_NOT_FOUND", "UI job not found")
+        row = get_preview_row(conn, preview_id=preview_id)
+        if not row or int(row.get("job_id") or -1) != job_id:
+            raise PlaylistBuilderApiError("PLB_PREVIEW_NOT_FOUND", "Preview not found for this job")
 
-        conn.execute("UPDATE playlist_build_previews SET status = 'APPLIED' WHERE id = ?", (preview_id,))
-        _deactivate_existing_draft_history(conn, channel_slug=brief.channel_slug, job_id=job_id)
-        try:
-            history_id = _insert_draft_history(conn, preview_id=preview_id, brief=brief, result=result, tracks=tracks)
-        except Exception as exc:
-            raise PlaylistBuilderApiError("PLB_HISTORY_WRITE_FAILED", f"Failed to write draft history: {exc}") from exc
+        existing_history = _find_preview_draft_history(conn, preview_id=preview_id)
+        if str(row.get("status") or "").upper() == "APPLIED" and existing_history:
+            response = {
+                "job_id": str(job_id),
+                "playlist_applied": True,
+                "draft_history_id": int(existing_history["id"]),
+                "history_written": False,
+            }
+        else:
+            expires_at = _parse_iso(str(row["expires_at"]))
+            if _now_utc() > expires_at:
+                conn.execute("UPDATE playlist_build_previews SET status = 'EXPIRED' WHERE id = ?", (preview_id,))
+                post_commit_error = PlaylistBuilderApiError("PLB_PREVIEW_EXPIRED", "Preview expired")
+            elif str(row.get("status") or "").upper() != "PREVIEW":
+                raise PlaylistBuilderApiError("PLB_APPLY_CONFLICT", "Preview cannot be applied in current state")
+            else:
+                brief, result = _load_preview_payload(row)
+                tracks = _fetch_tracks(conn, result.ordered_track_pks)
+                if len(tracks) != len(result.ordered_track_pks):
+                    raise PlaylistBuilderApiError("PLB_APPLY_CONFLICT", "Preview payload tracks are no longer fully available")
+                if not tracks:
+                    raise PlaylistBuilderApiError("PLB_APPLY_CONFLICT", "Preview payload has no applicable tracks")
+
+                existing_history = _find_preview_draft_history(conn, preview_id=preview_id)
+                if existing_history:
+                    conn.execute("UPDATE playlist_build_previews SET status = 'APPLIED' WHERE id = ?", (preview_id,))
+                    response = {
+                        "job_id": str(job_id),
+                        "playlist_applied": True,
+                        "draft_history_id": int(existing_history["id"]),
+                        "history_written": False,
+                    }
+                else:
+                    audio_ids = ",".join(str(t["track_pk"]) for t in tracks)
+                    updated = conn.execute(
+                        "UPDATE ui_job_drafts SET audio_ids_text = ?, updated_at = ? WHERE job_id = ?",
+                        (audio_ids, dbm.now_ts(), job_id),
+                    )
+                    if int(updated.rowcount or 0) == 0:
+                        raise PlaylistBuilderApiError("PLB_JOB_NOT_FOUND", "UI job not found")
+
+                    conn.execute("UPDATE playlist_build_previews SET status = 'APPLIED' WHERE id = ?", (preview_id,))
+                    _deactivate_existing_draft_history(conn, channel_slug=brief.channel_slug, job_id=job_id)
+                    try:
+                        history_id = _insert_draft_history(conn, preview_id=preview_id, brief=brief, result=result, tracks=tracks)
+                    except Exception as exc:
+                        if "UNIQUE constraint failed" in str(exc):
+                            existing_history = _find_preview_draft_history(conn, preview_id=preview_id)
+                            if existing_history:
+                                response = {
+                                    "job_id": str(job_id),
+                                    "playlist_applied": True,
+                                    "draft_history_id": int(existing_history["id"]),
+                                    "history_written": False,
+                                }
+                            else:
+                                raise PlaylistBuilderApiError("PLB_HISTORY_WRITE_FAILED", f"Failed to write draft history: {exc}") from exc
+                        else:
+                            raise PlaylistBuilderApiError("PLB_HISTORY_WRITE_FAILED", f"Failed to write draft history: {exc}") from exc
+                    else:
+                        response = {
+                            "job_id": str(job_id),
+                            "playlist_applied": True,
+                            "draft_history_id": history_id,
+                            "history_written": True,
+                        }
+
         conn.commit()
     except Exception:
         conn.rollback()
         raise
 
-    return {"job_id": str(job_id), "playlist_applied": True, "draft_history_id": history_id, "history_written": True}
+    if post_commit_error is not None:
+        raise post_commit_error
+    assert response is not None
+    return response
