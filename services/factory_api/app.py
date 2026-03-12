@@ -31,6 +31,14 @@ from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
+from services.playlist_builder.api_adapter import (
+    PlaylistBuilderValidationError,
+    build_channel_settings_payload,
+    channel_settings_row_to_patch,
+    parse_override_json,
+    resolve_playlist_brief,
+)
+from services.playlist_builder.models import PlaylistBriefOverrides, PlaylistChannelSettingsPatch
 from services.ui_jobs import (
     UiJobRetryNotFoundError,
     UiJobRetryStatusError,
@@ -119,6 +127,143 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
     finally:
         conn.close()
     return rows
+
+
+def _plb_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+@app.get("/v1/playlist-builder/channels/{channel_slug}/settings")
+def api_playlist_builder_channel_settings_get(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        row = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
+    finally:
+        conn.close()
+    if not row:
+        return _plb_error(404, "PLB_CHANNEL_SETTINGS_NOT_FOUND", "Playlist builder channel settings not found")
+    return build_channel_settings_payload(channel_slug=channel_slug, row=row)
+
+
+@app.put("/v1/playlist-builder/channels/{channel_slug}/settings")
+def api_playlist_builder_channel_settings_put(
+    channel_slug: str,
+    payload: PlaylistChannelSettingsPatch,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_slug(conn, channel_slug)
+        if not channel:
+            return _plb_error(404, "PLB_CHANNEL_SETTINGS_NOT_FOUND", "Playlist builder channel settings not found")
+        existing = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
+        merged_patch = {
+            **channel_settings_row_to_patch(existing),
+            **payload.as_patch_dict(),
+        }
+        brief = resolve_playlist_brief(
+            channel_slug=channel_slug,
+            job_id=None,
+            channel_settings=merged_patch,
+            job_override=None,
+            request_override=None,
+        )
+        dbm.upsert_playlist_builder_channel_settings(
+            conn,
+            channel_slug=channel_slug,
+            default_generation_mode=brief.generation_mode,
+            min_duration_min=brief.min_duration_min,
+            max_duration_min=brief.max_duration_min,
+            tolerance_min=brief.tolerance_min,
+            preferred_month_batch=brief.preferred_month_batch,
+            preferred_batch_ratio=brief.preferred_batch_ratio,
+            allow_cross_channel=brief.allow_cross_channel,
+            novelty_target_min=brief.novelty_target_min,
+            novelty_target_max=brief.novelty_target_max,
+            position_memory_window=brief.position_memory_window,
+            strictness_mode=brief.strictness_mode,
+            vocal_policy=brief.vocal_policy,
+        )
+        conn.commit()
+        saved = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
+    except PlaylistBuilderValidationError as exc:
+        return _plb_error(422, "PLB_INVALID_BRIEF", str(exc))
+    finally:
+        conn.close()
+    assert saved is not None
+    return build_channel_settings_payload(channel_slug=channel_slug, row=saved)
+
+
+@app.get("/v1/playlist-builder/jobs/{job_id}/brief")
+def api_playlist_builder_job_brief_get(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        draft = dbm.get_ui_job_draft(conn, job_id)
+        if not job or not draft:
+            return _plb_error(404, "PLB_JOB_NOT_FOUND", "UI job not found")
+
+        channel_slug = str(job.get("channel_slug") or "")
+        settings_row = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
+        settings_patch = channel_settings_row_to_patch(settings_row)
+        job_override = parse_override_json(draft.get("playlist_builder_override_json"))
+        brief = resolve_playlist_brief(
+            channel_slug=channel_slug,
+            job_id=job_id,
+            channel_settings=settings_patch,
+            job_override=job_override,
+            request_override=None,
+        )
+    except PlaylistBuilderValidationError as exc:
+        return _plb_error(422, "PLB_INVALID_BRIEF", str(exc))
+    finally:
+        conn.close()
+
+    return {"brief": brief.to_api_dict()}
+
+
+@app.patch("/v1/ui/jobs/{job_id}/playlist-builder/override")
+def api_playlist_builder_job_override_patch(
+    job_id: int,
+    payload: PlaylistBriefOverrides,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        draft = dbm.get_ui_job_draft(conn, job_id)
+        if not job or not draft:
+            return _plb_error(404, "PLB_JOB_NOT_FOUND", "UI job not found")
+        channel_slug = str(job.get("channel_slug") or "")
+        settings_row = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
+        settings_patch = channel_settings_row_to_patch(settings_row)
+
+        existing_override = parse_override_json(draft.get("playlist_builder_override_json"))
+        override_patch = payload.as_patch_dict()
+        merged_override = {
+            **existing_override,
+            **override_patch,
+        }
+        resolve_playlist_brief(
+            channel_slug=channel_slug,
+            job_id=job_id,
+            channel_settings=settings_patch,
+            job_override=merged_override,
+            request_override=None,
+        )
+
+        dbm.update_ui_job_playlist_builder_override_json(
+            conn,
+            job_id=job_id,
+            playlist_builder_override_json=json.dumps(merged_override, sort_keys=True),
+        )
+        conn.commit()
+    except PlaylistBuilderValidationError as exc:
+        return _plb_error(422, "PLB_INVALID_BRIEF", str(exc))
+    finally:
+        conn.close()
+
+    return {"job_id": str(job_id), "override": merged_override}
 
 
 def _require_channel(channel_slug: str) -> None:
