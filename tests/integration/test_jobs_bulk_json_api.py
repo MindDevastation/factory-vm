@@ -65,6 +65,27 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             "audio_ids_text": "1",
         }
 
+    def _seed_playlist_tracks(self, env: Env) -> None:
+        conn = dbm.connect(env)
+        try:
+            ts = dbm.now_ts()
+            for pk, tid, duration, month in [
+                (801, "t801", 240.0, "2024-01"),
+                (802, "t802", 260.0, "2024-01"),
+                (803, "t803", 280.0, "2024-02"),
+            ]:
+                conn.execute(
+                    "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, title, duration_sec, month_batch, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (pk, "darkwood-reverie", tid, f"g{pk}", f"Track {pk}", duration, month, ts, ts),
+                )
+                conn.execute(
+                    "INSERT INTO track_analysis_flat(track_pk, channel_slug, track_id, analysis_computed_at, analysis_status, duration_sec, yamnet_top_tags_text, voice_flag, speech_flag, dominant_texture, dsp_score, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+                    (pk, "darkwood-reverie", tid, ts, "ok", duration, "ambient,calm", 0, 0, "smooth", 0.6),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
     def test_preview_all_modes_and_examples(self) -> None:
         with temp_env() as (_, env):
             os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
@@ -194,6 +215,127 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                     {"job_id": str(existing_bad), "error": {"code": "UIJ_RENDER_NOT_ALLOWED", "message": "Status not allowed"}},
                 ],
             })
+
+    def test_bulk_playlist_builder_preview_and_execute_for_create_modes(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
+            self._seed_playlist_tracks(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch is not None
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            token_path = oauth_token_path(base_dir=Env.load().gdrive_tokens_dir, channel_slug="darkwood-reverie")
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
+
+            mod, client = self._new_client()
+            mod._create_drive_client = lambda _env: object()
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
+
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            preview_ok = client.post(
+                "/v1/ui/jobs/bulk-json/preview",
+                headers=h,
+                json={
+                    "mode": "create_draft_jobs",
+                    "items": [
+                        {
+                            **self._create_item(channel_id, title="PB Preview"),
+                            "playlist_builder": {"generation_mode": "safe", "min_duration_min": 10, "max_duration_min": 15},
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(preview_ok.status_code, 200)
+            payload_preview_ok = preview_ok.json()
+            self.assertEqual(payload_preview_ok["summary"], {"requested": 1, "valid": 1, "failed": 0})
+            self.assertTrue(payload_preview_ok["results"][0]["playlist_builder"]["ok"])
+            self.assertIsInstance(payload_preview_ok["results"][0]["playlist_builder"].get("summary"), dict)
+
+            preview_fail = client.post(
+                "/v1/ui/jobs/bulk-json/preview",
+                headers=h,
+                json={
+                    "mode": "create_draft_jobs",
+                    "items": [
+                        {**self._create_item(channel_id, title="PB Bad"), "playlist_builder": {"unknown": 1}}
+                    ],
+                },
+            )
+            self.assertEqual(preview_fail.status_code, 200)
+            self.assertEqual(preview_fail.json()["summary"], {"requested": 1, "valid": 0, "failed": 1})
+            self.assertEqual(preview_fail.json()["results"][0]["error"]["code"], "UIJ_INVALID_INPUT")
+
+            execute_draft = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={
+                    "mode": "create_draft_jobs",
+                    "items": [
+                        {
+                            **self._create_item(channel_id, title="PB Draft"),
+                            "playlist_builder": {"generation_mode": "safe", "min_duration_min": 10, "max_duration_min": 15},
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(execute_draft.status_code, 200)
+            execute_draft_payload = execute_draft.json()
+            self.assertEqual(execute_draft_payload["summary"], {"requested": 1, "created": 1, "failed": 0})
+            draft_job_id = int(execute_draft_payload["results"][0]["job_id"])
+            self.assertTrue(execute_draft_payload["results"][0]["playlist_builder"]["ok"])
+
+            conn = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn, draft_job_id)
+                self.assertIsNotNone(draft)
+                self.assertNotEqual(str(draft["audio_ids_text"]).strip(), "1")
+                self.assertIn('"generation_mode": "safe"', str(draft["playlist_builder_override_json"]))
+            finally:
+                conn.close()
+
+            execute_enqueue = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={
+                    "mode": "create_and_enqueue",
+                    "items": [
+                        {
+                            **self._create_item(channel_id, title="PB Enqueue"),
+                            "playlist_builder": True,
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(execute_enqueue.status_code, 200)
+            execute_enqueue_payload = execute_enqueue.json()
+            self.assertEqual(execute_enqueue_payload["summary"], {"requested": 1, "created": 1, "enqueued": 1, "noop": 0, "failed": 0})
+            self.assertTrue(execute_enqueue_payload["results"][0]["playlist_builder"]["ok"])
+
+            execute_fail = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={
+                    "mode": "create_draft_jobs",
+                    "items": [
+                        {
+                            **self._create_item(channel_id, title="PB Execute Fail"),
+                            "playlist_builder": {"generation_mode": "safe", "required_tags": ["no-match-tag"]},
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(execute_fail.status_code, 200)
+            self.assertEqual(execute_fail.json()["summary"], {"requested": 1, "created": 0, "failed": 1})
+            self.assertEqual(execute_fail.json()["results"][0]["error"]["code"], "PLB_NO_CANDIDATES")
+
 
     def test_execute_mode_c_runtime_exception_converted_to_item_error(self) -> None:
         with temp_env() as (_, env):

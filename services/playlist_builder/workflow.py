@@ -13,6 +13,7 @@ from services.playlist_builder.history import batch_distribution_overlap, list_e
 from services.playlist_builder.models import PlaylistBrief, PlaylistPreviewResult
 
 PREVIEW_TTL_HOURS = 72
+EFFECTIVE_HISTORY_WINDOW = 20
 
 
 class PlaylistBuilderApiError(Exception):
@@ -86,17 +87,15 @@ def _fetch_tracks(conn: object, ordered_track_pks: list[int]) -> list[dict[str, 
     return ordered
 
 
-def create_preview(conn: object, *, job_id: int, override: dict[str, Any] | None, created_by: str | None = None) -> PreviewEnvelope:
-    job = dbm.get_job(conn, job_id)
-    draft = dbm.get_ui_job_draft(conn, job_id)
-    if not job or not draft:
-        raise PlaylistBuilderApiError("PLB_JOB_NOT_FOUND", "UI job not found")
 
-    try:
-        brief = resolve_effective_brief_for_job(conn, job_id=job_id, request_override=override or {})
-    except Exception as exc:
-        raise PlaylistBuilderApiError("PLB_INVALID_BRIEF", str(exc)) from exc
 
+def _generate_preview_envelope(
+    conn: object,
+    *,
+    brief: PlaylistBrief,
+    preview_job_id: int | None,
+    created_by: str | None,
+) -> PreviewEnvelope:
     try:
         result = PlaylistBuilder().generate_preview(conn, brief)
     except CuratedModeLimitExceeded as exc:
@@ -125,7 +124,7 @@ def create_preview(conn: object, *, job_id: int, override: dict[str, Any] | None
         """,
         (
             preview_id,
-            job_id,
+            preview_job_id,
             brief.channel_slug,
             json.dumps(brief.model_dump(), sort_keys=True),
             json.dumps(result.model_dump(), sort_keys=True),
@@ -137,6 +136,33 @@ def create_preview(conn: object, *, job_id: int, override: dict[str, Any] | None
     )
 
     return PreviewEnvelope(preview_id=preview_id, brief=brief, preview_result=result, tracks=tracks)
+
+def create_preview(conn: object, *, job_id: int, override: dict[str, Any] | None, created_by: str | None = None) -> PreviewEnvelope:
+    job = dbm.get_job(conn, job_id)
+    draft = dbm.get_ui_job_draft(conn, job_id)
+    if not job or not draft:
+        raise PlaylistBuilderApiError("PLB_JOB_NOT_FOUND", "UI job not found")
+
+    try:
+        brief = resolve_effective_brief_for_job(conn, job_id=job_id, request_override=override or {})
+    except Exception as exc:
+        raise PlaylistBuilderApiError("PLB_INVALID_BRIEF", str(exc)) from exc
+
+    return _generate_preview_envelope(
+        conn,
+        brief=brief,
+        preview_job_id=job_id,
+        created_by=created_by,
+    )
+
+
+def create_preview_for_brief(conn: object, *, brief: PlaylistBrief, created_by: str | None = None) -> PreviewEnvelope:
+    return _generate_preview_envelope(
+        conn,
+        brief=brief,
+        preview_job_id=brief.job_id,
+        created_by=created_by,
+    )
 
 
 def get_preview_row(conn: object, *, preview_id: str) -> dict[str, Any] | None:
@@ -322,7 +348,7 @@ def write_committed_history_for_published(conn: object, *, job_id: int) -> int |
             f"Draft playlist no longer matches active draft history for job_id={job_id}",
         )
 
-    effective = list_effective_history(conn, channel_slug=str(draft_history["channel_slug"]), window=200)
+    effective = list_effective_history(conn, channel_slug=str(draft_history["channel_slug"]), window=EFFECTIVE_HISTORY_WINDOW)
     prev = next((entry for entry in effective if int(entry.job_id or -1) != int(job_id)), None)
 
     current_batches = [t.get("month_batch") for t in current_tracks]
@@ -378,7 +404,7 @@ def write_committed_history_for_published(conn: object, *, job_id: int) -> int |
     return history_id
 
 
-def apply_preview(conn: object, *, job_id: int, preview_id: str) -> dict[str, Any]:
+def apply_preview(conn: object, *, job_id: int, preview_id: str, manage_transaction: bool = True) -> dict[str, Any]:
     job = dbm.get_job(conn, job_id)
     draft = dbm.get_ui_job_draft(conn, job_id)
     if not job or not draft:
@@ -387,7 +413,8 @@ def apply_preview(conn: object, *, job_id: int, preview_id: str) -> dict[str, An
     post_commit_error: PlaylistBuilderApiError | None = None
     response: dict[str, Any] | None = None
 
-    conn.execute("BEGIN IMMEDIATE")
+    if manage_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     try:
         row = get_preview_row(conn, preview_id=preview_id)
         if not row or int(row.get("job_id") or -1) != job_id:
@@ -460,9 +487,11 @@ def apply_preview(conn: object, *, job_id: int, preview_id: str) -> dict[str, An
                             "history_written": True,
                         }
 
-        conn.commit()
+        if manage_transaction:
+            conn.commit()
     except Exception:
-        conn.rollback()
+        if manage_transaction:
+            conn.rollback()
         raise
 
     if post_commit_error is not None:

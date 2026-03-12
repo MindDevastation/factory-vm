@@ -44,6 +44,7 @@ from services.playlist_builder.workflow import (
     apply_preview,
     build_preview_response,
     create_preview,
+    create_preview_for_brief,
     write_committed_history_for_published,
 )
 from services.ui_jobs import (
@@ -2481,6 +2482,98 @@ def _validate_create_item(conn: Any, item: dict[str, Any]) -> tuple[UiJobDraftPa
     return payload, None
 
 
+def _parse_bulk_playlist_builder_request(item: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if "playlist_builder" not in item:
+        return None, None
+
+    raw = item.get("playlist_builder")
+    if raw is False or raw is None:
+        return None, None
+    if raw is True:
+        return {}, None
+    if not isinstance(raw, dict):
+        return None, {"code": "UIJ_INVALID_INPUT", "message": "playlist_builder must be boolean or object"}
+
+    try:
+        overrides = PlaylistBriefOverrides.model_validate(raw).as_patch_dict()
+    except Exception as exc:
+        return None, {"code": "UIJ_INVALID_INPUT", "message": f"playlist_builder invalid: {exc}"}
+    return overrides, None
+
+
+def _validate_create_item_with_playlist(conn: Any, item: dict[str, Any]) -> tuple[UiJobDraftPayload | None, dict[str, Any] | None, dict[str, Any] | None]:
+    payload, item_error = _validate_create_item(conn, item)
+    if item_error:
+        return None, None, item_error
+
+    overrides, override_error = _parse_bulk_playlist_builder_request(item)
+    if override_error:
+        return None, None, override_error
+
+    return payload, overrides, None
+
+
+def _bulk_preview_playlist_builder(conn: Any, *, channel_id: int, overrides: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if overrides is None:
+        return None, None
+
+    channel = dbm.get_channel_by_id(conn, int(channel_id))
+    if not channel:
+        return None, {"code": "UIJ_INVALID_INPUT", "message": "project does not exist"}
+
+    try:
+        settings_row = dbm.get_playlist_builder_channel_settings(conn, str(channel["slug"]))
+        settings_patch = channel_settings_row_to_patch(settings_row)
+        brief = resolve_playlist_brief(
+            channel_slug=str(channel["slug"]),
+            job_id=None,
+            channel_settings=settings_patch,
+            job_override={},
+            request_override=overrides,
+        )
+        envelope = create_preview_for_brief(conn, brief=brief, created_by=env.basic_user)
+        summary = build_preview_response(envelope).get("summary", {})
+        return {
+            "requested": True,
+            "ok": True,
+            "preview_id": envelope.preview_id,
+            "summary": {
+                "generation_mode": summary.get("generation_mode"),
+                "strictness_mode": summary.get("strictness_mode"),
+                "tracks_count": summary.get("tracks_count"),
+                "duration": summary.get("duration"),
+                "warnings": summary.get("warnings"),
+            },
+        }, None
+    except PlaylistBuilderValidationError as exc:
+        return None, {"code": "UIJ_INVALID_INPUT", "message": f"playlist_builder invalid: {exc}"}
+    except PlaylistBuilderApiError as exc:
+        return None, {"code": exc.code, "message": exc.message}
+
+
+def _bulk_apply_playlist_builder_for_job(conn: Any, *, job_id: int, overrides: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if overrides is None:
+        return None, None
+
+    try:
+        envelope = create_preview(conn, job_id=job_id, override=overrides, created_by=env.basic_user)
+        applied = apply_preview(conn, job_id=job_id, preview_id=envelope.preview_id, manage_transaction=False)
+        if overrides:
+            dbm.update_ui_job_playlist_builder_override_json(
+                conn,
+                job_id=job_id,
+                playlist_builder_override_json=json.dumps(overrides, sort_keys=True),
+            )
+        return {
+            "requested": True,
+            "ok": True,
+            "preview_id": envelope.preview_id,
+            "draft_history_id": applied.get("draft_history_id"),
+        }, None
+    except PlaylistBuilderApiError as exc:
+        return None, {"code": exc.code, "message": exc.message}
+
+
 def _preview_enqueue_existing_item(conn: Any, item: dict[str, Any]) -> dict[str, Any]:
     job_id_value = item.get("job_id")
     try:
@@ -2824,11 +2917,23 @@ def api_ui_jobs_bulk_json_preview(payload: UiJobsBulkJsonPayload, _: bool = Depe
         results: list[dict[str, Any]] = []
         if mode in {"create_draft_jobs", "create_and_enqueue"}:
             for index, item in enumerate(payload.items):
-                _, item_error = _validate_create_item(conn, item)
+                parsed, playlist_overrides, item_error = _validate_create_item_with_playlist(conn, item)
                 if item_error:
                     results.append({"index": index, "error": item_error})
+                    continue
+                assert parsed is not None
+                playlist_preview, playlist_error = _bulk_preview_playlist_builder(
+                    conn,
+                    channel_id=parsed.channel_id,
+                    overrides=playlist_overrides,
+                )
+                if playlist_error:
+                    results.append({"index": index, "error": playlist_error})
                 else:
-                    results.append({"index": index, "valid": True})
+                    result_item = {"index": index, "valid": True}
+                    if playlist_preview is not None:
+                        result_item["playlist_builder"] = playlist_preview
+                    results.append(result_item)
         else:
             for item in payload.items:
                 if set(item.keys()) != {"job_id"}:
@@ -2861,17 +2966,22 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
     try:
         conn.execute("BEGIN IMMEDIATE")
         tx_started = True
-        validated: list[UiJobDraftPayload] = []
-        for item in payload.items:
-            parsed, item_error = _validate_create_item(conn, item)
+        validated: list[tuple[UiJobDraftPayload, dict[str, Any] | None]] = []
+        for index, item in enumerate(payload.items):
+            parsed, playlist_overrides, item_error = _validate_create_item_with_playlist(conn, item)
             if item_error:
                 conn.execute("ROLLBACK")
                 tx_started = False
-                return {"mode": mode, "summary": {"requested": len(payload.items), "created": 0, "failed": 1}, "results": [{"error": item_error}]}
+                return {
+                    "mode": mode,
+                    "summary": {"requested": len(payload.items), "created": 0, "failed": 1},
+                    "results": [{"index": index, "error": item_error}],
+                }
             assert parsed is not None
-            validated.append(parsed)
+            validated.append((parsed, playlist_overrides))
 
-        for item in validated:
+        playlist_meta_by_job: dict[int, dict[str, Any]] = {}
+        for index, (item, playlist_overrides) in enumerate(validated):
             job_id = dbm.create_ui_job_draft(
                 conn,
                 channel_id=item.channel_id,
@@ -2885,7 +2995,21 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
                 audio_ids_text=item.audio_ids_text.strip(),
                 job_type="UI",
             )
+            playlist_meta, playlist_error = _bulk_apply_playlist_builder_for_job(
+                conn,
+                job_id=job_id,
+                overrides=playlist_overrides,
+            )
+            if playlist_error:
+                conn.execute("ROLLBACK")
+                tx_started = False
+                return {
+                    "mode": mode,
+                    "summary": {"requested": len(payload.items), "created": 0, "failed": 1},
+                    "results": [{"index": index, "job_id": str(job_id), "error": playlist_error}],
+                }
             created_job_ids.append(job_id)
+            playlist_meta_by_job[job_id] = playlist_meta
 
         conn.execute("COMMIT")
         tx_started = False
@@ -2896,7 +3020,13 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
     finally:
         conn.close()
 
-    create_results = [{"index": idx, "job_id": str(job_id), "created": True} for idx, job_id in enumerate(created_job_ids)]
+    create_results = []
+    for idx, job_id in enumerate(created_job_ids):
+        item_result = {"index": idx, "job_id": str(job_id), "created": True}
+        playlist_meta = playlist_meta_by_job.get(job_id)
+        if playlist_meta is not None:
+            item_result["playlist_builder"] = playlist_meta
+        create_results.append(item_result)
     if mode == "create_draft_jobs":
         return {
             "mode": mode,
