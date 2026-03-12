@@ -48,6 +48,12 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('name="channel_id"', r.text)
             self.assertIn('name="title"', r.text)
             self.assertIn('name="audio_ids_text"', r.text)
+            self.assertIn('id="playlist-builder-open-btn"', r.text)
+            self.assertIn('id="playlist-builder-modal"', r.text)
+            self.assertIn('id="plb-preview-btn"', r.text)
+            self.assertIn('id="plb-apply-btn"', r.text)
+            self.assertIn('id="playlist-builder-save-first"', r.text)
+            self.assertIn('Save this job first to generate/apply playlist', r.text)
             self.assertIn('name="background_name"', r.text)
             self.assertIn('name="background_ext"', r.text)
 
@@ -137,6 +143,12 @@ class TestUiPagesSlice4(unittest.TestCase):
             r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Edit Job", r.text)
+            self.assertIn('id="playlist-builder-open-btn"', r.text)
+            self.assertIn('/v1/playlist-builder/jobs/${jobId}/preview', r.text)
+            self.assertIn('/v1/playlist-builder/jobs/${jobId}/apply', r.text)
+            self.assertIn('existing playlist will be replaced only after Apply', r.text)
+            self.assertIn('<th>month_batch</th>', r.text)
+            self.assertIn('<th>fit/explanation</th>', r.text)
 
             r = client.get(f"/jobs/{job_id}", headers=h)
             self.assertEqual(r.status_code, 200)
@@ -220,6 +232,75 @@ class TestUiPagesSlice4(unittest.TestCase):
                 },
             )
             self.assertEqual(r.status_code, 409)
+
+    def test_edit_page_reflects_applied_playlist_in_audio_ids_field(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ts = dbm.now_ts()
+                for pk, tid, duration, month in [
+                    (401, "t401", 240.0, "2024-01"),
+                    (402, "t402", 260.0, "2024-01"),
+                    (403, "t403", 280.0, "2024-02"),
+                ]:
+                    conn.execute(
+                        "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, title, duration_sec, month_batch, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                        (pk, "darkwood-reverie", tid, f"g{pk}", f"Track {pk}", duration, month, ts, ts),
+                    )
+                    conn.execute(
+                        "INSERT INTO track_analysis_flat(track_pk, channel_slug, track_id, analysis_computed_at, analysis_status, duration_sec, yamnet_top_tags_text, voice_flag, speech_flag, dominant_texture, dsp_score, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+                        (pk, "darkwood-reverie", tid, ts, "ok", duration, "ambient,calm", 0, 0, "smooth", 0.6),
+                    )
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="T",
+                    description="",
+                    tags_csv="",
+                    cover_name="",
+                    cover_ext="",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="123",
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            preview = client.post(
+                f"/v1/playlist-builder/jobs/{job_id}/preview",
+                headers=h,
+                json={"override": {"generation_mode": "safe", "min_duration_min": 10, "max_duration_min": 15}},
+            )
+            self.assertEqual(preview.status_code, 200)
+            preview_id = preview.json()["preview_id"]
+
+            apply_resp = client.post(
+                f"/v1/playlist-builder/jobs/{job_id}/apply",
+                headers=h,
+                json={"preview_id": preview_id},
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+
+            r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(r.status_code, 200)
+
+            conn2 = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn2, job_id)
+                expected_audio_ids = str(draft["audio_ids_text"])
+            finally:
+                conn2.close()
+            self.assertIn(f'value="{expected_audio_ids}"', r.text)
 
 
     def test_tags_editor_manual_fields_override_stale_json(self) -> None:
