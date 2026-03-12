@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from dataclasses import dataclass, field
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -71,6 +72,61 @@ class PlaylistBrief(BaseModel):
         payload = self.model_dump()
         payload["target_duration_min"] = self.target_duration_min
         return payload
+
+
+@dataclass(frozen=True)
+class TrackCandidate:
+    track_pk: int
+    track_id: str
+    channel_slug: str
+    duration_sec: float
+    month_batch: Optional[str]
+    tags: frozenset[str]
+    voice_flag: Optional[bool]
+    speech_flag: Optional[bool]
+    dominant_texture: Optional[str]
+    dsp_score: Optional[float]
+
+
+@dataclass(frozen=True)
+class PlaylistHistoryEntry:
+    history_id: int
+    job_id: Optional[int]
+    history_stage: str
+    tracks: tuple[int, ...]
+    month_batches: tuple[Optional[str], ...] = ()
+
+
+@dataclass
+class CandidateScore:
+    track_pk: int
+    hard_eligible: bool
+    context_fit: float
+    novelty_contribution: float
+    batch_ratio_contribution: float
+    voice_policy_fit: float
+    required_tags_fit: float
+    low_reuse_penalty_inverse: float
+    duration_fit_micro: float
+    base_fit: float
+    fit_note: str = ""
+
+
+class PlaylistPreviewResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: GenerationMode
+    status: Literal["ok", "not_implemented", "empty"]
+    warnings: list[str] = Field(default_factory=list)
+    relaxations: list[str] = Field(default_factory=list)
+    selected_track_pks: list[int] = Field(default_factory=list)
+    ordered_track_pks: list[int] = Field(default_factory=list)
+    achieved_duration_sec: float = 0.0
+    achieved_duration_min: float = 0.0
+    achieved_novelty: float = 0.0
+    achieved_batch_ratio: float = 0.0
+    per_track_fit_notes: list[dict[str, Any]] = Field(default_factory=list)
+    ordering_rationale: str = ""
 
 
 class PlaylistBriefOverrides(BaseModel):
