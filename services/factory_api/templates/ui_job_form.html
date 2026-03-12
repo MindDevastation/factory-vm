@@ -149,7 +149,25 @@
 
   let lastPreviewId = null;
   let lastTrackPks = [];
+  let lastPreviewOverrideSnapshot = null;
   const canRun = Number.isInteger(jobId);
+
+  const previewStateInputIds = [
+    'plb-generation-mode',
+    'plb-strictness-mode',
+    'plb-min-duration',
+    'plb-max-duration',
+    'plb-tolerance',
+    'plb-allow-cross-channel',
+    'plb-preferred-month-batch',
+    'plb-preferred-batch-ratio',
+    'plb-novelty-min',
+    'plb-novelty-max',
+    'plb-vocal-policy',
+    'plb-required-tags',
+    'plb-excluded-tags',
+    'plb-notes',
+  ];
 
   function toNumber(id) {
     const value = Number(document.getElementById(id).value);
@@ -178,6 +196,21 @@
       excluded_tags: splitTags('plb-excluded-tags'),
       notes: document.getElementById('plb-notes').value.trim() || null,
     };
+  }
+
+  function invalidatePreviewState() {
+    const hadPreview = Boolean(lastPreviewId);
+    lastPreviewId = null;
+    lastTrackPks = [];
+    lastPreviewOverrideSnapshot = null;
+    applyBtn.disabled = true;
+    summary.innerHTML = '';
+    tracks.innerHTML = '';
+    summary.style.display = 'none';
+    tracks.style.display = 'none';
+    if (hadPreview) {
+      status.textContent = 'Preview outdated; run Preview again';
+    }
   }
 
   function renderPreview(payload) {
@@ -234,15 +267,23 @@
 
   closeBtn.addEventListener('click', () => modal.close());
 
+  previewStateInputIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', invalidatePreviewState);
+    el.addEventListener('change', invalidatePreviewState);
+  });
+
   previewBtn.addEventListener('click', async () => {
     if (!canRun) return;
     status.textContent = 'Previewing...';
     applyBtn.disabled = true;
+    const override = buildOverride();
     const resp = await fetch(`/v1/playlist-builder/jobs/${jobId}/preview`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ override: buildOverride() }),
+      body: JSON.stringify({ override }),
     });
     const payload = await resp.json();
     if (!resp.ok) {
@@ -250,6 +291,7 @@
       return;
     }
     lastPreviewId = payload.preview_id;
+    lastPreviewOverrideSnapshot = override;
     lastTrackPks = (payload.tracks || []).map((t) => t.track_pk).filter((v) => Number.isInteger(v));
     renderPreview(payload);
     status.textContent = `Preview ready: ${lastPreviewId}`;
@@ -271,12 +313,14 @@
       return;
     }
 
-    await fetch(`/v1/ui/jobs/${jobId}/playlist-builder/override`, {
-      method: 'PATCH',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildOverride()),
-    });
+    if (lastPreviewOverrideSnapshot) {
+      await fetch(`/v1/ui/jobs/${jobId}/playlist-builder/override`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(lastPreviewOverrideSnapshot),
+      });
+    }
 
     audioIdsInput.value = lastTrackPks.join(' ');
     document.getElementById('playlist-overwrite-warning').style.display = audioIdsInput.value.trim() ? 'block' : 'none';
