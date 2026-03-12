@@ -238,19 +238,24 @@ def api_playlist_builder_job_override_patch(
         settings_row = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
         settings_patch = channel_settings_row_to_patch(settings_row)
 
+        existing_override = parse_override_json(draft.get("playlist_builder_override_json"))
         override_patch = payload.as_patch_dict()
+        merged_override = {
+            **existing_override,
+            **override_patch,
+        }
         resolve_playlist_brief(
             channel_slug=channel_slug,
             job_id=job_id,
             channel_settings=settings_patch,
-            job_override=override_patch,
+            job_override=merged_override,
             request_override=None,
         )
 
         dbm.update_ui_job_playlist_builder_override_json(
             conn,
             job_id=job_id,
-            playlist_builder_override_json=json.dumps(override_patch, sort_keys=True),
+            playlist_builder_override_json=json.dumps(merged_override, sort_keys=True),
         )
         conn.commit()
     except PlaylistBuilderValidationError as exc:
@@ -258,7 +263,7 @@ def api_playlist_builder_job_override_patch(
     finally:
         conn.close()
 
-    return {"job_id": str(job_id), "override": override_patch}
+    return {"job_id": str(job_id), "override": merged_override}
 
 
 def _require_channel(channel_slug: str) -> None:

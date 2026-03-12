@@ -56,7 +56,8 @@ def channel_settings_row_to_patch(row: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def build_channel_settings_payload(*, channel_slug: str, row: dict[str, Any] | None) -> dict[str, Any]:
-    merged = {**SYSTEM_DEFAULTS, **channel_settings_row_to_patch(row)}
+    default_settings = PlaylistChannelSettingsPatch().model_dump()
+    merged = {**default_settings, **channel_settings_row_to_patch(row)}
     return {
         "channel_slug": channel_slug,
         "settings": PlaylistChannelSettingsPatch.model_validate(merged).model_dump(),
