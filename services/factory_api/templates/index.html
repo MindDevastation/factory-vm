@@ -171,6 +171,7 @@
   const oauthTableBody = document.querySelector('#oauth-status-table tbody');
   const trackJobStatusBySlug = {};
   const trackJobPollTimers = {};
+  const jobsStatusFilterDropdown = document.getElementById('jobs-status-filter-dropdown');
   const jobsStatusFilterSummary = document.getElementById('jobs-status-filter-summary');
   const jobsStatusFilter = document.getElementById('jobs-status-filter');
   const jobsStatusClear = document.getElementById('jobs-status-clear');
@@ -677,6 +678,27 @@
     updateStatusSummaryLabel(selectedSet);
   }
 
+  function setJobsStatusFilterUnavailable(isUnavailable) {
+    if (isUnavailable) {
+      jobsStatusFilterDropdown.open = false;
+      jobsStatusFilterDropdown.setAttribute('data-unavailable', 'true');
+      jobsStatusFilterSummary.setAttribute('aria-disabled', 'true');
+      jobsStatusFilterSummary.style.cursor = 'not-allowed';
+      jobsStatusFilterSummary.style.opacity = '0.6';
+      return;
+    }
+    jobsStatusFilterDropdown.removeAttribute('data-unavailable');
+    jobsStatusFilterSummary.removeAttribute('aria-disabled');
+    jobsStatusFilterSummary.style.cursor = 'pointer';
+    jobsStatusFilterSummary.style.opacity = '1';
+  }
+
+  jobsStatusFilterSummary.addEventListener('click', (event) => {
+    if (jobsStatusFilterDropdown.getAttribute('data-unavailable') === 'true') {
+      event.preventDefault();
+    }
+  });
+
   function syncStatusFilterOptionsFromJobs(jobs) {
     const known = new Set(jobsStatusSource);
     let changed = false;
@@ -711,6 +733,7 @@
       applyJobsFilter(selectedStatuses);
       updateStatusesQuery(selectedStatuses, jobsStatusSource);
 
+      setJobsStatusFilterUnavailable(false);
       jobsStatusClear.disabled = false;
       jobsStatusNote.textContent = '';
 
@@ -736,6 +759,7 @@
       });
     } catch (err) {
       console.warn('jobs status filter unavailable:', err);
+      setJobsStatusFilterUnavailable(true);
       jobsStatusClear.disabled = true;
       jobsStatusNote.textContent = 'Status filter unavailable';
       applyJobsFilter(new Set());
