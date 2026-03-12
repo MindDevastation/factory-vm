@@ -54,7 +54,7 @@
 
 <dialog id="playlist-builder-modal" style="width:min(980px,95vw)">
   <h3>Playlist Builder</h3>
-  <p id="playlist-builder-save-first" style="color:#92400e; display:none;"><b>Save this job first to generate/apply playlist.</b> Create flow supports settings only until the first save.</p>
+  <p id="playlist-builder-save-first" style="color:#92400e; display:none;"><b>Draft will be auto-created on first Preview.</b> You can generate/apply playlist in Create flow without manual save first.</p>
 
   <fieldset>
     <legend>Mode</legend>
@@ -133,7 +133,7 @@
 <script>
 (function () {
   const mode = '{{ mode }}';
-  const jobId = {{ job_id if job_id else 'null' }};
+  const initialJobId = {{ job_id if job_id else 'null' }};
   const modal = document.getElementById('playlist-builder-modal');
   const openBtn = document.getElementById('playlist-builder-open-btn');
   const closeBtn = document.getElementById('plb-close-btn');
@@ -147,10 +147,57 @@
 
   if (!modal || !openBtn || !closeBtn || !previewBtn || !applyBtn || !status || !summary || !tracks || !audioIdsInput) return;
 
+  let activeJobId = Number.isInteger(initialJobId) ? initialJobId : null;
   let lastPreviewId = null;
   let lastTrackPks = [];
   let lastPreviewOverrideSnapshot = null;
-  const canRun = Number.isInteger(jobId);
+  function canRun() {
+    return Number.isInteger(activeJobId);
+  }
+
+  function buildCreatePayload() {
+    const channelInput = document.querySelector('select[name="channel_id"], input[name="channel_id"]');
+    const readText = (selector) => {
+      const el = document.querySelector(selector);
+      return el ? String(el.value || '').trim() : '';
+    };
+    return {
+      channel_id: Number(channelInput ? channelInput.value : NaN),
+      title: readText('input[name="title"]'),
+      description: readText('textarea[name="description"]'),
+      tags_csv: readText('input[name="tags_csv"]'),
+      cover_name: readText('input[name="cover_name"]'),
+      cover_ext: readText('input[name="cover_ext"]'),
+      background_name: readText('input[name="background_name"]'),
+      background_ext: readText('input[name="background_ext"]'),
+      audio_ids_text: readText('input[name="audio_ids_text"]'),
+    };
+  }
+
+  async function ensureJobIdForPlaylistBuilder() {
+    if (canRun()) return activeJobId;
+    status.textContent = 'Creating draft...';
+    const createResp = await fetch('/v1/ui/jobs', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildCreatePayload()),
+    });
+    const createPayload = await createResp.json();
+    if (!createResp.ok) {
+      status.textContent = 'Draft creation failed. Fill required fields and retry Preview.';
+      return null;
+    }
+    activeJobId = Number(createPayload.job_id);
+    if (!canRun()) {
+      status.textContent = 'Draft creation failed. Retry Preview.';
+      return null;
+    }
+    if (window.history && typeof window.history.replaceState === 'function') {
+      window.history.replaceState(null, '', `/ui/jobs/${activeJobId}/edit`);
+    }
+    return activeJobId;
+  }
 
   const previewStateInputIds = [
     'plb-generation-mode',
@@ -253,15 +300,9 @@
 
   openBtn.addEventListener('click', () => {
     status.textContent = '';
-    if (!canRun) {
-      saveFirst.style.display = 'block';
-      previewBtn.disabled = true;
-      applyBtn.disabled = true;
-    } else {
-      saveFirst.style.display = 'none';
-      previewBtn.disabled = false;
-      applyBtn.disabled = !lastPreviewId;
-    }
+    saveFirst.style.display = mode === 'create' && !canRun() ? 'block' : 'none';
+    previewBtn.disabled = false;
+    applyBtn.disabled = !lastPreviewId;
     modal.showModal();
   });
 
@@ -275,7 +316,8 @@
   });
 
   previewBtn.addEventListener('click', async () => {
-    if (!canRun) return;
+    const jobId = await ensureJobIdForPlaylistBuilder();
+    if (!Number.isInteger(jobId)) return;
     status.textContent = 'Previewing...';
     applyBtn.disabled = true;
     const override = buildOverride();
@@ -299,7 +341,8 @@
   });
 
   applyBtn.addEventListener('click', async () => {
-    if (!canRun || !lastPreviewId) return;
+    if (!canRun() || !lastPreviewId) return;
+    const jobId = Number(activeJobId);
     status.textContent = 'Applying...';
     const applyResp = await fetch(`/v1/playlist-builder/jobs/${jobId}/apply`, {
       method: 'POST',
