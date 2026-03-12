@@ -186,5 +186,128 @@ class TestPlaylistBuilderCommittedHistoryPublish(unittest.TestCase):
                 conn.close()
 
 
+    def test_mark_published_fails_when_draft_playlist_diverges_from_active_draft_history(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            self._seed_tracks()
+            job_id = self._create_ui_draft()
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            self._preview_apply(client, headers, job_id)
+
+            conn = dbm.connect(self.env)
+            try:
+                conn.execute("UPDATE ui_job_drafts SET audio_ids_text = ?, updated_at = ? WHERE job_id = ?", ("401,403", dbm.now_ts(), job_id))
+                conn.commit()
+            finally:
+                conn.close()
+
+            self._set_wait_approval(job_id)
+            resp = client.post(f"/v1/jobs/{job_id}/mark_published", headers=headers, json={})
+            self.assertEqual(resp.status_code, 409)
+            self.assertEqual(resp.json()["error"]["code"], "PLB_COMMITTED_HISTORY_PLAYLIST_MISMATCH")
+
+            conn = dbm.connect(self.env)
+            try:
+                committed_count = conn.execute(
+                    "SELECT COUNT(*) AS c FROM playlist_history WHERE job_id = ? AND history_stage = 'COMMITTED'",
+                    (job_id,),
+                ).fetchone()
+                self.assertEqual(int(committed_count["c"]), 0)
+            finally:
+                conn.close()
+
+    def test_mark_published_recomputes_relative_metrics_at_publish_time(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            self._seed_tracks()
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            job_a = self._create_ui_draft()
+            self._preview_apply(client, headers, job_a)
+
+            conn = dbm.connect(self.env)
+            try:
+                draft_a = conn.execute(
+                    "SELECT id, novelty_against_prev, batch_overlap_score FROM playlist_history WHERE job_id = ? AND history_stage = 'DRAFT' ORDER BY id DESC LIMIT 1",
+                    (job_a,),
+                ).fetchone()
+                self.assertIsNone(draft_a["novelty_against_prev"])
+                self.assertIsNone(draft_a["batch_overlap_score"])
+            finally:
+                conn.close()
+
+            job_b = self._create_ui_draft()
+            conn = dbm.connect(self.env)
+            try:
+                conn.execute("UPDATE ui_job_drafts SET audio_ids_text = ?, updated_at = ? WHERE job_id = ?", ("401,402", dbm.now_ts(), job_b))
+                conn.commit()
+            finally:
+                conn.close()
+            self._set_wait_approval(job_b)
+            published_b = client.post(f"/v1/jobs/{job_b}/mark_published", headers=headers, json={})
+            self.assertEqual(published_b.status_code, 409)
+
+            conn = dbm.connect(self.env)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO playlist_history(channel_slug, job_id, history_stage, source_preview_id, generation_mode,
+                    strictness_mode, playlist_duration_sec, tracks_count, set_fingerprint, ordered_fingerprint,
+                    prefix_fingerprint_n3, prefix_fingerprint_n5, novelty_against_prev, batch_overlap_score, is_active, created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        "darkwood-reverie",
+                        job_b,
+                        "COMMITTED",
+                        None,
+                        "safe",
+                        "balanced",
+                        500.0,
+                        2,
+                        "x-set",
+                        "x-ord",
+                        "x-p3",
+                        "x-p5",
+                        0.0,
+                        0.0,
+                        1,
+                        "2030-01-01T00:00:00+00:00",
+                    ),
+                )
+                committed_b = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+                conn.execute(
+                    "INSERT INTO playlist_history_items(history_id, position_index, track_pk, month_batch, duration_sec, channel_slug) VALUES(?,?,?,?,?,?)",
+                    (committed_b, 0, 401, "2024-01", 240.0, "darkwood-reverie"),
+                )
+                conn.execute(
+                    "INSERT INTO playlist_history_items(history_id, position_index, track_pk, month_batch, duration_sec, channel_slug) VALUES(?,?,?,?,?,?)",
+                    (committed_b, 1, 402, "2024-01", 260.0, "darkwood-reverie"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            self._set_wait_approval(job_a)
+            published_a = client.post(f"/v1/jobs/{job_a}/mark_published", headers=headers, json={})
+            self.assertEqual(published_a.status_code, 200)
+
+            conn = dbm.connect(self.env)
+            try:
+                committed_a = conn.execute(
+                    "SELECT novelty_against_prev, batch_overlap_score FROM playlist_history WHERE job_id = ? AND history_stage = 'COMMITTED' ORDER BY id DESC LIMIT 1",
+                    (job_a,),
+                ).fetchone()
+                self.assertIsNotNone(committed_a)
+                self.assertAlmostEqual(float(committed_a["novelty_against_prev"]), 1.0 / 3.0, places=6)
+                self.assertAlmostEqual(float(committed_a["batch_overlap_score"]), 2.0 / 3.0, places=6)
+            finally:
+                conn.close()
+
+
+
 if __name__ == "__main__":
     unittest.main()
