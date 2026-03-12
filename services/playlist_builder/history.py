@@ -74,9 +74,8 @@ def list_effective_history(conn: object, *, channel_slug: str, window: int) -> l
         FROM playlist_history
         WHERE channel_slug = ? AND is_active = 1
         ORDER BY datetime(created_at) DESC, id DESC
-        LIMIT ?
         """,
-        (channel_slug, max(window * 3, window)),
+        (channel_slug,),
     ).fetchall()
     by_job: dict[int, dict] = {}
     passthrough: list[dict] = []
@@ -85,12 +84,17 @@ def list_effective_history(conn: object, *, channel_slug: str, window: int) -> l
         if job_id is None:
             passthrough.append(row)
             continue
-        existing = by_job.get(int(job_id))
+        jid = int(job_id)
+        existing = by_job.get(jid)
+        stage = str(row["history_stage"]).upper()
         if existing is None:
-            by_job[int(job_id)] = row
+            by_job[jid] = row
             continue
-        if str(row["history_stage"]).upper() == "COMMITTED":
-            by_job[int(job_id)] = row
+        existing_stage = str(existing["history_stage"]).upper()
+        if existing_stage == "COMMITTED":
+            continue
+        if stage == "COMMITTED":
+            by_job[jid] = row
 
     effective_rows = sorted(list(by_job.values()) + passthrough, key=lambda r: (r["created_at"], r["id"]), reverse=True)[:window]
     history_ids = [int(r["id"]) for r in effective_rows]

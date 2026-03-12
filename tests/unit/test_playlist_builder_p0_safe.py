@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timedelta
 
 from services.common import db as dbm
-from services.playlist_builder.composition import compose_safe, list_safe_candidates
+from services.playlist_builder.composition import _attempt_swaps, compose_safe, list_safe_candidates
 from services.playlist_builder.constraints import relaxed_brief_variants
 from services.playlist_builder.history import (
     batch_distribution_overlap,
@@ -15,7 +15,7 @@ from services.playlist_builder.history import (
     prefix_overlap,
     track_set_overlap,
 )
-from services.playlist_builder.models import PlaylistBrief
+from services.playlist_builder.models import PlaylistBrief, TrackCandidate
 from services.playlist_builder.sequencing import sequence_safe
 from tests._helpers import temp_env, seed_minimal_db
 
@@ -72,6 +72,50 @@ class PlaylistBuilderP0SafeTest(unittest.TestCase):
         self.assertEqual(len(hist), 1)
         self.assertEqual(hist[0].tracks[0], 456)
         self.assertEqual(position_memory_risk(456, 0, hist), 1.0)
+
+    def test_swap_improvement_keeps_unique_track_pks(self) -> None:
+        selected = [
+            TrackCandidate(1, "t1", "darkwood-reverie", 200.0, "2024-01", frozenset(), False, False, "smooth", 0.1),
+            TrackCandidate(2, "t2", "darkwood-reverie", 200.0, "2024-01", frozenset(), False, False, "smooth", 0.1),
+        ]
+        ranked = [
+            selected[0],
+            selected[1],
+            TrackCandidate(3, "t3", "darkwood-reverie", 150.0, "2024-01", frozenset(), False, False, "smooth", 0.1),
+        ]
+
+        swapped = _attempt_swaps(selected, ranked, target_sec=300.0)
+
+        self.assertEqual([t.track_pk for t in swapped], [3, 2])
+        self.assertEqual(len({t.track_pk for t in swapped}), len(swapped))
+
+    def test_history_precedence_applies_before_window_limit(self) -> None:
+        now = datetime.utcnow()
+
+        # Newer rows flood the old prefetch window (window=2 -> old prefetch=6).
+        for idx in range(1, 6):
+            self.conn.execute(
+                "INSERT INTO playlist_history(id, channel_slug, job_id, history_stage, source_preview_id, generation_mode, strictness_mode, playlist_duration_sec, tracks_count, set_fingerprint, ordered_fingerprint, prefix_fingerprint_n3, prefix_fingerprint_n5, novelty_against_prev, batch_overlap_score, is_active, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (idx, "darkwood-reverie", 200, "DRAFT", None, "safe", "balanced", 100, 1, "a", "b", "c", "d", 0.5, 0.5, 1, (now - timedelta(seconds=idx)).isoformat()),
+            )
+
+        self.conn.execute(
+            "INSERT INTO playlist_history(id, channel_slug, job_id, history_stage, source_preview_id, generation_mode, strictness_mode, playlist_duration_sec, tracks_count, set_fingerprint, ordered_fingerprint, prefix_fingerprint_n3, prefix_fingerprint_n5, novelty_against_prev, batch_overlap_score, is_active, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (6, "darkwood-reverie", 300, "DRAFT", None, "safe", "balanced", 100, 1, "a", "b", "c", "d", 0.5, 0.5, 1, (now - timedelta(seconds=6)).isoformat()),
+        )
+        self.conn.execute(
+            "INSERT INTO playlist_history(id, channel_slug, job_id, history_stage, source_preview_id, generation_mode, strictness_mode, playlist_duration_sec, tracks_count, set_fingerprint, ordered_fingerprint, prefix_fingerprint_n3, prefix_fingerprint_n5, novelty_against_prev, batch_overlap_score, is_active, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (7, "darkwood-reverie", 300, "COMMITTED", None, "safe", "balanced", 100, 1, "a", "b", "c", "d", 0.5, 0.5, 1, (now - timedelta(seconds=7)).isoformat()),
+        )
+
+        self.conn.execute("INSERT INTO playlist_history_items(id, history_id, position_index, track_pk, month_batch, duration_sec, channel_slug) VALUES(?,?,?,?,?,?,?)", (1, 6, 0, 111, "2024-01", 10, "darkwood-reverie"))
+        self.conn.execute("INSERT INTO playlist_history_items(id, history_id, position_index, track_pk, month_batch, duration_sec, channel_slug) VALUES(?,?,?,?,?,?,?)", (2, 7, 0, 999, "2024-01", 10, "darkwood-reverie"))
+
+        hist = list_effective_history(self.conn, channel_slug="darkwood-reverie", window=2)
+
+        target = next(h for h in hist if h.job_id == 300)
+        self.assertEqual(target.history_stage, "COMMITTED")
+        self.assertEqual(target.tracks, (999,))
 
     def test_relaxation_engine_variants(self) -> None:
         brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="safe", strictness_mode="flexible", preferred_month_batch="2024-02", required_tags=["calm"])

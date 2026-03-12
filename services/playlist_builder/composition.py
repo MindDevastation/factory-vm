@@ -206,12 +206,14 @@ def compose_safe(brief: PlaylistBrief, candidates: list[TrackCandidate], history
 def _attempt_swaps(selected: list[TrackCandidate], ranked: list[TrackCandidate], target_sec: float) -> list[TrackCandidate]:
     current = list(selected)
     curr_err = abs(sum(c.duration_sec for c in current) - target_sec)
-    selected_ids = {c.track_pk for c in current}
-    available = [c for c in ranked if c.track_pk not in selected_ids]
     for out_idx, out in enumerate(list(current)):
+        current_ids = {c.track_pk for c in current}
+        available = [c for c in ranked if c.track_pk not in current_ids]
         for inc in available[:12]:
             proposal = list(current)
             proposal[out_idx] = inc
+            if len({c.track_pk for c in proposal}) != len(proposal):
+                continue
             err = abs(sum(c.duration_sec for c in proposal) - target_sec)
             if err + 0.001 < curr_err:
                 current = proposal
