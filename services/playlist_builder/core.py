@@ -4,11 +4,15 @@ from typing import Any
 
 from services.common import db as dbm
 from services.playlist_builder.api_adapter import channel_settings_row_to_patch, parse_override_json, resolve_playlist_brief
-from services.playlist_builder.composition import compose_safe, compose_smart, list_safe_candidates
+from services.playlist_builder.composition import CuratedOptimizationLimitExceeded, compose_curated, compose_safe, compose_smart, list_safe_candidates
 from services.playlist_builder.explain import build_preview_result
 from services.playlist_builder.history import list_effective_history
 from services.playlist_builder.models import PlaylistBrief, PlaylistPreviewResult
-from services.playlist_builder.sequencing import sequence_safe, sequence_smart
+from services.playlist_builder.sequencing import CuratedSequencingLimitExceeded, sequence_curated, sequence_safe, sequence_smart
+
+
+class CuratedModeLimitExceeded(RuntimeError):
+    pass
 
 
 class PlaylistBuilder:
@@ -17,6 +21,8 @@ class PlaylistBuilder:
             return self._generate_safe(conn, brief)
         if brief.generation_mode == "smart":
             return self._generate_smart(conn, brief)
+        if brief.generation_mode == "curated":
+            return self._generate_curated(conn, brief)
         return PlaylistPreviewResult(
             mode=brief.generation_mode,
             status="not_implemented",
@@ -108,6 +114,54 @@ class PlaylistBuilder:
             warnings=warnings,
             relaxations=relaxations,
             ordering_rationale=f"{rationale} Smart mode applied post-selection and post-ordering local refinement beyond Safe.",
+        )
+
+    def _generate_curated(self, conn: object, brief: PlaylistBrief) -> PlaylistPreviewResult:
+        history = list_effective_history(conn, channel_slug=brief.channel_slug, window=brief.position_memory_window)
+        candidates = list_safe_candidates(conn, brief)
+        warnings: list[str] = []
+        if not candidates:
+            warnings.append("No eligible analyzed candidates found for curated mode.")
+            return build_preview_result(
+                brief=brief,
+                selected=[],
+                ordered=[],
+                scores=[],
+                history=history,
+                warnings=warnings,
+                relaxations=[],
+                ordering_rationale="No candidates passed Curated mode candidate filtering.",
+            )
+        try:
+            selected, scores, relaxations, composition_summary = compose_curated(brief, candidates, history)
+            if not selected:
+                warnings.append("No composition could satisfy hard eligibility constraints.")
+                return build_preview_result(
+                    brief=brief,
+                    selected=[],
+                    ordered=[],
+                    scores=[],
+                    history=history,
+                    warnings=warnings,
+                    relaxations=relaxations,
+                    ordering_rationale="No candidates could be selected after Curated composition passes.",
+                )
+            ordered, rationale = sequence_curated(brief, selected, history)
+        except (CuratedOptimizationLimitExceeded, CuratedSequencingLimitExceeded) as exc:
+            raise CuratedModeLimitExceeded(str(exc)) from exc
+
+        warnings.append(composition_summary)
+        return build_preview_result(
+            brief=brief,
+            selected=selected,
+            ordered=ordered,
+            scores=scores,
+            history=history,
+            warnings=warnings,
+            relaxations=relaxations,
+            ordering_rationale=(
+                f"{rationale} Curated mode performed iterative composition/sequencing refinement with bounded best-of-N and beam-like search."
+            ),
         )
 
 

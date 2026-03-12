@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from time import monotonic
 
 from services.playlist_builder.constraints import duration_band_sec, relaxed_brief_variants
 from services.playlist_builder.history import novelty_against_previous, position_memory_risk
 from services.playlist_builder.models import CandidateScore, PlaylistBrief, PlaylistHistoryEntry, TrackCandidate
+
+
+class CuratedOptimizationLimitExceeded(RuntimeError):
+    pass
 
 
 def _norm_tag_set(tags: set[str]) -> frozenset[str]:
@@ -286,6 +291,120 @@ def compose_smart(
     final_scores = [score_map.get(c.track_pk) for c in current if score_map.get(c.track_pk)]
     summary = f"Smart composition used top-{top_k} pool with {passes} pass(es) and {improvements} accepted swap refinement(s)."
     return current, final_scores, relaxations, summary
+
+
+def _curated_sequence_hint(ordered: list[TrackCandidate]) -> float:
+    if len(ordered) <= 1:
+        return 0.0
+    smooth = 0.0
+    for idx in range(1, len(ordered)):
+        prev = ordered[idx - 1].dsp_score
+        nxt = ordered[idx].dsp_score
+        if prev is None or nxt is None:
+            smooth += 0.5
+        else:
+            smooth += max(0.0, 1.0 - abs(prev - nxt))
+    return smooth / max(len(ordered) - 1, 1)
+
+
+def _curated_set_objective(
+    brief: PlaylistBrief,
+    selected: list[TrackCandidate],
+    history: list[PlaylistHistoryEntry],
+    ordered: list[TrackCandidate],
+) -> float:
+    return (0.88 * _selection_objective(brief, selected, history)) + (0.12 * _curated_sequence_hint(ordered))
+
+
+def compose_curated(
+    brief: PlaylistBrief,
+    candidates: list[TrackCandidate],
+    history: list[PlaylistHistoryEntry],
+    *,
+    max_wall_seconds: float = 1.0,
+    max_iterations: int = 360,
+) -> tuple[list[TrackCandidate], list[CandidateScore], list[str], str]:
+    started = monotonic()
+    if max_iterations < 1 or max_wall_seconds <= 0.0:
+        raise CuratedOptimizationLimitExceeded("Curated optimization guardrail invalid; max_iterations and max_wall_seconds must be positive.")
+
+    seed_selected, _, relaxations, smart_summary = compose_smart(brief, candidates, history)
+    if not seed_selected:
+        return seed_selected, [], relaxations, "Curated mode could not start optimization because Smart seed composition yielded no set."
+
+    scored = score_candidates(brief, candidates, history)
+    score_map = {s.track_pk: s for s in scored}
+    ranked_pool = sorted(
+        candidates,
+        key=lambda c: (score_map[c.track_pk].base_fit, score_map[c.track_pk].novelty_contribution, -c.track_pk),
+        reverse=True,
+    )
+    top_k = min(len(ranked_pool), max(len(seed_selected) * 6, 18))
+    pool = ranked_pool[:top_k]
+    by_pk = {c.track_pk: c for c in pool}
+    min_sec, _, max_sec = duration_band_sec(brief)
+
+    seeds = [list(seed_selected)]
+    for start in (1, 2):
+        alt = [by_pk.get(c.track_pk, c) for c in seed_selected]
+        for idx in range(start, len(alt), 2):
+            for cand in pool:
+                if cand.track_pk in {t.track_pk for t in alt}:
+                    continue
+                trial = list(alt)
+                trial[idx] = cand
+                dur = sum(c.duration_sec for c in trial)
+                if min_sec <= dur <= max_sec:
+                    alt = trial
+                    break
+        seeds.append(alt)
+
+    best = list(seed_selected)
+    best_obj = _curated_set_objective(brief, best, history, best)
+    improvements = 0
+    iterations = 0
+    for current in seeds:
+        current_ids = {c.track_pk for c in current}
+        improved = True
+        while improved:
+            if monotonic() - started > max_wall_seconds:
+                raise CuratedOptimizationLimitExceeded(
+                    f"Curated composition exceeded guardrail: max_wall_seconds={max_wall_seconds:.2f}, max_iterations={max_iterations}, iterations={iterations}."
+                )
+            if iterations >= max_iterations:
+                raise CuratedOptimizationLimitExceeded(
+                    f"Curated composition exceeded guardrail: max_iterations={max_iterations}, elapsed={monotonic() - started:.3f}s."
+                )
+            improved = False
+            iterations += 1
+            current_obj = _curated_set_objective(brief, current, history, current)
+            for idx, out in enumerate(list(current)):
+                for cand in pool:
+                    if cand.track_pk in current_ids:
+                        continue
+                    proposal = list(current)
+                    proposal[idx] = cand
+                    proposal_duration = sum(c.duration_sec for c in proposal)
+                    if proposal_duration < min_sec - 1e-6 or proposal_duration > max_sec + 1e-6:
+                        continue
+                    proposal_obj = _curated_set_objective(brief, proposal, history, proposal)
+                    if proposal_obj > current_obj + 1e-6:
+                        current_ids.discard(out.track_pk)
+                        current_ids.add(cand.track_pk)
+                        current = proposal
+                        current_obj = proposal_obj
+                        improvements += 1
+                        improved = True
+            if current_obj > best_obj + 1e-6:
+                best = list(current)
+                best_obj = current_obj
+
+    final_scores = [score_map[c.track_pk] for c in best if c.track_pk in score_map]
+    summary = (
+        f"Curated composition ran seeded best-of-{len(seeds)} search over top-{top_k} candidates; "
+        f"iterations={iterations}, accepted replacements={improvements}. {smart_summary}"
+    )
+    return best, final_scores, relaxations, summary
 
 
 def _attempt_swaps(selected: list[TrackCandidate], ranked: list[TrackCandidate], target_sec: float) -> list[TrackCandidate]:

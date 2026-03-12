@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+from time import monotonic
+
 from services.playlist_builder.history import position_memory_risk
 from services.playlist_builder.models import PlaylistBrief, PlaylistHistoryEntry, TrackCandidate
+
+
+class CuratedSequencingLimitExceeded(RuntimeError):
+    pass
 
 
 def _transition_compatibility(a: TrackCandidate, b: TrackCandidate) -> float:
@@ -178,3 +184,64 @@ def sequence_smart(brief: PlaylistBrief, selected: list[TrackCandidate], history
         f"abrupt-jump penalties, and {accepted} accepted local reorder swap(s)."
     )
     return ordered, rationale
+
+
+def sequence_curated(
+    brief: PlaylistBrief,
+    selected: list[TrackCandidate],
+    history: list[PlaylistHistoryEntry],
+    *,
+    beam_width: int = 4,
+    max_iterations: int = 180,
+    max_wall_seconds: float = 1.0,
+) -> tuple[list[TrackCandidate], str]:
+    if len(selected) <= 1:
+        return selected, "Curated ordering is trivial due to single-track or empty selection."
+    if beam_width < 1 or max_iterations < 1 or max_wall_seconds <= 0.0:
+        raise CuratedSequencingLimitExceeded("Curated sequencing guardrail invalid; beam_width/max_iterations/max_wall_seconds must be positive.")
+
+    started = monotonic()
+    base_order, smart_rationale = sequence_smart(brief, selected, history)
+    beam: list[list[TrackCandidate]] = [base_order]
+    accepted = 0
+    iterations = 0
+    while iterations < max_iterations:
+        if monotonic() - started > max_wall_seconds:
+            raise CuratedSequencingLimitExceeded(
+                f"Curated sequencing exceeded guardrail: max_wall_seconds={max_wall_seconds:.2f}, max_iterations={max_iterations}, iterations={iterations}."
+            )
+        iterations += 1
+        candidates: list[list[TrackCandidate]] = list(beam)
+        for ordered in beam:
+            for idx in range(1, len(ordered) - 1):
+                for jdx in range(idx + 1, min(len(ordered), idx + 4)):
+                    proposal = list(ordered)
+                    proposal[idx], proposal[jdx] = proposal[jdx], proposal[idx]
+                    candidates.append(proposal)
+
+        ranked = sorted(
+            candidates,
+            key=lambda seq: (_sequence_objective(brief, seq, history), tuple(t.track_pk for t in seq)),
+            reverse=True,
+        )
+        next_beam: list[list[TrackCandidate]] = []
+        seen: set[tuple[int, ...]] = set()
+        for seq in ranked:
+            key = tuple(c.track_pk for c in seq)
+            if key in seen:
+                continue
+            seen.add(key)
+            next_beam.append(seq)
+            if len(next_beam) >= beam_width:
+                break
+        if tuple(t.track_pk for t in next_beam[0]) == tuple(t.track_pk for t in beam[0]):
+            break
+        beam = next_beam
+        accepted += 1
+
+    best = beam[0]
+    rationale = (
+        "Curated sequence optimization used beam-like bounded local search with multi-objective scoring "
+        f"(beam_width={beam_width}, iterations={iterations}, accepted_steps={accepted}). {smart_rationale}"
+    )
+    return best, rationale
