@@ -12,6 +12,60 @@ from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
 class TestUiPagesSlice4(unittest.TestCase):
+    def test_playlist_builder_preview_state_guards(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="T",
+                    description="",
+                    tags_csv="",
+                    cover_name="",
+                    cover_ext="",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("const previewStateInputIds = [", r.text)
+            self.assertIn("'plb-generation-mode'", r.text)
+            self.assertIn("'plb-strictness-mode'", r.text)
+            self.assertIn("'plb-min-duration'", r.text)
+            self.assertIn("'plb-max-duration'", r.text)
+            self.assertIn("'plb-tolerance'", r.text)
+            self.assertIn("'plb-allow-cross-channel'", r.text)
+            self.assertIn("'plb-preferred-month-batch'", r.text)
+            self.assertIn("'plb-preferred-batch-ratio'", r.text)
+            self.assertIn("'plb-novelty-min'", r.text)
+            self.assertIn("'plb-novelty-max'", r.text)
+            self.assertIn("'plb-vocal-policy'", r.text)
+            self.assertIn("'plb-required-tags'", r.text)
+            self.assertIn("'plb-excluded-tags'", r.text)
+            self.assertIn("'plb-notes'", r.text)
+            self.assertIn("function invalidatePreviewState()", r.text)
+            self.assertIn("applyBtn.disabled = false;", r.text)
+            self.assertIn("applyBtn.disabled = true;", r.text)
+            self.assertIn("status.textContent = 'Preview outdated; run Preview again';", r.text)
+            self.assertIn("lastPreviewOverrideSnapshot = override;", r.text)
+            self.assertIn("body: JSON.stringify(lastPreviewOverrideSnapshot)", r.text)
+            self.assertNotIn("body: JSON.stringify(buildOverride())", r.text)
+
     def test_pages_and_validation(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
