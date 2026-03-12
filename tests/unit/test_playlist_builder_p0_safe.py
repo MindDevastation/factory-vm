@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import unittest
+from datetime import datetime, timedelta
+
+from services.common import db as dbm
+from services.playlist_builder.composition import compose_safe, list_safe_candidates
+from services.playlist_builder.constraints import relaxed_brief_variants
+from services.playlist_builder.history import (
+    batch_distribution_overlap,
+    list_effective_history,
+    novelty_against_previous,
+    ordered_sequence_overlap,
+    position_memory_risk,
+    prefix_overlap,
+    track_set_overlap,
+)
+from services.playlist_builder.models import PlaylistBrief
+from services.playlist_builder.sequencing import sequence_safe
+from tests._helpers import temp_env, seed_minimal_db
+
+
+class PlaylistBuilderP0SafeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._ctx = temp_env()
+        _, self.env = self._ctx.__enter__()
+        seed_minimal_db(self.env)
+        self.conn = dbm.connect(self.env)
+        dbm.migrate(self.conn)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self._ctx.__exit__(None, None, None)
+
+    def _insert_track(self, *, pk: int, track_id: str, channel_slug: str = "darkwood-reverie", duration: float = 180.0, batch: str = "2024-01", voice: int = 0, speech: int = 0, dsp: float = 0.5, tags: str = "calm,ambient", texture: str = "smooth") -> None:
+        ts = dbm.now_ts()
+        self.conn.execute(
+            "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, duration_sec, month_batch, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?)",
+            (pk, channel_slug, track_id, f"g{pk}", duration, batch, ts, ts),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO track_analysis_flat(
+                track_pk, channel_slug, track_id, analysis_computed_at, analysis_status,
+                duration_sec, yamnet_top_tags_text, voice_flag, speech_flag, dominant_texture,
+                dsp_score, updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (pk, channel_slug, track_id, ts, "ok", duration, tags, voice, speech, texture, dsp, datetime.utcnow().isoformat()),
+        )
+
+    def test_overlap_formulas(self) -> None:
+        self.assertAlmostEqual(track_set_overlap([1, 2], [2, 3]), 1 / 3)
+        self.assertAlmostEqual(novelty_against_previous([1, 2], [2, 3]), 0.5)
+        self.assertAlmostEqual(ordered_sequence_overlap([1, 2, 3], [1, 4, 3]), 2 / 3)
+        self.assertAlmostEqual(prefix_overlap([1, 2, 3], [1, 2, 4], 3), 2 / 3)
+        self.assertAlmostEqual(batch_distribution_overlap(["a", "a", "b"], ["a", "c"]), 0.5)
+
+    def test_history_precedence_and_position_memory(self) -> None:
+        now = datetime.utcnow()
+        self.conn.execute(
+            "INSERT INTO playlist_history(id, channel_slug, job_id, history_stage, source_preview_id, generation_mode, strictness_mode, playlist_duration_sec, tracks_count, set_fingerprint, ordered_fingerprint, prefix_fingerprint_n3, prefix_fingerprint_n5, novelty_against_prev, batch_overlap_score, is_active, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (1, "darkwood-reverie", 99, "DRAFT", None, "safe", "balanced", 100, 2, "a", "b", "c", "d", 0.5, 0.5, 1, (now - timedelta(minutes=1)).isoformat()),
+        )
+        self.conn.execute(
+            "INSERT INTO playlist_history(id, channel_slug, job_id, history_stage, source_preview_id, generation_mode, strictness_mode, playlist_duration_sec, tracks_count, set_fingerprint, ordered_fingerprint, prefix_fingerprint_n3, prefix_fingerprint_n5, novelty_against_prev, batch_overlap_score, is_active, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (2, "darkwood-reverie", 99, "COMMITTED", None, "safe", "balanced", 100, 2, "a", "b", "c", "d", 0.5, 0.5, 1, now.isoformat()),
+        )
+        self.conn.execute("INSERT INTO playlist_history_items(id, history_id, position_index, track_pk, month_batch, duration_sec, channel_slug) VALUES(?,?,?,?,?,?,?)", (1, 1, 0, 123, "2024-01", 10, "darkwood-reverie"))
+        self.conn.execute("INSERT INTO playlist_history_items(id, history_id, position_index, track_pk, month_batch, duration_sec, channel_slug) VALUES(?,?,?,?,?,?,?)", (2, 2, 0, 456, "2024-01", 10, "darkwood-reverie"))
+        hist = list_effective_history(self.conn, channel_slug="darkwood-reverie", window=20)
+        self.assertEqual(len(hist), 1)
+        self.assertEqual(hist[0].tracks[0], 456)
+        self.assertEqual(position_memory_risk(456, 0, hist), 1.0)
+
+    def test_relaxation_engine_variants(self) -> None:
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="safe", strictness_mode="flexible", preferred_month_batch="2024-02", required_tags=["calm"])
+        labels = [label for _, label in relaxed_brief_variants(brief)]
+        self.assertIn("drop_preferred_month_batch", labels)
+        self.assertIn("lower_novelty_target_min", labels)
+        self.assertIn("relax_vocal_policy_allow_any", labels)
+        self.assertIn("drop_required_tags", labels)
+
+    def test_safe_composition_and_sequencing(self) -> None:
+        self._insert_track(pk=1, track_id="t1", duration=210, batch="2024-01", voice=0, tags="ambient,calm", dsp=0.2)
+        self._insert_track(pk=2, track_id="t2", duration=220, batch="2024-01", voice=0, tags="ambient,calm", dsp=0.4)
+        self._insert_track(pk=3, track_id="t3", duration=230, batch="2024-02", voice=1, tags="ambient,tense", dsp=0.7)
+        self._insert_track(pk=4, track_id="t4", channel_slug="channel-b", duration=240, batch="2024-02", voice=0, tags="ambient,calm", dsp=0.6)
+        brief = PlaylistBrief(
+            channel_slug="darkwood-reverie",
+            generation_mode="safe",
+            strictness_mode="balanced",
+            min_duration_min=10,
+            max_duration_min=14,
+            tolerance_min=1,
+            required_tags=["calm"],
+            preferred_month_batch="2024-01",
+            vocal_policy="require_instrumental",
+        )
+        candidates = list_safe_candidates(self.conn, brief)
+        self.assertEqual({c.track_pk for c in candidates}, {1, 2})
+        selected, _, _ = compose_safe(brief, candidates, history=[])
+        self.assertGreaterEqual(len(selected), 2)
+        ordered, rationale = sequence_safe(brief, selected, history=[])
+        self.assertEqual(len(ordered), len(selected))
+        self.assertIn("Greedy pair_score sequencing", rationale)
+
+
+if __name__ == "__main__":
+    unittest.main()
