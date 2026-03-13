@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import io
 import sqlite3
 import tempfile
 import unittest
@@ -9,7 +10,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from services.ops.backup_restore import BackupSettings, apply_retention, create_backup, restore_snapshot
+from scripts.ops_backup_restore import main as backup_restore_main
+from services.ops.backup_restore import (
+    BackupSettings,
+    OpsRestoreError,
+    apply_retention,
+    create_backup,
+    resolve_snapshot_from_index,
+    restore_snapshot,
+    verify_backup_by_id,
+)
 
 
 class TestOpsBackupRestore(unittest.TestCase):
@@ -360,6 +370,158 @@ class TestOpsBackupRestore(unittest.TestCase):
         with sqlite3.connect(self.db_path) as conn:
             row = conn.execute("select count(*) from jobs").fetchone()
         self.assertEqual(row[0], 1)
+
+    def test_verify_command_succeeds_for_valid_snapshot(self) -> None:
+        settings = self._settings()
+        snapshot = create_backup(settings, now=datetime(2026, 2, 4, 0, 0, 0, tzinfo=UTC))
+
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, mock.patch.dict(
+            "os.environ",
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            },
+            clear=False,
+        ):
+            code = backup_restore_main(["backup", "verify", "--backup-id", snapshot.name])
+
+        self.assertEqual(code, 0)
+        self.assertIn("verify_ok", stdout.getvalue())
+
+    def test_verify_fails_for_tampered_snapshot(self) -> None:
+        settings = self._settings()
+        snapshot = create_backup(settings, now=datetime(2026, 2, 5, 0, 0, 0, tzinfo=UTC))
+        (snapshot / "db" / "app.sqlite3").write_bytes(b"tampered")
+
+        with self.assertRaises(OpsRestoreError) as exc:
+            verify_backup_by_id(settings, snapshot.name)
+        self.assertEqual(exc.exception.code, "OPS_RESTORE_CHECKSUM_FAILED")
+
+    def test_verify_fails_for_tampered_manifest(self) -> None:
+        settings = self._settings()
+        snapshot = create_backup(settings, now=datetime(2026, 2, 5, 1, 0, 0, tzinfo=UTC))
+        manifest_path = snapshot / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["snapshot"] = "tampered-snapshot-id"
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+        with self.assertRaises(OpsRestoreError) as exc:
+            verify_backup_by_id(settings, snapshot.name)
+        self.assertEqual(exc.exception.code, "OPS_RESTORE_CHECKSUM_FAILED")
+
+    def test_verify_fails_for_broken_non_db_manifest_mapping_before_restore(self) -> None:
+        cfg = self.root / "configs" / "app.yaml"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("mode: prod\n", encoding="utf-8")
+
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": str(cfg),
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+        snapshot = create_backup(settings, now=datetime(2026, 2, 5, 2, 0, 0, tzinfo=UTC))
+
+        manifest_path = snapshot / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["artifacts"]["config"][0]["source"] = ""
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+        checksums = {}
+        for line in (snapshot / "checksums.sha256").read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            digest, rel = line.split("  ", 1)
+            checksums[rel] = digest
+        checksums["manifest.json"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        (snapshot / "checksums.sha256").write_text(
+            "\n".join(f"{checksums[rel]}  {rel}" for rel in sorted(checksums)) + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(OpsRestoreError) as exc:
+            verify_backup_by_id(settings, snapshot.name)
+        self.assertEqual(exc.exception.code, "OPS_RESTORE_MANIFEST_INVALID")
+
+    def test_restore_over_existing_state_moves_previous_files_to_quarantine(self) -> None:
+        settings = self._settings()
+        snapshot = create_backup(settings, now=datetime(2026, 2, 6, 0, 0, 0, tzinfo=UTC))
+        stopped = self.backup_dir / ".services_stopped"
+        stopped.parent.mkdir(parents=True, exist_ok=True)
+        stopped.write_text("ok", encoding="utf-8")
+
+        self.db_path.write_text("old", encoding="utf-8")
+        (self.deploy / "env").write_text("OLD=1\n", encoding="utf-8")
+
+        summary = restore_snapshot(settings, snapshot, services_stopped_file=stopped)
+        quarantine_dir = Path(summary["quarantine_dir"])
+        self.assertTrue(quarantine_dir.exists())
+        self.assertTrue(any(path.is_file() for path in quarantine_dir.rglob("*")))
+
+    def test_restore_failure_does_not_claim_success(self) -> None:
+        settings = self._settings()
+        snapshot = create_backup(settings, now=datetime(2026, 2, 7, 0, 0, 0, tzinfo=UTC))
+        (snapshot / "db" / "app.sqlite3").write_bytes(b"not-a-sqlite-db")
+        stopped = self.backup_dir / ".services_stopped"
+        stopped.parent.mkdir(parents=True, exist_ok=True)
+        stopped.write_text("ok", encoding="utf-8")
+
+        with mock.patch("scripts.ops_backup_restore.LOGGER") as logger, mock.patch(
+            "sys.stdout", new_callable=io.StringIO
+        ) as stdout, mock.patch.dict(
+            "os.environ",
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+                "FACTORY_SERVICES_STOPPED_FILE": str(stopped),
+            },
+            clear=False,
+        ):
+            code = backup_restore_main(["restore", "--backup-id", snapshot.name])
+
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("restore_ok", stdout.getvalue())
+        logger.info.assert_any_call("ops.restore.start", extra={"backup_id": snapshot.name})
+        failure_calls = [call for call in logger.exception.call_args_list if call.args[0] == "ops.restore.failure"]
+        self.assertTrue(failure_calls)
+
+    def test_quarantine_strategy_avoids_basename_collisions(self) -> None:
+        settings = self._settings()
+        env_a = self.root / "one" / "same.env"
+        env_b = self.root / "two" / "same.env"
+        env_a.parent.mkdir(parents=True, exist_ok=True)
+        env_b.parent.mkdir(parents=True, exist_ok=True)
+        env_a.write_text("A=1\n", encoding="utf-8")
+        env_b.write_text("B=2\n", encoding="utf-8")
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": f"{env_a}:{env_b}",
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+        snapshot = create_backup(settings, now=datetime(2026, 2, 8, 0, 0, 0, tzinfo=UTC))
+        stopped = self.backup_dir / ".services_stopped"
+        stopped.parent.mkdir(parents=True, exist_ok=True)
+        stopped.write_text("ok", encoding="utf-8")
+
+        env_a.write_text("A=mutated\n", encoding="utf-8")
+        env_b.write_text("B=mutated\n", encoding="utf-8")
+        summary = restore_snapshot(settings, snapshot, services_stopped_file=stopped)
+
+        quarantine_files = [p for p in Path(summary["quarantine_dir"]).rglob("*") if p.is_file()]
+        self.assertGreaterEqual(len(quarantine_files), 2)
 
 
 if __name__ == "__main__":

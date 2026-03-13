@@ -2,9 +2,21 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 from pathlib import Path
 
-from services.ops.backup_restore import BackupSettings, create_backup, list_snapshots, restore_snapshot
+from services.ops.backup_restore import (
+    BackupSettings,
+    OpsRestoreError,
+    create_backup,
+    list_backups,
+    resolve_snapshot_from_index,
+    restore_snapshot,
+    verify_backup_by_id,
+)
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -14,16 +26,12 @@ def _parser() -> argparse.ArgumentParser:
     backup = sub.add_parser("backup", help="Backup operations")
     backup_sub = backup.add_subparsers(dest="backup_command", required=True)
     backup_sub.add_parser("create", help="Create a timestamped backup snapshot")
-
-    sub.add_parser("list", help="List existing snapshot directories")
+    backup_sub.add_parser("list", help="List indexed backups")
+    verify = backup_sub.add_parser("verify", help="Verify a backup manifest and checksums")
+    verify.add_argument("--backup-id", required=True, help="Backup id in index.json")
 
     restore = sub.add_parser("restore", help="Restore from a snapshot directory")
-    restore.add_argument("--snapshot", required=True, help="Snapshot directory name under FACTORY_BACKUP_DIR")
-    restore.add_argument(
-        "--services-stopped-file",
-        required=True,
-        help="Path to a file that must exist to confirm services are stopped before restore",
-    )
+    restore.add_argument("--backup-id", required=True, help="Backup id in index.json")
     return parser
 
 
@@ -36,19 +44,40 @@ def main(argv: list[str] | None = None) -> int:
         print(f"backup_created={snapshot}")
         return 0
 
-    if args.command == "list":
-        for item in list_snapshots(settings):
-            print(item.name)
+    if args.command == "backup" and args.backup_command == "list":
+        for item in list_backups(settings):
+            print(f"{item.get('backup_id')}\t{item.get('status')}\t{item.get('created_at')}")
         return 0
 
-    snapshot_dir = settings.backup_dir / args.snapshot
-    if not snapshot_dir.exists():
-        print(f"snapshot_not_found={snapshot_dir}")
-        return 2
+    if args.command == "backup" and args.backup_command == "verify":
+        try:
+            snapshot = verify_backup_by_id(settings, args.backup_id)
+        except OpsRestoreError as exc:
+            print(f"error_code={exc.code} message={exc}")
+            return 2
+        print(f"verify_ok backup_id={args.backup_id} snapshot={snapshot}")
+        return 0
 
-    restore_snapshot(settings, snapshot_dir, services_stopped_file=Path(args.services_stopped_file))
-    print(f"restore_completed={snapshot_dir}")
-    return 0
+    marker = Path(os.environ.get("FACTORY_SERVICES_STOPPED_FILE", settings.backup_dir / ".services_stopped"))
+
+    try:
+        snapshot = resolve_snapshot_from_index(settings, args.backup_id)
+        LOGGER.info("ops.restore.start", extra={"backup_id": args.backup_id})
+        summary = restore_snapshot(settings, snapshot, services_stopped_file=marker)
+        LOGGER.info("ops.restore.success", extra={"backup_id": args.backup_id, "restore_id": summary["restore_id"]})
+        print(
+            f"restore_ok backup_id={args.backup_id} restore_id={summary['restore_id']} "
+            f"quarantine_dir={summary['quarantine_dir']} restored={summary['restored']}"
+        )
+        return 0
+    except OpsRestoreError as exc:
+        LOGGER.exception("ops.restore.failure", extra={"backup_id": args.backup_id, "error_code": exc.code})
+        print(f"error_code={exc.code} message={exc}")
+        return 2
+    except Exception as exc:
+        LOGGER.exception("ops.restore.failure", extra={"backup_id": args.backup_id, "error_code": type(exc).__name__})
+        print(f"error_code={type(exc).__name__} message={exc}")
+        return 2
 
 
 if __name__ == "__main__":
