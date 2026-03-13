@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from scripts import doctor
@@ -14,7 +15,7 @@ from services.ops_health_smoke.runner import run_checks_with_error_capture, run_
 
 class TestDoctorProductionSmoke(unittest.TestCase):
     def test_smoke_json_schema(self) -> None:
-        report = run_production_smoke(profile="prod")
+        report = run_production_smoke(profile="prod", selected_check_ids={"runner_bootstrap"})
         self.assertEqual(report["schema_version"], "factory_production_smoke/1")
         self.assertEqual(report["profile"], "prod")
         self.assertIn(report["overall_status"], {"OK", "WARNING", "FAIL"})
@@ -39,8 +40,26 @@ class TestDoctorProductionSmoke(unittest.TestCase):
         self.assertEqual(runner_error["result"], "FAIL")
         self.assertIn("error", runner_error["details"])
 
+    def test_disk_space_missing_paths_report_does_not_degrade_to_runner_error(self) -> None:
+        env = SimpleNamespace(
+            bind="127.0.0.1",
+            port=9999,
+            db_path="/missing/nested/db/factory.sqlite3",
+            storage_root="/missing/nested/storage/root",
+            origin_backend="remote",
+            origin_local_root="/unused/origin",
+        )
+        with patch("services.ops_health_smoke.runner.Env.load", return_value=env):
+            report = run_checks_with_error_capture(profile="local", selected_check_ids={"disk_space"})
+
+        self.assertEqual(report["schema_version"], "factory_production_smoke/1")
+        self.assertEqual(report["summary"]["total_checks"], 1)
+        self.assertEqual(report["checks"][0]["check_id"], "disk_space")
+        self.assertNotEqual(report["checks"][0]["check_id"], "runner_error")
+        self.assertIn(report["checks"][0]["result"], {"WARN", "FAIL", "PASS"})
+
     def test_human_output_shape(self) -> None:
-        report = run_production_smoke(profile="local")
+        report = run_production_smoke(profile="local", selected_check_ids={"runner_bootstrap"})
         human = render_human_report(report)
         self.assertIn("Overall status:", human)
         self.assertIn("Profile: local", human)
@@ -49,7 +68,7 @@ class TestDoctorProductionSmoke(unittest.TestCase):
 
 
     def test_doctor_cli_json_stdout_is_clean_json(self) -> None:
-        with patch("sys.argv", ["doctor.py", "production-smoke", "--json"]):
+        with patch("sys.argv", ["doctor.py", "production-smoke", "--json", "--checks", "runner_bootstrap"]):
             with io.StringIO() as buf, redirect_stdout(buf):
                 with self.assertRaises(SystemExit) as cm:
                     doctor.main()
