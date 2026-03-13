@@ -389,11 +389,21 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
         for kind in ("env", "config", "exports"):
             for item in copied[kind]:
                 path = temp_snap / item["artifact"]
-                if path.exists() and path.is_dir():
+                if not path.exists():
+                    raise OpsRestoreError(
+                        "OPS_BACKUP_SCOPE_COPY_FAILED",
+                        f"copied artifact missing after copy: {item['source']}",
+                    )
+                if path.is_dir():
                     size_bytes, artifact_sha = _directory_artifact_metadata(temp_snap, item["artifact"])
                 else:
-                    size_bytes = path.stat().st_size if path.exists() and path.is_file() else 0
+                    size_bytes = path.stat().st_size
                     artifact_sha = sha_by_rel.get(item["artifact"], "")
+                    if not artifact_sha:
+                        raise OpsRestoreError(
+                            "OPS_BACKUP_SCOPE_COPY_FAILED",
+                            f"checksum missing for copied artifact: {item['source']}",
+                        )
                 items.append(
                     ManifestItem(
                         kind=_manifest_kind_for_scope(kind, Path(item["source"])),

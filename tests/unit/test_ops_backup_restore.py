@@ -566,6 +566,35 @@ class TestOpsBackupRestore(unittest.TestCase):
         self.assertIn("config_file", kinds)
         self.assertIn("export_file", kinds)
 
+
+    def test_cli_startup_from_env_unexpected_error_is_controlled(self) -> None:
+        with mock.patch("scripts.ops_backup_restore.BackupSettings.from_env", side_effect=RuntimeError("boom")), mock.patch(
+            "sys.stdout", new_callable=io.StringIO
+        ) as stdout:
+            code = backup_restore_main(["backup", "list"])
+
+        self.assertEqual(code, 2)
+        self.assertIn("error_code=OPS_BACKUP_CONFIG_INVALID", stdout.getvalue())
+
+    def test_backup_create_cli_unexpected_error_is_controlled(self) -> None:
+        with mock.patch("scripts.ops_backup_restore.create_backup", side_effect=RuntimeError("boom")), mock.patch(
+            "sys.stdout", new_callable=io.StringIO
+        ) as stdout, mock.patch.dict(
+            "os.environ",
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            },
+            clear=False,
+        ):
+            code = backup_restore_main(["backup", "create"])
+
+        self.assertEqual(code, 2)
+        self.assertIn("error_code=OPS_BACKUP_SCOPE_COPY_FAILED", stdout.getvalue())
+
     def test_backup_create_cli_failure_is_controlled_and_nonzero(self) -> None:
         missing = self.root / "missing.env"
         with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, mock.patch.dict(

@@ -49,6 +49,9 @@ def main(argv: list[str] | None = None) -> int:
         settings = BackupSettings.from_env()
     except ValueError as exc:
         return _print_error("OPS_BACKUP_CONFIG_INVALID", str(exc))
+    except Exception:
+        LOGGER.exception("ops.backup_restore.cli.startup_failure")
+        return _print_error("OPS_BACKUP_CONFIG_INVALID", "invalid backup/restore startup configuration")
 
     try:
         if args.command == "backup" and args.backup_command == "create":
@@ -83,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
         return _print_error(exc.code, str(exc))
     except Exception:
         LOGGER.exception("ops.backup_restore.cli.failure")
+        if args.command == "backup" and args.backup_command == "create":
+            return _print_error("OPS_BACKUP_SCOPE_COPY_FAILED", "backup create failed")
         return _print_error("OPS_BACKUP_CONFIG_INVALID", "backup/restore command failed")
 
 
