@@ -5,9 +5,11 @@ import os
 import shutil
 import sqlite3
 import stat
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 
 def _split_paths(raw: str) -> tuple[Path, ...]:
@@ -36,6 +38,10 @@ def _copy_dir(src: Path, dst: Path) -> None:
 
 def _snapshot_name(now: datetime | None = None) -> str:
     return (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _artifact_path(group: str, source: Path) -> Path:
+    return Path(group) / quote(str(source), safe="")
 
 
 @dataclass(frozen=True)
@@ -122,16 +128,19 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
     copied = {"env": [], "config": [], "exports": []}
     for src in settings.env_files:
         if src.exists() and src.is_file():
-            _copy_file(src, snap / "env" / src.name)
-            copied["env"].append(str(src))
+            artifact_rel = _artifact_path("env", src)
+            _copy_file(src, snap / artifact_rel)
+            copied["env"].append({"source": str(src), "artifact": str(artifact_rel)})
     for src in settings.config_paths:
         if src.exists():
-            _copy_dir(src, snap / "config" / src.name) if src.is_dir() else _copy_file(src, snap / "config" / src.name)
-            copied["config"].append(str(src))
+            artifact_rel = _artifact_path("config", src)
+            _copy_dir(src, snap / artifact_rel) if src.is_dir() else _copy_file(src, snap / artifact_rel)
+            copied["config"].append({"source": str(src), "artifact": str(artifact_rel)})
     for src in settings.export_dirs:
         if src.exists() and src.is_dir():
-            _copy_dir(src, snap / "exports" / src.name)
-            copied["exports"].append(str(src))
+            artifact_rel = _artifact_path("exports", src)
+            _copy_dir(src, snap / artifact_rel)
+            copied["exports"].append({"source": str(src), "artifact": str(artifact_rel)})
 
     manifest = {
         "schema": "ops-backup-manifest-v1",
@@ -140,15 +149,15 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
         "snapshot": snap.name,
         "scope": {
             "FACTORY_DB_PATH": str(settings.db_path),
-            "FACTORY_ENV_FILES": copied["env"],
-            "FACTORY_BACKUP_CONFIG_PATHS": copied["config"],
-            "FACTORY_BACKUP_EXPORT_DIRS": copied["exports"],
+            "FACTORY_ENV_FILES": [item["source"] for item in copied["env"]],
+            "FACTORY_BACKUP_CONFIG_PATHS": [item["source"] for item in copied["config"]],
+            "FACTORY_BACKUP_EXPORT_DIRS": [item["source"] for item in copied["exports"]],
         },
         "artifacts": {
             "db": str(Path("db") / settings.db_path.name),
-            "env": [str(Path("env") / Path(x).name) for x in copied["env"]],
-            "config": [str(Path("config") / Path(x).name) for x in copied["config"]],
-            "exports": [str(Path("exports") / Path(x).name) for x in copied["exports"]],
+            "env": copied["env"],
+            "config": copied["config"],
+            "exports": copied["exports"],
         },
     }
     m = snap / "manifest.json"
@@ -160,6 +169,26 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
 
 def list_snapshots(settings: BackupSettings) -> list[Path]:
     return _snapshots(settings.backup_dir)
+
+
+def _legacy_or_exact_mappings(manifest: dict, *, artifact_key: str, scope_key: str) -> list[tuple[Path, Path]]:
+    artifacts = manifest.get("artifacts", {}).get(artifact_key, [])
+    if not artifacts:
+        return []
+    if isinstance(artifacts[0], dict):
+        return [(Path(item["source"]), Path(item["artifact"])) for item in artifacts]
+
+    scope_paths = [Path(item) for item in manifest.get("scope", {}).get(scope_key, [])]
+    if len(scope_paths) != len(artifacts):
+        raise RuntimeError(f"snapshot manifest {artifact_key} mapping is ambiguous")
+    return [(scope_paths[idx], Path(artifacts[idx])) for idx in range(len(artifacts))]
+
+
+def _resolve_target(source: Path, configured: Iterable[Path], *, scope_key: str) -> Path:
+    for candidate in configured:
+        if candidate == source:
+            return candidate
+    raise RuntimeError(f"restore target for {scope_key} source '{source}' is not configured")
 
 
 def restore_snapshot(settings: BackupSettings, snapshot: Path, *, services_stopped_file: Path) -> None:
@@ -176,13 +205,19 @@ def restore_snapshot(settings: BackupSettings, snapshot: Path, *, services_stopp
     shutil.copy2(db_src, settings.db_path)
     _chmod600(settings.db_path)
 
-    for env_rel in manifest["artifacts"]["env"]:
-        _copy_file(snapshot / env_rel, Path("deploy") / Path(env_rel).name)
+    for source, artifact_rel in _legacy_or_exact_mappings(
+        manifest,
+        artifact_key="env",
+        scope_key="FACTORY_ENV_FILES",
+    ):
+        target = _resolve_target(source, settings.env_files, scope_key="FACTORY_ENV_FILES")
+        _copy_file(snapshot / artifact_rel, target)
 
-    for rel, options in (("config", settings.config_paths), ("exports", settings.export_dirs)):
-        for src_rel in manifest["artifacts"][rel]:
+    for rel, options, scope_key in (
+        ("config", settings.config_paths, "FACTORY_BACKUP_CONFIG_PATHS"),
+        ("exports", settings.export_dirs, "FACTORY_BACKUP_EXPORT_DIRS"),
+    ):
+        for source, src_rel in _legacy_or_exact_mappings(manifest, artifact_key=rel, scope_key=scope_key):
+            target = _resolve_target(source, options, scope_key=scope_key)
             src = snapshot / src_rel
-            match = next((p for p in options if p.name == Path(src_rel).name), None)
-            if not match:
-                continue
-            _copy_dir(src, match) if src.is_dir() else _copy_file(src, match)
+            _copy_dir(src, target) if src.is_dir() else _copy_file(src, target)

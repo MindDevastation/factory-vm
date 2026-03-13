@@ -77,6 +77,83 @@ class TestOpsBackupRestore(unittest.TestCase):
         removed = apply_retention(self.backup_dir)
         self.assertIsInstance(removed, list)
 
+
+    def test_restore_uses_exact_configured_env_target_path(self) -> None:
+        external_env = self.root / "runtime" / "secrets" / "factory.env"
+        external_env.parent.mkdir(parents=True, exist_ok=True)
+        external_env.write_text("TOKEN=before\n", encoding="utf-8")
+
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(external_env),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+        snapshot = create_backup(settings, now=datetime(2026, 2, 2, 0, 0, 0, tzinfo=UTC))
+
+        external_env.unlink()
+        stopped = self.root / "services.stopped"
+        stopped.write_text("ok", encoding="utf-8")
+
+        restore_snapshot(settings, snapshot, services_stopped_file=stopped)
+        self.assertTrue(external_env.exists())
+        self.assertEqual(external_env.read_text(encoding="utf-8"), "TOKEN=before\n")
+
+    def test_restore_handles_duplicate_basenames_without_collision(self) -> None:
+        env_a = self.root / "envs" / "tenant-a" / "shared.env"
+        env_b = self.root / "envs" / "tenant-b" / "shared.env"
+        env_a.parent.mkdir(parents=True, exist_ok=True)
+        env_b.parent.mkdir(parents=True, exist_ok=True)
+        env_a.write_text("A=1\n", encoding="utf-8")
+        env_b.write_text("B=2\n", encoding="utf-8")
+
+        config_a = self.root / "config" / "alpha" / "shared"
+        config_b = self.root / "config" / "beta" / "shared"
+        config_a.mkdir(parents=True, exist_ok=True)
+        config_b.mkdir(parents=True, exist_ok=True)
+        (config_a / "settings.json").write_text('{"name":"alpha"}', encoding="utf-8")
+        (config_b / "settings.json").write_text('{"name":"beta"}', encoding="utf-8")
+
+        export_a = self.root / "exports" / "batch-a" / "shared"
+        export_b = self.root / "exports" / "batch-b" / "shared"
+        export_a.mkdir(parents=True, exist_ok=True)
+        export_b.mkdir(parents=True, exist_ok=True)
+        (export_a / "report.txt").write_text("export-a", encoding="utf-8")
+        (export_b / "report.txt").write_text("export-b", encoding="utf-8")
+
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": f"{env_a},{env_b}",
+                "FACTORY_BACKUP_CONFIG_PATHS": f"{config_a},{config_b}",
+                "FACTORY_BACKUP_EXPORT_DIRS": f"{export_a},{export_b}",
+            }
+        )
+        snapshot = create_backup(settings, now=datetime(2026, 2, 3, 0, 0, 0, tzinfo=UTC))
+
+        env_a.write_text("A=mutated\n", encoding="utf-8")
+        env_b.write_text("B=mutated\n", encoding="utf-8")
+        (config_a / "settings.json").write_text('{"name":"mutated-a"}', encoding="utf-8")
+        (config_b / "settings.json").write_text('{"name":"mutated-b"}', encoding="utf-8")
+        (export_a / "report.txt").write_text("mutated-a", encoding="utf-8")
+        (export_b / "report.txt").write_text("mutated-b", encoding="utf-8")
+
+        stopped = self.root / "services.stopped"
+        stopped.write_text("ok", encoding="utf-8")
+
+        restore_snapshot(settings, snapshot, services_stopped_file=stopped)
+
+        self.assertEqual(env_a.read_text(encoding="utf-8"), "A=1\n")
+        self.assertEqual(env_b.read_text(encoding="utf-8"), "B=2\n")
+        self.assertEqual((config_a / "settings.json").read_text(encoding="utf-8"), '{"name":"alpha"}')
+        self.assertEqual((config_b / "settings.json").read_text(encoding="utf-8"), '{"name":"beta"}')
+        self.assertEqual((export_a / "report.txt").read_text(encoding="utf-8"), "export-a")
+        self.assertEqual((export_b / "report.txt").read_text(encoding="utf-8"), "export-b")
+
     def test_restore_requires_services_stopped_file(self) -> None:
         settings = self._settings()
         snapshot = create_backup(settings, now=datetime(2026, 2, 1, 0, 0, 0, tzinfo=UTC))
