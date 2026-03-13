@@ -159,6 +159,7 @@ class TestOpsBackupRestore(unittest.TestCase):
 
         config_artifact = next(item for item in manifest["artifacts"]["config"] if item["source"] == str(config_dir))["artifact"]
         config_manifest_item = next(item for item in manifest["items"] if item["stored_path"] == config_artifact)
+        self.assertEqual(config_manifest_item["kind"], "config_dir")
         self.assertGreater(config_manifest_item["size_bytes"], 0)
         self.assertTrue(config_manifest_item["sha256"])
 
@@ -288,6 +289,22 @@ class TestOpsBackupRestore(unittest.TestCase):
         )
         self.assertEqual(settings.env_files, tuple())
 
+    def test_create_backup_with_unset_factory_env_files_keeps_env_scope_empty(self) -> None:
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+
+        snapshot = create_backup(settings, now=datetime(2026, 2, 1, 0, 0, 3, tzinfo=UTC))
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["scope"]["env_files_count"], 0)
+        self.assertEqual(manifest["restore_targets"]["FACTORY_ENV_FILES"], [])
+        self.assertEqual(manifest["artifacts"]["env"], [])
+
     def test_create_backup_fails_fast_for_missing_required_allowlisted_path(self) -> None:
         missing = self.root / "missing.env"
         settings = BackupSettings.from_env(
@@ -302,6 +319,38 @@ class TestOpsBackupRestore(unittest.TestCase):
 
         with self.assertRaises(OpsRestoreError) as exc:
             create_backup(settings, now=datetime(2026, 2, 1, 0, 0, 0, tzinfo=UTC))
+        self.assertEqual(exc.exception.code, "OPS_BACKUP_CONFIG_INVALID")
+
+    def test_create_backup_fails_fast_for_missing_required_allowlisted_config_path(self) -> None:
+        missing_config = self.root / "missing-config.yaml"
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": str(missing_config),
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+
+        with self.assertRaises(OpsRestoreError) as exc:
+            create_backup(settings, now=datetime(2026, 2, 1, 0, 0, 1, tzinfo=UTC))
+        self.assertEqual(exc.exception.code, "OPS_BACKUP_CONFIG_INVALID")
+
+    def test_create_backup_fails_fast_for_missing_required_allowlisted_export_path(self) -> None:
+        missing_export = self.root / "missing-exports"
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": str(missing_export),
+            }
+        )
+
+        with self.assertRaises(OpsRestoreError) as exc:
+            create_backup(settings, now=datetime(2026, 2, 1, 0, 0, 2, tzinfo=UTC))
         self.assertEqual(exc.exception.code, "OPS_BACKUP_CONFIG_INVALID")
 
     def test_restore_uses_exact_configured_env_target_path(self) -> None:
@@ -565,6 +614,35 @@ class TestOpsBackupRestore(unittest.TestCase):
         self.assertIn("env_file", kinds)
         self.assertIn("config_file", kinds)
         self.assertIn("export_file", kinds)
+
+
+    def test_cli_startup_from_env_unexpected_error_is_controlled(self) -> None:
+        with mock.patch("scripts.ops_backup_restore.BackupSettings.from_env", side_effect=RuntimeError("boom")), mock.patch(
+            "sys.stdout", new_callable=io.StringIO
+        ) as stdout:
+            code = backup_restore_main(["backup", "list"])
+
+        self.assertEqual(code, 2)
+        self.assertIn("error_code=OPS_BACKUP_CONFIG_INVALID", stdout.getvalue())
+
+    def test_backup_create_cli_unexpected_error_is_controlled(self) -> None:
+        with mock.patch("scripts.ops_backup_restore.create_backup", side_effect=RuntimeError("boom")), mock.patch(
+            "sys.stdout", new_callable=io.StringIO
+        ) as stdout, mock.patch.dict(
+            "os.environ",
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            },
+            clear=False,
+        ):
+            code = backup_restore_main(["backup", "create"])
+
+        self.assertEqual(code, 2)
+        self.assertIn("error_code=OPS_BACKUP_SCOPE_COPY_FAILED", stdout.getvalue())
 
     def test_backup_create_cli_failure_is_controlled_and_nonzero(self) -> None:
         missing = self.root / "missing.env"

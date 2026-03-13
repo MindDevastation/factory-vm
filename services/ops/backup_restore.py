@@ -40,26 +40,26 @@ def _ops_error_code(exc: Exception, *, default: str) -> str:
     return default
 
 
-def _manifest_kind_for_scope(scope_kind: str, src: Path) -> str:
+def _manifest_kind_for_scope(scope_kind: str, artifact_path: Path) -> str:
     if scope_kind == "env":
         return "env_file"
     if scope_kind == "config":
-        return "config_dir" if src.is_dir() else "config_file"
+        return "config_dir" if artifact_path.is_dir() else "config_file"
     if scope_kind == "exports":
-        return "export_dir" if src.is_dir() else "export_file"
+        return "export_dir" if artifact_path.is_dir() else "export_file"
     raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"unsupported backup scope kind '{scope_kind}'")
 
 
 def _validate_required_scope_paths(settings: BackupSettings) -> None:
     for src in settings.env_files:
         if not src.exists() or not src.is_file():
-            raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"required env path missing or not a file: {src}")
+            raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"required allowlisted env file missing: {src}")
     for src in settings.config_paths:
         if not src.exists():
-            raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"required config path missing: {src}")
+            raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"required allowlisted config path missing: {src}")
     for src in settings.export_dirs:
         if not src.exists():
-            raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"required export path missing: {src}")
+            raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"required allowlisted export path missing: {src}")
 
 
 def _chmod600(path: Path, *, generated: bool = False) -> None:
@@ -389,14 +389,24 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
         for kind in ("env", "config", "exports"):
             for item in copied[kind]:
                 path = temp_snap / item["artifact"]
-                if path.exists() and path.is_dir():
+                if not path.exists():
+                    raise OpsRestoreError(
+                        "OPS_BACKUP_SCOPE_COPY_FAILED",
+                        f"copied artifact missing after copy: {item['source']}",
+                    )
+                if path.is_dir():
                     size_bytes, artifact_sha = _directory_artifact_metadata(temp_snap, item["artifact"])
                 else:
-                    size_bytes = path.stat().st_size if path.exists() and path.is_file() else 0
+                    size_bytes = path.stat().st_size
                     artifact_sha = sha_by_rel.get(item["artifact"], "")
+                    if not artifact_sha:
+                        raise OpsRestoreError(
+                            "OPS_BACKUP_SCOPE_COPY_FAILED",
+                            f"checksum missing for copied artifact: {item['source']}",
+                        )
                 items.append(
                     ManifestItem(
-                        kind=_manifest_kind_for_scope(kind, Path(item["source"])),
+                        kind=_manifest_kind_for_scope(kind, path),
                         source_path=item["source"],
                         stored_path=item["artifact"],
                         size_bytes=size_bytes,
