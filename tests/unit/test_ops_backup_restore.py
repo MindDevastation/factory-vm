@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 from services.ops.backup_restore import BackupSettings, apply_retention, create_backup, restore_snapshot
 
@@ -78,6 +80,121 @@ class TestOpsBackupRestore(unittest.TestCase):
         self.assertEqual(index["snapshots"][0]["manifest_path"], "snapshots/20260102T030405Z/manifest.json")
         self.assertEqual((self.backup_dir / "latest_successful").read_text(encoding="utf-8"), "20260102T030405Z\n")
 
+
+    def test_create_backup_writes_manifest_checksums_and_db_snapshot(self) -> None:
+        cfg = self.root / "configs" / "app.yaml"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("mode: prod\n", encoding="utf-8")
+
+        export_dir = self.root / "exports" / "daily"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        export_file = export_dir / "jobs.json"
+        export_file.write_text('{"jobs":1}\n', encoding="utf-8")
+
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": str(cfg),
+                "FACTORY_BACKUP_EXPORT_DIRS": str(export_dir),
+            }
+        )
+
+        snapshot = create_backup(settings, now=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC))
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["artifacts"]["db"], "db/app.sqlite3")
+
+        checksum_lines = (snapshot / "checksums.sha256").read_text(encoding="utf-8").strip().splitlines()
+        self.assertGreaterEqual(len(checksum_lines), 3)
+
+        checksum_map = {}
+        for line in checksum_lines:
+            digest, rel = line.split("  ", 1)
+            checksum_map[rel] = digest
+
+        for rel, digest in checksum_map.items():
+            payload = (snapshot / rel).read_bytes()
+            self.assertEqual(hashlib.sha256(payload).hexdigest(), digest)
+
+        manifest_items = {item["stored_path"]: item["sha256"] for item in manifest["items"]}
+        self.assertEqual(manifest_items["db/app.sqlite3"], checksum_map["db/app.sqlite3"])
+
+    def test_create_backup_directory_artifact_manifest_metadata_is_non_empty_and_consistent(self) -> None:
+        config_dir = self.root / "configs" / "bundle"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "a.yaml").write_text("a: 1\n", encoding="utf-8")
+        (config_dir / "nested").mkdir(parents=True, exist_ok=True)
+        (config_dir / "nested" / "b.yaml").write_text("b: 2\n", encoding="utf-8")
+
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": str(config_dir),
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+
+        snapshot = create_backup(settings, now=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC))
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        checksum_lines = (snapshot / "checksums.sha256").read_text(encoding="utf-8").strip().splitlines()
+
+        checksum_map = {}
+        for line in checksum_lines:
+            digest, rel = line.split("  ", 1)
+            checksum_map[rel] = digest
+
+        config_artifact = next(item for item in manifest["artifacts"]["config"] if item["source"] == str(config_dir))["artifact"]
+        config_manifest_item = next(item for item in manifest["items"] if item["stored_path"] == config_artifact)
+        self.assertGreater(config_manifest_item["size_bytes"], 0)
+        self.assertTrue(config_manifest_item["sha256"])
+
+        files = sorted(path for path in (snapshot / config_artifact).rglob("*") if path.is_file())
+        expected_size = sum(path.stat().st_size for path in files)
+        expected_digest = hashlib.sha256()
+        for path in files:
+            rel = path.relative_to(snapshot).as_posix()
+            expected_digest.update(f"{rel}\0{path.stat().st_size}\0{checksum_map[rel]}\n".encode("utf-8"))
+
+        self.assertEqual(config_manifest_item["size_bytes"], expected_size)
+        self.assertEqual(config_manifest_item["sha256"], expected_digest.hexdigest())
+
+    def test_create_backup_failure_does_not_update_index_or_latest(self) -> None:
+        settings = self._settings()
+        first = create_backup(settings, now=datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC))
+        first_index = (self.backup_dir / "index.json").read_text(encoding="utf-8")
+        first_latest = (self.backup_dir / "latest_successful").read_text(encoding="utf-8")
+
+        with mock.patch("services.ops.backup_restore._copy_file", side_effect=RuntimeError("copy_failed")):
+            with self.assertRaises(RuntimeError):
+                create_backup(settings, now=datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC))
+
+        self.assertTrue(first.exists())
+        self.assertEqual((self.backup_dir / "index.json").read_text(encoding="utf-8"), first_index)
+        self.assertEqual((self.backup_dir / "latest_successful").read_text(encoding="utf-8"), first_latest)
+        self.assertTrue((self.backup_dir / "snapshots" / "20260102T000000Z.tmp").exists())
+
+    def test_repeated_backups_keep_previous_snapshot_content_intact(self) -> None:
+        settings = self._settings()
+        snap1 = create_backup(settings, now=datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC))
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("insert into jobs(name) values (?)", ("after-first",))
+            conn.commit()
+
+        snap2 = create_backup(settings, now=datetime(2026, 1, 3, 0, 0, 0, tzinfo=UTC))
+        self.assertNotEqual(snap1, snap2)
+
+        with sqlite3.connect(snap1 / "db" / "app.sqlite3") as conn:
+            count1 = conn.execute("select count(*) from jobs").fetchone()[0]
+        with sqlite3.connect(snap2 / "db" / "app.sqlite3") as conn:
+            count2 = conn.execute("select count(*) from jobs").fetchone()[0]
+
+        self.assertEqual(count1, 1)
+        self.assertEqual(count2, 2)
+
     def test_retention_keeps_policies_and_latest(self) -> None:
         settings = self._settings()
         start = datetime(2026, 3, 31, 0, 0, 0, tzinfo=UTC)
@@ -96,6 +213,21 @@ class TestOpsBackupRestore(unittest.TestCase):
         # retention called after successful backup, can still be run idempotently
         removed = apply_retention(self.backup_dir)
         self.assertIsInstance(removed, list)
+
+    def test_create_backup_retention_rebuilds_index_without_stale_entries(self) -> None:
+        settings = self._settings()
+        start = datetime(2026, 3, 31, 0, 0, 0, tzinfo=UTC)
+        for idx in range(20):
+            create_backup(settings, now=start - timedelta(days=idx))
+
+        index = json.loads((self.backup_dir / "index.json").read_text(encoding="utf-8"))
+        snapshot_dirs = {
+            node.name for node in (self.backup_dir / "snapshots").iterdir() if node.is_dir() and not node.name.endswith(".tmp")
+        }
+        indexed_ids = {item["backup_id"] for item in index["snapshots"]}
+
+        self.assertSetEqual(indexed_ids, snapshot_dirs)
+        self.assertEqual((self.backup_dir / "latest_successful").read_text(encoding="utf-8"), f"{max(snapshot_dirs)}\n")
 
 
 

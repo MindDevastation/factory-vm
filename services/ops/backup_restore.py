@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sqlite3
 import stat
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from urllib.parse import quote
 
-from services.ops_backup_restore.index import upsert_snapshot, write_index, write_latest_successful
+from services.ops_backup_restore.index import rebuild_index_from_snapshots, upsert_snapshot, write_index, write_latest_successful
 from services.ops_backup_restore.manifest import build_manifest
 from services.ops_backup_restore.models import ManifestItem
 from services.ops_backup_restore.paths import generate_backup_id, snapshot_dir, snapshots_root
 from services.ops_backup_restore.scope import resolve_backup_scope
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _chmod600(path: Path, *, generated: bool = False) -> None:
@@ -40,6 +45,50 @@ def _copy_dir(src: Path, dst: Path) -> None:
 
 def _artifact_path(group: str, source: Path) -> Path:
     return Path(group) / quote(str(source), safe="")
+
+
+def _fsync_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _checksummed_files(root: Path) -> list[Path]:
+    return sorted(
+        [
+            node
+            for node in root.rglob("*")
+            if node.is_file() and node.name not in {"manifest.json", "checksums.sha256"}
+        ]
+    )
+
+
+def _directory_artifact_metadata(root: Path, artifact_rel: str) -> tuple[int, str]:
+    artifact_root = root / artifact_rel
+    digest = sha256()
+    total_size = 0
+    for node in sorted([path for path in artifact_root.rglob("*") if path.is_file()]):
+        rel = node.relative_to(root).as_posix()
+        file_size = node.stat().st_size
+        file_sha = _sha256_file(node)
+        digest.update(f"{rel}\0{file_size}\0{file_sha}\n".encode("utf-8"))
+        total_size += file_size
+    return total_size, digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -117,101 +166,189 @@ def apply_retention(backup_dir: Path) -> list[Path]:
 
 
 def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> Path:
+    started = time.monotonic()
+    hostname = os.uname().nodename
     settings.backup_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(settings.backup_dir, 0o700)
+
     backup_id = generate_backup_id(now)
+    snapshots_dir = snapshots_root(settings.backup_dir)
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+    temp_snap = snapshots_dir / f"{backup_id}.tmp"
     snap = snapshot_dir(settings.backup_dir, backup_id)
-    snap.mkdir(parents=True, exist_ok=False)
-    os.chmod(snap, 0o700)
 
-    db_dst = snap / "db" / settings.db_path.name
-    db_dst.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(settings.db_path) as src, sqlite3.connect(db_dst) as dst:
-        src.backup(dst)
-    _chmod600(db_dst, generated=True)
+    LOGGER.info(
+        "ops.backup.create.start",
+        extra={
+            "backup_id": backup_id,
+            "hostname": hostname,
+            "items_count": 0,
+            "total_size_bytes": 0,
+            "duration_ms": 0,
+            "result": "STARTED",
+            "error_code": "",
+        },
+    )
 
-    copied = {"env": [], "config": [], "exports": []}
-    for src in settings.env_files:
-        if src.exists() and src.is_file():
-            artifact_rel = _artifact_path("env", src)
-            _copy_file(src, snap / artifact_rel)
-            copied["env"].append({"source": str(src), "artifact": str(artifact_rel)})
-    for src in settings.config_paths:
-        if src.exists():
-            artifact_rel = _artifact_path("config", src)
-            _copy_dir(src, snap / artifact_rel) if src.is_dir() else _copy_file(src, snap / artifact_rel)
-            copied["config"].append({"source": str(src), "artifact": str(artifact_rel)})
-    for src in settings.export_dirs:
-        if src.exists() and src.is_dir():
-            artifact_rel = _artifact_path("exports", src)
-            _copy_dir(src, snap / artifact_rel)
-            copied["exports"].append({"source": str(src), "artifact": str(artifact_rel)})
+    if temp_snap.exists():
+        shutil.rmtree(temp_snap)
 
-    items = [
-        ManifestItem(
-            kind="db",
-            source_path=str(settings.db_path),
-            stored_path=str(Path("db") / settings.db_path.name),
-            size_bytes=db_dst.stat().st_size,
-            sha256="",
-            contains_secrets=False,
-        )
-    ]
-    for kind in ("env", "config", "exports"):
-        for item in copied[kind]:
-            path = snap / item["artifact"]
-            items.append(
-                ManifestItem(
-                    kind=kind,
-                    source_path=item["source"],
-                    stored_path=item["artifact"],
-                    size_bytes=path.stat().st_size if path.exists() and path.is_file() else 0,
-                    sha256="",
-                    contains_secrets=(kind == "env"),
-                )
+    try:
+        temp_snap.mkdir(parents=True, exist_ok=False)
+        os.chmod(temp_snap, 0o700)
+
+        db_dst = temp_snap / "db" / "app.sqlite3"
+        db_dst.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(settings.db_path) as src, sqlite3.connect(db_dst) as dst:
+            src.backup(dst)
+        if not db_dst.exists() or db_dst.stat().st_size <= 0:
+            raise RuntimeError("sqlite_backup_output_invalid")
+        _chmod600(db_dst, generated=True)
+
+        copied = {"env": [], "config": [], "exports": []}
+        for src in settings.env_files:
+            if src.exists() and src.is_file():
+                artifact_rel = _artifact_path("env", src)
+                _copy_file(src, temp_snap / artifact_rel)
+                copied["env"].append({"source": str(src), "artifact": str(artifact_rel)})
+        for src in settings.config_paths:
+            if src.exists():
+                artifact_rel = _artifact_path("config", src)
+                _copy_dir(src, temp_snap / artifact_rel) if src.is_dir() else _copy_file(src, temp_snap / artifact_rel)
+                copied["config"].append({"source": str(src), "artifact": str(artifact_rel)})
+        for src in settings.export_dirs:
+            if src.exists():
+                artifact_rel = _artifact_path("exports", src)
+                _copy_dir(src, temp_snap / artifact_rel) if src.is_dir() else _copy_file(src, temp_snap / artifact_rel)
+                copied["exports"].append({"source": str(src), "artifact": str(artifact_rel)})
+
+        checksummed = _checksummed_files(temp_snap)
+        sha_by_rel = {path.relative_to(temp_snap).as_posix(): _sha256_file(path) for path in checksummed}
+        total_size_bytes = sum(path.stat().st_size for path in checksummed)
+
+        items = [
+            ManifestItem(
+                kind="db",
+                source_path=str(settings.db_path),
+                stored_path="db/app.sqlite3",
+                size_bytes=db_dst.stat().st_size,
+                sha256=sha_by_rel["db/app.sqlite3"],
+                contains_secrets=False,
             )
+        ]
+        for kind in ("env", "config", "exports"):
+            for item in copied[kind]:
+                path = temp_snap / item["artifact"]
+                if path.exists() and path.is_dir():
+                    size_bytes, artifact_sha = _directory_artifact_metadata(temp_snap, item["artifact"])
+                else:
+                    size_bytes = path.stat().st_size if path.exists() and path.is_file() else 0
+                    artifact_sha = sha_by_rel.get(item["artifact"], "")
+                items.append(
+                    ManifestItem(
+                        kind=kind,
+                        source_path=item["source"],
+                        stored_path=item["artifact"],
+                        size_bytes=size_bytes,
+                        sha256=artifact_sha,
+                        contains_secrets=(kind == "env"),
+                    )
+                )
 
-    manifest = build_manifest(
-        backup_id=backup_id,
-        scope=resolve_backup_scope(
-            {
-                "FACTORY_BACKUP_DIR": str(settings.backup_dir),
-                "FACTORY_DB_PATH": str(settings.db_path),
-                "FACTORY_ENV_FILES": ":".join(str(item) for item in settings.env_files),
-                "FACTORY_BACKUP_CONFIG_PATHS": ":".join(str(item) for item in settings.config_paths),
-                "FACTORY_BACKUP_EXPORT_DIRS": ":".join(str(item) for item in settings.export_dirs),
-            }
-        ),
-        items=items,
-        created_at=datetime.now(UTC),
-    )
-    manifest["snapshot"] = backup_id
-    manifest["restore_targets"] = {
-        "FACTORY_DB_PATH": str(settings.db_path),
-        "FACTORY_ENV_FILES": [item["source"] for item in copied["env"]],
-        "FACTORY_BACKUP_CONFIG_PATHS": [item["source"] for item in copied["config"]],
-        "FACTORY_BACKUP_EXPORT_DIRS": [item["source"] for item in copied["exports"]],
-    }
-    manifest["artifacts"] = {
-        "db": str(Path("db") / settings.db_path.name),
-        "env": copied["env"],
-        "config": copied["config"],
-        "exports": copied["exports"],
-    }
-    m = snap / "manifest.json"
-    m.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
-    _chmod600(m, generated=True)
+        manifest = build_manifest(
+            backup_id=backup_id,
+            scope=resolve_backup_scope(
+                {
+                    "FACTORY_BACKUP_DIR": str(settings.backup_dir),
+                    "FACTORY_DB_PATH": str(settings.db_path),
+                    "FACTORY_ENV_FILES": ":".join(str(item) for item in settings.env_files),
+                    "FACTORY_BACKUP_CONFIG_PATHS": ":".join(str(item) for item in settings.config_paths),
+                    "FACTORY_BACKUP_EXPORT_DIRS": ":".join(str(item) for item in settings.export_dirs),
+                }
+            ),
+            items=items,
+            created_at=datetime.now(UTC),
+        )
+        manifest["snapshot"] = backup_id
+        manifest["restore_targets"] = {
+            "FACTORY_DB_PATH": str(settings.db_path),
+            "FACTORY_ENV_FILES": [item["source"] for item in copied["env"]],
+            "FACTORY_BACKUP_CONFIG_PATHS": [item["source"] for item in copied["config"]],
+            "FACTORY_BACKUP_EXPORT_DIRS": [item["source"] for item in copied["exports"]],
+        }
+        manifest["artifacts"] = {
+            "db": "db/app.sqlite3",
+            "env": copied["env"],
+            "config": copied["config"],
+            "exports": copied["exports"],
+        }
+        manifest_file = temp_snap / "manifest.json"
+        manifest_file.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        _chmod600(manifest_file, generated=True)
 
-    index_payload = upsert_snapshot(
-        backup_root=settings.backup_dir,
-        backup_id=backup_id,
-        created_at=manifest["created_at"],
-    )
-    write_index(settings.backup_dir, index_payload)
-    write_latest_successful(settings.backup_dir, backup_id)
+        checksums_file = temp_snap / "checksums.sha256"
+        checksums_file.write_text(
+            "\n".join(f"{sha_by_rel[rel]}  {rel}" for rel in sorted(sha_by_rel)) + "\n",
+            encoding="utf-8",
+        )
+        _chmod600(checksums_file, generated=True)
 
-    apply_retention(settings.backup_dir)
-    return snap
+        _fsync_file(db_dst)
+        _fsync_file(manifest_file)
+        _fsync_file(checksums_file)
+        _fsync_dir(db_dst.parent)
+        _fsync_dir(temp_snap)
+
+        os.replace(temp_snap, snap)
+        _fsync_dir(snapshots_dir)
+
+        index_payload = upsert_snapshot(
+            backup_root=settings.backup_dir,
+            backup_id=backup_id,
+            created_at=manifest["created_at"],
+        )
+        write_index(settings.backup_dir, index_payload)
+        write_latest_successful(settings.backup_dir, backup_id)
+
+        try:
+            apply_retention(settings.backup_dir)
+            write_index(settings.backup_dir, rebuild_index_from_snapshots(settings.backup_dir))
+
+            successful = _successful(settings.backup_dir)
+            if successful:
+                write_latest_successful(settings.backup_dir, successful[0].name)
+        except Exception:
+            LOGGER.exception("ops.backup.create.retention_failure", extra={"backup_id": backup_id})
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        LOGGER.info(
+            "ops.backup.create.success",
+            extra={
+                "backup_id": backup_id,
+                "hostname": hostname,
+                "items_count": len(items),
+                "total_size_bytes": total_size_bytes,
+                "duration_ms": duration_ms,
+                "result": "SUCCESS",
+                "error_code": "",
+            },
+        )
+        return snap
+    except Exception as exc:
+        duration_ms = int((time.monotonic() - started) * 1000)
+        LOGGER.exception(
+            "ops.backup.create.failure",
+            extra={
+                "backup_id": backup_id,
+                "hostname": hostname,
+                "items_count": 0,
+                "total_size_bytes": 0,
+                "duration_ms": duration_ms,
+                "result": "FAILURE",
+                "error_code": type(exc).__name__,
+            },
+        )
+        raise
 
 
 def list_snapshots(settings: BackupSettings) -> list[Path]:
