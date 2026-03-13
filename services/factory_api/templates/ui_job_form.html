@@ -267,8 +267,8 @@
     const n = s.novelty || {};
     summary.innerHTML = `
       <p><b>generation mode:</b> ${s.generation_mode || ''} · <b>strictness mode:</b> ${s.strictness_mode || ''}</p>
-      <p><b>duration min/target/max/tolerance:</b> ${d.min || 0} / ${d.target || 0} / ${d.max || 0} / ${d.tolerance || 0} sec</p>
-      <p><b>achieved duration:</b> ${d.achieved || 0} sec · <b>number of tracks:</b> ${s.tracks_count || 0}</p>
+      <p><b>duration min/target/max/tolerance:</b> ${d.min || 0} / ${d.target || 0} / ${d.max || 0} / ${d.tolerance || 0} min</p>
+      <p><b>achieved duration:</b> ${d.achieved || 0} min · <b>number of tracks:</b> ${s.tracks_count || 0}</p>
       <p><b>target batch ratio:</b> ${b.target_preferred ?? ''} · <b>achieved batch ratio:</b> ${b.achieved_preferred ?? ''}</p>
       <p><b>target novelty:</b> ${n.target_min ?? ''} - ${n.target_max ?? ''} · <b>achieved novelty:</b> ${n.achieved ?? ''}</p>
       <p><b>warnings:</b> ${(s.warnings || []).join('; ') || '-'}</p>

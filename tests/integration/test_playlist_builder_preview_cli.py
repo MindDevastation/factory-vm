@@ -66,6 +66,8 @@ class PlaylistBuilderPreviewCliIntegrationTest(unittest.TestCase):
         self.assertIsNotNone(draft)
         audio_text = str(draft["audio_ids_text"])
         self.assertTrue(audio_text.strip())
+        self.assertNotIn(",", audio_text)
+        self.assertRegex(audio_text, r"^\d+( \d+)*$")
 
         rows = self.conn.execute(
             "SELECT id FROM playlist_history WHERE source_preview_id = ? AND history_stage = 'DRAFT' ORDER BY id ASC",

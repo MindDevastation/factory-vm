@@ -173,20 +173,20 @@ def get_preview_row(conn: object, *, preview_id: str) -> dict[str, Any] | None:
 def build_preview_response(envelope: PreviewEnvelope) -> dict[str, Any]:
     result = envelope.preview_result
     brief = envelope.brief
-    target_sec = int(round(brief.target_duration_min * 60.0))
-    achieved_sec = int(round(result.achieved_duration_sec))
+    target_min = round(brief.target_duration_min, 3)
+    achieved_min = round(result.achieved_duration_min, 3)
     return {
         "preview_id": envelope.preview_id,
         "summary": {
             "generation_mode": brief.generation_mode,
             "strictness_mode": brief.strictness_mode,
             "duration": {
-                "min": brief.min_duration_min * 60,
-                "target": target_sec,
-                "max": brief.max_duration_min * 60,
-                "tolerance": brief.tolerance_min * 60,
-                "achieved": achieved_sec,
-                "deviation_from_target": achieved_sec - target_sec,
+                "min": round(brief.min_duration_min, 3),
+                "target": target_min,
+                "max": round(brief.max_duration_min, 3),
+                "tolerance": round(brief.tolerance_min, 3),
+                "achieved": achieved_min,
+                "deviation_from_target": round(achieved_min - target_min, 3),
             },
             "tracks_count": len(envelope.tracks),
             "batch_ratio": {
@@ -453,7 +453,7 @@ def apply_preview(conn: object, *, job_id: int, preview_id: str, manage_transact
                         "history_written": False,
                     }
                 else:
-                    audio_ids = ",".join(str(t["track_pk"]) for t in tracks)
+                    audio_ids = " ".join(str(t["track_pk"]) for t in tracks)
                     updated = conn.execute(
                         "UPDATE ui_job_drafts SET audio_ids_text = ?, updated_at = ? WHERE job_id = ?",
                         (audio_ids, dbm.now_ts(), job_id),
