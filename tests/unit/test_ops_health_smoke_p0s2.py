@@ -102,6 +102,58 @@ class TestOpsHealthSmokeP0S2(unittest.TestCase):
         self.assertNotIn(str(Path(env.custom_tags_seed_dir).expanduser().resolve()), required_paths)
         self.assertEqual(optional, [])
 
+    def test_pipeline_readiness_passes_when_all_dependency_checks_pass(self) -> None:
+        check = runner.PipelineReadinessCheck()
+        env = SimpleNamespace(upload_backend="youtube")
+        context = SimpleNamespace(
+            profile="prod",
+            env=env,
+            prior_results=(
+                runner.CheckResult("api_health", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("db_access", "", "", "critical", "PASS", "", {"quick_check_result": "ok"}),
+                runner.CheckResult("storage_paths", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("ffmpeg_available", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("required_runtime_roles", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("youtube_ready", "", "", "critical", "PASS", "", {}),
+            ),
+        )
+
+        with patch.object(runner.PipelineReadinessCheck, "_planner_enabled", return_value=True):
+            with patch("services.ops_health_smoke.runner._resolved_runtime_roles") as resolved:
+                resolved.return_value = SimpleNamespace(track_catalog_enabled=True)
+                result = check.run(context)
+
+        self.assertEqual(result.result, "PASS")
+        self.assertEqual(result.details["integration_blockers"], [])
+        self.assertTrue(result.details["db_ready"])
+        self.assertTrue(result.details["workers_ready"])
+
+    def test_pipeline_readiness_fails_on_critical_subcheck_failure(self) -> None:
+        check = runner.PipelineReadinessCheck()
+        env = SimpleNamespace(upload_backend="youtube")
+        context = SimpleNamespace(
+            profile="prod",
+            env=env,
+            prior_results=(
+                runner.CheckResult("api_health", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("db_access", "", "", "critical", "FAIL", "", {"quick_check_result": "corrupt"}),
+                runner.CheckResult("storage_paths", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("ffmpeg_available", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("required_runtime_roles", "", "", "critical", "FAIL", "", {}),
+                runner.CheckResult("youtube_ready", "", "", "critical", "PASS", "", {}),
+            ),
+        )
+
+        with patch.object(runner.PipelineReadinessCheck, "_planner_enabled", return_value=True):
+            with patch("services.ops_health_smoke.runner._resolved_runtime_roles") as resolved:
+                resolved.return_value = SimpleNamespace(track_catalog_enabled=True)
+                result = check.run(context)
+
+        self.assertEqual(result.result, "FAIL")
+        self.assertIn("db_access", result.details["integration_blockers"])
+        self.assertIn("required_runtime_roles", result.details["integration_blockers"])
+        self.assertIn("track_jobs_role_not_ready", result.details["integration_blockers"])
+
     def test_disk_space_missing_nested_paths_is_bounded_and_does_not_raise(self) -> None:
         check = runner.DiskSpaceCheck()
         env = SimpleNamespace(db_path="/nope/a/b/c/factory.sqlite3", storage_root="/also-missing/x/y/z")

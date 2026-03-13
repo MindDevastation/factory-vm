@@ -35,6 +35,7 @@ class SmokeCheck(Protocol):
 class SmokeContext:
     profile: str
     env: Env
+    prior_results: tuple[CheckResult, ...] = ()
 
 
 def _local_api_base_url(env: Env) -> str:
@@ -622,6 +623,85 @@ class RequiredRuntimeRolesCheck:
         )
 
 
+class PipelineReadinessCheck:
+    check_id = "pipeline_readiness"
+    title = "Pipeline readiness gate"
+    category = "local/core"
+    severity = "critical"
+
+    @staticmethod
+    def _planner_enabled() -> bool:
+        raw = os.environ.get("FACTORY_PLANNER_ENABLED")
+        if raw is None:
+            return True
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+    def run(self, context: SmokeContext) -> CheckResult:
+        prior = {result.check_id: result for result in context.prior_results}
+        resolved_roles = _resolved_runtime_roles(context)
+
+        db_result = prior.get("db_access")
+        api_result = prior.get("api_health")
+        storage_result = prior.get("storage_paths")
+        ffmpeg_result = prior.get("ffmpeg_available")
+        worker_roles_result = prior.get("required_runtime_roles")
+        youtube_result = prior.get("youtube_ready")
+
+        db_ready = bool(db_result and db_result.result == "PASS")
+        api_ready = bool(api_result and api_result.result == "PASS")
+        workers_ready = bool(worker_roles_result and worker_roles_result.result == "PASS")
+        storage_ready = bool(storage_result and storage_result.result == "PASS")
+        render_dependency_ready = bool(ffmpeg_result and ffmpeg_result.result == "PASS")
+        uploader_ready = bool(youtube_result and youtube_result.result == "PASS") if context.env.upload_backend == "youtube" else True
+
+        planner_enabled = self._planner_enabled()
+        planner_structures_ready = True
+        if planner_enabled:
+            quick_check_result = (db_result.details.get("quick_check_result") if db_result else "") or ""
+            planner_structures_ready = db_ready and quick_check_result.lower() == "ok"
+
+        blockers: list[str] = []
+        if not db_ready:
+            blockers.append("db_access")
+        if not api_ready:
+            blockers.append("api_health")
+        if not storage_ready:
+            blockers.append("storage_paths")
+        if not render_dependency_ready:
+            blockers.append("ffmpeg_available")
+        if not workers_ready:
+            blockers.append("required_runtime_roles")
+        if not uploader_ready:
+            blockers.append("youtube_ready")
+        if planner_enabled and not planner_structures_ready:
+            blockers.append("planner_data_structures")
+        if resolved_roles.track_catalog_enabled and not workers_ready:
+            blockers.append("track_jobs_role_not_ready")
+
+        unique_blockers = sorted(set(blockers))
+        result = "PASS" if not unique_blockers else "FAIL"
+        message = "Pipeline is ready for production jobs" if result == "PASS" else "Pipeline is not ready for production jobs"
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            category=self.category,
+            severity=self.severity,
+            result=result,
+            message=message,
+            details={
+                "planner_enabled": planner_enabled,
+                "uploader_ready": uploader_ready,
+                "workers_ready": workers_ready,
+                "db_ready": db_ready,
+                "storage_ready": storage_ready,
+                "render_dependency_ready": render_dependency_ready,
+                "integration_blockers": unique_blockers,
+                "planner_structures_ready": planner_structures_ready,
+                "api_ready": api_ready,
+            },
+        )
+
+
 class TelegramReadyCheck:
     check_id = "telegram_ready"
     title = "Telegram readiness"
@@ -836,6 +916,7 @@ def default_checks() -> list[SmokeCheck]:
         GDriveReadyCheck(),
         WorkerHeartbeatCheck(),
         RequiredRuntimeRolesCheck(),
+        PipelineReadinessCheck(),
         DiskSpaceCheck(),
     ]
 
@@ -872,7 +953,10 @@ def run_production_smoke(*, profile: str, selected_check_ids: set[str] | None = 
         if not checks:
             raise ValueError("No checks matched --checks filter")
 
-    results = [check.run(context) for check in checks]
+    results: list[CheckResult] = []
+    for check in checks:
+        check_context = SmokeContext(profile=context.profile, env=context.env, prior_results=tuple(results))
+        results.append(check.run(check_context))
     summary = _compute_summary(results)
     overall, exit_code = _compute_overall(results)
 
