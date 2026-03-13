@@ -10,24 +10,14 @@ from typing import List
 
 from services.common.profile import load_profile_env
 from services.common.env import Env
+from services.common.runtime_roles import worker_roles_for_runtime
 
 
 def _popen(args: List[str]) -> subprocess.Popen:
     return subprocess.Popen(args, stdout=None, stderr=None)
 
-
-def _importer_enabled(no_importer_flag: bool) -> bool:
-    env_value = os.getenv("IMPORTER_ENABLED")
-    if env_value is not None:
-        return env_value.strip().lower() not in {"0", "false", "no", "off"}
-    return not no_importer_flag
-
-
 def _worker_roles(no_importer_flag: bool) -> List[str]:
-    roles = ["importer", "orchestrator", "track_jobs", "qa", "uploader", "cleanup"]
-    if not _importer_enabled(no_importer_flag):
-        roles.remove("importer")
-    return roles
+    return worker_roles_for_runtime(no_importer_flag=no_importer_flag, with_bot_flag=False)
 
 
 def main() -> None:
@@ -66,10 +56,13 @@ def main() -> None:
     procs.append(_popen([py, "-m", "services.factory_api"]))
     time.sleep(0.8)
 
-    for role in _worker_roles(args.no_importer):
+    worker_roles = worker_roles_for_runtime(no_importer_flag=args.no_importer, with_bot_flag=(args.with_bot == 1))
+    for role in worker_roles:
+        if role == "bot":
+            continue
         procs.append(_popen([py, "-m", "services.workers", "--role", role]))
 
-    if args.with_bot == 1:
+    if "bot" in worker_roles:
         procs.append(_popen([py, "-m", "services.bot"]))
 
     print(f"Stack started (profile={args.profile}). Dashboard: http://{env.bind}:{env.port}/")

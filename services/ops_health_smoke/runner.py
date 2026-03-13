@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
 import shutil
 import socket
@@ -14,6 +16,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from services.common.env import Env
+from services.common.runtime_roles import resolve_required_runtime_roles
 
 from .models import CheckResult, OverallStatus, SmokeSummary
 
@@ -64,6 +67,70 @@ def _evaluate_disk_status(*, free_percent: float, free_gib: float, warn_percent:
     if free_percent < warn_percent or free_gib < warn_gib:
         return "WARN"
     return "PASS"
+
+
+def _workers_api_url(env: Env) -> str:
+    return f"{_local_api_base_url(env)}/v1/workers"
+
+
+def _fetch_workers(env: Env) -> list[dict[str, Any]]:
+    url = _workers_api_url(env)
+    creds = f"{env.basic_user}:{env.basic_pass}".encode("utf-8")
+    token = base64.b64encode(creds).decode("ascii")
+    req = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})
+    with urllib.request.urlopen(req, timeout=5.0) as resp:
+        status_attr = getattr(resp, "status", None)
+        status = int(status_attr if status_attr is not None else resp.getcode())
+        if status != 200:
+            raise ValueError(f"workers endpoint returned HTTP {status}")
+        payload = json.loads(resp.read().decode("utf-8"))
+    workers = payload.get("workers", [])
+    if not isinstance(workers, list):
+        raise ValueError("workers payload malformed")
+    return [w for w in workers if isinstance(w, dict)]
+
+
+def _evaluate_worker_heartbeats(*, workers: list[dict[str, Any]], stale_after_sec: int, now_ts: float | None = None) -> dict[str, Any]:
+    current_ts = float(now_ts if now_ts is not None else time.time())
+    active_workers: list[str] = []
+    heartbeat_ages: dict[str, float | None] = {}
+    stale_workers: list[str] = []
+    present_roles: set[str] = set()
+    stale_roles: set[str] = set()
+
+    for worker in workers:
+        worker_id = str(worker.get("worker_id") or "")
+        role = str(worker.get("role") or "")
+        last_seen_raw = worker.get("last_seen")
+        age: float | None = None
+        if last_seen_raw is not None:
+            try:
+                age = max(0.0, current_ts - float(last_seen_raw))
+            except (TypeError, ValueError):
+                age = None
+
+        active = bool(worker_id) and age is not None and age <= stale_after_sec
+        stale = bool(worker_id) and (age is None or age > stale_after_sec)
+
+        if worker_id:
+            heartbeat_ages[worker_id] = None if age is None else round(age, 2)
+        if active:
+            active_workers.append(worker_id)
+        if stale:
+            stale_workers.append(worker_id)
+
+        if role:
+            present_roles.add(role)
+            if stale:
+                stale_roles.add(role)
+
+    return {
+        "active_workers": sorted(active_workers),
+        "heartbeat_ages": heartbeat_ages,
+        "stale_workers": sorted(stale_workers),
+        "present_roles": sorted(present_roles),
+        "stale_roles": sorted(stale_roles),
+    }
 
 
 class RunnerBootstrapCheck:
@@ -441,6 +508,108 @@ class DiskSpaceCheck:
         )
 
 
+class WorkerHeartbeatCheck:
+    check_id = "worker_heartbeat"
+    title = "Worker heartbeat freshness"
+    category = "local/runtime"
+    severity = "critical"
+
+    def run(self, context: SmokeContext) -> CheckResult:
+        stale_after_sec = int(os.environ.get("FACTORY_SMOKE_WORKER_STALE_SEC", "120"))
+        try:
+            workers = _fetch_workers(context.env)
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                category=self.category,
+                severity=self.severity,
+                result="FAIL",
+                message=f"Worker heartbeat check failed: {exc}",
+                details={"stale_after_sec": stale_after_sec},
+            )
+
+        eval_result = _evaluate_worker_heartbeats(workers=workers, stale_after_sec=stale_after_sec)
+        stale_workers = eval_result["stale_workers"]
+        result = "PASS" if not stale_workers else "FAIL"
+        message = "All workers are fresh" if result == "PASS" else "Stale or missing worker heartbeat detected"
+
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            category=self.category,
+            severity=self.severity,
+            result=result,
+            message=message,
+            details={"stale_after_sec": stale_after_sec, **eval_result},
+        )
+
+
+class RequiredRuntimeRolesCheck:
+    check_id = "required_runtime_roles"
+    title = "Required runtime roles"
+    category = "local/runtime"
+    severity = "critical"
+
+    def run(self, context: SmokeContext) -> CheckResult:
+        stale_after_sec = int(os.environ.get("FACTORY_SMOKE_WORKER_STALE_SEC", "120"))
+        resolved = resolve_required_runtime_roles(profile=context.profile)
+
+        try:
+            workers = _fetch_workers(context.env)
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                category=self.category,
+                severity=self.severity,
+                result="FAIL",
+                message=f"Required runtime role check failed: {exc}",
+                details={
+                    "resolved_profile": resolved.resolved_profile,
+                    "required_roles": resolved.required_roles,
+                    "optional_roles": resolved.optional_roles,
+                    "stale_after_sec": stale_after_sec,
+                },
+            )
+
+        eval_result = _evaluate_worker_heartbeats(workers=workers, stale_after_sec=stale_after_sec)
+        present_roles = set(eval_result["present_roles"])
+        stale_roles = set(eval_result["stale_roles"])
+        required_roles = set(resolved.required_roles)
+
+        missing_required = sorted(role for role in required_roles if role not in present_roles)
+        stale_required = sorted(role for role in required_roles if role in stale_roles)
+
+        result = "PASS"
+        message = "All required runtime roles are present and fresh"
+        if missing_required or stale_required:
+            result = "FAIL"
+            message = "One or more required runtime roles are missing or stale"
+
+        details = {
+            "resolved_profile": resolved.resolved_profile,
+            "required_roles": sorted(required_roles),
+            "optional_roles": sorted(set(resolved.optional_roles)),
+            "present_roles": sorted(present_roles),
+            "stale_roles": sorted(stale_roles),
+            "missing_roles": missing_required,
+            "stale_after_sec": stale_after_sec,
+        }
+        if stale_required:
+            details["stale_required_roles"] = stale_required
+
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            category=self.category,
+            severity=self.severity,
+            result=result,
+            message=message,
+            details=details,
+        )
+
+
 def default_checks() -> list[SmokeCheck]:
     return [
         RunnerBootstrapCheck(),
@@ -448,6 +617,8 @@ def default_checks() -> list[SmokeCheck]:
         DbAccessCheck(),
         StoragePathsCheck(),
         FfmpegAvailableCheck(),
+        WorkerHeartbeatCheck(),
+        RequiredRuntimeRolesCheck(),
         DiskSpaceCheck(),
     ]
 
