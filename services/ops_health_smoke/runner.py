@@ -42,16 +42,15 @@ def _local_api_base_url(env: Env) -> str:
 
 
 def _resolve_storage_paths(env: Env) -> tuple[list[Path], list[Path]]:
+    storage_root = Path(env.storage_root).expanduser().resolve()
     required = [
         Path(env.db_path).expanduser().resolve().parent,
-        Path(env.storage_root).expanduser().resolve(),
-        Path(env.storage_root).expanduser().resolve() / "workspace",
-        Path(env.storage_root).expanduser().resolve() / "outbox",
-        Path(env.storage_root).expanduser().resolve() / "logs",
-        Path(env.storage_root).expanduser().resolve() / "qa",
-        Path(env.storage_root).expanduser().resolve() / "previews",
-        Path("configs").resolve(),
-        Path(env.custom_tags_seed_dir).expanduser().resolve(),
+        storage_root,
+        storage_root / "workspace",
+        storage_root / "outbox",
+        storage_root / "logs",
+        storage_root / "qa",
+        storage_root / "previews",
     ]
     optional = []
     if env.origin_backend == "local":
@@ -331,6 +330,17 @@ class DiskSpaceCheck:
     category = "local/core"
     severity = "warning"
 
+    @staticmethod
+    def _nearest_existing_ancestor(path: Path) -> Path | None:
+        current = path
+        while True:
+            if current.exists():
+                return current
+            parent = current.parent
+            if parent == current:
+                return None
+            current = parent
+
     def run(self, context: SmokeContext) -> CheckResult:
         warn_percent = float(os.environ.get("FACTORY_SMOKE_DISK_WARN_PERCENT", "15"))
         warn_gib = float(os.environ.get("FACTORY_SMOKE_DISK_WARN_GIB", "20"))
@@ -348,8 +358,36 @@ class DiskSpaceCheck:
         overall_result = "PASS"
 
         for monitored in monitored_paths:
-            target = monitored if monitored.exists() else monitored.parent
-            usage = shutil.disk_usage(target)
+            target = self._nearest_existing_ancestor(monitored)
+            if target is None:
+                path_details.append(
+                    {
+                        "monitored_path": str(monitored),
+                        "total_bytes": None,
+                        "free_bytes": None,
+                        "free_percent": None,
+                        "status": "FAIL",
+                        "error": "no_existing_ancestor",
+                    }
+                )
+                overall_result = "FAIL"
+                continue
+
+            try:
+                usage = shutil.disk_usage(target)
+            except OSError as exc:
+                path_details.append(
+                    {
+                        "monitored_path": str(monitored),
+                        "total_bytes": None,
+                        "free_bytes": None,
+                        "free_percent": None,
+                        "status": "FAIL",
+                        "error": f"disk_usage_error:{exc.__class__.__name__}",
+                    }
+                )
+                overall_result = "FAIL"
+                continue
             free_percent = (usage.free / usage.total) * 100.0 if usage.total else 0.0
             free_gib = usage.free / (1024**3)
             status = _evaluate_disk_status(
