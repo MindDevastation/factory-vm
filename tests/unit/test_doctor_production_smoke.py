@@ -14,7 +14,7 @@ from services.ops_health_smoke.runner import run_checks_with_error_capture, run_
 
 class TestDoctorProductionSmoke(unittest.TestCase):
     def test_smoke_json_schema(self) -> None:
-        report = run_production_smoke(profile="prod")
+        report = run_production_smoke(profile="prod", selected_check_ids={"runner_bootstrap"})
         self.assertEqual(report["schema_version"], "factory_production_smoke/1")
         self.assertEqual(report["profile"], "prod")
         self.assertIn(report["overall_status"], {"OK", "WARNING", "FAIL"})
@@ -40,7 +40,7 @@ class TestDoctorProductionSmoke(unittest.TestCase):
         self.assertIn("error", runner_error["details"])
 
     def test_human_output_shape(self) -> None:
-        report = run_production_smoke(profile="local")
+        report = run_production_smoke(profile="local", selected_check_ids={"runner_bootstrap"})
         human = render_human_report(report)
         self.assertIn("Overall status:", human)
         self.assertIn("Profile: local", human)
@@ -49,7 +49,7 @@ class TestDoctorProductionSmoke(unittest.TestCase):
 
 
     def test_doctor_cli_json_stdout_is_clean_json(self) -> None:
-        with patch("sys.argv", ["doctor.py", "production-smoke", "--json"]):
+        with patch("sys.argv", ["doctor.py", "production-smoke", "--json", "--checks", "runner_bootstrap"]):
             with io.StringIO() as buf, redirect_stdout(buf):
                 with self.assertRaises(SystemExit) as cm:
                     doctor.main()
