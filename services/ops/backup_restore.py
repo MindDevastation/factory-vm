@@ -14,7 +14,7 @@ from hashlib import sha256
 from pathlib import Path
 from urllib.parse import quote
 
-from services.ops_backup_restore.index import upsert_snapshot, write_index, write_latest_successful
+from services.ops_backup_restore.index import rebuild_index_from_snapshots, upsert_snapshot, write_index, write_latest_successful
 from services.ops_backup_restore.manifest import build_manifest
 from services.ops_backup_restore.models import ManifestItem
 from services.ops_backup_restore.paths import generate_backup_id, snapshot_dir, snapshots_root
@@ -76,6 +76,19 @@ def _checksummed_files(root: Path) -> list[Path]:
             if node.is_file() and node.name not in {"manifest.json", "checksums.sha256"}
         ]
     )
+
+
+def _directory_artifact_metadata(root: Path, artifact_rel: str) -> tuple[int, str]:
+    artifact_root = root / artifact_rel
+    digest = sha256()
+    total_size = 0
+    for node in sorted([path for path in artifact_root.rglob("*") if path.is_file()]):
+        rel = node.relative_to(root).as_posix()
+        file_size = node.stat().st_size
+        file_sha = _sha256_file(node)
+        digest.update(f"{rel}\0{file_size}\0{file_sha}\n".encode("utf-8"))
+        total_size += file_size
+    return total_size, digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -226,13 +239,18 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
         for kind in ("env", "config", "exports"):
             for item in copied[kind]:
                 path = temp_snap / item["artifact"]
+                if path.exists() and path.is_dir():
+                    size_bytes, artifact_sha = _directory_artifact_metadata(temp_snap, item["artifact"])
+                else:
+                    size_bytes = path.stat().st_size if path.exists() and path.is_file() else 0
+                    artifact_sha = sha_by_rel.get(item["artifact"], "")
                 items.append(
                     ManifestItem(
                         kind=kind,
                         source_path=item["source"],
                         stored_path=item["artifact"],
-                        size_bytes=path.stat().st_size if path.exists() and path.is_file() else 0,
-                        sha256=sha_by_rel.get(item["artifact"], ""),
+                        size_bytes=size_bytes,
+                        sha256=artifact_sha,
                         contains_secrets=(kind == "env"),
                     )
                 )
@@ -294,6 +312,11 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
 
         try:
             apply_retention(settings.backup_dir)
+            write_index(settings.backup_dir, rebuild_index_from_snapshots(settings.backup_dir))
+
+            successful = _successful(settings.backup_dir)
+            if successful:
+                write_latest_successful(settings.backup_dir, successful[0].name)
         except Exception:
             LOGGER.exception("ops.backup.create.retention_failure", extra={"backup_id": backup_id})
 
