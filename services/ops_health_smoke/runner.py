@@ -100,16 +100,25 @@ def run_checks_with_error_capture(*, profile: str, selected_check_ids: set[str] 
             "generated_at": datetime.now(UTC).isoformat(),
             "hostname": socket.gethostname(),
             "profile": profile,
-            "overall_status": "RUNNER_ERROR",
+            "overall_status": "FAIL",
             "exit_code": 3,
             "duration_ms": 0,
             "summary": {
-                "total_checks": 0,
+                "total_checks": 1,
                 "pass_count": 0,
                 "warn_count": 0,
-                "fail_count": 0,
+                "fail_count": 1,
                 "skip_count": 0,
             },
-            "checks": [],
-            "error": str(exc),
+            "checks": [
+                {
+                    "check_id": "runner_error",
+                    "title": "Smoke runner execution",
+                    "category": "framework",
+                    "severity": "critical",
+                    "result": "FAIL",
+                    "message": "Smoke runner failed before completing checks",
+                    "details": {"error": str(exc)},
+                }
+            ],
         }
