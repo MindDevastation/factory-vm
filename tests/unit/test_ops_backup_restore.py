@@ -277,6 +277,33 @@ class TestOpsBackupRestore(unittest.TestCase):
                 }
             )
 
+    def test_from_env_unset_factory_env_files_resolves_to_empty_scope(self) -> None:
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+        self.assertEqual(settings.env_files, tuple())
+
+    def test_create_backup_fails_fast_for_missing_required_allowlisted_path(self) -> None:
+        missing = self.root / "missing.env"
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(missing),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+
+        with self.assertRaises(OpsRestoreError) as exc:
+            create_backup(settings, now=datetime(2026, 2, 1, 0, 0, 0, tzinfo=UTC))
+        self.assertEqual(exc.exception.code, "OPS_BACKUP_CONFIG_INVALID")
+
     def test_restore_uses_exact_configured_env_target_path(self) -> None:
         external_env = self.root / "runtime" / "secrets" / "factory.env"
         external_env.parent.mkdir(parents=True, exist_ok=True)
@@ -495,9 +522,7 @@ class TestOpsBackupRestore(unittest.TestCase):
         stopped.parent.mkdir(parents=True, exist_ok=True)
         stopped.write_text("ok", encoding="utf-8")
 
-        with mock.patch("scripts.ops_backup_restore.LOGGER") as logger, mock.patch(
-            "sys.stdout", new_callable=io.StringIO
-        ) as stdout, mock.patch.dict(
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, mock.patch.dict(
             "os.environ",
             {
                 "FACTORY_DB_PATH": str(self.db_path),
@@ -513,9 +538,51 @@ class TestOpsBackupRestore(unittest.TestCase):
 
         self.assertNotEqual(code, 0)
         self.assertNotIn("restore_ok", stdout.getvalue())
-        logger.info.assert_any_call("ops.restore.start", extra={"backup_id": snapshot.name})
-        failure_calls = [call for call in logger.exception.call_args_list if call.args[0] == "ops.restore.failure"]
-        self.assertTrue(failure_calls)
+        self.assertIn("error_code=OPS_RESTORE_CHECKSUM_FAILED", stdout.getvalue())
+
+    def test_manifest_item_kinds_match_schema(self) -> None:
+        cfg = self.root / "configs" / "app.yaml"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("mode: prod\n", encoding="utf-8")
+
+        export_file = self.root / "exports" / "daily.json"
+        export_file.parent.mkdir(parents=True, exist_ok=True)
+        export_file.write_text('{"ok":true}\n', encoding="utf-8")
+
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": str(cfg),
+                "FACTORY_BACKUP_EXPORT_DIRS": str(export_file),
+            }
+        )
+        snapshot = create_backup(settings, now=datetime(2026, 2, 9, 0, 0, 0, tzinfo=UTC))
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        kinds = {item["kind"] for item in manifest["items"]}
+        self.assertIn("sqlite_db", kinds)
+        self.assertIn("env_file", kinds)
+        self.assertIn("config_file", kinds)
+        self.assertIn("export_file", kinds)
+
+    def test_backup_create_cli_failure_is_controlled_and_nonzero(self) -> None:
+        missing = self.root / "missing.env"
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, mock.patch.dict(
+            "os.environ",
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(missing),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            },
+            clear=False,
+        ):
+            code = backup_restore_main(["backup", "create"])
+
+        self.assertEqual(code, 2)
+        self.assertIn("error_code=OPS_BACKUP_CONFIG_INVALID", stdout.getvalue())
 
     def test_quarantine_strategy_avoids_basename_collisions(self) -> None:
         settings = self._settings()

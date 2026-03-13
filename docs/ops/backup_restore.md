@@ -7,7 +7,7 @@ This SOP covers the current backup/restore CLI implemented by `scripts/ops_backu
 Backups only include paths from the explicit backup scope:
 
 - SQLite DB at `FACTORY_DB_PATH` (stored as `db/app.sqlite3` in snapshot).
-- Environment files from `FACTORY_ENV_FILES` (or runtime defaults when unset).
+- Environment files from `FACTORY_ENV_FILES` (explicit allowlist only).
 - Config file/dir paths from `FACTORY_BACKUP_CONFIG_PATHS`.
 - Export file/dir paths from `FACTORY_BACKUP_EXPORT_DIRS`.
 - Snapshot metadata files:
@@ -49,7 +49,7 @@ Important format note:
 
 Default behavior when `FACTORY_ENV_FILES` is unset:
 
-- Existing files among `deploy/env`, `deploy/env.local`, `deploy/env.prod` are included.
+- Env file scope is empty. No implicit fallback paths are added.
 
 ## 4) How to create backup
 
@@ -65,6 +65,7 @@ Operational notes:
 
 - `FACTORY_BACKUP_DIR` is created with mode `0700`.
 - Generated snapshot files are written with restrictive permissions (`0600`).
+- If an allowlisted env/config/export path does not exist, backup fails fast with `error_code=OPS_BACKUP_CONFIG_INVALID`.
 - Retention pruning is attempted after successful snapshot creation.
 
 ## 5) How to list/verify backups
@@ -96,7 +97,7 @@ If verification fails, command exits non-zero and prints `error_code=...`.
 Minimum restore runbook:
 
 1. **Stop services** (web + workers) using your service manager.
-2. **Mark services stopped** by creating the restore guard file:
+2. **Mark services stopped** by creating the restore guard file (guard-file policy, not daemon-state inspection):
    - default marker path: `<FACTORY_BACKUP_DIR>/.services_stopped`
    - or set `FACTORY_SERVICES_STOPPED_FILE` to a custom path and create that file.
 3. **List available backups**:
