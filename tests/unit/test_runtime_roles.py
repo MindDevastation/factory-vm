@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from services.common.runtime_roles import resolve_required_runtime_roles, worker_roles_for_runtime
+from services.common.runtime_roles import (
+    launched_worker_roles_for_runtime,
+    resolve_required_runtime_roles,
+    runtime_role_inputs_from_runtime,
+    worker_roles_for_runtime,
+)
 
 
 class TestRuntimeRoles(unittest.TestCase):
@@ -32,6 +37,35 @@ class TestRuntimeRoles(unittest.TestCase):
             environ={"TRACK_CATALOG_ENABLED": "1"},
         )
         self.assertEqual(roles, ["orchestrator", "track_jobs", "qa", "uploader", "cleanup", "bot"])
+
+    def test_runtime_inputs_env_override_flags(self) -> None:
+        inputs = runtime_role_inputs_from_runtime(
+            profile="prod",
+            no_importer_flag=False,
+            with_bot_flag=False,
+            environ={"FACTORY_RUNTIME_NO_IMPORTER": "1", "FACTORY_RUNTIME_WITH_BOT": "1"},
+        )
+        self.assertTrue(inputs.no_importer_flag)
+        self.assertTrue(inputs.with_bot_flag)
+
+    def test_track_jobs_disabled_removes_required_track_jobs(self) -> None:
+        resolved = resolve_required_runtime_roles(
+            profile="prod",
+            no_importer_flag=False,
+            with_bot_flag=False,
+            environ={"TRACK_CATALOG_ENABLED": "0", "IMPORTER_ENABLED": "1", "BOT_ENABLED": "0"},
+        )
+        self.assertNotIn("track_jobs", resolved.required_roles)
+        self.assertIn("track_jobs", resolved.optional_roles)
+
+    def test_launched_roles_for_prod_excludes_optional_disabled_roles(self) -> None:
+        roles = launched_worker_roles_for_runtime(
+            profile="prod",
+            no_importer_flag=True,
+            with_bot_flag=False,
+            environ={"TRACK_CATALOG_ENABLED": "0"},
+        )
+        self.assertEqual(roles, ["orchestrator", "qa", "uploader", "cleanup"])
 
 
 if __name__ == "__main__":

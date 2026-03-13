@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from services.common.env import Env
-from services.common.runtime_roles import resolve_required_runtime_roles
+from services.common.runtime_roles import resolve_required_runtime_roles, runtime_role_inputs_from_runtime
 
 from .models import CheckResult, OverallStatus, SmokeSummary
 
@@ -553,7 +553,12 @@ class RequiredRuntimeRolesCheck:
 
     def run(self, context: SmokeContext) -> CheckResult:
         stale_after_sec = int(os.environ.get("FACTORY_SMOKE_WORKER_STALE_SEC", "120"))
-        resolved = resolve_required_runtime_roles(profile=context.profile)
+        inputs = runtime_role_inputs_from_runtime(profile=context.profile)
+        resolved = resolve_required_runtime_roles(
+            profile=inputs.profile,
+            no_importer_flag=inputs.no_importer_flag,
+            with_bot_flag=inputs.with_bot_flag,
+        )
 
         try:
             workers = _fetch_workers(context.env)
@@ -570,6 +575,7 @@ class RequiredRuntimeRolesCheck:
                     "required_roles": resolved.required_roles,
                     "optional_roles": resolved.optional_roles,
                     "stale_after_sec": stale_after_sec,
+                    "runtime_inputs": {"no_importer_flag": inputs.no_importer_flag, "with_bot_flag": inputs.with_bot_flag},
                 },
             )
 
@@ -595,6 +601,7 @@ class RequiredRuntimeRolesCheck:
             "stale_roles": sorted(stale_roles),
             "missing_roles": missing_required,
             "stale_after_sec": stale_after_sec,
+            "runtime_inputs": {"no_importer_flag": inputs.no_importer_flag, "with_bot_flag": inputs.with_bot_flag},
         }
         if stale_required:
             details["stale_required_roles"] = stale_required
