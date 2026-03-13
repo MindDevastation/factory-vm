@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 Severity = Literal["critical", "warning", "info"]
 CheckOutcome = Literal["PASS", "WARN", "FAIL", "SKIP"]
-OverallStatus = Literal["OK", "WARNING", "FAIL", "RUNNER_ERROR"]
+OverallStatus = Literal["OK", "WARNING", "FAIL"]
 
 
 @dataclass(frozen=True)

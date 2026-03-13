@@ -39,13 +39,15 @@ def main() -> None:
     parser.add_argument("--json-out", default="")
     parser.add_argument("--checks", default="")
     args = parser.parse_args()
+    is_smoke_json = args.command == "production-smoke" and args.as_json
 
     os.environ["FACTORY_PROFILE"] = args.profile
     loaded = load_profile_env()
-    if loaded:
-        _ok(f"Loaded env file: {loaded}")
-    else:
-        _warn("No env file loaded. Create deploy/env.local or deploy/env.prod (or deploy/env).")
+    if not is_smoke_json:
+        if loaded:
+            _ok(f"Loaded env file: {loaded}")
+        else:
+            _warn("No env file loaded. Create deploy/env.local or deploy/env.prod (or deploy/env).")
 
     env = Env.load()
 

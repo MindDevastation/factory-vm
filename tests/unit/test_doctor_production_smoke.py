@@ -29,8 +29,15 @@ class TestDoctorProductionSmoke(unittest.TestCase):
         self.assertEqual(report["summary"]["total_checks"], 1)
 
         error_report = run_checks_with_error_capture(profile="local", selected_check_ids={"missing"})
-        self.assertEqual(error_report["overall_status"], "RUNNER_ERROR")
+        self.assertEqual(error_report["overall_status"], "FAIL")
         self.assertEqual(error_report["exit_code"], 3)
+        self.assertEqual(error_report["summary"]["total_checks"], 1)
+        self.assertEqual(error_report["summary"]["fail_count"], 1)
+        self.assertEqual(len(error_report["checks"]), 1)
+        runner_error = error_report["checks"][0]
+        self.assertEqual(runner_error["check_id"], "runner_error")
+        self.assertEqual(runner_error["result"], "FAIL")
+        self.assertIn("error", runner_error["details"])
 
     def test_human_output_shape(self) -> None:
         report = run_production_smoke(profile="local")
@@ -39,6 +46,19 @@ class TestDoctorProductionSmoke(unittest.TestCase):
         self.assertIn("Profile: local", human)
         self.assertIn("[PASS] runner_bootstrap", human)
         self.assertIn("Operator hint: System ready", human)
+
+
+    def test_doctor_cli_json_stdout_is_clean_json(self) -> None:
+        with patch("sys.argv", ["doctor.py", "production-smoke", "--json"]):
+            with io.StringIO() as buf, redirect_stdout(buf):
+                with self.assertRaises(SystemExit) as cm:
+                    doctor.main()
+                output = buf.getvalue()
+
+        self.assertEqual(cm.exception.code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["schema_version"], "factory_production_smoke/1")
+        self.assertEqual(payload["overall_status"], "OK")
 
     def test_doctor_cli_json_out_and_exit_code(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".json") as handle:
