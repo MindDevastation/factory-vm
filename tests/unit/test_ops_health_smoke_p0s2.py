@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -70,36 +70,61 @@ class TestOpsHealthSmokeP0S2(unittest.TestCase):
             storage = base / "storage"
             for sub in ["workspace", "outbox", "logs", "qa", "previews"]:
                 (storage / sub).mkdir(parents=True, exist_ok=True)
-            (base / "configs").mkdir(parents=True, exist_ok=True)
-            seeds = base / "custom_seeds"
-            seeds.mkdir(parents=True, exist_ok=True)
             db_parent = base / "data"
             db_parent.mkdir(parents=True, exist_ok=True)
 
             env = SimpleNamespace(
                 db_path=str(db_parent / "factory.sqlite3"),
                 storage_root=str(storage),
-                custom_tags_seed_dir=str(seeds),
                 origin_backend="local",
                 origin_local_root=str(base / "missing_optional_origin"),
             )
-            required = [
-                db_parent,
-                storage,
-                storage / "workspace",
-                storage / "outbox",
-                storage / "logs",
-                storage / "qa",
-                storage / "previews",
-                base / "configs",
-                seeds,
-            ]
-            optional = [base / "missing_optional_origin"]
-            with patch("services.ops_health_smoke.runner._resolve_storage_paths", return_value=(required, optional)):
-                result = runner.StoragePathsCheck().run(SimpleNamespace(env=env, profile="local"))
+            result = runner.StoragePathsCheck().run(SimpleNamespace(env=env, profile="local"))
             self.assertEqual(result.result, "WARN")
             self.assertEqual(len(result.details["missing_required"]), 0)
             self.assertGreaterEqual(len(result.details["missing_optional"]), 1)
+
+    def test_storage_paths_excludes_seed_and_config_only_paths(self) -> None:
+        env = SimpleNamespace(
+            db_path="/tmp/factory/db.sqlite3",
+            storage_root="/tmp/factory/storage",
+            custom_tags_seed_dir="/tmp/factory/custom_seeds",
+            origin_backend="remote",
+            origin_local_root="/tmp/factory/origin_local",
+        )
+        required, optional = runner._resolve_storage_paths(env)
+        required_paths = {str(path) for path in required}
+
+        self.assertNotIn(str(Path("configs").resolve()), required_paths)
+        self.assertNotIn(str(Path(env.custom_tags_seed_dir).expanduser().resolve()), required_paths)
+        self.assertEqual(optional, [])
+
+    def test_disk_space_missing_nested_paths_is_bounded_and_does_not_raise(self) -> None:
+        check = runner.DiskSpaceCheck()
+        env = SimpleNamespace(db_path="/nope/a/b/c/factory.sqlite3", storage_root="/also-missing/x/y/z")
+        context = SimpleNamespace(env=env, profile="local")
+
+        usage = shutil._ntuple_diskusage(total=1024**4, used=900 * 1024**3, free=400 * 1024**3)
+        with patch("services.ops_health_smoke.runner.shutil.disk_usage", return_value=usage):
+            result = check.run(context)
+
+        self.assertEqual(result.result, "PASS")
+        self.assertEqual(result.message, "Disk free space is within thresholds")
+        self.assertGreaterEqual(len(result.details["paths"]), 1)
+        self.assertTrue(all(p["status"] == "PASS" for p in result.details["paths"]))
+
+    def test_disk_space_no_existing_ancestor_returns_deterministic_failure(self) -> None:
+        check = runner.DiskSpaceCheck()
+        context = SimpleNamespace(env=SimpleNamespace(db_path="/", storage_root="/"), profile="local")
+
+        missing_path = Path("/does-not-exist/child/grandchild")
+        with patch.object(check, "_nearest_existing_ancestor", return_value=None):
+            with patch("services.ops_health_smoke.runner.Path", side_effect=lambda raw: missing_path if raw == "/" else Path(raw)):
+                result = check.run(context)
+
+        self.assertEqual(result.result, "FAIL")
+        self.assertEqual(result.details["paths"][0]["status"], "FAIL")
+        self.assertEqual(result.details["paths"][0]["error"], "no_existing_ancestor")
 
     def test_ffmpeg_presence_behavior(self) -> None:
         check = runner.FfmpegAvailableCheck()

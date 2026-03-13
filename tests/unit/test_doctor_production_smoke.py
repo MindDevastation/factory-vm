@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from scripts import doctor
@@ -38,6 +39,24 @@ class TestDoctorProductionSmoke(unittest.TestCase):
         self.assertEqual(runner_error["check_id"], "runner_error")
         self.assertEqual(runner_error["result"], "FAIL")
         self.assertIn("error", runner_error["details"])
+
+    def test_disk_space_missing_paths_report_does_not_degrade_to_runner_error(self) -> None:
+        env = SimpleNamespace(
+            bind="127.0.0.1",
+            port=9999,
+            db_path="/missing/nested/db/factory.sqlite3",
+            storage_root="/missing/nested/storage/root",
+            origin_backend="remote",
+            origin_local_root="/unused/origin",
+        )
+        with patch("services.ops_health_smoke.runner.Env.load", return_value=env):
+            report = run_checks_with_error_capture(profile="local", selected_check_ids={"disk_space"})
+
+        self.assertEqual(report["schema_version"], "factory_production_smoke/1")
+        self.assertEqual(report["summary"]["total_checks"], 1)
+        self.assertEqual(report["checks"][0]["check_id"], "disk_space")
+        self.assertNotEqual(report["checks"][0]["check_id"], "runner_error")
+        self.assertIn(report["checks"][0]["result"], {"WARN", "FAIL", "PASS"})
 
     def test_human_output_shape(self) -> None:
         report = run_production_smoke(profile="local", selected_check_ids={"runner_bootstrap"})
