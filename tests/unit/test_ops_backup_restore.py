@@ -392,6 +392,28 @@ class TestOpsBackupRestore(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("verify_ok", stdout.getvalue())
 
+    def test_backup_list_command_prints_indexed_snapshots(self) -> None:
+        create_backup(self._settings(), now=datetime(2026, 2, 4, 0, 0, 0, tzinfo=UTC))
+        latest_snapshot = create_backup(self._settings(), now=datetime(2026, 2, 5, 0, 0, 0, tzinfo=UTC))
+
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, mock.patch.dict(
+            "os.environ",
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            },
+            clear=False,
+        ):
+            code = backup_restore_main(["backup", "list"])
+
+        self.assertEqual(code, 0)
+        lines = [line for line in stdout.getvalue().splitlines() if line.strip()]
+        self.assertGreaterEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith(f"{latest_snapshot.name}\tSUCCESS\t"))
+
     def test_verify_fails_for_tampered_snapshot(self) -> None:
         settings = self._settings()
         snapshot = create_backup(settings, now=datetime(2026, 2, 5, 0, 0, 0, tzinfo=UTC))
