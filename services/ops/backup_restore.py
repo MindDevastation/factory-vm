@@ -79,12 +79,15 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _checksummed_files(root: Path) -> list[Path]:
+def _checksummed_files(root: Path, *, include_manifest: bool = True) -> list[Path]:
+    excluded_names = {"checksums.sha256"}
+    if not include_manifest:
+        excluded_names.add("manifest.json")
     return sorted(
         [
             node
             for node in root.rglob("*")
-            if node.is_file() and node.name not in {"manifest.json", "checksums.sha256"}
+            if node.is_file() and node.name not in excluded_names
         ]
     )
 
@@ -233,7 +236,7 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
                 _copy_dir(src, temp_snap / artifact_rel) if src.is_dir() else _copy_file(src, temp_snap / artifact_rel)
                 copied["exports"].append({"source": str(src), "artifact": str(artifact_rel)})
 
-        checksummed = _checksummed_files(temp_snap)
+        checksummed = _checksummed_files(temp_snap, include_manifest=False)
         sha_by_rel = {path.relative_to(temp_snap).as_posix(): _sha256_file(path) for path in checksummed}
         total_size_bytes = sum(path.stat().st_size for path in checksummed)
 
@@ -297,9 +300,12 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
         manifest_file.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
         _chmod600(manifest_file, generated=True)
 
+        contract_checksummed = _checksummed_files(temp_snap)
+        contract_sha_by_rel = {path.relative_to(temp_snap).as_posix(): _sha256_file(path) for path in contract_checksummed}
+
         checksums_file = temp_snap / "checksums.sha256"
         checksums_file.write_text(
-            "\n".join(f"{sha_by_rel[rel]}  {rel}" for rel in sorted(sha_by_rel)) + "\n",
+            "\n".join(f"{contract_sha_by_rel[rel]}  {rel}" for rel in sorted(contract_sha_by_rel)) + "\n",
             encoding="utf-8",
         )
         _chmod600(checksums_file, generated=True)
@@ -398,12 +404,8 @@ def _parse_checksums(snapshot: Path) -> dict[str, str]:
 
 def verify_backup_snapshot(snapshot: Path) -> dict:
     manifest = _manifest(snapshot)
-    if manifest.get("status") != "SUCCESS" or not isinstance(manifest.get("artifacts"), dict):
+    if manifest.get("status") != "SUCCESS":
         raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", "snapshot manifest is missing or invalid")
-    artifacts = manifest["artifacts"]
-    db_artifact = artifacts.get("db")
-    if not isinstance(db_artifact, str) or not db_artifact:
-        raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", "db artifact is missing from manifest")
 
     checksums = _parse_checksums(snapshot)
     expected = set(checksums.keys())
@@ -415,6 +417,8 @@ def verify_backup_snapshot(snapshot: Path) -> dict:
         file_path = snapshot / rel
         if not file_path.exists() or _sha256_file(file_path) != digest:
             raise OpsRestoreError("OPS_RESTORE_CHECKSUM_FAILED", f"checksum mismatch for '{rel}'")
+
+    _validate_restore_manifest_contract(snapshot, manifest, checksums)
     return manifest
 
 
@@ -447,8 +451,73 @@ def _manifest_restore_mappings(manifest: dict, artifact_key: str) -> list[tuple[
     for item in artifacts:
         if not isinstance(item, dict) or "source" not in item or "artifact" not in item:
             raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"{artifact_key} manifest mappings are invalid")
+        if not isinstance(item["source"], str) or not item["source"]:
+            raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"{artifact_key} manifest source is invalid")
+        if not isinstance(item["artifact"], str) or not item["artifact"]:
+            raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"{artifact_key} manifest artifact is invalid")
         mappings.append((Path(item["source"]), Path(item["artifact"])))
     return mappings
+
+
+def _validate_restore_manifest_contract(snapshot: Path, manifest: dict, checksums: dict[str, str]) -> None:
+    restore_targets = manifest.get("restore_targets")
+    if not isinstance(restore_targets, dict):
+        raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", "manifest restore_targets are missing or invalid")
+
+    db_target_value = restore_targets.get("FACTORY_DB_PATH")
+    if not isinstance(db_target_value, str) or not db_target_value:
+        raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", "manifest restore target FACTORY_DB_PATH is missing")
+
+    targets_by_kind = {
+        "env": "FACTORY_ENV_FILES",
+        "config": "FACTORY_BACKUP_CONFIG_PATHS",
+        "exports": "FACTORY_BACKUP_EXPORT_DIRS",
+    }
+    for target_key in targets_by_kind.values():
+        values = restore_targets.get(target_key)
+        if not isinstance(values, list) or not all(isinstance(item, str) and item for item in values):
+            raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"manifest restore target {target_key} is invalid")
+
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", "snapshot artifacts are missing or invalid")
+
+    db_artifact = artifacts.get("db")
+    if not isinstance(db_artifact, str) or not db_artifact:
+        raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", "db artifact is missing from manifest")
+
+    manifest_items = {
+        item.get("stored_path"): item
+        for item in manifest.get("items", [])
+        if isinstance(item, dict) and isinstance(item.get("stored_path"), str)
+    }
+
+    all_artifacts: list[tuple[str, Path]] = [("db", Path(db_artifact))]
+    for artifact_key, target_key in targets_by_kind.items():
+        mappings = _manifest_restore_mappings(manifest, artifact_key)
+        if len(mappings) != len(restore_targets[target_key]):
+            raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"manifest {artifact_key} restore mapping count is invalid")
+        mapped_sources = [str(source) for source, _ in mappings]
+        if mapped_sources != restore_targets[target_key]:
+            raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"manifest {artifact_key} restore mappings do not match restore targets")
+        all_artifacts.extend((artifact_key, artifact) for _, artifact in mappings)
+
+    for kind, artifact in all_artifacts:
+        artifact_rel = artifact.as_posix()
+        artifact_path = snapshot / artifact
+        if not artifact_path.exists():
+            raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"snapshot artifact missing: {artifact_path}")
+        item = manifest_items.get(artifact_rel)
+        if not item:
+            raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"manifest item missing for artifact '{artifact_rel}'")
+
+        if artifact_path.is_file():
+            if checksums.get(artifact_rel) != item.get("sha256"):
+                raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"manifest checksum mismatch for artifact '{artifact_rel}'")
+        else:
+            expected_size, expected_sha = _directory_artifact_metadata(snapshot, artifact_rel)
+            if item.get("size_bytes") != expected_size or item.get("sha256") != expected_sha:
+                raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"manifest directory metadata mismatch for artifact '{artifact_rel}'")
 
 
 def restore_snapshot(settings: BackupSettings, snapshot: Path, *, services_stopped_file: Path) -> dict:

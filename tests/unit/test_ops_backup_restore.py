@@ -400,6 +400,55 @@ class TestOpsBackupRestore(unittest.TestCase):
             verify_backup_by_id(settings, snapshot.name)
         self.assertEqual(exc.exception.code, "OPS_RESTORE_CHECKSUM_FAILED")
 
+    def test_verify_fails_for_tampered_manifest(self) -> None:
+        settings = self._settings()
+        snapshot = create_backup(settings, now=datetime(2026, 2, 5, 1, 0, 0, tzinfo=UTC))
+        manifest_path = snapshot / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["snapshot"] = "tampered-snapshot-id"
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+        with self.assertRaises(OpsRestoreError) as exc:
+            verify_backup_by_id(settings, snapshot.name)
+        self.assertEqual(exc.exception.code, "OPS_RESTORE_CHECKSUM_FAILED")
+
+    def test_verify_fails_for_broken_non_db_manifest_mapping_before_restore(self) -> None:
+        cfg = self.root / "configs" / "app.yaml"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("mode: prod\n", encoding="utf-8")
+
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": str(self.deploy / "env"),
+                "FACTORY_BACKUP_CONFIG_PATHS": str(cfg),
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+        snapshot = create_backup(settings, now=datetime(2026, 2, 5, 2, 0, 0, tzinfo=UTC))
+
+        manifest_path = snapshot / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["artifacts"]["config"][0]["source"] = ""
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+        checksums = {}
+        for line in (snapshot / "checksums.sha256").read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            digest, rel = line.split("  ", 1)
+            checksums[rel] = digest
+        checksums["manifest.json"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        (snapshot / "checksums.sha256").write_text(
+            "\n".join(f"{checksums[rel]}  {rel}" for rel in sorted(checksums)) + "\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(OpsRestoreError) as exc:
+            verify_backup_by_id(settings, snapshot.name)
+        self.assertEqual(exc.exception.code, "OPS_RESTORE_MANIFEST_INVALID")
+
     def test_restore_over_existing_state_moves_previous_files_to_quarantine(self) -> None:
         settings = self._settings()
         snapshot = create_backup(settings, now=datetime(2026, 2, 6, 0, 0, 0, tzinfo=UTC))
