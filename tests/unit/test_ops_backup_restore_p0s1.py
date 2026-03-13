@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import stat
 import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest import mock
 
 from services.ops_backup_restore.index import upsert_snapshot, write_index, write_latest_successful
 from services.ops_backup_restore.manifest import build_manifest
@@ -98,6 +101,26 @@ class OpsBackupRestoreP0S1Tests(unittest.TestCase):
         self.assertEqual(manifest["status"], "SUCCESS")
         self.assertNotIn("TOKEN=", json.dumps(manifest))
 
+    def test_manifest_builder_uses_factory_app_version_from_environment(self) -> None:
+        db_path = self.root / "app.sqlite3"
+        scope = BackupScope(
+            backup_dir=self.root / "backups",
+            db_path=db_path,
+            env_files=tuple(),
+            config_paths=tuple(),
+            export_paths=tuple(),
+        )
+
+        with mock.patch.dict(os.environ, {"FACTORY_APP_VERSION": "9.9.9"}, clear=False):
+            manifest = build_manifest(
+                backup_id="20260102T030405Z",
+                scope=scope,
+                items=[],
+                created_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+            )
+
+        self.assertEqual(manifest["app_version"], "9.9.9")
+
     def test_index_upsert_and_latest_successful(self) -> None:
         backup_root = self.root / "backups"
         payload = upsert_snapshot(
@@ -123,6 +146,8 @@ class OpsBackupRestoreP0S1Tests(unittest.TestCase):
             "snapshots/20260103T030405Z/manifest.json",
         )
         self.assertEqual(latest.read_text(encoding="utf-8"), "20260103T030405Z\n")
+        self.assertEqual(stat.S_IMODE(out.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(latest.stat().st_mode), 0o600)
 
 
 if __name__ == "__main__":

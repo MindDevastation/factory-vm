@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import socket
 import sqlite3
 import subprocess
@@ -12,7 +13,7 @@ MANIFEST_VERSION = "factory_backup/1"
 
 
 def resolve_app_version(*, env: dict[str, str] | None = None, repo_root: Path | None = None) -> str:
-    source = {} if env is None else env
+    source = os.environ if env is None else env
     app_version = source.get("FACTORY_APP_VERSION", "").strip()
     if app_version:
         return app_version

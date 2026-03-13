@@ -46,7 +46,7 @@ class TestOpsBackupRestore(unittest.TestCase):
         snapshot = create_backup(settings, now=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC))
 
         manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["status"], "success")
+        self.assertEqual(manifest["status"], "SUCCESS")
         self.assertNotIn("super-secret", json.dumps(manifest))
 
         db_backup = snapshot / manifest["artifacts"]["db"]
@@ -59,6 +59,25 @@ class TestOpsBackupRestore(unittest.TestCase):
         root_mode = self.backup_dir.stat().st_mode & 0o777
         self.assertEqual(root_mode, 0o700)
 
+    def test_create_backup_uses_p0s1_canonical_layout_and_index_helpers(self) -> None:
+        settings = self._settings()
+        snapshot = create_backup(settings, now=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC))
+
+        self.assertEqual(snapshot, self.backup_dir / "snapshots" / "20260102T030405Z")
+
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["manifest_version"], "factory_backup/1")
+        self.assertEqual(manifest["status"], "SUCCESS")
+        self.assertIn("scope", manifest)
+        self.assertIn("env_files_count", manifest["scope"])
+        self.assertNotIn("FACTORY_DB_PATH", manifest["scope"])
+        self.assertIn("restore_targets", manifest)
+
+        index = json.loads((self.backup_dir / "index.json").read_text(encoding="utf-8"))
+        self.assertEqual(index["index_version"], "factory_backup_index/1")
+        self.assertEqual(index["snapshots"][0]["manifest_path"], "snapshots/20260102T030405Z/manifest.json")
+        self.assertEqual((self.backup_dir / "latest_successful").read_text(encoding="utf-8"), "20260102T030405Z\n")
+
     def test_retention_keeps_policies_and_latest(self) -> None:
         settings = self._settings()
         start = datetime(2026, 3, 31, 0, 0, 0, tzinfo=UTC)
@@ -68,7 +87,8 @@ class TestOpsBackupRestore(unittest.TestCase):
             snap = create_backup(settings, now=dt)
             created.append(snap.name)
 
-        kept = sorted([p.name for p in self.backup_dir.iterdir() if p.is_dir()])
+        snapshots_root = self.backup_dir / "snapshots"
+        kept = sorted([p.name for p in snapshots_root.iterdir() if p.is_dir()])
         self.assertTrue(created[0] in kept)
         self.assertLess(len(kept), len(created))
         self.assertGreaterEqual(len(kept), 7)
@@ -77,6 +97,42 @@ class TestOpsBackupRestore(unittest.TestCase):
         removed = apply_retention(self.backup_dir)
         self.assertIsInstance(removed, list)
 
+
+
+    def test_from_env_scope_contract_uses_canonical_colon_separator(self) -> None:
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": f"{self.root / 'a.env'}:{self.root / 'b.env'}",
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+        self.assertEqual(settings.env_files, (self.root / "a.env", self.root / "b.env"))
+
+    def test_from_env_scope_contract_does_not_use_legacy_comma_separator(self) -> None:
+        settings = BackupSettings.from_env(
+            {
+                "FACTORY_DB_PATH": str(self.db_path),
+                "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                "FACTORY_ENV_FILES": f"{self.root / 'a.env'},{self.root / 'b.env'}",
+                "FACTORY_BACKUP_CONFIG_PATHS": "",
+                "FACTORY_BACKUP_EXPORT_DIRS": "",
+            }
+        )
+        self.assertEqual(settings.env_files, (Path(f"{self.root / 'a.env'},{self.root / 'b.env'}"),))
+
+    def test_from_env_requires_factory_db_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "FACTORY_DB_PATH"):
+            BackupSettings.from_env(
+                {
+                    "FACTORY_BACKUP_DIR": str(self.backup_dir),
+                    "FACTORY_ENV_FILES": "",
+                    "FACTORY_BACKUP_CONFIG_PATHS": "",
+                    "FACTORY_BACKUP_EXPORT_DIRS": "",
+                }
+            )
 
     def test_restore_uses_exact_configured_env_target_path(self) -> None:
         external_env = self.root / "runtime" / "secrets" / "factory.env"
@@ -128,9 +184,9 @@ class TestOpsBackupRestore(unittest.TestCase):
             {
                 "FACTORY_DB_PATH": str(self.db_path),
                 "FACTORY_BACKUP_DIR": str(self.backup_dir),
-                "FACTORY_ENV_FILES": f"{env_a},{env_b}",
-                "FACTORY_BACKUP_CONFIG_PATHS": f"{config_a},{config_b}",
-                "FACTORY_BACKUP_EXPORT_DIRS": f"{export_a},{export_b}",
+                "FACTORY_ENV_FILES": f"{env_a}:{env_b}",
+                "FACTORY_BACKUP_CONFIG_PATHS": f"{config_a}:{config_b}",
+                "FACTORY_BACKUP_EXPORT_DIRS": f"{export_a}:{export_b}",
             }
         )
         snapshot = create_backup(settings, now=datetime(2026, 2, 3, 0, 0, 0, tzinfo=UTC))
