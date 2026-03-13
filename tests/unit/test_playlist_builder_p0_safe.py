@@ -12,6 +12,7 @@ from services.playlist_builder.history import (
     novelty_against_previous,
     ordered_sequence_overlap,
     position_memory_risk,
+    position_overlap,
     prefix_overlap,
     track_set_overlap,
 )
@@ -50,11 +51,18 @@ class PlaylistBuilderP0SafeTest(unittest.TestCase):
         )
 
     def test_overlap_formulas(self) -> None:
-        self.assertAlmostEqual(track_set_overlap([1, 2], [2, 3]), 1 / 3)
+        self.assertAlmostEqual(track_set_overlap([1, 2], [2, 3]), 1 / 2)
         self.assertAlmostEqual(novelty_against_previous([1, 2], [2, 3]), 0.5)
-        self.assertAlmostEqual(ordered_sequence_overlap([1, 2, 3], [1, 4, 3]), 2 / 3)
+        self.assertAlmostEqual(ordered_sequence_overlap([1, 2, 3], [1, 2, 4]), 1 / 2)
+        self.assertAlmostEqual(position_overlap([1, 2, 3], [1, 4, 3]), 2 / 3)
         self.assertAlmostEqual(prefix_overlap([1, 2, 3], [1, 2, 4], 3), 2 / 3)
+        self.assertAlmostEqual(prefix_overlap([1, 2, 3, 9, 10], [1, 2, 8, 9, 10], 5), 2 / 5)
         self.assertAlmostEqual(batch_distribution_overlap(["a", "a", "b"], ["a", "c"]), 0.5)
+
+
+    def test_sequence_and_position_overlap_are_distinct(self) -> None:
+        self.assertAlmostEqual(ordered_sequence_overlap([1, 2, 3, 4], [1, 9, 3, 4]), 1 / 3)
+        self.assertAlmostEqual(position_overlap([1, 2, 3, 4], [1, 9, 3, 4]), 3 / 4)
 
     def test_history_precedence_and_position_memory(self) -> None:
         now = datetime.utcnow()

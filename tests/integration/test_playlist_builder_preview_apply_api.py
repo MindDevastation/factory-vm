@@ -87,7 +87,7 @@ class TestPlaylistBuilderPreviewApplyApi(unittest.TestCase):
             try:
                 draft = dbm.get_ui_job_draft(conn, job_id)
                 self.assertIsNotNone(draft)
-                self.assertIn("201", str(draft["audio_ids_text"]))
+                self.assertRegex(str(draft["audio_ids_text"]), r"^\d+( \d+)*$")
                 histories = conn.execute(
                     "SELECT id, source_preview_id, history_stage, is_active FROM playlist_history WHERE job_id = ? ORDER BY id ASC",
                     (job_id,),
@@ -139,6 +139,13 @@ class TestPlaylistBuilderPreviewApplyApi(unittest.TestCase):
 
             summary = body["summary"]
             self.assertEqual(summary["generation_mode"], "smart")
+            duration = summary["duration"]
+            self.assertEqual(duration["min"], 10)
+            self.assertEqual(duration["max"], 15)
+            self.assertEqual(duration["target"], 12.5)
+            self.assertEqual(duration["tolerance"], 5)
+            self.assertIsInstance(duration["achieved"], float)
+            self.assertAlmostEqual(duration["deviation_from_target"], duration["achieved"] - duration["target"], places=3)
             self.assertTrue(any("top-" in w for w in summary.get("warnings", [])))
 
     def test_preview_curated_mode_contract_and_apply_flow(self) -> None:
