@@ -73,6 +73,15 @@ def _workers_api_url(env: Env) -> str:
     return f"{_local_api_base_url(env)}/v1/workers"
 
 
+def _resolved_runtime_roles(context: "SmokeContext"):
+    inputs = runtime_role_inputs_from_runtime(profile=context.profile)
+    return resolve_required_runtime_roles(
+        profile=inputs.profile,
+        no_importer_flag=inputs.no_importer_flag,
+        with_bot_flag=inputs.with_bot_flag,
+    )
+
+
 def _fetch_workers(env: Env) -> list[dict[str, Any]]:
     url = _workers_api_url(env)
     creds = f"{env.basic_user}:{env.basic_pass}".encode("utf-8")
@@ -554,11 +563,7 @@ class RequiredRuntimeRolesCheck:
     def run(self, context: SmokeContext) -> CheckResult:
         stale_after_sec = int(os.environ.get("FACTORY_SMOKE_WORKER_STALE_SEC", "120"))
         inputs = runtime_role_inputs_from_runtime(profile=context.profile)
-        resolved = resolve_required_runtime_roles(
-            profile=inputs.profile,
-            no_importer_flag=inputs.no_importer_flag,
-            with_bot_flag=inputs.with_bot_flag,
-        )
+        resolved = _resolved_runtime_roles(context)
 
         try:
             workers = _fetch_workers(context.env)
@@ -617,6 +622,208 @@ class RequiredRuntimeRolesCheck:
         )
 
 
+class TelegramReadyCheck:
+    check_id = "telegram_ready"
+    title = "Telegram readiness"
+    category = "integrations"
+    severity = "warning"
+
+    def run(self, context: SmokeContext) -> CheckResult:
+        resolved = _resolved_runtime_roles(context)
+        bot_required = "bot" in set(resolved.required_roles)
+        severity = "critical" if bot_required else "warning"
+
+        config_present = bool(context.env.tg_bot_token and context.env.tg_admin_chat_id)
+        init_ok = False
+        init_error = None
+        if config_present:
+            try:
+                from aiogram import Bot
+                from aiogram.enums import ParseMode
+
+                _ = Bot(token=context.env.tg_bot_token, parse_mode=ParseMode.HTML)
+                init_ok = True
+            except Exception as exc:
+                init_error = str(exc)
+
+        result = "PASS" if config_present and init_ok else "FAIL"
+        if result == "FAIL" and severity == "warning":
+            result = "WARN"
+
+        details = {
+            "config_present": config_present,
+            "init_ok": init_ok,
+            "bot_required_by_profile": bot_required,
+        }
+        if init_error:
+            details["init_error"] = init_error
+
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            category=self.category,
+            severity=severity,
+            result=result,
+            message="Telegram config and local client init are ready" if result == "PASS" else "Telegram readiness is incomplete",
+            details=details,
+        )
+
+
+class YouTubeReadyCheck:
+    check_id = "youtube_ready"
+    title = "YouTube readiness"
+    category = "integrations"
+    severity = "warning"
+
+    def run(self, context: SmokeContext) -> CheckResult:
+        upload_capable = context.profile == "prod" and context.env.upload_backend == "youtube"
+        severity = "critical" if upload_capable else "warning"
+
+        channel_slug = os.environ.get("FACTORY_YT_CHANNEL_SLUG", "").strip()
+        tokens_root = Path(context.env.yt_tokens_dir).expanduser().resolve() if context.env.yt_tokens_dir else None
+        token_path = tokens_root / channel_slug / "token.json" if tokens_root and channel_slug else None
+        client_secret_path = Path(context.env.yt_client_secret_json).expanduser().resolve() if context.env.yt_client_secret_json else None
+
+        config_paths_present = bool(
+            client_secret_path
+            and token_path
+            and client_secret_path.is_file()
+            and token_path.is_file()
+        )
+
+        token_load_ok = False
+        client_load_ok = False
+        token_error = None
+        client_error = None
+        if config_paths_present:
+            try:
+                from google.oauth2.credentials import Credentials
+
+                creds = Credentials.from_authorized_user_file(str(token_path), ["https://www.googleapis.com/auth/youtube.upload"])
+                token_load_ok = bool(creds.token)
+            except Exception as exc:
+                token_error = str(exc)
+
+            try:
+                token_json = json.loads(token_path.read_text(encoding="utf-8"))
+                secret_json = json.loads(client_secret_path.read_text(encoding="utf-8"))
+                has_installed = isinstance(secret_json, dict) and any(k in secret_json for k in ("web", "installed"))
+                has_token_shape = isinstance(token_json, dict) and any(k in token_json for k in ("access_token", "refresh_token", "token"))
+                client_load_ok = bool(has_installed and has_token_shape)
+            except Exception as exc:
+                client_error = str(exc)
+
+        result = "PASS" if config_paths_present and token_load_ok and client_load_ok else "FAIL"
+        if result == "FAIL" and severity == "warning":
+            result = "WARN"
+
+        details = {
+            "channel_slug": channel_slug,
+            "channel_context_available": bool(channel_slug),
+            "token_path": str(token_path) if token_path else None,
+            "config_paths_present": config_paths_present,
+            "token_load_ok": token_load_ok,
+            "client_load_ok": client_load_ok,
+        }
+        if not channel_slug:
+            details["channel_context_error"] = "FACTORY_YT_CHANNEL_SLUG is not set"
+        if token_error:
+            details["token_error"] = token_error
+        if client_error:
+            details["client_error"] = client_error
+
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            category=self.category,
+            severity=severity,
+            result=result,
+            message="YouTube config/token parsed without upload actions" if result == "PASS" else "YouTube readiness is incomplete",
+            details=details,
+        )
+
+
+class GDriveReadyCheck:
+    check_id = "gdrive_ready"
+    title = "Google Drive readiness"
+    category = "integrations"
+    severity = "warning"
+
+    def run(self, context: SmokeContext) -> CheckResult:
+        resolved = _resolved_runtime_roles(context)
+        drive_flow_enabled = context.env.origin_backend == "gdrive" and resolved.importer_enabled
+        severity = "critical" if drive_flow_enabled else "warning"
+
+        sa_path = Path(context.env.gdrive_sa_json).expanduser().resolve() if context.env.gdrive_sa_json else None
+        oauth_client = Path(context.env.gdrive_oauth_client_json).expanduser().resolve() if context.env.gdrive_oauth_client_json else None
+        oauth_token = Path(context.env.gdrive_oauth_token_json).expanduser().resolve() if context.env.gdrive_oauth_token_json else None
+
+        service_account_mode = bool(sa_path and sa_path.is_file())
+        oauth_mode = bool(oauth_client and oauth_token and oauth_client.is_file() and oauth_token.is_file())
+        credential_path_present = bool(service_account_mode or oauth_mode)
+
+        credential_parse_ok = False
+        client_init_ok = False
+        parse_error = None
+        init_error = None
+        if credential_path_present:
+            try:
+                if service_account_mode:
+                    from google.oauth2 import service_account
+
+                    creds = service_account.Credentials.from_service_account_file(
+                        str(sa_path), scopes=["https://www.googleapis.com/auth/drive"]
+                    )
+                    credential_parse_ok = bool(getattr(creds, "service_account_email", ""))
+                else:
+                    from google.oauth2.credentials import Credentials
+
+                    creds = Credentials.from_authorized_user_file(
+                        str(oauth_token), ["https://www.googleapis.com/auth/drive"]
+                    )
+                    credential_parse_ok = bool(creds.token)
+            except Exception as exc:
+                parse_error = str(exc)
+
+            if credential_parse_ok:
+                try:
+                    if service_account_mode:
+                        secret_json = json.loads(sa_path.read_text(encoding="utf-8"))
+                        client_init_ok = isinstance(secret_json, dict) and secret_json.get("type") == "service_account"
+                    else:
+                        client_json = json.loads(oauth_client.read_text(encoding="utf-8"))
+                        token_json = json.loads(oauth_token.read_text(encoding="utf-8"))
+                        has_client = isinstance(client_json, dict) and any(k in client_json for k in ("web", "installed"))
+                        has_token = isinstance(token_json, dict) and any(k in token_json for k in ("access_token", "refresh_token", "token"))
+                        client_init_ok = bool(has_client and has_token)
+                except Exception as exc:
+                    init_error = str(exc)
+
+        result = "PASS" if credential_path_present and credential_parse_ok and client_init_ok else "FAIL"
+        if result == "FAIL" and severity == "warning":
+            result = "WARN"
+
+        details = {
+            "credential_path_present": credential_path_present,
+            "credential_parse_ok": credential_parse_ok,
+            "client_init_ok": client_init_ok,
+        }
+        if parse_error:
+            details["credential_error"] = parse_error
+        if init_error:
+            details["client_error"] = init_error
+
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            category=self.category,
+            severity=severity,
+            result=result,
+            message="Google Drive credentials parsed and initialized locally" if result == "PASS" else "Google Drive readiness is incomplete",
+            details=details,
+        )
+
+
 def default_checks() -> list[SmokeCheck]:
     return [
         RunnerBootstrapCheck(),
@@ -624,6 +831,9 @@ def default_checks() -> list[SmokeCheck]:
         DbAccessCheck(),
         StoragePathsCheck(),
         FfmpegAvailableCheck(),
+        TelegramReadyCheck(),
+        YouTubeReadyCheck(),
+        GDriveReadyCheck(),
         WorkerHeartbeatCheck(),
         RequiredRuntimeRolesCheck(),
         DiskSpaceCheck(),
@@ -640,10 +850,14 @@ def _compute_summary(results: list[CheckResult]) -> SmokeSummary:
     )
 
 
-def _compute_overall(summary: SmokeSummary) -> tuple[OverallStatus, int]:
-    if summary.fail_count > 0:
+def _compute_overall(results: list[CheckResult]) -> tuple[OverallStatus, int]:
+    critical_fail = any(r.severity == "critical" and r.result == "FAIL" for r in results)
+    warning_attention = any(
+        (r.severity == "warning" and r.result in {"FAIL", "WARN"}) or (r.severity == "info" and r.result == "FAIL") for r in results
+    )
+    if critical_fail:
         return ("FAIL", 2)
-    if summary.warn_count > 0:
+    if warning_attention:
         return ("WARNING", 1)
     return ("OK", 0)
 
@@ -660,7 +874,7 @@ def run_production_smoke(*, profile: str, selected_check_ids: set[str] | None = 
 
     results = [check.run(context) for check in checks]
     summary = _compute_summary(results)
-    overall, exit_code = _compute_overall(summary)
+    overall, exit_code = _compute_overall(results)
 
     return {
         "schema_version": "factory_production_smoke/1",
