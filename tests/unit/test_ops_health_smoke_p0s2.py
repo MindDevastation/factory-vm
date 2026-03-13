@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from services.ops_health_smoke import runner
+from services.common.runtime_roles import RuntimeRoleInputs, persist_runtime_role_inputs
 
 
 class TestOpsHealthSmokeP0S2(unittest.TestCase):
@@ -269,6 +270,99 @@ class TestOpsHealthSmokeP0S2(unittest.TestCase):
 
         self.assertEqual(result.result, "FAIL")
         self.assertIn("w-stale", result.details["stale_workers"])
+
+    def test_required_runtime_roles_uses_runtime_input_flags(self) -> None:
+        check = runner.RequiredRuntimeRolesCheck()
+        env = SimpleNamespace(bind="127.0.0.1", port=8080, basic_user="admin", basic_pass="secret")
+        context = SimpleNamespace(env=env, profile="prod")
+
+        class Response:
+            status = 200
+
+            def read(self) -> bytes:
+                payload = {
+                    "workers": [
+                        {"worker_id": "w1", "role": "orchestrator", "last_seen": 190.0},
+                        {"worker_id": "w2", "role": "qa", "last_seen": 190.0},
+                        {"worker_id": "w3", "role": "uploader", "last_seen": 190.0},
+                        {"worker_id": "w4", "role": "cleanup", "last_seen": 190.0},
+                        {"worker_id": "w5", "role": "bot", "last_seen": 190.0},
+                    ]
+                }
+                return json.dumps(payload).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch.dict(
+            os.environ,
+            {"FACTORY_RUNTIME_WITH_BOT": "1", "FACTORY_RUNTIME_NO_IMPORTER": "1", "TRACK_CATALOG_ENABLED": "0"},
+            clear=False,
+        ):
+            with patch("services.ops_health_smoke.runner.time.time", return_value=200.0):
+                with patch("services.ops_health_smoke.runner.urllib.request.urlopen", return_value=Response()):
+                    result = check.run(context)
+
+        self.assertEqual(result.result, "PASS")
+        self.assertEqual(result.details["runtime_inputs"], {"no_importer_flag": True, "with_bot_flag": True})
+        self.assertEqual(result.details["missing_roles"], [])
+
+    def test_required_runtime_roles_reads_shared_runtime_inputs_file(self) -> None:
+        check = runner.RequiredRuntimeRolesCheck()
+        env = SimpleNamespace(bind="127.0.0.1", port=8080, basic_user="admin", basic_pass="secret")
+        context = SimpleNamespace(env=env, profile="prod")
+
+        class Response:
+            status = 200
+
+            def read(self) -> bytes:
+                payload = {
+                    "workers": [
+                        {"worker_id": "w1", "role": "orchestrator", "last_seen": 190.0},
+                        {"worker_id": "w2", "role": "qa", "last_seen": 190.0},
+                        {"worker_id": "w3", "role": "uploader", "last_seen": 190.0},
+                        {"worker_id": "w4", "role": "cleanup", "last_seen": 190.0},
+                        {"worker_id": "w5", "role": "bot", "last_seen": 190.0},
+                    ]
+                }
+                return json.dumps(payload).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_inputs_file = Path(tmpdir) / "runtime-inputs.json"
+            persist_runtime_role_inputs(
+                RuntimeRoleInputs(profile="prod", no_importer_flag=True, with_bot_flag=True),
+                environ={"FACTORY_RUNTIME_INPUTS_FILE": str(runtime_inputs_file)},
+            )
+            with patch.dict(
+                os.environ,
+                {"FACTORY_RUNTIME_INPUTS_FILE": str(runtime_inputs_file), "TRACK_CATALOG_ENABLED": "0"},
+                clear=True,
+            ):
+                with patch("services.ops_health_smoke.runner.time.time", return_value=200.0):
+                    with patch("services.ops_health_smoke.runner.urllib.request.urlopen", return_value=Response()):
+                        result = check.run(context)
+
+        self.assertEqual(result.result, "PASS")
+        self.assertEqual(result.details["runtime_inputs"], {"no_importer_flag": True, "with_bot_flag": True})
+        self.assertEqual(result.details["required_roles"], ["bot", "cleanup", "orchestrator", "qa", "uploader"])
+        self.assertIn("track_jobs", result.details["optional_roles"])
+
+    def test_worker_heartbeat_last_seen_epoch_contract(self) -> None:
+        evaluated = runner._evaluate_worker_heartbeats(
+            workers=[{"worker_id": "w1", "role": "orchestrator", "last_seen": "195.0"}],
+            stale_after_sec=120,
+            now_ts=200.0,
+        )
+        self.assertEqual(evaluated["active_workers"], ["w1"])
 
 
 if __name__ == "__main__":
