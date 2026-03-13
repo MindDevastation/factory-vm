@@ -9,11 +9,9 @@ from services.playlist_builder.models import PlaylistHistoryEntry
 def track_set_overlap(current: Iterable[int], previous: Iterable[int]) -> float:
     a = set(current)
     b = set(previous)
-    if not a and not b:
-        return 1.0
-    if not a or not b:
+    if not a:
         return 0.0
-    return len(a & b) / len(a | b)
+    return len(a & b) / len(a)
 
 
 def novelty_against_previous(current: Iterable[int], previous: Iterable[int]) -> float:
@@ -26,26 +24,34 @@ def novelty_against_previous(current: Iterable[int], previous: Iterable[int]) ->
 def ordered_sequence_overlap(current: Iterable[int], previous: Iterable[int]) -> float:
     a = tuple(current)
     b = tuple(previous)
-    if not a or not b:
+    if len(a) < 2 or len(b) < 2:
         return 0.0
-    n = min(len(a), len(b))
-    same = sum(1 for i in range(n) if a[i] == b[i])
-    return same / max(len(a), len(b))
+    a_pairs = {(a[i], a[i + 1]) for i in range(len(a) - 1)}
+    b_pairs = {(b[i], b[i + 1]) for i in range(len(b) - 1)}
+    return len(a_pairs & b_pairs) / max(1, len(a_pairs))
 
 
 def position_overlap(current: Iterable[int], previous: Iterable[int]) -> float:
-    return ordered_sequence_overlap(current, previous)
+    a = tuple(current)
+    b = tuple(previous)
+    if not a:
+        return 0.0
+    n = min(len(a), len(b))
+    same = sum(1 for i in range(n) if a[i] == b[i])
+    return same / len(a)
 
 
 def prefix_overlap(current: Iterable[int], previous: Iterable[int], n: int) -> float:
     if n <= 0:
         return 0.0
-    a = tuple(current)[:n]
-    b = tuple(previous)[:n]
-    if len(a) < n or len(b) < n:
-        return 0.0
-    same = sum(1 for i in range(n) if a[i] == b[i])
-    return same / n
+    a = tuple(current)
+    b = tuple(previous)
+    common = 0
+    for idx in range(n):
+        if idx >= len(a) or idx >= len(b) or a[idx] != b[idx]:
+            break
+        common += 1
+    return common / n
 
 
 def batch_distribution_overlap(current_batches: Iterable[str | None], previous_batches: Iterable[str | None]) -> float:
@@ -60,11 +66,10 @@ def batch_distribution_overlap(current_batches: Iterable[str | None], previous_b
     if not a_counts and not b_counts:
         return 1.0
     all_keys = set(a_counts) | set(b_counts)
-    if not all_keys:
-        return 1.0
     total_a = sum(a_counts.values()) or 1
     total_b = sum(b_counts.values()) or 1
-    return sum(min(a_counts[k] / total_a, b_counts[k] / total_b) for k in all_keys)
+    l1 = sum(abs((a_counts[k] / total_a) - (b_counts[k] / total_b)) for k in all_keys)
+    return 1.0 - (l1 / 2.0)
 
 
 def list_effective_history(conn: object, *, channel_slug: str, window: int) -> list[PlaylistHistoryEntry]:
