@@ -34,6 +34,34 @@ class OpsRestoreError(RuntimeError):
         self.code = code
 
 
+def _ops_error_code(exc: Exception, *, default: str) -> str:
+    if isinstance(exc, OpsRestoreError):
+        return exc.code
+    return default
+
+
+def _manifest_kind_for_scope(scope_kind: str, src: Path) -> str:
+    if scope_kind == "env":
+        return "env_file"
+    if scope_kind == "config":
+        return "config_dir" if src.is_dir() else "config_file"
+    if scope_kind == "exports":
+        return "export_dir" if src.is_dir() else "export_file"
+    raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"unsupported backup scope kind '{scope_kind}'")
+
+
+def _validate_required_scope_paths(settings: BackupSettings) -> None:
+    for src in settings.env_files:
+        if not src.exists() or not src.is_file():
+            raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"required env path missing or not a file: {src}")
+    for src in settings.config_paths:
+        if not src.exists():
+            raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"required config path missing: {src}")
+    for src in settings.export_dirs:
+        if not src.exists():
+            raise OpsRestoreError("OPS_BACKUP_CONFIG_INVALID", f"required export path missing: {src}")
+
+
 def _chmod600(path: Path, *, generated: bool = False) -> None:
     mode = 0o600 if generated else (stat.S_IMODE(path.stat().st_mode) & 0o600) or 0o600
     os.chmod(path, mode)
@@ -125,13 +153,10 @@ class BackupSettings:
                 "FACTORY_BACKUP_EXPORT_DIRS": source.get("FACTORY_BACKUP_EXPORT_DIRS", ""),
             }
         )
-        env_files = scope.env_files or tuple(
-            p for p in (Path("deploy/env"), Path("deploy/env.local"), Path("deploy/env.prod")) if p.exists()
-        )
         return BackupSettings(
             db_path=scope.db_path,
             backup_dir=scope.backup_dir,
-            env_files=env_files,
+            env_files=scope.env_files,
             config_paths=scope.config_paths,
             export_dirs=scope.export_paths,
         )
@@ -247,12 +272,36 @@ def apply_retention(backup_dir: Path) -> list[Path]:
 
 
 def prune_backups(backup_dir: Path) -> list[Path]:
+    started = time.monotonic()
+    hostname = os.uname().nodename
     try:
         removed = apply_retention(backup_dir)
-        LOGGER.info("ops.backup.prune.success", extra={"removed_count": len(removed), "error_code": ""})
+        LOGGER.info(
+            "ops.backup.prune.success",
+            extra={
+                "backup_id": "",
+                "hostname": hostname,
+                "items_count": len(removed),
+                "total_size_bytes": 0,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "result": "SUCCESS",
+                "error_code": "",
+            },
+        )
         return removed
-    except Exception:
-        LOGGER.exception("ops.backup.prune.failure", extra={"error_code": "OPS_RETENTION_PRUNE_FAILED"})
+    except Exception as exc:
+        LOGGER.exception(
+            "ops.backup.prune.failure",
+            extra={
+                "backup_id": "",
+                "hostname": hostname,
+                "items_count": 0,
+                "total_size_bytes": 0,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "result": "FAILURE",
+                "error_code": _ops_error_code(exc, default="OPS_RETENTION_PRUNE_FAILED"),
+            },
+        )
         raise OpsRestoreError("OPS_RETENTION_PRUNE_FAILED", "backup retention pruning failed")
 
 
@@ -285,6 +334,10 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
         shutil.rmtree(temp_snap)
 
     try:
+        if not settings.db_path.exists():
+            raise OpsRestoreError("OPS_BACKUP_DB_NOT_FOUND", f"database path does not exist: {settings.db_path}")
+        _validate_required_scope_paths(settings)
+
         temp_snap.mkdir(parents=True, exist_ok=False)
         os.chmod(temp_snap, 0o700)
 
@@ -298,20 +351,26 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
 
         copied = {"env": [], "config": [], "exports": []}
         for src in settings.env_files:
-            if src.exists() and src.is_file():
-                artifact_rel = _artifact_path("env", src)
+            artifact_rel = _artifact_path("env", src)
+            try:
                 _copy_file(src, temp_snap / artifact_rel)
-                copied["env"].append({"source": str(src), "artifact": str(artifact_rel)})
+            except Exception as exc:
+                raise OpsRestoreError("OPS_BACKUP_SCOPE_COPY_FAILED", f"failed to copy env path: {src}") from exc
+            copied["env"].append({"source": str(src), "artifact": str(artifact_rel)})
         for src in settings.config_paths:
-            if src.exists():
-                artifact_rel = _artifact_path("config", src)
+            artifact_rel = _artifact_path("config", src)
+            try:
                 _copy_dir(src, temp_snap / artifact_rel) if src.is_dir() else _copy_file(src, temp_snap / artifact_rel)
-                copied["config"].append({"source": str(src), "artifact": str(artifact_rel)})
+            except Exception as exc:
+                raise OpsRestoreError("OPS_BACKUP_SCOPE_COPY_FAILED", f"failed to copy config path: {src}") from exc
+            copied["config"].append({"source": str(src), "artifact": str(artifact_rel)})
         for src in settings.export_dirs:
-            if src.exists():
-                artifact_rel = _artifact_path("exports", src)
+            artifact_rel = _artifact_path("exports", src)
+            try:
                 _copy_dir(src, temp_snap / artifact_rel) if src.is_dir() else _copy_file(src, temp_snap / artifact_rel)
-                copied["exports"].append({"source": str(src), "artifact": str(artifact_rel)})
+            except Exception as exc:
+                raise OpsRestoreError("OPS_BACKUP_SCOPE_COPY_FAILED", f"failed to copy export path: {src}") from exc
+            copied["exports"].append({"source": str(src), "artifact": str(artifact_rel)})
 
         checksummed = _checksummed_files(temp_snap, include_manifest=False)
         sha_by_rel = {path.relative_to(temp_snap).as_posix(): _sha256_file(path) for path in checksummed}
@@ -319,7 +378,7 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
 
         items = [
             ManifestItem(
-                kind="db",
+                kind="sqlite_db",
                 source_path=str(settings.db_path),
                 stored_path="db/app.sqlite3",
                 size_bytes=db_dst.stat().st_size,
@@ -337,7 +396,7 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
                     artifact_sha = sha_by_rel.get(item["artifact"], "")
                 items.append(
                     ManifestItem(
-                        kind=kind,
+                        kind=_manifest_kind_for_scope(kind, Path(item["source"])),
                         source_path=item["source"],
                         stored_path=item["artifact"],
                         size_bytes=size_bytes,
@@ -374,7 +433,10 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
             "exports": copied["exports"],
         }
         manifest_file = temp_snap / "manifest.json"
-        manifest_file.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        try:
+            manifest_file.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        except Exception as exc:
+            raise OpsRestoreError("OPS_BACKUP_MANIFEST_WRITE_FAILED", "failed to write backup manifest") from exc
         _chmod600(manifest_file, generated=True)
 
         contract_checksummed = _checksummed_files(temp_snap)
@@ -396,13 +458,16 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
         os.replace(temp_snap, snap)
         _fsync_dir(snapshots_dir)
 
-        index_payload = upsert_snapshot(
-            backup_root=settings.backup_dir,
-            backup_id=backup_id,
-            created_at=manifest["created_at"],
-        )
-        write_index(settings.backup_dir, index_payload)
-        write_latest_successful(settings.backup_dir, backup_id)
+        try:
+            index_payload = upsert_snapshot(
+                backup_root=settings.backup_dir,
+                backup_id=backup_id,
+                created_at=manifest["created_at"],
+            )
+            write_index(settings.backup_dir, index_payload)
+            write_latest_successful(settings.backup_dir, backup_id)
+        except Exception as exc:
+            raise OpsRestoreError("OPS_BACKUP_INDEX_UPDATE_FAILED", "failed to update backup index") from exc
 
         try:
             prune_backups(settings.backup_dir)
@@ -434,7 +499,7 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
                 "total_size_bytes": 0,
                 "duration_ms": duration_ms,
                 "result": "FAILURE",
-                "error_code": type(exc).__name__,
+                "error_code": _ops_error_code(exc, default="OPS_BACKUP_SCOPE_COPY_FAILED"),
             },
         )
         raise
@@ -496,13 +561,37 @@ def verify_backup_snapshot(snapshot: Path) -> dict:
 
 def verify_backup_by_id(settings: BackupSettings, backup_id: str) -> Path:
     snapshot = resolve_snapshot_from_index(settings, backup_id)
+    started = time.monotonic()
+    hostname = os.uname().nodename
     try:
-        verify_backup_snapshot(snapshot)
-        LOGGER.info("ops.backup.verify.success", extra={"backup_id": backup_id, "error_code": ""})
+        manifest = verify_backup_snapshot(snapshot)
+        LOGGER.info(
+            "ops.backup.verify.success",
+            extra={
+                "backup_id": backup_id,
+                "hostname": hostname,
+                "items_count": len(manifest.get("items", [])),
+                "total_size_bytes": sum(int(item.get("size_bytes", 0)) for item in manifest.get("items", [])),
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "result": "SUCCESS",
+                "error_code": "",
+            },
+        )
         return snapshot
     except Exception as exc:
-        error_code = exc.code if isinstance(exc, OpsRestoreError) else type(exc).__name__
-        LOGGER.exception("ops.backup.verify.failure", extra={"backup_id": backup_id, "error_code": error_code})
+        error_code = _ops_error_code(exc, default="OPS_RESTORE_MANIFEST_INVALID")
+        LOGGER.exception(
+            "ops.backup.verify.failure",
+            extra={
+                "backup_id": backup_id,
+                "hostname": hostname,
+                "items_count": 0,
+                "total_size_bytes": 0,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "result": "FAILURE",
+                "error_code": error_code,
+            },
+        )
         raise
 
 
@@ -563,6 +652,14 @@ def _validate_restore_manifest_contract(snapshot: Path, manifest: dict, checksum
         for item in manifest.get("items", [])
         if isinstance(item, dict) and isinstance(item.get("stored_path"), str)
     }
+    allowed_kinds = {
+        "sqlite_db",
+        "env_file",
+        "config_file",
+        "config_dir",
+        "export_file",
+        "export_dir",
+    }
 
     all_artifacts: list[tuple[str, Path]] = [("db", Path(db_artifact))]
     for artifact_key, target_key in targets_by_kind.items():
@@ -582,6 +679,8 @@ def _validate_restore_manifest_contract(snapshot: Path, manifest: dict, checksum
         item = manifest_items.get(artifact_rel)
         if not item:
             raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"manifest item missing for artifact '{artifact_rel}'")
+        if item.get("kind") not in allowed_kinds:
+            raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"manifest item kind is invalid for artifact '{artifact_rel}'")
 
         if artifact_path.is_file():
             if checksums.get(artifact_rel) != item.get("sha256"):
@@ -593,50 +692,101 @@ def _validate_restore_manifest_contract(snapshot: Path, manifest: dict, checksum
 
 
 def restore_snapshot(settings: BackupSettings, snapshot: Path, *, services_stopped_file: Path) -> dict:
-    if not services_stopped_file.exists():
-        raise OpsRestoreError("OPS_RESTORE_SERVICES_RUNNING", "restore requires services to be stopped before file replacement")
-
-    manifest = verify_backup_snapshot(snapshot)
+    started = time.monotonic()
+    hostname = os.uname().nodename
+    backup_id = snapshot.name
     restore_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    quarantine_root = settings.backup_dir / "quarantine" / restore_id
+    LOGGER.info(
+        "ops.restore.start",
+        extra={
+            "backup_id": backup_id,
+            "restore_id": restore_id,
+            "hostname": hostname,
+            "items_count": 0,
+            "total_size_bytes": 0,
+            "duration_ms": 0,
+            "result": "STARTED",
+            "error_code": "",
+        },
+    )
+
     try:
-        quarantine_root.mkdir(parents=True, exist_ok=False)
+        if not services_stopped_file.exists():
+            raise OpsRestoreError(
+                "OPS_RESTORE_SERVICES_RUNNING",
+                "restore requires guard-file policy marker indicating services are stopped",
+            )
+
+        manifest = verify_backup_snapshot(snapshot)
+        quarantine_root = settings.backup_dir / "quarantine" / restore_id
+        try:
+            quarantine_root.mkdir(parents=True, exist_ok=False)
+        except Exception as exc:
+            raise OpsRestoreError("OPS_RESTORE_QUARANTINE_FAILED", "failed to create restore quarantine directory") from exc
+
+        restore_targets = manifest.get("restore_targets", {})
+        db_target_value = restore_targets.get("FACTORY_DB_PATH")
+        if not isinstance(db_target_value, str) or not db_target_value:
+            raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", "manifest restore target FACTORY_DB_PATH is missing")
+        db_target = Path(db_target_value)
+        db_src = snapshot / Path(manifest["artifacts"]["db"])
+        restore_pairs = [(db_target, db_src)]
+        restore_pairs.extend((source, snapshot / artifact) for source, artifact in _manifest_restore_mappings(manifest, "env"))
+        restore_pairs.extend((source, snapshot / artifact) for source, artifact in _manifest_restore_mappings(manifest, "config"))
+        restore_pairs.extend((source, snapshot / artifact) for source, artifact in _manifest_restore_mappings(manifest, "exports"))
+
+        moved_targets: list[Path] = []
+        for target, src in restore_pairs:
+            if not src.exists():
+                raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"snapshot artifact missing: {src}")
+            if target.exists():
+                qdst = _quarantine_path(quarantine_root, target)
+                qdst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(target), str(qdst))
+                moved_targets.append(target)
+
+        db_target.parent.mkdir(parents=True, exist_ok=True)
+        db_tmp = db_target.with_name(f".{db_target.name}.restore_tmp")
+        shutil.copy2(db_src, db_tmp)
+        _chmod600(db_tmp, generated=True)
+        os.replace(db_tmp, db_target)
+        _chmod600(db_target, generated=True)
+
+        for target, src in restore_pairs[1:]:
+            if src.is_dir():
+                _copy_dir(src, target)
+            else:
+                _copy_file(src, target)
+
+        _sqlite_integrity_check(db_target)
+
+        summary = {"restore_id": restore_id, "quarantine_dir": quarantine_root, "restored": len(restore_pairs), "moved": len(moved_targets)}
+        LOGGER.info(
+            "ops.restore.success",
+            extra={
+                "backup_id": backup_id,
+                "restore_id": restore_id,
+                "hostname": hostname,
+                "items_count": len(restore_pairs),
+                "total_size_bytes": sum(src.stat().st_size for _, src in restore_pairs if src.is_file()),
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "result": "SUCCESS",
+                "error_code": "",
+            },
+        )
+        return summary
     except Exception as exc:
-        raise OpsRestoreError("OPS_RESTORE_QUARANTINE_FAILED", str(exc)) from exc
-
-    restore_targets = manifest.get("restore_targets", {})
-    db_target_value = restore_targets.get("FACTORY_DB_PATH")
-    if not isinstance(db_target_value, str) or not db_target_value:
-        raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", "manifest restore target FACTORY_DB_PATH is missing")
-    db_target = Path(db_target_value)
-    db_src = snapshot / Path(manifest["artifacts"]["db"])
-    restore_pairs = [(db_target, db_src)]
-    restore_pairs.extend((source, snapshot / artifact) for source, artifact in _manifest_restore_mappings(manifest, "env"))
-    restore_pairs.extend((source, snapshot / artifact) for source, artifact in _manifest_restore_mappings(manifest, "config"))
-    restore_pairs.extend((source, snapshot / artifact) for source, artifact in _manifest_restore_mappings(manifest, "exports"))
-
-    moved_targets: list[Path] = []
-    for target, src in restore_pairs:
-        if not src.exists():
-            raise OpsRestoreError("OPS_RESTORE_MANIFEST_INVALID", f"snapshot artifact missing: {src}")
-        if target.exists():
-            qdst = _quarantine_path(quarantine_root, target)
-            qdst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(target), str(qdst))
-            moved_targets.append(target)
-
-    db_target.parent.mkdir(parents=True, exist_ok=True)
-    db_tmp = db_target.with_name(f".{db_target.name}.restore_tmp")
-    shutil.copy2(db_src, db_tmp)
-    _chmod600(db_tmp, generated=True)
-    os.replace(db_tmp, db_target)
-    _chmod600(db_target, generated=True)
-
-    for target, src in restore_pairs[1:]:
-        if src.is_dir():
-            _copy_dir(src, target)
-        else:
-            _copy_file(src, target)
-
-    _sqlite_integrity_check(db_target)
-    return {"restore_id": restore_id, "quarantine_dir": quarantine_root, "restored": len(restore_pairs), "moved": len(moved_targets)}
+        LOGGER.exception(
+            "ops.restore.failure",
+            extra={
+                "backup_id": backup_id,
+                "restore_id": restore_id,
+                "hostname": hostname,
+                "items_count": 0,
+                "total_size_bytes": 0,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+                "result": "FAILURE",
+                "error_code": _ops_error_code(exc, default="OPS_RESTORE_MANIFEST_INVALID"),
+            },
+        )
+        raise
