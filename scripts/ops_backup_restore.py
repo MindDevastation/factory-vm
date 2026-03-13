@@ -11,6 +11,7 @@ from services.ops.backup_restore import (
     OpsRestoreError,
     create_backup,
     list_backups,
+    prune_backups,
     resolve_snapshot_from_index,
     restore_snapshot,
     verify_backup_by_id,
@@ -27,6 +28,7 @@ def _parser() -> argparse.ArgumentParser:
     backup_sub = backup.add_subparsers(dest="backup_command", required=True)
     backup_sub.add_parser("create", help="Create a timestamped backup snapshot")
     backup_sub.add_parser("list", help="List indexed backups")
+    backup_sub.add_parser("prune", help="Prune backups with configured retention policy")
     verify = backup_sub.add_parser("verify", help="Verify a backup manifest and checksums")
     verify.add_argument("--backup-id", required=True, help="Backup id in index.json")
 
@@ -56,6 +58,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error_code={exc.code} message={exc}")
             return 2
         print(f"verify_ok backup_id={args.backup_id} snapshot={snapshot}")
+        return 0
+
+    if args.command == "backup" and args.backup_command == "prune":
+        try:
+            removed = prune_backups(settings.backup_dir)
+        except OpsRestoreError as exc:
+            print(f"error_code={exc.code} message={exc}")
+            return 2
+        print(f"prune_ok removed={len(removed)}")
         return 0
 
     marker = Path(os.environ.get("FACTORY_SERVICES_STOPPED_FILE", settings.backup_dir / ".services_stopped"))

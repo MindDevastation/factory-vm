@@ -8,7 +8,7 @@ import sqlite3
 import stat
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from urllib.parse import quote
@@ -151,32 +151,109 @@ def _successful(root: Path) -> list[Path]:
     return sorted([p for p in _snapshots(root) if _manifest(p).get("status") == "SUCCESS"], key=lambda p: p.name, reverse=True)
 
 
+def _retention_month_key(value: date, offset: int) -> str:
+    year = value.year
+    month = value.month - offset
+    while month <= 0:
+        month += 12
+        year -= 1
+    return f"{year:04d}-{month:02d}"
+
+
+def build_retention_labels(successful_ids: list[str]) -> dict[str, list[str]]:
+    if not successful_ids:
+        return {}
+
+    latest_id = successful_ids[0]
+    latest_ts = datetime.strptime(latest_id, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+    latest_day = latest_ts.date()
+    target_days = {(latest_day - timedelta(days=idx)).isoformat() for idx in range(7)}
+    target_weeks = {
+        f"{(latest_day - timedelta(weeks=idx)).isocalendar().year:04d}-W{(latest_day - timedelta(weeks=idx)).isocalendar().week:02d}"
+        for idx in range(4)
+    }
+    target_months = {_retention_month_key(latest_day, idx) for idx in range(6)}
+
+    by_id: dict[str, datetime] = {
+        backup_id: datetime.strptime(backup_id, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC) for backup_id in successful_ids
+    }
+
+    labels: dict[str, set[str]] = {latest_id: {"latest"}}
+    retained: set[str] = {latest_id}
+
+    seen_days: set[str] = set()
+    for backup_id in successful_ids:
+        day_key = by_id[backup_id].date().isoformat()
+        if day_key in target_days and day_key not in seen_days:
+            labels.setdefault(backup_id, set()).add("daily")
+            retained.add(backup_id)
+            seen_days.add(day_key)
+
+    seen_weeks: set[str] = {
+        f"{by_id[backup_id].isocalendar().year:04d}-W{by_id[backup_id].isocalendar().week:02d}"
+        for backup_id in retained
+    }
+    for backup_id in successful_ids:
+        if backup_id in retained:
+            continue
+        ts = by_id[backup_id]
+        week_key = f"{ts.isocalendar().year:04d}-W{ts.isocalendar().week:02d}"
+        if week_key in target_weeks and week_key not in seen_weeks:
+            labels.setdefault(backup_id, set()).add("weekly")
+            retained.add(backup_id)
+            seen_weeks.add(week_key)
+
+    seen_months: set[str] = {by_id[backup_id].strftime("%Y-%m") for backup_id in retained}
+    for backup_id in successful_ids:
+        if backup_id in retained:
+            continue
+        month_key = by_id[backup_id].strftime("%Y-%m")
+        if month_key in target_months and month_key not in seen_months:
+            labels.setdefault(backup_id, set()).add("monthly")
+            retained.add(backup_id)
+            seen_months.add(month_key)
+
+    label_order = {"latest": 0, "daily": 1, "weekly": 2, "monthly": 3}
+    return {
+        backup_id: sorted(item_labels, key=lambda item: label_order[item])
+        for backup_id, item_labels in labels.items()
+    }
+
+
 def apply_retention(backup_dir: Path) -> list[Path]:
-    keep: set[Path] = set()
-    daily: set[str] = set()
-    weekly: set[str] = set()
-    monthly: set[str] = set()
+    load_index(backup_dir)
     successful = _successful(backup_dir)
-    if successful:
-        keep.add(successful[0])
-    for snap in successful:
-        ts = datetime.strptime(snap.name, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
-        d, w, m = ts.strftime("%Y-%m-%d"), f"{ts.isocalendar().year}-W{ts.isocalendar().week:02d}", ts.strftime("%Y-%m")
-        if len(daily) < 7 and d not in daily:
-            daily.add(d)
-            keep.add(snap)
-        if len(weekly) < 4 and w not in weekly:
-            weekly.add(w)
-            keep.add(snap)
-        if len(monthly) < 6 and m not in monthly:
-            monthly.add(m)
-            keep.add(snap)
+    labels_by_id = build_retention_labels([snap.name for snap in successful])
+    keep_ids = set(labels_by_id)
+
     removed: list[Path] = []
     for snap in _snapshots(backup_dir):
-        if _manifest(snap).get("status") == "SUCCESS" and snap not in keep:
+        if snap.name.endswith(".tmp"):
+            continue
+        if _manifest(snap).get("status") == "SUCCESS" and snap.name not in keep_ids:
             shutil.rmtree(snap)
             removed.append(snap)
+
+    index_payload = rebuild_index_from_snapshots(backup_dir)
+    for item in index_payload.get("snapshots", []):
+        item["retention_labels"] = labels_by_id.get(item.get("backup_id", ""), [])
+    write_index(backup_dir, index_payload)
+
+    retained_successful = _successful(backup_dir)
+    if retained_successful:
+        write_latest_successful(backup_dir, retained_successful[0].name)
+
     return removed
+
+
+def prune_backups(backup_dir: Path) -> list[Path]:
+    try:
+        removed = apply_retention(backup_dir)
+        LOGGER.info("ops.backup.prune.success", extra={"removed_count": len(removed), "error_code": ""})
+        return removed
+    except Exception:
+        LOGGER.exception("ops.backup.prune.failure", extra={"error_code": "OPS_RETENTION_PRUNE_FAILED"})
+        raise OpsRestoreError("OPS_RETENTION_PRUNE_FAILED", "backup retention pruning failed")
 
 
 def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> Path:
@@ -328,13 +405,8 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
         write_latest_successful(settings.backup_dir, backup_id)
 
         try:
-            apply_retention(settings.backup_dir)
-            write_index(settings.backup_dir, rebuild_index_from_snapshots(settings.backup_dir))
-
-            successful = _successful(settings.backup_dir)
-            if successful:
-                write_latest_successful(settings.backup_dir, successful[0].name)
-        except Exception:
+            prune_backups(settings.backup_dir)
+        except OpsRestoreError:
             LOGGER.exception("ops.backup.create.retention_failure", extra={"backup_id": backup_id})
 
         duration_ms = int((time.monotonic() - started) * 1000)

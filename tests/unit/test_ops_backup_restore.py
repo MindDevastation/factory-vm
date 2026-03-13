@@ -15,6 +15,7 @@ from services.ops.backup_restore import (
     BackupSettings,
     OpsRestoreError,
     apply_retention,
+    build_retention_labels,
     create_backup,
     resolve_snapshot_from_index,
     restore_snapshot,
@@ -522,6 +523,139 @@ class TestOpsBackupRestore(unittest.TestCase):
 
         quarantine_files = [p for p in Path(summary["quarantine_dir"]).rglob("*") if p.is_file()]
         self.assertGreaterEqual(len(quarantine_files), 2)
+
+
+class TestBackupRetentionPolicy(unittest.TestCase):
+    def test_build_retention_labels_prefers_latest_then_daily_weekly_monthly(self) -> None:
+        successful_ids = [
+            "20260520T020000Z",
+            "20260520T010000Z",
+            "20260519T030000Z",
+            "20260518T040000Z",
+            "20260517T050000Z",
+            "20260516T060000Z",
+            "20260515T070000Z",
+            "20260514T080000Z",
+            "20260513T090000Z",
+            "20260510T090000Z",
+            "20260501T010000Z",
+            "20260415T010000Z",
+            "20260320T010000Z",
+            "20260218T010000Z",
+            "20260110T010000Z",
+            "20251201T010000Z",
+        ]
+
+        labels = build_retention_labels(successful_ids)
+
+        self.assertEqual(labels["20260520T020000Z"], ["latest", "daily"])
+        self.assertEqual(labels["20260519T030000Z"], ["daily"])
+        self.assertEqual(labels["20260510T090000Z"], ["weekly"])
+        self.assertEqual(labels["20260501T010000Z"], ["weekly"])
+        self.assertEqual(labels["20251201T010000Z"], ["monthly"])
+
+    def test_apply_retention_prunes_only_successful_and_is_idempotent(self) -> None:
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        root = Path(td.name)
+
+        backup_dir = root / "backups"
+        snapshots_dir = backup_dir / "snapshots"
+        snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+        def make_snapshot(backup_id: str, status: str = "SUCCESS") -> Path:
+            snap = snapshots_dir / backup_id
+            snap.mkdir(parents=True, exist_ok=True)
+            manifest = {
+                "status": status,
+                "created_at": datetime.strptime(backup_id, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC).isoformat(),
+            }
+            (snap / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            return snap
+
+        success_ids = [
+            "20260520T000000Z",
+            "20260519T000000Z",
+            "20260518T000000Z",
+            "20260517T000000Z",
+            "20260516T000000Z",
+            "20260515T000000Z",
+            "20260514T000000Z",
+            "20260513T000000Z",
+            "20260512T000000Z",
+            "20260511T000000Z",
+            "20260420T000000Z",
+            "20260320T000000Z",
+            "20260220T000000Z",
+            "20260120T000000Z",
+            "20251220T000000Z",
+            "20251120T000000Z",
+            "20251020T000000Z",
+        ]
+        for backup_id in success_ids:
+            make_snapshot(backup_id, "SUCCESS")
+
+        failed = make_snapshot("20260509T000000Z", "FAILED")
+        in_progress = snapshots_dir / "20260521T000000Z.tmp"
+        in_progress.mkdir(parents=True, exist_ok=True)
+
+        removed_first = {path.name for path in apply_retention(backup_dir)}
+        self.assertIn("20251020T000000Z", removed_first)
+        self.assertTrue(failed.exists())
+        self.assertTrue(in_progress.exists())
+
+        first_index = (backup_dir / "index.json").read_text(encoding="utf-8")
+        removed_second = apply_retention(backup_dir)
+        second_index = (backup_dir / "index.json").read_text(encoding="utf-8")
+
+        self.assertEqual(removed_second, [])
+        self.assertEqual(first_index, second_index)
+        self.assertEqual((backup_dir / "latest_successful").read_text(encoding="utf-8"), "20260520T000000Z\n")
+
+    def test_backup_prune_cli_reports_removed_count(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            db_path = root / "factory.sqlite3"
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("create table jobs(id integer primary key, name text)")
+                conn.execute("insert into jobs(name) values ('seed')")
+                conn.commit()
+
+            env_file = root / "deploy" / "env"
+            env_file.parent.mkdir(parents=True, exist_ok=True)
+            env_file.write_text("TOKEN=a\n", encoding="utf-8")
+
+            backup_dir = root / "backups"
+            settings = BackupSettings.from_env(
+                {
+                    "FACTORY_DB_PATH": str(db_path),
+                    "FACTORY_BACKUP_DIR": str(backup_dir),
+                    "FACTORY_ENV_FILES": str(env_file),
+                    "FACTORY_BACKUP_CONFIG_PATHS": "",
+                    "FACTORY_BACKUP_EXPORT_DIRS": "",
+                }
+            )
+
+            start = datetime(2026, 5, 20, 0, 0, 0, tzinfo=UTC)
+            for idx in range(20):
+                create_backup(settings, now=start - timedelta(days=idx))
+
+            with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, mock.patch.dict(
+                "os.environ",
+                {
+                    "FACTORY_DB_PATH": str(db_path),
+                    "FACTORY_BACKUP_DIR": str(backup_dir),
+                    "FACTORY_ENV_FILES": str(env_file),
+                    "FACTORY_BACKUP_CONFIG_PATHS": "",
+                    "FACTORY_BACKUP_EXPORT_DIRS": "",
+                },
+                clear=False,
+            ):
+                code = backup_restore_main(["backup", "prune"])
+
+            self.assertEqual(code, 0)
+            self.assertIn("prune_ok removed=0", stdout.getvalue())
+
 
 
 if __name__ == "__main__":
