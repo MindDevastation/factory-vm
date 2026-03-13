@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 
 _BASE_WORKER_ROLES = ("importer", "orchestrator", "track_jobs", "qa", "uploader", "cleanup")
 _ALWAYS_REQUIRED_PROD = ("orchestrator", "qa", "uploader", "cleanup")
+_RUNTIME_INPUTS_FILE_ENV = "FACTORY_RUNTIME_INPUTS_FILE"
+_DEFAULT_RUNTIME_INPUTS_FILE = "/tmp/factory_runtime_inputs.json"
 
 
 @dataclass(frozen=True)
@@ -24,6 +28,34 @@ class RuntimeRoleInputs:
     profile: str
     no_importer_flag: bool
     with_bot_flag: bool
+
+
+def runtime_inputs_store_path(*, environ: Mapping[str, str] | None = None) -> Path:
+    env = environ if environ is not None else os.environ
+    return Path(env.get(_RUNTIME_INPUTS_FILE_ENV, _DEFAULT_RUNTIME_INPUTS_FILE)).expanduser()
+
+
+def persist_runtime_role_inputs(inputs: RuntimeRoleInputs, *, environ: Mapping[str, str] | None = None) -> None:
+    path = runtime_inputs_store_path(environ=environ)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    payload = {
+        "profile": inputs.profile,
+        "no_importer_flag": "1" if inputs.no_importer_flag else "0",
+        "with_bot_flag": "1" if inputs.with_bot_flag else "0",
+    }
+    tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _read_persisted_runtime_inputs(*, environ: Mapping[str, str] | None = None) -> Mapping[str, str]:
+    path = runtime_inputs_store_path(environ=environ)
+    if not path.is_file():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return {str(k): str(v) for k, v in raw.items()}
 
 
 def _parse_enabled(raw: str | None, *, default: bool) -> bool:
@@ -45,15 +77,27 @@ def _parse_runtime_flag(name: str, raw: str | None, *, default: bool) -> bool:
 
 def runtime_role_inputs_from_runtime(*, profile: str, no_importer_flag: bool = False, with_bot_flag: bool = False, environ: Mapping[str, str] | None = None) -> RuntimeRoleInputs:
     env = environ if environ is not None else os.environ
-    resolved_profile = (profile or "").strip().lower() or "prod"
+    persisted = _read_persisted_runtime_inputs(environ=env)
+
+    runtime_profile = (profile or "").strip().lower()
+    persisted_profile = persisted.get("profile", "").strip().lower()
+    resolved_profile = runtime_profile or persisted_profile or "prod"
+
+    no_importer_raw = env.get("FACTORY_RUNTIME_NO_IMPORTER")
+    if no_importer_raw is None:
+        no_importer_raw = persisted.get("no_importer_flag")
     resolved_no_importer = _parse_runtime_flag(
         "FACTORY_RUNTIME_NO_IMPORTER",
-        env.get("FACTORY_RUNTIME_NO_IMPORTER"),
+        no_importer_raw,
         default=no_importer_flag,
     )
+
+    with_bot_raw = env.get("FACTORY_RUNTIME_WITH_BOT")
+    if with_bot_raw is None:
+        with_bot_raw = persisted.get("with_bot_flag")
     resolved_with_bot = _parse_runtime_flag(
         "FACTORY_RUNTIME_WITH_BOT",
-        env.get("FACTORY_RUNTIME_WITH_BOT"),
+        with_bot_raw,
         default=with_bot_flag,
     )
     return RuntimeRoleInputs(

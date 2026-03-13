@@ -10,7 +10,7 @@ from typing import List
 
 from services.common.profile import load_profile_env
 from services.common.env import Env
-from services.common.runtime_roles import launched_worker_roles_for_runtime
+from services.common.runtime_roles import launched_worker_roles_for_runtime, persist_runtime_role_inputs, RuntimeRoleInputs
 
 
 def _popen(args: List[str]) -> subprocess.Popen:
@@ -33,6 +33,13 @@ def main() -> None:
 
     os.environ["FACTORY_RUNTIME_NO_IMPORTER"] = "1" if args.no_importer else "0"
     os.environ["FACTORY_RUNTIME_WITH_BOT"] = "1" if args.with_bot == 1 else "0"
+    persist_runtime_role_inputs(
+        RuntimeRoleInputs(
+            profile=args.profile,
+            no_importer_flag=args.no_importer,
+            with_bot_flag=(args.with_bot == 1),
+        )
+    )
 
     os.environ["FACTORY_PROFILE"] = args.profile
     load_profile_env()
