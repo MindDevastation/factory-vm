@@ -18,10 +18,6 @@ from services.ops_backup_restore.paths import generate_backup_id, snapshot_dir, 
 from services.ops_backup_restore.scope import resolve_backup_scope
 
 
-def _split_paths(raw: str) -> tuple[Path, ...]:
-    return tuple(Path(x.strip()) for x in raw.split(",") if x.strip())
-
-
 def _chmod600(path: Path, *, generated: bool = False) -> None:
     mode = 0o600 if generated else (stat.S_IMODE(path.stat().st_mode) & 0o600) or 0o600
     os.chmod(path, mode)
@@ -57,18 +53,17 @@ class BackupSettings:
     @staticmethod
     def from_env(env: dict[str, str] | None = None) -> "BackupSettings":
         source = os.environ if env is None else env
-        env_files_raw = source.get("FACTORY_ENV_FILES", "").strip()
-        env_files = _split_paths(env_files_raw) if env_files_raw else tuple(
-            p for p in (Path("deploy/env"), Path("deploy/env.local"), Path("deploy/env.prod")) if p.exists()
-        )
         scope = resolve_backup_scope(
             {
                 "FACTORY_BACKUP_DIR": source.get("FACTORY_BACKUP_DIR", ""),
-                "FACTORY_DB_PATH": source.get("FACTORY_DB_PATH", "").strip() or "data/factory.sqlite3",
-                "FACTORY_ENV_FILES": ":".join(str(item) for item in env_files),
-                "FACTORY_BACKUP_CONFIG_PATHS": source.get("FACTORY_BACKUP_CONFIG_PATHS", "").replace(",", ":"),
-                "FACTORY_BACKUP_EXPORT_DIRS": source.get("FACTORY_BACKUP_EXPORT_DIRS", "").replace(",", ":"),
+                "FACTORY_DB_PATH": source.get("FACTORY_DB_PATH", ""),
+                "FACTORY_ENV_FILES": source.get("FACTORY_ENV_FILES", ""),
+                "FACTORY_BACKUP_CONFIG_PATHS": source.get("FACTORY_BACKUP_CONFIG_PATHS", ""),
+                "FACTORY_BACKUP_EXPORT_DIRS": source.get("FACTORY_BACKUP_EXPORT_DIRS", ""),
             }
+        )
+        env_files = scope.env_files or tuple(
+            p for p in (Path("deploy/env"), Path("deploy/env.local"), Path("deploy/env.prod")) if p.exists()
         )
         return BackupSettings(
             db_path=scope.db_path,
@@ -90,7 +85,7 @@ def _snapshots(root: Path) -> list[Path]:
 
 
 def _successful(root: Path) -> list[Path]:
-    return sorted([p for p in _snapshots(root) if _manifest(p).get("status") == "success"], key=lambda p: p.name, reverse=True)
+    return sorted([p for p in _snapshots(root) if _manifest(p).get("status") == "SUCCESS"], key=lambda p: p.name, reverse=True)
 
 
 def apply_retention(backup_dir: Path) -> list[Path]:
@@ -115,7 +110,7 @@ def apply_retention(backup_dir: Path) -> list[Path]:
             keep.add(snap)
     removed: list[Path] = []
     for snap in _snapshots(backup_dir):
-        if _manifest(snap).get("status") == "success" and snap not in keep:
+        if _manifest(snap).get("status") == "SUCCESS" and snap not in keep:
             shutil.rmtree(snap)
             removed.append(snap)
     return removed
@@ -191,7 +186,7 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
         created_at=datetime.now(UTC),
     )
     manifest["snapshot"] = backup_id
-    manifest["scope"] = {
+    manifest["restore_targets"] = {
         "FACTORY_DB_PATH": str(settings.db_path),
         "FACTORY_ENV_FILES": [item["source"] for item in copied["env"]],
         "FACTORY_BACKUP_CONFIG_PATHS": [item["source"] for item in copied["config"]],
@@ -203,7 +198,6 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
         "config": copied["config"],
         "exports": copied["exports"],
     }
-    manifest["status"] = "success"
     m = snap / "manifest.json"
     m.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     _chmod600(m, generated=True)
@@ -231,7 +225,7 @@ def _legacy_or_exact_mappings(manifest: dict, *, artifact_key: str, scope_key: s
     if isinstance(artifacts[0], dict):
         return [(Path(item["source"]), Path(item["artifact"])) for item in artifacts]
 
-    scope_paths = [Path(item) for item in manifest.get("scope", {}).get(scope_key, [])]
+    scope_paths = [Path(item) for item in manifest.get("restore_targets", {}).get(scope_key, [])]
     if len(scope_paths) != len(artifacts):
         raise RuntimeError(f"snapshot manifest {artifact_key} mapping is ambiguous")
     return [(scope_paths[idx], Path(artifacts[idx])) for idx in range(len(artifacts))]
@@ -248,7 +242,7 @@ def restore_snapshot(settings: BackupSettings, snapshot: Path, *, services_stopp
     if not services_stopped_file.exists():
         raise RuntimeError("restore requires services to be stopped before file replacement")
     manifest = _manifest(snapshot)
-    if manifest.get("status") != "success":
+    if manifest.get("status") != "SUCCESS":
         raise RuntimeError("snapshot manifest is missing or not successful")
 
     db_src = snapshot / Path(manifest["artifacts"]["db"])
