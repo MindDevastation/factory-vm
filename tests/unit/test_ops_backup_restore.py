@@ -59,6 +59,20 @@ class TestOpsBackupRestore(unittest.TestCase):
         root_mode = self.backup_dir.stat().st_mode & 0o777
         self.assertEqual(root_mode, 0o700)
 
+    def test_create_backup_uses_p0s1_canonical_layout_and_index_helpers(self) -> None:
+        settings = self._settings()
+        snapshot = create_backup(settings, now=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC))
+
+        self.assertEqual(snapshot, self.backup_dir / "snapshots" / "20260102T030405Z")
+
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["manifest_version"], "factory_backup/1")
+
+        index = json.loads((self.backup_dir / "index.json").read_text(encoding="utf-8"))
+        self.assertEqual(index["index_version"], "factory_backup_index/1")
+        self.assertEqual(index["snapshots"][0]["manifest_path"], "snapshots/20260102T030405Z/manifest.json")
+        self.assertEqual((self.backup_dir / "latest_successful").read_text(encoding="utf-8"), "20260102T030405Z\n")
+
     def test_retention_keeps_policies_and_latest(self) -> None:
         settings = self._settings()
         start = datetime(2026, 3, 31, 0, 0, 0, tzinfo=UTC)
@@ -68,7 +82,8 @@ class TestOpsBackupRestore(unittest.TestCase):
             snap = create_backup(settings, now=dt)
             created.append(snap.name)
 
-        kept = sorted([p.name for p in self.backup_dir.iterdir() if p.is_dir()])
+        snapshots_root = self.backup_dir / "snapshots"
+        kept = sorted([p.name for p in snapshots_root.iterdir() if p.is_dir()])
         self.assertTrue(created[0] in kept)
         self.assertLess(len(kept), len(created))
         self.assertGreaterEqual(len(kept), 7)

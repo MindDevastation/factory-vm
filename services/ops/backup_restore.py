@@ -11,6 +11,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
+from services.ops_backup_restore.index import upsert_snapshot, write_index, write_latest_successful
+from services.ops_backup_restore.manifest import build_manifest
+from services.ops_backup_restore.models import ManifestItem
+from services.ops_backup_restore.paths import generate_backup_id, snapshot_dir, snapshots_root
+from services.ops_backup_restore.scope import resolve_backup_scope
+
 
 def _split_paths(raw: str) -> tuple[Path, ...]:
     return tuple(Path(x.strip()) for x in raw.split(",") if x.strip())
@@ -36,10 +42,6 @@ def _copy_dir(src: Path, dst: Path) -> None:
             _chmod600(p)
 
 
-def _snapshot_name(now: datetime | None = None) -> str:
-    return (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
-
-
 def _artifact_path(group: str, source: Path) -> Path:
     return Path(group) / quote(str(source), safe="")
 
@@ -55,19 +57,25 @@ class BackupSettings:
     @staticmethod
     def from_env(env: dict[str, str] | None = None) -> "BackupSettings":
         source = os.environ if env is None else env
-        backup_dir = source.get("FACTORY_BACKUP_DIR", "").strip()
-        if not backup_dir:
-            raise ValueError("FACTORY_BACKUP_DIR is required")
         env_files_raw = source.get("FACTORY_ENV_FILES", "").strip()
         env_files = _split_paths(env_files_raw) if env_files_raw else tuple(
             p for p in (Path("deploy/env"), Path("deploy/env.local"), Path("deploy/env.prod")) if p.exists()
         )
+        scope = resolve_backup_scope(
+            {
+                "FACTORY_BACKUP_DIR": source.get("FACTORY_BACKUP_DIR", ""),
+                "FACTORY_DB_PATH": source.get("FACTORY_DB_PATH", "").strip() or "data/factory.sqlite3",
+                "FACTORY_ENV_FILES": ":".join(str(item) for item in env_files),
+                "FACTORY_BACKUP_CONFIG_PATHS": source.get("FACTORY_BACKUP_CONFIG_PATHS", "").replace(",", ":"),
+                "FACTORY_BACKUP_EXPORT_DIRS": source.get("FACTORY_BACKUP_EXPORT_DIRS", "").replace(",", ":"),
+            }
+        )
         return BackupSettings(
-            db_path=Path(source.get("FACTORY_DB_PATH", "").strip() or "data/factory.sqlite3"),
-            backup_dir=Path(backup_dir),
+            db_path=scope.db_path,
+            backup_dir=scope.backup_dir,
             env_files=env_files,
-            config_paths=_split_paths(source.get("FACTORY_BACKUP_CONFIG_PATHS", "")),
-            export_dirs=_split_paths(source.get("FACTORY_BACKUP_EXPORT_DIRS", "")),
+            config_paths=scope.config_paths,
+            export_dirs=scope.export_paths,
         )
 
 
@@ -77,7 +85,8 @@ def _manifest(snapshot: Path) -> dict:
 
 
 def _snapshots(root: Path) -> list[Path]:
-    return sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name) if root.exists() else []
+    snapshots_dir = snapshots_root(root)
+    return sorted([p for p in snapshots_dir.iterdir() if p.is_dir()], key=lambda p: p.name) if snapshots_dir.exists() else []
 
 
 def _successful(root: Path) -> list[Path]:
@@ -115,7 +124,8 @@ def apply_retention(backup_dir: Path) -> list[Path]:
 def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> Path:
     settings.backup_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(settings.backup_dir, 0o700)
-    snap = settings.backup_dir / _snapshot_name(now)
+    backup_id = generate_backup_id(now)
+    snap = snapshot_dir(settings.backup_dir, backup_id)
     snap.mkdir(parents=True, exist_ok=False)
     os.chmod(snap, 0o700)
 
@@ -142,27 +152,70 @@ def create_backup(settings: BackupSettings, *, now: datetime | None = None) -> P
             _copy_dir(src, snap / artifact_rel)
             copied["exports"].append({"source": str(src), "artifact": str(artifact_rel)})
 
-    manifest = {
-        "schema": "ops-backup-manifest-v1",
-        "status": "success",
-        "created_at": datetime.now(UTC).isoformat(),
-        "snapshot": snap.name,
-        "scope": {
-            "FACTORY_DB_PATH": str(settings.db_path),
-            "FACTORY_ENV_FILES": [item["source"] for item in copied["env"]],
-            "FACTORY_BACKUP_CONFIG_PATHS": [item["source"] for item in copied["config"]],
-            "FACTORY_BACKUP_EXPORT_DIRS": [item["source"] for item in copied["exports"]],
-        },
-        "artifacts": {
-            "db": str(Path("db") / settings.db_path.name),
-            "env": copied["env"],
-            "config": copied["config"],
-            "exports": copied["exports"],
-        },
+    items = [
+        ManifestItem(
+            kind="db",
+            source_path=str(settings.db_path),
+            stored_path=str(Path("db") / settings.db_path.name),
+            size_bytes=db_dst.stat().st_size,
+            sha256="",
+            contains_secrets=False,
+        )
+    ]
+    for kind in ("env", "config", "exports"):
+        for item in copied[kind]:
+            path = snap / item["artifact"]
+            items.append(
+                ManifestItem(
+                    kind=kind,
+                    source_path=item["source"],
+                    stored_path=item["artifact"],
+                    size_bytes=path.stat().st_size if path.exists() and path.is_file() else 0,
+                    sha256="",
+                    contains_secrets=(kind == "env"),
+                )
+            )
+
+    manifest = build_manifest(
+        backup_id=backup_id,
+        scope=resolve_backup_scope(
+            {
+                "FACTORY_BACKUP_DIR": str(settings.backup_dir),
+                "FACTORY_DB_PATH": str(settings.db_path),
+                "FACTORY_ENV_FILES": ":".join(str(item) for item in settings.env_files),
+                "FACTORY_BACKUP_CONFIG_PATHS": ":".join(str(item) for item in settings.config_paths),
+                "FACTORY_BACKUP_EXPORT_DIRS": ":".join(str(item) for item in settings.export_dirs),
+            }
+        ),
+        items=items,
+        created_at=datetime.now(UTC),
+    )
+    manifest["snapshot"] = backup_id
+    manifest["scope"] = {
+        "FACTORY_DB_PATH": str(settings.db_path),
+        "FACTORY_ENV_FILES": [item["source"] for item in copied["env"]],
+        "FACTORY_BACKUP_CONFIG_PATHS": [item["source"] for item in copied["config"]],
+        "FACTORY_BACKUP_EXPORT_DIRS": [item["source"] for item in copied["exports"]],
     }
+    manifest["artifacts"] = {
+        "db": str(Path("db") / settings.db_path.name),
+        "env": copied["env"],
+        "config": copied["config"],
+        "exports": copied["exports"],
+    }
+    manifest["status"] = "success"
     m = snap / "manifest.json"
     m.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     _chmod600(m, generated=True)
+
+    index_payload = upsert_snapshot(
+        backup_root=settings.backup_dir,
+        backup_id=backup_id,
+        created_at=manifest["created_at"],
+    )
+    write_index(settings.backup_dir, index_payload)
+    write_latest_successful(settings.backup_dir, backup_id)
+
     apply_retention(settings.backup_dir)
     return snap
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from services.ops_backup_restore.paths import index_path, latest_successful_path, manifest_path
@@ -52,6 +53,7 @@ def write_index(backup_root: Path, payload: dict) -> Path:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
         handle.write("\n")
+    os.chmod(path, 0o600)
     return path
 
 
@@ -59,4 +61,5 @@ def write_latest_successful(backup_root: Path, backup_id: str) -> Path:
     path = latest_successful_path(backup_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"{backup_id}\n", encoding="utf-8")
+    os.chmod(path, 0o600)
     return path
