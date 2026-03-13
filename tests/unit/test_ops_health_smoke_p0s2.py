@@ -365,5 +365,127 @@ class TestOpsHealthSmokeP0S2(unittest.TestCase):
         self.assertEqual(evaluated["active_workers"], ["w1"])
 
 
+    def test_telegram_ready_severity_and_local_init(self) -> None:
+        check = runner.TelegramReadyCheck()
+        base_env = SimpleNamespace(tg_bot_token="", tg_admin_chat_id=0)
+
+        with patch.dict(os.environ, {"FACTORY_RUNTIME_WITH_BOT": "0"}, clear=False):
+            warning_result = check.run(SimpleNamespace(env=base_env, profile="local"))
+        self.assertEqual(warning_result.severity, "warning")
+        self.assertEqual(warning_result.result, "WARN")
+        self.assertFalse(warning_result.details["bot_required_by_profile"])
+
+        with patch.dict(os.environ, {"FACTORY_RUNTIME_WITH_BOT": "1"}, clear=False):
+            critical_result = check.run(SimpleNamespace(env=base_env, profile="prod"))
+        self.assertEqual(critical_result.severity, "critical")
+        self.assertEqual(critical_result.result, "FAIL")
+        self.assertTrue(critical_result.details["bot_required_by_profile"])
+
+        fake_aiogram = SimpleNamespace(Bot=lambda **_kw: object())
+        fake_enums = SimpleNamespace(ParseMode=SimpleNamespace(HTML="HTML"))
+        ok_env = SimpleNamespace(tg_bot_token="123:abc", tg_admin_chat_id=42)
+        with patch.dict(__import__("sys").modules, {"aiogram": fake_aiogram, "aiogram.enums": fake_enums}, clear=False):
+            with patch.dict(os.environ, {"FACTORY_RUNTIME_WITH_BOT": "1"}, clear=False):
+                ok_result = check.run(SimpleNamespace(env=ok_env, profile="prod"))
+        self.assertEqual(ok_result.result, "PASS")
+        self.assertTrue(ok_result.details["config_present"])
+        self.assertTrue(ok_result.details["init_ok"])
+
+    def test_youtube_ready_presence_and_severity(self) -> None:
+        check = runner.YouTubeReadyCheck()
+
+        missing_env = SimpleNamespace(yt_client_secret_json="", yt_tokens_dir="", upload_backend="youtube")
+        fail_result = check.run(SimpleNamespace(env=missing_env, profile="prod"))
+        self.assertEqual(fail_result.severity, "critical")
+        self.assertEqual(fail_result.result, "FAIL")
+        self.assertFalse(fail_result.details["config_paths_present"])
+
+        warn_result = check.run(SimpleNamespace(env=missing_env, profile="local"))
+        self.assertEqual(warn_result.severity, "warning")
+        self.assertEqual(warn_result.result, "WARN")
+
+    def test_youtube_ready_local_token_load_with_fixture(self) -> None:
+        check = runner.YouTubeReadyCheck()
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            token_path = base / "token.json"
+            token_path.write_text('{"access_token":"x"}', encoding="utf-8")
+            secret_path = base / "client.json"
+            secret_path.write_text('{"installed":{"client_id":"abc"}}', encoding="utf-8")
+
+            env = SimpleNamespace(yt_client_secret_json=str(secret_path), yt_tokens_dir=str(base), upload_backend="youtube")
+
+            class FakeCreds:
+                token = "tok"
+
+            fake_credentials_module = SimpleNamespace(Credentials=SimpleNamespace(from_authorized_user_file=lambda *_a, **_k: FakeCreds()))
+            with patch.dict(__import__("sys").modules, {"google.oauth2.credentials": fake_credentials_module}, clear=False):
+                result = check.run(SimpleNamespace(env=env, profile="prod"))
+
+        self.assertEqual(result.result, "PASS")
+        self.assertTrue(result.details["token_load_ok"])
+        self.assertTrue(result.details["client_load_ok"])
+
+    def test_gdrive_ready_severity_and_local_parse(self) -> None:
+        check = runner.GDriveReadyCheck()
+        missing_env = SimpleNamespace(
+            origin_backend="gdrive",
+            gdrive_sa_json="",
+            gdrive_oauth_client_json="",
+            gdrive_oauth_token_json="",
+        )
+        fail_result = check.run(SimpleNamespace(env=missing_env, profile="prod"))
+        self.assertEqual(fail_result.severity, "critical")
+        self.assertEqual(fail_result.result, "FAIL")
+
+        with patch.dict(os.environ, {"IMPORTER_ENABLED": "0"}, clear=False):
+            warn_result = check.run(SimpleNamespace(env=missing_env, profile="prod"))
+        self.assertEqual(warn_result.severity, "warning")
+        self.assertEqual(warn_result.result, "WARN")
+
+        with tempfile.TemporaryDirectory() as td:
+            sa_path = Path(td) / "sa.json"
+            sa_path.write_text('{"type":"service_account","client_email":"svc@example.test"}', encoding="utf-8")
+            ok_env = SimpleNamespace(
+                origin_backend="gdrive",
+                gdrive_sa_json=str(sa_path),
+                gdrive_oauth_client_json="",
+                gdrive_oauth_token_json="",
+            )
+
+            class FakeSvcCreds:
+                service_account_email = "svc@example.test"
+
+            fake_sa_module = SimpleNamespace(
+                Credentials=SimpleNamespace(from_service_account_file=lambda *_a, **_k: FakeSvcCreds())
+            )
+            fake_google_oauth2 = SimpleNamespace(service_account=fake_sa_module)
+            with patch.dict(
+                __import__("sys").modules,
+                {"google.oauth2": fake_google_oauth2, "google.oauth2.service_account": fake_sa_module},
+                clear=False,
+            ):
+                ok_result = check.run(SimpleNamespace(env=ok_env, profile="prod"))
+
+        self.assertEqual(ok_result.result, "PASS")
+        self.assertTrue(ok_result.details["credential_path_present"])
+        self.assertTrue(ok_result.details["credential_parse_ok"])
+        self.assertTrue(ok_result.details["client_init_ok"])
+
+    def test_overall_status_uses_severity_model(self) -> None:
+        warning_only = [
+            runner.CheckResult(
+                check_id="w",
+                title="warning",
+                category="x",
+                severity="warning",
+                result="FAIL",
+                message="warn",
+                details={},
+            )
+        ]
+        self.assertEqual(runner._compute_overall(warning_only), ("WARNING", 1))
+
+
 if __name__ == "__main__":
     unittest.main()
