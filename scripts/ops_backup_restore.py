@@ -11,7 +11,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Factory VM backup/restore operations")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("backup", help="Create a timestamped backup snapshot")
+    backup = sub.add_parser("backup", help="Backup operations")
+    backup_sub = backup.add_subparsers(dest="backup_command", required=True)
+    backup_sub.add_parser("create", help="Create a timestamped backup snapshot")
+
     sub.add_parser("list", help="List existing snapshot directories")
 
     restore = sub.add_parser("restore", help="Restore from a snapshot directory")
@@ -28,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     settings = BackupSettings.from_env()
 
-    if args.command == "backup":
+    if args.command == "backup" and args.backup_command == "create":
         snapshot = create_backup(settings)
         print(f"backup_created={snapshot}")
         return 0
