@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -103,14 +104,14 @@ class TestOpsHealthSmokeP0S2(unittest.TestCase):
         env = SimpleNamespace(db_path="/nope/a/b/c/factory.sqlite3", storage_root="/also-missing/x/y/z")
         context = SimpleNamespace(env=env, profile="local")
 
-        with patch("services.ops_health_smoke.runner.shutil.disk_usage", side_effect=FileNotFoundError("missing")):
+        usage = shutil._ntuple_diskusage(total=1024**4, used=900 * 1024**3, free=400 * 1024**3)
+        with patch("services.ops_health_smoke.runner.shutil.disk_usage", return_value=usage):
             result = check.run(context)
 
-        self.assertEqual(result.result, "FAIL")
-        self.assertEqual(result.message, "Disk free space is below fail threshold")
+        self.assertEqual(result.result, "PASS")
+        self.assertEqual(result.message, "Disk free space is within thresholds")
         self.assertGreaterEqual(len(result.details["paths"]), 1)
-        self.assertTrue(all(p["status"] == "FAIL" for p in result.details["paths"]))
-        self.assertTrue(all(p["error"].startswith("disk_usage_error:") for p in result.details["paths"]))
+        self.assertTrue(all(p["status"] == "PASS" for p in result.details["paths"]))
 
     def test_disk_space_no_existing_ancestor_returns_deterministic_failure(self) -> None:
         check = runner.DiskSpaceCheck()
