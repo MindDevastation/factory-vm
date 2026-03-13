@@ -399,6 +399,7 @@ class TestOpsHealthSmokeP0S2(unittest.TestCase):
         self.assertEqual(fail_result.severity, "critical")
         self.assertEqual(fail_result.result, "FAIL")
         self.assertFalse(fail_result.details["config_paths_present"])
+        self.assertFalse(fail_result.details["channel_context_available"])
 
         warn_result = check.run(SimpleNamespace(env=missing_env, profile="local"))
         self.assertEqual(warn_result.severity, "warning")
@@ -408,7 +409,9 @@ class TestOpsHealthSmokeP0S2(unittest.TestCase):
         check = runner.YouTubeReadyCheck()
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
-            token_path = base / "token.json"
+            channel_slug = "ambient-lab"
+            token_path = base / channel_slug / "token.json"
+            token_path.parent.mkdir(parents=True, exist_ok=True)
             token_path.write_text('{"access_token":"x"}', encoding="utf-8")
             secret_path = base / "client.json"
             secret_path.write_text('{"installed":{"client_id":"abc"}}', encoding="utf-8")
@@ -420,11 +423,87 @@ class TestOpsHealthSmokeP0S2(unittest.TestCase):
 
             fake_credentials_module = SimpleNamespace(Credentials=SimpleNamespace(from_authorized_user_file=lambda *_a, **_k: FakeCreds()))
             with patch.dict(__import__("sys").modules, {"google.oauth2.credentials": fake_credentials_module}, clear=False):
-                result = check.run(SimpleNamespace(env=env, profile="prod"))
+                with patch.dict(os.environ, {"FACTORY_YT_CHANNEL_SLUG": channel_slug}, clear=False):
+                    result = check.run(SimpleNamespace(env=env, profile="prod"))
 
         self.assertEqual(result.result, "PASS")
+        self.assertTrue(result.details["channel_context_available"])
+        self.assertEqual(Path(result.details["token_path"]), token_path.resolve())
         self.assertTrue(result.details["token_load_ok"])
         self.assertTrue(result.details["client_load_ok"])
+
+    def test_youtube_ready_channel_context_comes_from_factory_channel_slug_env(self) -> None:
+        check = runner.YouTubeReadyCheck()
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            canonical_slug = "ambient-lab"
+            decoy_slug = "not-used"
+
+            (base / canonical_slug).mkdir(parents=True, exist_ok=True)
+            (base / canonical_slug / "token.json").write_text('{"access_token":"x"}', encoding="utf-8")
+            # Decoy token path exists under a different slug to prove the check resolves
+            # channel context specifically from FACTORY_YT_CHANNEL_SLUG.
+            (base / decoy_slug).mkdir(parents=True, exist_ok=True)
+            (base / decoy_slug / "token.json").write_text('{"access_token":"y"}', encoding="utf-8")
+
+            secret_path = base / "client.json"
+            secret_path.write_text('{"installed":{"client_id":"abc"}}', encoding="utf-8")
+            env = SimpleNamespace(yt_client_secret_json=str(secret_path), yt_tokens_dir=str(base), upload_backend="youtube")
+
+            class FakeCreds:
+                token = "tok"
+
+            fake_credentials_module = SimpleNamespace(Credentials=SimpleNamespace(from_authorized_user_file=lambda *_a, **_k: FakeCreds()))
+            with patch.dict(__import__("sys").modules, {"google.oauth2.credentials": fake_credentials_module}, clear=False):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "FACTORY_YT_CHANNEL_SLUG": canonical_slug,
+                        "FACTORY_ACTIVE_CHANNEL_SLUG": decoy_slug,
+                    },
+                    clear=False,
+                ):
+                    result = check.run(SimpleNamespace(env=env, profile="prod"))
+
+        self.assertEqual(result.result, "PASS")
+        self.assertEqual(result.details["channel_slug"], canonical_slug)
+        self.assertEqual(Path(result.details["token_path"]), (base / canonical_slug / "token.json").resolve())
+
+    def test_youtube_ready_no_global_single_token_fallback(self) -> None:
+        check = runner.YouTubeReadyCheck()
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            (base / "token.json").write_text('{"access_token":"global"}', encoding="utf-8")
+            secret_path = base / "client.json"
+            secret_path.write_text('{"installed":{"client_id":"abc"}}', encoding="utf-8")
+            env = SimpleNamespace(yt_client_secret_json=str(secret_path), yt_tokens_dir=str(base), upload_backend="youtube")
+
+            with patch.dict(os.environ, {"FACTORY_YT_CHANNEL_SLUG": ""}, clear=False):
+                result = check.run(SimpleNamespace(env=env, profile="prod"))
+
+        self.assertEqual(result.result, "FAIL")
+        self.assertFalse(result.details["channel_context_available"])
+        self.assertIsNone(result.details["token_path"])
+        self.assertFalse(result.details["config_paths_present"])
+
+    def test_youtube_ready_missing_per_channel_token_path_fails(self) -> None:
+        check = runner.YouTubeReadyCheck()
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            channel_slug = "ambient-lab"
+            (base / "token.json").write_text('{"access_token":"global"}', encoding="utf-8")
+            secret_path = base / "client.json"
+            secret_path.write_text('{"installed":{"client_id":"abc"}}', encoding="utf-8")
+            env = SimpleNamespace(yt_client_secret_json=str(secret_path), yt_tokens_dir=str(base), upload_backend="youtube")
+
+            with patch.dict(os.environ, {"FACTORY_YT_CHANNEL_SLUG": channel_slug}, clear=False):
+                result = check.run(SimpleNamespace(env=env, profile="prod"))
+
+        self.assertEqual(result.result, "FAIL")
+        self.assertTrue(result.details["channel_context_available"])
+        expected = (base / channel_slug / "token.json").resolve()
+        self.assertEqual(Path(result.details["token_path"]), expected)
+        self.assertFalse(result.details["config_paths_present"])
 
     def test_gdrive_ready_severity_and_local_parse(self) -> None:
         check = runner.GDriveReadyCheck()

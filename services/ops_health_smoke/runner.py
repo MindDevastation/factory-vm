@@ -679,7 +679,9 @@ class YouTubeReadyCheck:
         upload_capable = context.profile == "prod" and context.env.upload_backend == "youtube"
         severity = "critical" if upload_capable else "warning"
 
-        token_path = Path(context.env.yt_tokens_dir).expanduser().resolve() / "token.json" if context.env.yt_tokens_dir else None
+        channel_slug = os.environ.get("FACTORY_YT_CHANNEL_SLUG", "").strip()
+        tokens_root = Path(context.env.yt_tokens_dir).expanduser().resolve() if context.env.yt_tokens_dir else None
+        token_path = tokens_root / channel_slug / "token.json" if tokens_root and channel_slug else None
         client_secret_path = Path(context.env.yt_client_secret_json).expanduser().resolve() if context.env.yt_client_secret_json else None
 
         config_paths_present = bool(
@@ -716,10 +718,15 @@ class YouTubeReadyCheck:
             result = "WARN"
 
         details = {
+            "channel_slug": channel_slug,
+            "channel_context_available": bool(channel_slug),
+            "token_path": str(token_path) if token_path else None,
             "config_paths_present": config_paths_present,
             "token_load_ok": token_load_ok,
             "client_load_ok": client_load_ok,
         }
+        if not channel_slug:
+            details["channel_context_error"] = "FACTORY_YT_CHANNEL_SLUG is not set"
         if token_error:
             details["token_error"] = token_error
         if client_error:
