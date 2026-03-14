@@ -6,6 +6,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from services.common import db as dbm
+from services.common.disk_thresholds import DiskPressureLevel
 from services.factory_api.ui_jobs_enqueue import UiRenderEnqueueResult, enqueue_ui_render_job
 
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
@@ -175,6 +176,21 @@ class TestUiJobRetryEndpoint(unittest.TestCase):
                 conn.close()
             self.assertIsNone(child)
             self.assertIsNone(orphan_draft)
+
+    def test_503_when_disk_pressure_is_critical(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            source_job_id = self._prepare_failed_source_with_inputs(env)
+
+            mod, client = self._new_client()
+            mod.evaluate_disk_pressure_for_env = lambda **_kwargs: type("Snap", (), {"pressure": DiskPressureLevel.CRITICAL})()
+            mod.emit_disk_pressure_event = lambda **_kwargs: None
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.post(f"/v1/ui/jobs/{source_job_id}/retry", headers=h)
+            self.assertEqual(resp.status_code, 503)
+            self.assertEqual(resp.json()["error"]["code"], "DISK_CRITICAL_WRITE_BLOCKED")
+
 
 
 if __name__ == "__main__":
