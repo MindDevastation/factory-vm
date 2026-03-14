@@ -66,8 +66,10 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("item.channel_slug || '—'", r.text)
             self.assertIn("item.state || '—'", r.text)
             self.assertIn("No recovery jobs match current filters.", r.text)
-            self.assertIn("<h4>Available actions (read-only preview)</h4>", r.text)
+            self.assertIn("<h4>Available actions</h4>", r.text)
             self.assertIn("<h4>Recent recovery audit entries</h4>", r.text)
+            self.assertIn('id="recovery-action-modal"', r.text)
+            self.assertIn("Strong confirm required for cancel_job.", r.text)
 
             details = client.get(f"/v1/ops/recovery/jobs/{seeded['failed']}", headers=h)
             self.assertEqual(details.status_code, 200)
@@ -162,9 +164,10 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("registerAutoApplyInput(qInput)", page.text)
             self.assertIn("categoryInput.addEventListener('change', loadJobs)", page.text)
             self.assertIn("actionabilityInput.addEventListener('change', loadJobs)", page.text)
-            self.assertIn("Available actions (read-only preview)", page.text)
+            self.assertIn("Action preview ·", page.text)
             self.assertIn("Recent recovery audit entries", page.text)
-            self.assertIn('<button type="button" disabled title="Read-only slice">', page.text)
+            self.assertIn("openActionModal", page.text)
+            self.assertIn("I confirm execute.", page.text)
 
     def test_playlist_builder_preview_state_guards(self) -> None:
         with temp_env() as (_, _):
@@ -303,7 +306,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="recovery-table"', r.text)
             self.assertIn('id="recovery-details-modal"', r.text)
             self.assertIn('loadJobs();', r.text)
-            self.assertIn('renderActions(item.available_actions)', r.text)
+            self.assertIn('renderActions((item.available_actions || []).map((a) => ({...a, job_id: item.job_id})))', r.text)
             self.assertNotIn("Not Found", r.text)
             self.assertNotIn('{"detail":"Not Found"}', r.text)
             self.assertIn("jobsUrl", r.text)
