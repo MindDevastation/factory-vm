@@ -37,40 +37,61 @@ class RecoveryClassifier:
         return self._classify_jobs([job])[0]
 
     def list_recent_audit(self, job_id: int, *, limit: int = 10) -> list[dict[str, Any]]:
-        if not self._has_legacy_audit_schema():
+        if not self._has_scaffold_audit_schema():
             return []
         rows = self._conn.execute(
             """
-            SELECT id, job_id, action, phase, requested_by,
-                   request_payload_json, result_payload_json, ok, error_code, created_at
+            SELECT id, job_id, action_name, risk_level, requested_by,
+                   requested_at, preview_allowed, execute_attempted,
+                   result_status, result_code, message,
+                   state_before, state_after, details_json
             FROM recovery_action_audit
             WHERE job_id = ?
-            ORDER BY created_at DESC, id DESC
+            ORDER BY requested_at DESC, id DESC
             LIMIT ?
             """,
             (int(job_id), int(limit)),
         ).fetchall()
         out: list[dict[str, Any]] = []
         for row in rows:
-            request_payload = self._safe_json(row.get("request_payload_json"))
-            result_payload = self._safe_json(row.get("result_payload_json"))
+            if self._is_placeholder_legacy_row(row):
+                continue
+            details = self._safe_json(row.get("details_json"))
             out.append(
                 {
                     "id": int(row["id"]),
                     "job_id": int(row["job_id"]),
-                    "action": str(row.get("action") or ""),
-                    "phase": str(row.get("phase") or ""),
+                    "action_name": str(row.get("action_name") or ""),
+                    "risk_level": str(row.get("risk_level") or ""),
                     "requested_by": row.get("requested_by"),
-                    "ok": bool(int(row.get("ok") or 0)),
-                    "error_code": row.get("error_code"),
-                    "created_at": row.get("created_at"),
-                    "request_payload": request_payload,
-                    "result_payload": result_payload,
+                    "requested_at": row.get("requested_at"),
+                    "preview_allowed": row.get("preview_allowed"),
+                    "execute_attempted": bool(int(row.get("execute_attempted") or 0)),
+                    "result_status": row.get("result_status"),
+                    "result_code": row.get("result_code"),
+                    "message": row.get("message"),
+                    "state_before": row.get("state_before"),
+                    "state_after": row.get("state_after"),
+                    "details": details,
                 }
             )
         return out
 
-    def _has_legacy_audit_schema(self) -> bool:
+    @staticmethod
+    def _is_placeholder_legacy_row(row: dict[str, Any]) -> bool:
+        """Hide legacy-write placeholders from read-only recovery detail responses.
+
+        P0-S1 read-only responses should avoid implying scaffold-native audit semantics
+        when rows were inserted through the legacy write contract and scaffold defaults.
+        """
+        action_name = str(row.get("action_name") or "").strip()
+        requested_at = str(row.get("requested_at") or "").strip()
+        result_status = str(row.get("result_status") or "").strip().lower()
+        if action_name or requested_at:
+            return False
+        return result_status == "legacy"
+
+    def _has_scaffold_audit_schema(self) -> bool:
         row = self._conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
             ("recovery_action_audit",),
@@ -81,14 +102,18 @@ class RecoveryClassifier:
         expected = {
             "id",
             "job_id",
-            "action",
-            "phase",
+            "action_name",
+            "risk_level",
             "requested_by",
-            "request_payload_json",
-            "result_payload_json",
-            "ok",
-            "error_code",
-            "created_at",
+            "requested_at",
+            "preview_allowed",
+            "execute_attempted",
+            "result_status",
+            "result_code",
+            "message",
+            "state_before",
+            "state_after",
+            "details_json",
         }
         return expected.issubset(cols)
 
