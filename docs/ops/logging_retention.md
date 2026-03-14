@@ -82,6 +82,14 @@ Retention runner deletes only allowlisted disposable categories:
 - `terminal_abandoned_job_workspaces` (default dir: `<storage_root>/workspace`)
 - `stale_temp_scratch_dirs` (default dir: `<storage_root>/tmp`)
 
+Optional root overrides (env):
+
+- `FACTORY_RETENTION_PREVIEW_DIR`
+- `FACTORY_RETENTION_EXPORT_DIR`
+- `FACTORY_RETENTION_TRANSIENT_REPORT_DIR`
+- `FACTORY_RETENTION_WORKSPACE_DIR`
+- `FACTORY_RETENTION_SCRATCH_DIR`
+
 Protected behavior (never delete):
 
 - any path outside category root (`RETENTION_SKIP_OUTSIDE_SCOPE`),
@@ -167,7 +175,7 @@ Per-candidate events:
 Common `reason_code` values:
 
 - skip reasons: `RETENTION_SKIP_OUTSIDE_SCOPE`, `RETENTION_SKIP_PROTECTED_PATH`, `RETENTION_SKIP_ACTIVE_WORKSPACE`, `RETENTION_SKIP_TOO_RECENT`,
-- delete reasons: `RETENTION_DELETE_TEMP_PREVIEW_EXPIRED`, `RETENTION_DELETE_EXPORT_EXPIRED`, `RETENTION_DELETE_TERMINAL_WORKSPACE_EXPIRED`.
+- delete reasons: `RETENTION_DELETE_TEMP_PREVIEW_EXPIRED`, `RETENTION_DELETE_EXPORT_EXPIRED`, `RETENTION_DELETE_TRANSIENT_REPORT_EXPIRED`, `RETENTION_DELETE_TERMINAL_WORKSPACE_EXPIRED`, `RETENTION_DELETE_STALE_SCRATCH_EXPIRED`.
 
 Disk pressure events:
 

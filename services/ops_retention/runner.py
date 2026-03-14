@@ -163,10 +163,12 @@ def _delete_reason(category: ArtifactCategory) -> str:
         return "RETENTION_DELETE_TEMP_PREVIEW_EXPIRED"
     if category == ArtifactCategory.TEMP_EXPORTS:
         return "RETENTION_DELETE_EXPORT_EXPIRED"
+    if category == ArtifactCategory.TRANSIENT_REPORTS:
+        return "RETENTION_DELETE_TRANSIENT_REPORT_EXPIRED"
     if category == ArtifactCategory.TERMINAL_WORKSPACES:
         return "RETENTION_DELETE_TERMINAL_WORKSPACE_EXPIRED"
-    if category == ArtifactCategory.TRANSIENT_REPORTS:
-        return "RETENTION_DELETE_EXPORT_EXPIRED"
+    if category == ArtifactCategory.STALE_SCRATCH_DIRS:
+        return "RETENTION_DELETE_STALE_SCRATCH_EXPIRED"
     return "RETENTION_DELETE_EXPORT_EXPIRED"
 
 

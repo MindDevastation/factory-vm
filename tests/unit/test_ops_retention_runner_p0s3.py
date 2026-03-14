@@ -143,6 +143,39 @@ class TestOpsRetentionRunnerP0S3(unittest.TestCase):
             self.assertIn("RETENTION_DELETE_TEMP_PREVIEW_EXPIRED", reason_codes)
             self.assertIn("RETENTION_DELETE_TERMINAL_WORKSPACE_EXPIRED", reason_codes)
 
+    def test_run_emits_distinct_reason_codes_for_transient_and_scratch_deletes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            qa_dir = root / "qa"
+            scratch_dir = root / "tmp"
+            qa_dir.mkdir(parents=True)
+            scratch_dir.mkdir(parents=True)
+
+            stale_report = qa_dir / "report_tmp.txt"
+            stale_report.write_text("old", encoding="utf-8")
+            stale_scratch = scratch_dir / "scratch_tmp"
+            stale_scratch.mkdir()
+
+            old_ts = time.time() - (8 * 86400)
+            os.utime(stale_report, (old_ts, old_ts))
+            os.utime(stale_scratch, (old_ts, old_ts))
+
+            events: list[dict[str, object]] = []
+            with patch.dict("os.environ", {"FACTORY_STORAGE_ROOT": str(root)}, clear=False):
+                env = Env.load()
+                outcome = execute_retention(
+                    env=env,
+                    windows=RetentionWindows(),
+                    execution_mode="run",
+                    logger=logging.getLogger("test.retention.reason-codes"),
+                    event_sink=events.append,
+                )
+
+            self.assertEqual(outcome.deleted, 2)
+            reason_codes = [str(evt["reason_code"]) for evt in events if evt["event_name"] == "retention.delete.success"]
+            self.assertIn("RETENTION_DELETE_TRANSIENT_REPORT_EXPIRED", reason_codes)
+            self.assertIn("RETENTION_DELETE_STALE_SCRATCH_EXPIRED", reason_codes)
+
     def test_run_skips_protected_path_and_emits_structured_skip_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -201,6 +234,43 @@ class TestOpsRetentionRunnerP0S3(unittest.TestCase):
             self.assertEqual(event["result"], "skipped")
             self.assertTrue(bool(event["timestamp"]))
             self.assertEqual(event["error_code"], "")
+
+    def test_run_uses_override_retention_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            custom_previews = root / "custom_previews"
+            default_previews = root / "previews"
+            custom_previews.mkdir(parents=True)
+            default_previews.mkdir(parents=True)
+
+            old_preview = custom_previews / "old_preview.mp4"
+            old_preview.write_text("old", encoding="utf-8")
+            untouched = default_previews / "do_not_touch.mp4"
+            untouched.write_text("new", encoding="utf-8")
+            old_ts = time.time() - (26 * 3600)
+            os.utime(old_preview, (old_ts, old_ts))
+            os.utime(untouched, (old_ts, old_ts))
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "FACTORY_STORAGE_ROOT": str(root),
+                    "FACTORY_RETENTION_PREVIEW_DIR": str(custom_previews),
+                },
+                clear=False,
+            ):
+                env = Env.load()
+                outcome = execute_retention(
+                    env=env,
+                    windows=RetentionWindows(),
+                    execution_mode="run",
+                    logger=logging.getLogger("test.retention.override-root"),
+                )
+
+            self.assertEqual(outcome.deleted, 1)
+            self.assertFalse(old_preview.exists())
+            self.assertTrue(untouched.exists())
+
 
 
 if __name__ == "__main__":
