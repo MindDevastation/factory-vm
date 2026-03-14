@@ -20,6 +20,8 @@ PYTHONPATH=. python scripts/ops_backup_restore.py backup verify --backup-id <bac
 PYTHONPATH=. python scripts/ops_backup_restore.py restore --backup-id <backup_id>
 ```
 
+Expected success output includes `restore_ok backup_id=<backup_id> restore_id=<restore_id> quarantine_dir=/quarantine/<restore_id>/ restored=<count>`.
+
 4. Start services manually.
 5. Run post-restore verification runbook (`../post_restore_verification.md`).
 
