@@ -37,11 +37,14 @@ class RecoveryClassifier:
         return self._classify_jobs([job])[0]
 
     def list_recent_audit(self, job_id: int, *, limit: int = 10) -> list[dict[str, Any]]:
+        if not self._has_scaffold_audit_schema():
+            return []
         rows = self._conn.execute(
             """
-            SELECT id, job_id, action_name, risk_level, requested_by, requested_at,
-                   preview_allowed, execute_attempted, result_status, result_code,
-                   message, state_before, state_after, details_json
+            SELECT id, job_id, action_name, risk_level, requested_by,
+                   requested_at, preview_allowed, execute_attempted,
+                   result_status, result_code, message,
+                   state_before, state_after, details_json
             FROM recovery_action_audit
             WHERE job_id = ?
             ORDER BY requested_at DESC, id DESC
@@ -51,25 +54,20 @@ class RecoveryClassifier:
         ).fetchall()
         out: list[dict[str, Any]] = []
         for row in rows:
-            details_json = row.get("details_json")
-            details: dict[str, Any] | None = None
-            if details_json:
-                try:
-                    parsed = json.loads(str(details_json))
-                    details = parsed if isinstance(parsed, dict) else {"raw": parsed}
-                except json.JSONDecodeError:
-                    details = {"raw": str(details_json)}
+            if self._is_placeholder_legacy_row(row):
+                continue
+            details = self._safe_json(row.get("details_json"))
             out.append(
                 {
                     "id": int(row["id"]),
                     "job_id": int(row["job_id"]),
-                    "action_name": str(row["action_name"]),
-                    "risk_level": str(row["risk_level"]),
+                    "action_name": str(row.get("action_name") or ""),
+                    "risk_level": str(row.get("risk_level") or ""),
                     "requested_by": row.get("requested_by"),
-                    "requested_at": str(row["requested_at"]),
-                    "preview_allowed": None if row.get("preview_allowed") is None else bool(int(row["preview_allowed"])),
+                    "requested_at": row.get("requested_at"),
+                    "preview_allowed": row.get("preview_allowed"),
                     "execute_attempted": bool(int(row.get("execute_attempted") or 0)),
-                    "result_status": str(row["result_status"]),
+                    "result_status": row.get("result_status"),
                     "result_code": row.get("result_code"),
                     "message": row.get("message"),
                     "state_before": row.get("state_before"),
@@ -78,6 +76,55 @@ class RecoveryClassifier:
                 }
             )
         return out
+
+    @staticmethod
+    def _is_placeholder_legacy_row(row: dict[str, Any]) -> bool:
+        """Hide legacy-write placeholders from read-only recovery detail responses.
+
+        P0-S1 read-only responses should avoid implying scaffold-native audit semantics
+        when rows were inserted through the legacy write contract and scaffold defaults.
+        """
+        action_name = str(row.get("action_name") or "").strip()
+        requested_at = str(row.get("requested_at") or "").strip()
+        result_status = str(row.get("result_status") or "").strip().lower()
+        if action_name or requested_at:
+            return False
+        return result_status == "legacy"
+
+    def _has_scaffold_audit_schema(self) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            ("recovery_action_audit",),
+        ).fetchone()
+        if row is None:
+            return False
+        cols = {str(row.get("name")) for row in self._conn.execute("PRAGMA table_info(recovery_action_audit)").fetchall()}
+        expected = {
+            "id",
+            "job_id",
+            "action_name",
+            "risk_level",
+            "requested_by",
+            "requested_at",
+            "preview_allowed",
+            "execute_attempted",
+            "result_status",
+            "result_code",
+            "message",
+            "state_before",
+            "state_after",
+            "details_json",
+        }
+        return expected.issubset(cols)
+
+    @staticmethod
+    def _safe_json(value: Any) -> Any:
+        if value is None:
+            return None
+        try:
+            return json.loads(str(value))
+        except json.JSONDecodeError:
+            return value
 
     def _classify_jobs(self, jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         now_ts = dbm.now_ts()

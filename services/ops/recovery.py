@@ -142,42 +142,41 @@ def insert_recovery_audit(
     ok: bool,
     error_code: str | None = None,
 ) -> None:
-    risk_level = "safe" if action in SAFE_ACTIONS else "risky"
-    preview_allowed = result_payload.get("allowed") if phase == "preview" else None
-    requested_at = str(dbm.now_ts())
-    message = str(result_payload.get("message") or "") or None
-    state_before = request_payload.get("state_before")
-    state_after = result_payload.get("state_after")
-    status = "ok" if ok else "failed"
+    cols = {
+        str(row.get("name"))
+        for row in conn.execute("PRAGMA table_info(recovery_action_audit)").fetchall()
+        if isinstance(row, dict) and row.get("name")
+    }
+    legacy_write_cols = {
+        "job_id",
+        "action",
+        "phase",
+        "requested_by",
+        "request_payload_json",
+        "result_payload_json",
+        "ok",
+        "error_code",
+        "created_at",
+    }
+    if not legacy_write_cols.issubset(cols):
+        # Read-only slice: migration scaffold may be present without execute/preview write wiring yet.
+        return
 
     conn.execute(
         """
         INSERT INTO recovery_action_audit(
-            job_id, action_name, risk_level, requested_by, requested_at,
-            preview_allowed, execute_attempted, result_status, result_code,
-            message, state_before, state_after, details_json
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            job_id, action, phase, requested_by, request_payload_json, result_payload_json, ok, error_code, created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?)
         """,
         (
             int(job_id),
             action,
-            risk_level,
+            phase,
             requested_by,
-            requested_at,
-            None if preview_allowed is None else (1 if bool(preview_allowed) else 0),
-            1 if phase == "execute" else 0,
-            status,
+            json.dumps(request_payload, ensure_ascii=False),
+            json.dumps(result_payload, ensure_ascii=False),
+            1 if ok else 0,
             error_code,
-            message,
-            None if state_before is None else str(state_before),
-            None if state_after is None else str(state_after),
-            json.dumps(
-                {
-                    "phase": phase,
-                    "request_payload": request_payload,
-                    "result_payload": result_payload,
-                },
-                ensure_ascii=False,
-            ),
+            dbm.now_ts(),
         ),
     )

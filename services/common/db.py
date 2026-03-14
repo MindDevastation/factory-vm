@@ -541,29 +541,6 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_tcta_track_state
             ON track_custom_tag_assignments(track_pk, state);
 
-        CREATE TABLE IF NOT EXISTS recovery_action_audit (
-            id INTEGER PRIMARY KEY,
-            job_id INTEGER NOT NULL,
-            action_name TEXT NOT NULL,
-            risk_level TEXT NOT NULL,
-            requested_by TEXT NULL,
-            requested_at TEXT NOT NULL,
-            preview_allowed INTEGER NULL,
-            execute_attempted INTEGER NOT NULL DEFAULT 1,
-            result_status TEXT NOT NULL,
-            result_code TEXT NULL,
-            message TEXT NULL,
-            state_before TEXT NULL,
-            state_after TEXT NULL,
-            details_json TEXT NULL,
-            FOREIGN KEY(job_id) REFERENCES jobs(id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_recovery_audit_job_id_requested_at
-            ON recovery_action_audit(job_id, requested_at DESC);
-
-        CREATE INDEX IF NOT EXISTS idx_recovery_audit_action_name_requested_at
-            ON recovery_action_audit(action_name, requested_at DESC);
         """
     )
 
@@ -574,56 +551,6 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_tracks_columns(conn)
     _ensure_recovery_action_audit_schema(conn)
 
-
-
-def _ensure_recovery_action_audit_schema(conn: sqlite3.Connection) -> None:
-    expected_cols = {
-        "id",
-        "job_id",
-        "action_name",
-        "risk_level",
-        "requested_by",
-        "requested_at",
-        "preview_allowed",
-        "execute_attempted",
-        "result_status",
-        "result_code",
-        "message",
-        "state_before",
-        "state_after",
-        "details_json",
-    }
-    if not _table_exists(conn, "recovery_action_audit"):
-        return
-    if _table_columns(conn, "recovery_action_audit") != expected_cols:
-        _rename_table_to_legacy(conn, "recovery_action_audit")
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS recovery_action_audit (
-                id INTEGER PRIMARY KEY,
-                job_id INTEGER NOT NULL,
-                action_name TEXT NOT NULL,
-                risk_level TEXT NOT NULL,
-                requested_by TEXT NULL,
-                requested_at TEXT NOT NULL,
-                preview_allowed INTEGER NULL,
-                execute_attempted INTEGER NOT NULL DEFAULT 1,
-                result_status TEXT NOT NULL,
-                result_code TEXT NULL,
-                message TEXT NULL,
-                state_before TEXT NULL,
-                state_after TEXT NULL,
-                details_json TEXT NULL,
-                FOREIGN KEY(job_id) REFERENCES jobs(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_recovery_audit_job_id_requested_at
-                ON recovery_action_audit(job_id, requested_at DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_recovery_audit_action_name_requested_at
-                ON recovery_action_audit(action_name, requested_at DESC);
-            """
-        )
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
@@ -671,6 +598,91 @@ def _ensure_track_analyzer_schema_tables(conn: sqlite3.Connection) -> None:
             continue
         if _table_columns(conn, table) != expected_cols:
             _rename_table_to_legacy(conn, table)
+
+
+def _ensure_recovery_action_audit_schema(conn: sqlite3.Connection) -> None:
+    table = "recovery_action_audit"
+    scaffold_expected = {
+        "id",
+        "job_id",
+        "action_name",
+        "risk_level",
+        "requested_by",
+        "requested_at",
+        "preview_allowed",
+        "execute_attempted",
+        "result_status",
+        "result_code",
+        "message",
+        "state_before",
+        "state_after",
+        "details_json",
+    }
+    legacy_write_columns = {
+        "action",
+        "phase",
+        "request_payload_json",
+        "result_payload_json",
+        "ok",
+        "error_code",
+        "created_at",
+    }
+
+    if _table_exists(conn, table):
+        cols = _table_columns(conn, table)
+        if not scaffold_expected.issubset(cols):
+            # P0-S1 read-only slice must not rewrite/rename legacy audit storage at runtime.
+            return
+        missing_legacy_cols = legacy_write_columns - cols
+        for col, ddl in (
+            ("action", "TEXT"),
+            ("phase", "TEXT"),
+            ("request_payload_json", "TEXT"),
+            ("result_payload_json", "TEXT"),
+            ("ok", "INTEGER"),
+            ("error_code", "TEXT"),
+            ("created_at", "REAL"),
+        ):
+            if col in missing_legacy_cols:
+                with suppress(Exception):
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl};")
+        # P0-S1 read-only slice must not rewrite/rename legacy audit storage at runtime.
+        return
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS recovery_action_audit (
+            id INTEGER PRIMARY KEY,
+            job_id INTEGER NOT NULL,
+            action_name TEXT NOT NULL DEFAULT '',
+            risk_level TEXT NOT NULL DEFAULT 'unknown',
+            requested_by TEXT,
+            requested_at TEXT NOT NULL DEFAULT '',
+            preview_allowed INTEGER,
+            execute_attempted INTEGER NOT NULL DEFAULT 1,
+            result_status TEXT NOT NULL DEFAULT 'legacy',
+            result_code TEXT,
+            message TEXT,
+            state_before TEXT,
+            state_after TEXT,
+            details_json TEXT,
+            action TEXT,
+            phase TEXT,
+            request_payload_json TEXT,
+            result_payload_json TEXT,
+            ok INTEGER,
+            error_code TEXT,
+            created_at REAL,
+            FOREIGN KEY(job_id) REFERENCES jobs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_recovery_audit_job_id_requested_at
+            ON recovery_action_audit(job_id, requested_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_recovery_audit_action_name_requested_at
+            ON recovery_action_audit(action_name, requested_at DESC);
+        """
+    )
 
 
 def _ensure_jobs_columns(conn: sqlite3.Connection) -> None:
