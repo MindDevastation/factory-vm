@@ -143,6 +143,65 @@ class TestOpsRetentionRunnerP0S3(unittest.TestCase):
             self.assertIn("RETENTION_DELETE_TEMP_PREVIEW_EXPIRED", reason_codes)
             self.assertIn("RETENTION_DELETE_TERMINAL_WORKSPACE_EXPIRED", reason_codes)
 
+    def test_run_skips_protected_path_and_emits_structured_skip_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            previews = root / "previews"
+            previews.mkdir(parents=True)
+
+            protected = previews / "backups"
+            protected.mkdir()
+            marker = protected / "keep.txt"
+            marker.write_text("protected", encoding="utf-8")
+            old_ts = time.time() - (80 * 3600)
+            os.utime(protected, (old_ts, old_ts))
+
+            events: list[dict[str, object]] = []
+            with patch.dict("os.environ", {"FACTORY_STORAGE_ROOT": str(root)}, clear=False):
+                env = Env.load()
+                outcome = execute_retention(
+                    env=env,
+                    windows=RetentionWindows(),
+                    execution_mode="run",
+                    logger=logging.getLogger("test.retention.protected"),
+                    event_sink=events.append,
+                )
+
+            self.assertEqual(outcome.deleted, 0)
+            self.assertTrue(protected.exists())
+            self.assertTrue(marker.exists())
+
+            protected_skip_events = [
+                evt
+                for evt in events
+                if evt["event_name"] == "retention.skip"
+                and evt["reason_code"] == "RETENTION_SKIP_PROTECTED_PATH"
+                and evt["path"] == str(protected)
+            ]
+            self.assertEqual(len(protected_skip_events), 1)
+
+            event = protected_skip_events[0]
+            for field in (
+                "event_name",
+                "timestamp",
+                "category",
+                "path",
+                "reason_code",
+                "size_bytes",
+                "age_sec",
+                "protected_flag",
+                "execution_mode",
+                "result",
+                "error_code",
+            ):
+                self.assertIn(field, event)
+
+            self.assertEqual(event["event_name"], "retention.skip")
+            self.assertEqual(event["execution_mode"], "run")
+            self.assertEqual(event["result"], "skipped")
+            self.assertTrue(bool(event["timestamp"]))
+            self.assertEqual(event["error_code"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
