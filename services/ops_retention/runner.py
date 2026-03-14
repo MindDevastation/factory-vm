@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from services.common.disk_thresholds import DiskPressureLevel
 from services.common.env import Env
 from services.ops_retention.artifact_policy import ArtifactCategory
 from services.ops_retention.config import RetentionWindows
@@ -142,6 +143,21 @@ def _window_seconds(category: ArtifactCategory, windows: RetentionWindows, path:
     return 0
 
 
+
+
+def _urgent_window_seconds(category: ArtifactCategory, windows: RetentionWindows, path: Path) -> int:
+    if category in {ArtifactCategory.TEMP_PREVIEWS, ArtifactCategory.STALE_SCRATCH_DIRS}:
+        return 3600
+    if category in {ArtifactCategory.TEMP_EXPORTS, ArtifactCategory.TRANSIENT_REPORTS}:
+        return 24 * 3600
+    return _window_seconds(category, windows, path)
+
+
+def _effective_window_seconds(*, category: ArtifactCategory, windows: RetentionWindows, path: Path, urgent_mode: bool) -> int:
+    if not urgent_mode:
+        return _window_seconds(category, windows, path)
+    return _urgent_window_seconds(category, windows, path)
+
 def _delete_reason(category: ArtifactCategory) -> str:
     if category == ArtifactCategory.TEMP_PREVIEWS:
         return "RETENTION_DELETE_TEMP_PREVIEW_EXPIRED"
@@ -175,7 +191,7 @@ def scan_candidates(allowlist: dict[ArtifactCategory, Path]) -> list[Candidate]:
     return out
 
 
-def decide(candidate: Candidate, windows: RetentionWindows, now: datetime, env: Env) -> Decision:
+def decide(candidate: Candidate, windows: RetentionWindows, now: datetime, env: Env, *, urgent_mode: bool = False) -> Decision:
     size_bytes = _size_bytes(candidate.path)
     age_sec = _age_seconds(candidate.path, now)
     if not _inside_scope(candidate.path, candidate.root_path):
@@ -185,7 +201,7 @@ def decide(candidate: Candidate, windows: RetentionWindows, now: datetime, env: 
     if candidate.category == ArtifactCategory.TERMINAL_WORKSPACES and _workspace_is_active_or_uncertain(candidate.path, env):
         return Decision(candidate, False, "RETENTION_SKIP_ACTIVE_WORKSPACE", True, size_bytes, age_sec)
 
-    threshold = _window_seconds(candidate.category, windows, candidate.path)
+    threshold = _effective_window_seconds(category=candidate.category, windows=windows, path=candidate.path, urgent_mode=urgent_mode)
     if age_sec < threshold:
         return Decision(candidate, False, "RETENTION_SKIP_TOO_RECENT", False, size_bytes, age_sec)
     return Decision(candidate, True, _delete_reason(candidate.category), False, size_bytes, age_sec)
@@ -226,17 +242,29 @@ def execute_retention(
     execution_mode: ExecutionMode,
     logger: logging.Logger,
     event_sink: Callable[[dict[str, object]], None] | None = None,
+    disk_pressure: DiskPressureLevel = DiskPressureLevel.OK,
+    urgent_requested: bool = False,
 ) -> RetentionOutcome:
+    urgent_mode = urgent_requested and disk_pressure is DiskPressureLevel.CRITICAL
     allowlist = build_allowlist(env)
     candidates = scan_candidates(allowlist)
     now = _now_utc()
     _emit(logger, event_name="retention.scan.start", execution_mode=execution_mode, decision=None, result="started", sink=event_sink)
+    if urgent_requested:
+        _emit(
+            logger,
+            event_name="retention.urgent.start",
+            execution_mode=execution_mode,
+            decision=None,
+            result="enabled" if urgent_mode else "ignored",
+            sink=event_sink,
+        )
 
     deleted = 0
     skipped = 0
     failed = 0
     for candidate in candidates:
-        decision = decide(candidate, windows, now, env)
+        decision = decide(candidate, windows, now, env, urgent_mode=urgent_mode)
         if not decision.should_delete:
             skipped += 1
             _emit(logger, event_name="retention.skip", execution_mode=execution_mode, decision=decision, result="skipped", sink=event_sink)
@@ -273,6 +301,15 @@ def execute_retention(
                 sink=event_sink,
             )
 
+    if urgent_requested:
+        _emit(
+            logger,
+            event_name="retention.urgent.complete",
+            execution_mode=execution_mode,
+            decision=None,
+            result=f"urgent_mode={str(urgent_mode).lower()} deleted={deleted} skipped={skipped} failed={failed}",
+            sink=event_sink,
+        )
     _emit(
         logger,
         event_name="retention.scan.complete",
