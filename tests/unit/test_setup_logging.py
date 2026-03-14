@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import logging
 import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from services.common.logging_setup import (
     _CONFIGURED_FOR,
@@ -89,6 +91,25 @@ class TestSetupLogging(unittest.TestCase):
             self.assertLessEqual(len(ops_logs), 13)
             self.assertTrue((log_dir / "ops.log").exists())
             self.assertGreater((log_dir / "ops.log").stat().st_size, 0)
+
+
+    def test_stdout_logging_truncates_long_line(self) -> None:
+        with temp_env() as (_, env):
+            self._reset_root_logging()
+            self.addCleanup(self._reset_root_logging)
+
+            buf = io.StringIO()
+            with patch.dict(os.environ, {"FACTORY_STDOUT_LOG_MAX_CHARS": "200"}, clear=False):
+                with patch("sys.stdout", buf):
+                    setup_logging(env, service="ops-smoke")
+                    logger = get_logger("ops-smoke")
+                    logger.info("X" * 60_000)
+
+            out = buf.getvalue()
+            self.assertIn("ops-smoke", out)
+            self.assertIn("[truncated", out)
+            self.assertLess(len(out), 400)
+
 
 
 

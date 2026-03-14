@@ -13,6 +13,7 @@ from services.common.paths import logs_path
 
 
 _CONFIGURED_FOR: set[str] = set()
+_DEFAULT_STDOUT_LOG_MAX_CHARS = 4096
 
 
 _LOG_CLASS_FILE_NAMES: dict[LogClass, str] = {
@@ -60,6 +61,19 @@ class _ServiceFilter(logging.Filter):
         return True
 
 
+class _TruncatingFormatter(logging.Formatter):
+    def __init__(self, *, max_chars: int, **kwargs):
+        super().__init__(**kwargs)
+        self._max_chars = max(0, int(max_chars))
+
+    def format(self, record: logging.LogRecord) -> str:
+        rendered = super().format(record)
+        if self._max_chars <= 0 or len(rendered) <= self._max_chars:
+            return rendered
+        omitted = len(rendered) - self._max_chars
+        return f"{rendered[:self._max_chars]}… [truncated {omitted} chars]"
+
+
 def setup_logging(env: Env, *, service: str) -> None:
     """Configure root logging once per service.
 
@@ -80,8 +94,16 @@ def setup_logging(env: Env, *, service: str) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    stdout_max_chars = int(os.environ.get("FACTORY_STDOUT_LOG_MAX_CHARS", str(_DEFAULT_STDOUT_LOG_MAX_CHARS)))
+
     sh = logging.StreamHandler(sys.stdout)
-    sh.setFormatter(fmt)
+    sh.setFormatter(
+        _TruncatingFormatter(
+            max_chars=stdout_max_chars,
+            fmt="%(asctime)s | %(levelname)s | %(service)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
     sh.addFilter(_ServiceFilter(service))
     root.addHandler(sh)
 
