@@ -541,29 +541,6 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_tcta_track_state
             ON track_custom_tag_assignments(track_pk, state);
 
-        CREATE TABLE IF NOT EXISTS recovery_action_audit (
-            id INTEGER PRIMARY KEY,
-            job_id INTEGER NOT NULL,
-            action_name TEXT NOT NULL,
-            risk_level TEXT NOT NULL,
-            requested_by TEXT,
-            requested_at TEXT NOT NULL,
-            preview_allowed INTEGER,
-            execute_attempted INTEGER NOT NULL DEFAULT 1,
-            result_status TEXT NOT NULL,
-            result_code TEXT,
-            message TEXT,
-            state_before TEXT,
-            state_after TEXT,
-            details_json TEXT,
-            FOREIGN KEY(job_id) REFERENCES jobs(id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_recovery_audit_job_id_requested_at
-            ON recovery_action_audit(job_id, requested_at DESC);
-
-        CREATE INDEX IF NOT EXISTS idx_recovery_audit_action_name_requested_at
-            ON recovery_action_audit(action_name, requested_at DESC);
         """
     )
 
@@ -641,8 +618,9 @@ def _ensure_recovery_action_audit_schema(conn: sqlite3.Connection) -> None:
         "state_after",
         "details_json",
     }
-    if _table_exists(conn, table) and _table_columns(conn, table) != expected:
-        _rename_table_to_legacy(conn, table)
+    if _table_exists(conn, table) and not expected.issubset(_table_columns(conn, table)):
+        # P0-S1 read-only slice must not rewrite/rename legacy audit storage at runtime.
+        return
 
     conn.executescript(
         """

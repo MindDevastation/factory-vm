@@ -11,6 +11,40 @@ from tests._helpers import basic_auth_header, insert_release_and_job, seed_minim
 
 
 class OpsRecoveryReadonlyApiTests(unittest.TestCase):
+    def test_legacy_recovery_audit_table_not_rewritten_during_migrate(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE recovery_action_audit (
+                        id INTEGER PRIMARY KEY,
+                        job_id INTEGER NOT NULL,
+                        action TEXT NOT NULL,
+                        phase TEXT NOT NULL,
+                        requested_by TEXT,
+                        request_payload_json TEXT NOT NULL,
+                        result_payload_json TEXT NOT NULL,
+                        ok INTEGER NOT NULL,
+                        error_code TEXT,
+                        created_at REAL NOT NULL
+                    )
+                    """
+                )
+                dbm.migrate(conn)
+                legacy_rows = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'recovery_action_audit__legacy%'"
+                ).fetchall()
+                cols = conn.execute("PRAGMA table_info(recovery_action_audit)").fetchall()
+            finally:
+                conn.close()
+
+            self.assertEqual(legacy_rows, [])
+            names = {str(col["name"]) for col in cols}
+            self.assertIn("action", names)
+            self.assertNotIn("action_name", names)
+
     def test_recovery_listing_filters_and_detail_shape(self) -> None:
         with temp_env() as (_, _env0):
             env = Env.load()
@@ -89,6 +123,43 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
             index_names = {str(row["name"]) for row in idx_rows}
             self.assertIn("idx_recovery_audit_job_id_requested_at", index_names)
             self.assertIn("idx_recovery_audit_action_name_requested_at", index_names)
+
+    def test_recovery_detail_returns_empty_recent_audit_for_legacy_schema(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                conn.execute("DROP TABLE recovery_action_audit")
+                conn.execute(
+                    """
+                    CREATE TABLE recovery_action_audit (
+                        id INTEGER PRIMARY KEY,
+                        job_id INTEGER NOT NULL,
+                        action TEXT NOT NULL,
+                        phase TEXT NOT NULL,
+                        requested_by TEXT,
+                        request_payload_json TEXT NOT NULL,
+                        result_payload_json TEXT NOT NULL,
+                        ok INTEGER NOT NULL,
+                        error_code TEXT,
+                        created_at REAL NOT NULL
+                    )
+                    """
+                )
+            finally:
+                conn.close()
+
+            failed_job = insert_release_and_job(env, state="FAILED", stage="RENDER", channel_slug="darkwood-reverie")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            detail = client.get(f"/v1/ops/recovery/jobs/{failed_job}", headers=h)
+            self.assertEqual(detail.status_code, 200)
+            self.assertEqual(detail.json()["item"]["recent_audit_entries"], [])
 
 
 if __name__ == "__main__":

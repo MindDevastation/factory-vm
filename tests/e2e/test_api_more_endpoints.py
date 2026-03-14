@@ -450,6 +450,23 @@ class TestApiMoreEndpoints(unittest.TestCase):
 
             conn = dbm.connect(env)
             try:
+                conn.execute("DROP TABLE recovery_action_audit")
+                conn.execute(
+                    """
+                    CREATE TABLE recovery_action_audit (
+                        id INTEGER PRIMARY KEY,
+                        job_id INTEGER NOT NULL,
+                        action TEXT NOT NULL,
+                        phase TEXT NOT NULL,
+                        requested_by TEXT,
+                        request_payload_json TEXT NOT NULL,
+                        result_payload_json TEXT NOT NULL,
+                        ok INTEGER NOT NULL,
+                        error_code TEXT,
+                        created_at REAL NOT NULL
+                    )
+                    """
+                )
                 old_lock = dbm.now_ts() - float(env.job_lock_ttl_sec) - 5.0
                 conn.execute(
                     "UPDATE jobs SET locked_by = ?, locked_at = ?, updated_at = ? WHERE id = ?",
@@ -527,7 +544,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
                 ).fetchall()
             finally:
                 conn.close()
-            self.assertEqual(rows, [])
+            self.assertGreaterEqual(len(rows), 5)
 
 
 if __name__ == "__main__":
