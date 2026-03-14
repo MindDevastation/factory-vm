@@ -126,11 +126,13 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('href="/ui/track-catalog/custom-tags"', r.text)
             self.assertIn('href="/ui/track-catalog/analysis-report"', r.text)
             self.assertIn('id="nav-recovery-link"', r.text)
+            self.assertIn('href="/ui/recovery"', r.text)
 
 
             r = client.get("/ui/recovery", headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Ops Recovery Console", r.text)
+            self.assertIn('id="recovery-page"', r.text)
             self.assertIn('id="recovery-summary"', r.text)
             self.assertIn('id="filter-category"', r.text)
             self.assertIn('id="filter-channel"', r.text)
@@ -141,6 +143,11 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="recovery-details-modal"', r.text)
             self.assertIn('loadJobs();', r.text)
             self.assertIn('renderActions(item.available_actions)', r.text)
+            self.assertNotIn("Not Found", r.text)
+
+            r = client.get("/ui/recovery/", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("Ops Recovery Console", r.text)
 
             r = client.get("/ui/db-viewer", headers=h)
             self.assertEqual(r.status_code, 200)

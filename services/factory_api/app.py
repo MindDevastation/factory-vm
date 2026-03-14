@@ -2659,6 +2659,7 @@ def ui_track_analysis_report_page(request: Request, _: bool = Depends(require_ba
 
 
 @app.get("/ui/recovery", response_class=HTMLResponse)
+@app.get("/ui/recovery/", response_class=HTMLResponse)
 def ui_recovery_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("recovery.html", {"request": request})
 
