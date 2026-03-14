@@ -19,6 +19,12 @@ This addendum captures live Recovery UI evidence from the same working runtime c
    - Shows **Allowed stage token** control/state.
    - Artifact: `browser:/tmp/codex_browser_invocations/364abfb56e341cec/artifacts/artifacts/p0s4_recovery_stage_token_modal.png`
 
+3. Recovery details modal (job `1`) with explicit, non-empty recent audit payload visible.
+   - Shows **Recent recovery audit entries** section in-frame with populated JSON (`action_name: "retry_failed"`, `result_status: "success"`).
+   - Seed note (deterministic and minimal): one seeded recovery audit row was inserted for job `1` to guarantee non-empty reviewer-visible content.
+   - URL path used: `http://127.0.0.1:8010/ui/recovery` (details modal opened via first row “Open”).
+   - Artifact: `browser:/tmp/codex_browser_invocations/a7ec410859c5b608/artifacts/artifacts/p0s4_recovery_details_modal_non_empty_audit.png`
+
 ## Notes
 
 - This is evidence-only scope: no feature/API/action semantics changes.
