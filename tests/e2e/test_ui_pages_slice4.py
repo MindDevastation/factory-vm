@@ -92,6 +92,28 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn(seeded["stale"], stale_ids)
             self.assertNotIn(seeded["failed"], stale_ids)
 
+            state_only = client.get("/v1/ops/recovery/jobs?state=FAILED&actionability=any", headers=h)
+            self.assertEqual(state_only.status_code, 200)
+            state_ids = {int(item["job_id"]) for item in state_only.json()["items"]}
+            self.assertEqual(state_ids, {seeded["failed"]})
+
+            channel_only = client.get("/v1/ops/recovery/jobs?channel_slug=channel-b&actionability=any", headers=h)
+            self.assertEqual(channel_only.status_code, 200)
+            channel_ids = {int(item["job_id"]) for item in channel_only.json()["items"]}
+            self.assertEqual(channel_ids, {seeded["stale"]})
+
+            risky_present = client.get("/v1/ops/recovery/jobs?actionability=risky_present", headers=h)
+            self.assertEqual(risky_present.status_code, 200)
+            risky_ids = {int(item["job_id"]) for item in risky_present.json()["items"]}
+            self.assertIn(seeded["failed"], risky_ids)
+            self.assertIn(seeded["stale"], risky_ids)
+            self.assertNotIn(seeded["cleanup_pending"], risky_ids)
+
+            q_only = client.get("/v1/ops/recovery/jobs?q=muxing&actionability=any", headers=h)
+            self.assertEqual(q_only.status_code, 200)
+            q_ids = {int(item["job_id"]) for item in q_only.json()["items"]}
+            self.assertEqual(q_ids, {seeded["failed"]})
+
             details = client.get(f"/v1/ops/recovery/jobs/{seeded['failed']}", headers=h)
             self.assertEqual(details.status_code, 200)
             detail_item = details.json()["item"]
@@ -103,7 +125,15 @@ class TestUiPagesSlice4(unittest.TestCase):
             page = client.get("/ui/recovery", headers=h)
             self.assertEqual(page.status_code, 200)
             self.assertIn("detailsModal.showModal()", page.text)
+            self.assertIn("Applied filters:", page.text)
+            self.assertIn("formatAppliedFilters(params)", page.text)
+            self.assertIn("registerAutoApplyInput(channelInput)", page.text)
+            self.assertIn("registerAutoApplyInput(stateInput)", page.text)
+            self.assertIn("registerAutoApplyInput(qInput)", page.text)
+            self.assertIn("categoryInput.addEventListener('change', loadJobs)", page.text)
+            self.assertIn("actionabilityInput.addEventListener('change', loadJobs)", page.text)
             self.assertIn("Available actions (read-only preview)", page.text)
+            self.assertIn("Recent recovery audit entries", page.text)
             self.assertIn('<button type="button" disabled title="Read-only slice">', page.text)
 
     def test_playlist_builder_preview_state_guards(self) -> None:
