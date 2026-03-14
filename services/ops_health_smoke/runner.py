@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from services.common.env import Env
+from services.common.disk_thresholds import DiskThresholds, evaluate_disk_status, load_disk_thresholds
 from services.common.runtime_roles import resolve_required_runtime_roles, runtime_role_inputs_from_runtime
 
 from .models import CheckResult, OverallStatus, SmokeSummary
@@ -63,11 +64,13 @@ def _resolve_storage_paths(env: Env) -> tuple[list[Path], list[Path]]:
 
 
 def _evaluate_disk_status(*, free_percent: float, free_gib: float, warn_percent: float, warn_gib: float, fail_percent: float, fail_gib: float) -> str:
-    if free_percent < fail_percent or free_gib < fail_gib:
-        return "FAIL"
-    if free_percent < warn_percent or free_gib < warn_gib:
-        return "WARN"
-    return "PASS"
+    thresholds = DiskThresholds(
+        warn_percent=warn_percent,
+        warn_gib=warn_gib,
+        fail_percent=fail_percent,
+        fail_gib=fail_gib,
+    )
+    return evaluate_disk_status(free_percent=free_percent, free_gib=free_gib, thresholds=thresholds)
 
 
 def _workers_api_url(env: Env) -> str:
@@ -419,10 +422,7 @@ class DiskSpaceCheck:
             current = parent
 
     def run(self, context: SmokeContext) -> CheckResult:
-        warn_percent = float(os.environ.get("FACTORY_SMOKE_DISK_WARN_PERCENT", "15"))
-        warn_gib = float(os.environ.get("FACTORY_SMOKE_DISK_WARN_GIB", "20"))
-        fail_percent = float(os.environ.get("FACTORY_SMOKE_DISK_FAIL_PERCENT", "8"))
-        fail_gib = float(os.environ.get("FACTORY_SMOKE_DISK_FAIL_GIB", "10"))
+        thresholds = load_disk_thresholds()
 
         monitored_paths = [
             Path(context.env.db_path).expanduser().resolve(),
@@ -467,14 +467,7 @@ class DiskSpaceCheck:
                 continue
             free_percent = (usage.free / usage.total) * 100.0 if usage.total else 0.0
             free_gib = usage.free / (1024**3)
-            status = _evaluate_disk_status(
-                free_percent=free_percent,
-                free_gib=free_gib,
-                warn_percent=warn_percent,
-                warn_gib=warn_gib,
-                fail_percent=fail_percent,
-                fail_gib=fail_gib,
-            )
+            status = evaluate_disk_status(free_percent=free_percent, free_gib=free_gib, thresholds=thresholds)
             mount_key = str(target)
             if mount_key in seen_mounts:
                 continue
@@ -508,10 +501,10 @@ class DiskSpaceCheck:
             message=message,
             details={
                 "thresholds": {
-                    "warn_percent": warn_percent,
-                    "warn_gib": warn_gib,
-                    "fail_percent": fail_percent,
-                    "fail_gib": fail_gib,
+                    "warn_percent": thresholds.warn_percent,
+                    "warn_gib": thresholds.warn_gib,
+                    "fail_percent": thresholds.fail_percent,
+                    "fail_gib": thresholds.fail_gib,
                 },
                 "paths": path_details,
             },
