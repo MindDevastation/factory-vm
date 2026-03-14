@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import shutil
+import time
 from pathlib import Path
 
 from services.common.env import Env
 from services.common.profile import load_profile_env
 from services.ops_health_smoke import render_human_report, run_checks_with_error_capture
+
+
+logger = logging.getLogger(__name__)
 
 
 def _ok(msg: str) -> None:
@@ -32,6 +37,9 @@ def _parse_checks(raw_checks: str | None) -> set[str] | None:
 
 
 def main() -> None:
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
     parser = argparse.ArgumentParser()
     parser.add_argument("command", nargs="?", default="doctor", choices=["doctor", "production-smoke"])
     parser.add_argument("--profile", default="local", choices=["local", "prod"])
@@ -52,11 +60,26 @@ def main() -> None:
     env = Env.load()
 
     if args.command == "production-smoke":
+        smoke_started = time.monotonic()
         selected_checks = _parse_checks(args.checks)
+        logger.info("production_smoke_run_start profile=%s selected_checks=%s", args.profile, sorted(selected_checks) if selected_checks else "all")
         report = run_checks_with_error_capture(profile=args.profile, selected_check_ids=selected_checks)
+        failed_check_ids = sorted(check["check_id"] for check in report["checks"] if check["result"] == "FAIL")
+        warning_check_ids = sorted(check["check_id"] for check in report["checks"] if check["result"] == "WARN")
 
         if args.json_out:
             Path(args.json_out).write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+            logger.info("production_smoke_json_written path=%s", args.json_out)
+
+        logger.info(
+            "production_smoke_run_complete resolved_profile=%s duration_ms=%s overall_status=%s failed_check_ids=%s warning_check_ids=%s elapsed_s=%.3f",
+            report.get("profile"),
+            report.get("duration_ms"),
+            report.get("overall_status"),
+            failed_check_ids,
+            warning_check_ids,
+            time.monotonic() - smoke_started,
+        )
 
         if args.as_json:
             print(json.dumps(report, indent=2, sort_keys=True))

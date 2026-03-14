@@ -35,6 +35,7 @@ class SmokeCheck(Protocol):
 class SmokeContext:
     profile: str
     env: Env
+    prior_results: tuple[CheckResult, ...] = ()
 
 
 def _local_api_base_url(env: Env) -> str:
@@ -622,6 +623,132 @@ class RequiredRuntimeRolesCheck:
         )
 
 
+class PipelineReadinessCheck:
+    check_id = "pipeline_readiness"
+    title = "Pipeline readiness gate"
+    category = "local/core"
+    severity = "critical"
+
+    @staticmethod
+    def _planner_enabled() -> bool:
+        raw = os.environ.get("FACTORY_PLANNER_ENABLED")
+        if raw is None:
+            return True
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+    @staticmethod
+    def _planner_structures_ready(*, db_path: str) -> tuple[bool, dict[str, Any]]:
+        expected_columns = {
+            "id",
+            "channel_slug",
+            "content_type",
+            "title",
+            "publish_at",
+            "notes",
+            "status",
+            "created_at",
+            "updated_at",
+        }
+        resolved_path = Path(db_path).expanduser().resolve()
+        details: dict[str, Any] = {
+            "planner_table": "planned_releases",
+            "planner_db_path": str(resolved_path),
+            "planner_required_columns": sorted(expected_columns),
+            "planner_table_exists": False,
+            "planner_missing_columns": sorted(expected_columns),
+        }
+        if not resolved_path.is_file():
+            details["planner_schema_error"] = "planner_db_path_missing"
+            return False, details
+
+        try:
+            with sqlite3.connect(f"file:{resolved_path}?mode=ro", uri=True, timeout=2) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+                    ("planned_releases",),
+                ).fetchone()
+                if not row:
+                    return False, details
+                details["planner_table_exists"] = True
+
+                rows = conn.execute("PRAGMA table_info(planned_releases)").fetchall()
+                actual_columns = {str(raw[1]) for raw in rows if len(raw) > 1}
+        except sqlite3.Error as exc:
+            details["planner_schema_error"] = str(exc)
+            return False, details
+
+        missing = sorted(expected_columns - actual_columns)
+        details["planner_missing_columns"] = missing
+        return not missing, details
+
+    def run(self, context: SmokeContext) -> CheckResult:
+        prior = {result.check_id: result for result in context.prior_results}
+        resolved_roles = _resolved_runtime_roles(context)
+
+        db_result = prior.get("db_access")
+        api_result = prior.get("api_health")
+        storage_result = prior.get("storage_paths")
+        ffmpeg_result = prior.get("ffmpeg_available")
+        worker_roles_result = prior.get("required_runtime_roles")
+        youtube_result = prior.get("youtube_ready")
+
+        db_ready = bool(db_result and db_result.result == "PASS")
+        api_ready = bool(api_result and api_result.result == "PASS")
+        workers_ready = bool(worker_roles_result and worker_roles_result.result == "PASS")
+        storage_ready = bool(storage_result and storage_result.result == "PASS")
+        render_dependency_ready = bool(ffmpeg_result and ffmpeg_result.result == "PASS")
+        uploader_ready = bool(youtube_result and youtube_result.result == "PASS") if context.env.upload_backend == "youtube" else True
+
+        planner_enabled = self._planner_enabled()
+        planner_structures_ready = True
+        planner_details: dict[str, Any] = {}
+        if planner_enabled:
+            db_path = (db_result.details.get("db_path") if db_result else None) or str(context.env.db_path)
+            planner_structures_ready, planner_details = self._planner_structures_ready(db_path=db_path)
+
+        blockers: list[str] = []
+        if not db_ready:
+            blockers.append("db_access")
+        if not api_ready:
+            blockers.append("api_health")
+        if not storage_ready:
+            blockers.append("storage_paths")
+        if not render_dependency_ready:
+            blockers.append("ffmpeg_available")
+        if not workers_ready:
+            blockers.append("required_runtime_roles")
+        if not uploader_ready:
+            blockers.append("youtube_ready")
+        if planner_enabled and not planner_structures_ready:
+            blockers.append("planner_data_structures")
+        if resolved_roles.track_catalog_enabled and not workers_ready:
+            blockers.append("track_jobs_role_not_ready")
+
+        unique_blockers = sorted(set(blockers))
+        result = "PASS" if not unique_blockers else "FAIL"
+        message = "Pipeline is ready for production jobs" if result == "PASS" else "Pipeline is not ready for production jobs"
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            category=self.category,
+            severity=self.severity,
+            result=result,
+            message=message,
+            details={
+                "planner_enabled": planner_enabled,
+                "uploader_ready": uploader_ready,
+                "workers_ready": workers_ready,
+                "db_ready": db_ready,
+                "storage_ready": storage_ready,
+                "render_dependency_ready": render_dependency_ready,
+                "integration_blockers": unique_blockers,
+                "planner_structures_ready": planner_structures_ready,
+                "api_ready": api_ready,
+                **planner_details,
+            },
+        )
+
+
 class TelegramReadyCheck:
     check_id = "telegram_ready"
     title = "Telegram readiness"
@@ -836,6 +963,7 @@ def default_checks() -> list[SmokeCheck]:
         GDriveReadyCheck(),
         WorkerHeartbeatCheck(),
         RequiredRuntimeRolesCheck(),
+        PipelineReadinessCheck(),
         DiskSpaceCheck(),
     ]
 
@@ -872,7 +1000,10 @@ def run_production_smoke(*, profile: str, selected_check_ids: set[str] | None = 
         if not checks:
             raise ValueError("No checks matched --checks filter")
 
-    results = [check.run(context) for check in checks]
+    results: list[CheckResult] = []
+    for check in checks:
+        check_context = SmokeContext(profile=context.profile, env=context.env, prior_results=tuple(results))
+        results.append(check.run(check_context))
     summary = _compute_summary(results)
     overall, exit_code = _compute_overall(results)
 
