@@ -25,7 +25,7 @@ Run smoke in these operator moments:
 
 ## 3) Command examples
 
-Human-readable output:
+Canonical production smoke command (human-readable):
 
 ```bash
 python scripts/doctor.py production-smoke --profile prod
