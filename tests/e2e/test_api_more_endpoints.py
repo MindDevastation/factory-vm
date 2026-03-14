@@ -465,11 +465,11 @@ class TestApiMoreEndpoints(unittest.TestCase):
 
             list_resp = client.get("/v1/ops/recovery/jobs", headers=h)
             self.assertEqual(list_resp.status_code, 200)
-            self.assertTrue(list_resp.json().get("jobs"))
+            self.assertTrue(list_resp.json().get("items"))
 
             detail_resp = client.get(f"/v1/ops/recovery/jobs/{failed_job_id}", headers=h)
             self.assertEqual(detail_resp.status_code, 200)
-            self.assertEqual(int(detail_resp.json()["job"]["id"]), failed_job_id)
+            self.assertEqual(int(detail_resp.json()["item"]["job_id"]), failed_job_id)
 
             preview_retry = client.post(
                 f"/v1/ops/recovery/jobs/{failed_job_id}/actions/retry_failed/preview",
@@ -521,7 +521,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
             conn = dbm.connect(env)
             try:
                 rows = conn.execute(
-                    "SELECT action, phase, ok FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
+                    "SELECT action_name, result_status FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
                     (failed_job_id, stale_job_id),
                 ).fetchall()
             finally:
