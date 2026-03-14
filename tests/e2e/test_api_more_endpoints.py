@@ -441,6 +441,50 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(second.status_code, 200)
             self.assertIn("already connected", second.text.lower())
 
+
+    def test_ops_recovery_execute_audit_side_effects_on_scaffold_schema(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            failed_job_id = insert_release_and_job(env, state="FAILED", stage="RENDER")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            with mock.patch("services.ops.recovery.retry_failed_ui_job") as retry_mock:
+                retry_mock.return_value = type("RetryResult", (), {"retry_job_id": 999, "created": True})()
+                exec_retry = client.post(
+                    f"/v1/ops/recovery/jobs/{failed_job_id}/actions/retry_failed/execute",
+                    headers=h,
+                    json={"confirm": True},
+                )
+            self.assertEqual(exec_retry.status_code, 200)
+
+            conn = dbm.connect(env)
+            try:
+                row = conn.execute(
+                    """
+                    SELECT action, phase, ok, action_name, risk_level, result_status
+                    FROM recovery_action_audit
+                    WHERE job_id = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    (failed_job_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+
+            self.assertIsNotNone(row)
+            self.assertEqual(row["action"], "retry_failed")
+            self.assertEqual(row["phase"], "execute")
+            self.assertEqual(int(row["ok"]), 1)
+            self.assertEqual(str(row.get("action_name") or ""), "")
+            self.assertEqual(str(row.get("risk_level") or ""), "unknown")
+            self.assertEqual(str(row.get("result_status") or ""), "legacy")
+
     def test_ops_recovery_preview_execute_and_audit(self) -> None:
         with temp_env() as (_, _env0):
             env = Env.load()
@@ -450,6 +494,23 @@ class TestApiMoreEndpoints(unittest.TestCase):
 
             conn = dbm.connect(env)
             try:
+                conn.execute("DROP TABLE recovery_action_audit")
+                conn.execute(
+                    """
+                    CREATE TABLE recovery_action_audit (
+                        id INTEGER PRIMARY KEY,
+                        job_id INTEGER NOT NULL,
+                        action TEXT NOT NULL,
+                        phase TEXT NOT NULL,
+                        requested_by TEXT,
+                        request_payload_json TEXT NOT NULL,
+                        result_payload_json TEXT NOT NULL,
+                        ok INTEGER NOT NULL,
+                        error_code TEXT,
+                        created_at REAL NOT NULL
+                    )
+                    """
+                )
                 old_lock = dbm.now_ts() - float(env.job_lock_ttl_sec) - 5.0
                 conn.execute(
                     "UPDATE jobs SET locked_by = ?, locked_at = ?, updated_at = ? WHERE id = ?",
@@ -465,11 +526,12 @@ class TestApiMoreEndpoints(unittest.TestCase):
 
             list_resp = client.get("/v1/ops/recovery/jobs", headers=h)
             self.assertEqual(list_resp.status_code, 200)
-            self.assertTrue(list_resp.json().get("jobs"))
+            self.assertTrue(list_resp.json().get("items"))
 
             detail_resp = client.get(f"/v1/ops/recovery/jobs/{failed_job_id}", headers=h)
             self.assertEqual(detail_resp.status_code, 200)
-            self.assertEqual(int(detail_resp.json()["job"]["id"]), failed_job_id)
+            self.assertEqual(int(detail_resp.json()["item"]["job_id"]), failed_job_id)
+            self.assertEqual(detail_resp.json()["item"]["recent_audit_entries"], [])
 
             preview_retry = client.post(
                 f"/v1/ops/recovery/jobs/{failed_job_id}/actions/retry_failed/preview",
@@ -521,7 +583,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
             conn = dbm.connect(env)
             try:
                 rows = conn.execute(
-                    "SELECT action, phase, ok FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
+                    "SELECT id FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
                     (failed_job_id, stale_job_id),
                 ).fetchall()
             finally:

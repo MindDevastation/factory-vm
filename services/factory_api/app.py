@@ -31,6 +31,7 @@ from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
+from services.recovery import RecoveryClassifier, RecoveryRuntimeContext
 from services.ops.recovery import (
     CANONICAL_ACTIONS,
     RecoveryActionError,
@@ -2769,25 +2770,141 @@ def api_job(job_id: int, _: bool = Depends(require_basic_auth(env))):
 
 
 @app.get("/v1/ops/recovery/jobs")
-def api_ops_recovery_jobs(limit: int = 200, _: bool = Depends(require_basic_auth(env))):
+def api_ops_recovery_jobs(
+    category: Optional[str] = None,
+    channel_slug: Optional[str] = None,
+    state: Optional[str] = None,
+    actionability: str = "any",
+    q: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    page = max(1, int(page))
+    page_size = max(1, min(200, int(page_size)))
     conn = dbm.connect(env)
     try:
-        jobs = dbm.list_jobs(conn, limit=limit)
+        classifier = RecoveryClassifier(
+            conn,
+            runtime=RecoveryRuntimeContext(
+                retry_backoff_sec=int(env.retry_backoff_sec),
+                max_render_attempts=int(env.max_render_attempts),
+                job_lock_ttl_sec=int(env.job_lock_ttl_sec),
+            ),
+        )
+        all_items = classifier.list_items(limit=1000)
     finally:
         conn.close()
-    return {"jobs": jobs}
+
+    query = str(q or "").strip().lower()
+
+    def _matches(item: dict[str, Any]) -> bool:
+        if category and category not in set(item.get("categories") or []):
+            return False
+        if channel_slug and str(item.get("channel_slug") or "") != channel_slug:
+            return False
+        if state and str(item.get("state") or "") != state:
+            return False
+        if actionability and actionability != "any":
+            value = str(item.get("actionability") or "")
+            if actionability == "has_actions" and value not in {"safe_only", "risky_present", "has_actions"}:
+                return False
+            if actionability == "safe_only" and value != "safe_only":
+                return False
+            if actionability == "risky_present" and value != "risky_present":
+                return False
+        if query:
+            tokens = [
+                str(item.get("job_id") or ""),
+                str(item.get("channel_slug") or ""),
+                str(item.get("state") or ""),
+                str(item.get("failure_summary") or ""),
+                str((item.get("context") or {}).get("progress_text") or ""),
+            ]
+            haystack = " ".join(tokens).lower()
+            return query in haystack
+        return True
+
+    filtered = [item for item in all_items if _matches(item)]
+    start = (page - 1) * page_size
+    end = start + page_size
+    items = filtered[start:end]
+
+    summary = {
+        "total": len(filtered),
+        "by_category": {},
+        "by_state": {},
+        "by_actionability": {},
+    }
+    for item in filtered:
+        st = str(item.get("state") or "")
+        summary["by_state"][st] = int(summary["by_state"].get(st, 0)) + 1
+        act = str(item.get("actionability") or "any")
+        summary["by_actionability"][act] = int(summary["by_actionability"].get(act, 0)) + 1
+        for cat in item.get("categories") or []:
+            summary["by_category"][cat] = int(summary["by_category"].get(cat, 0)) + 1
+
+    return {
+        "summary": summary,
+        "items": items,
+        "page": page,
+        "page_size": page_size,
+        "total": len(filtered),
+    }
 
 
 @app.get("/v1/ops/recovery/jobs/{job_id}")
 def api_ops_recovery_job(job_id: int, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
-        job = dbm.get_job(conn, job_id)
-        if not job:
+        classifier = RecoveryClassifier(
+            conn,
+            runtime=RecoveryRuntimeContext(
+                retry_backoff_sec=int(env.retry_backoff_sec),
+                max_render_attempts=int(env.max_render_attempts),
+                job_lock_ttl_sec=int(env.job_lock_ttl_sec),
+            ),
+        )
+        item = classifier.get_item(job_id)
+        if not item:
             raise HTTPException(404, "job not found")
+        artifact_rows = conn.execute(
+            """
+            SELECT a.id, a.kind, a.path, a.name, jo.role
+            FROM job_outputs jo
+            JOIN assets a ON a.id = jo.asset_id
+            WHERE jo.job_id = ?
+            ORDER BY a.id ASC
+            """,
+            (job_id,),
+        ).fetchall()
+        job = dbm.get_job(conn, job_id)
+        cleanup = {
+            "delete_mp4_at": job.get("delete_mp4_at") if job else None,
+            "cleanup_pending": bool(job and str(job.get("state") or "") == "PUBLISHED" and job.get("delete_mp4_at") is not None),
+        }
+        item["failure_details"] = {
+            "error_reason": job.get("error_reason") if job else None,
+            "stage": job.get("stage") if job else None,
+            "attempt": int(job.get("attempt") or 0) if job else None,
+        }
+        item["artifacts"] = [
+            {
+                "asset_id": int(row["id"]),
+                "kind": row.get("kind"),
+                "role": row.get("role"),
+                "path": row.get("path"),
+                "name": row.get("name"),
+            }
+            for row in artifact_rows
+        ]
+        item["cleanup"] = cleanup
+        item["allowed_stage_tokens"] = []
+        item["allowed_stage_tokens_fallback"] = "stage-token derivation primitive unavailable in current runtime"
+        item["recent_audit_entries"] = classifier.list_recent_audit(job_id)
     finally:
         conn.close()
-    return {"job": job}
+    return {"item": item}
 
 
 @app.post("/v1/ops/recovery/jobs/{job_id}/actions/{action}/preview")
