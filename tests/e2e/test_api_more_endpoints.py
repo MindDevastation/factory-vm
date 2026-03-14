@@ -496,9 +496,24 @@ class TestApiMoreEndpoints(unittest.TestCase):
             seed_minimal_db(env)
             failed_job_id = insert_release_and_job(env, state="FAILED", stage="RENDER")
             stale_job_id = insert_release_and_job(env, state="RENDERING", stage="RENDER")
+            published_job_id = insert_release_and_job(env, state="PUBLISHED", stage="APPROVAL")
 
             conn = dbm.connect(env)
             try:
+                from pathlib import Path
+
+                outbox = Path(env.storage_root) / "outbox" / f"job_{published_job_id}"
+                outbox.mkdir(parents=True, exist_ok=True)
+                mp4_path = outbox / "render.mp4"
+                mp4_path.write_bytes(b"dummy")
+                asset_cur = conn.execute(
+                    "INSERT INTO assets(channel_id, kind, origin, origin_id, name, path, created_at) VALUES(?,?,?,?,?,?,?)",
+                    (1, "MP4", "VM", None, "render.mp4", str(mp4_path), dbm.now_ts()),
+                )
+                conn.execute(
+                    "INSERT INTO job_outputs(job_id, asset_id, role) VALUES(?,?,?)",
+                    (published_job_id, int(asset_cur.lastrowid), "MP4"),
+                )
                 conn.execute("DROP TABLE recovery_action_audit")
                 conn.execute(
                     """
@@ -566,6 +581,50 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(preview_reclaim.json()["preview"]["allowed"], True)
             self.assertEqual(preview_reclaim.json()["preview"]["risk_level"], "safe")
 
+            preview_reenqueue = client.post(
+                f"/v1/ops/recovery/jobs/{failed_job_id}/actions/reenqueue_allowed_stage/preview",
+                headers=h,
+            )
+            self.assertEqual(preview_reenqueue.status_code, 200)
+            self.assertTrue(preview_reenqueue.json()["preview"]["allowed"])
+            stage_tokens = preview_reenqueue.json()["preview"].get("allowed_stage_tokens") or []
+            self.assertTrue(stage_tokens)
+            stage_token = str(stage_tokens[0]["token"])
+
+            invalid_reenqueue = client.post(
+                f"/v1/ops/recovery/jobs/{failed_job_id}/actions/reenqueue_allowed_stage/execute",
+                headers=h,
+                json={"confirm": True, "second_confirm": True, "stage_token": "bad-token"},
+            )
+            self.assertEqual(invalid_reenqueue.status_code, 409)
+            self.assertEqual(invalid_reenqueue.json()["detail"]["code"], "ORC_STAGE_TOKEN_INVALID")
+
+            ok_reenqueue = client.post(
+                f"/v1/ops/recovery/jobs/{failed_job_id}/actions/reenqueue_allowed_stage/execute",
+                headers=h,
+                json={"confirm": True, "second_confirm": True, "stage_token": stage_token},
+            )
+            self.assertEqual(ok_reenqueue.status_code, 200)
+            self.assertEqual(ok_reenqueue.json()["details"]["reenqueued"], True)
+
+            conn = dbm.connect(env)
+            try:
+                worker_ts = dbm.now_ts() - 200.0
+                conn.execute(
+                    "INSERT OR REPLACE INTO worker_heartbeats(worker_id, role, pid, hostname, details_json, last_seen) VALUES(?,?,?,?,?,?)",
+                    ("worker:stale", "orchestrator", 123, "host", "{}", worker_ts),
+                )
+            finally:
+                conn.close()
+
+            stale_detail = client.get(f"/v1/ops/recovery/jobs/{stale_job_id}", headers=h)
+            self.assertEqual(stale_detail.status_code, 200)
+            worker_ctx = stale_detail.json()["item"]["worker_context"]
+            self.assertEqual(worker_ctx["worker_role"], "orchestrator")
+            self.assertTrue(worker_ctx["worker_stale"])
+            self.assertEqual(worker_ctx["root_cause_hint"], "worker_heartbeat_stale")
+            self.assertTrue(isinstance(stale_detail.json()["item"].get("recent_audit_entries"), list))
+
             exec_reclaim = client.post(
                 f"/v1/ops/recovery/jobs/{stale_job_id}/actions/reclaim_stale/execute",
                 headers=h,
@@ -591,6 +650,22 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(cancel_ok.status_code, 200)
             self.assertEqual(cancel_ok.json()["result"], "success")
             self.assertEqual(cancel_ok.json()["details"]["cancelled"], True)
+
+            force_cleanup_ok = client.post(
+                f"/v1/ops/recovery/jobs/{published_job_id}/actions/force_cleanup_artifacts/execute",
+                headers=h,
+                json={"confirm": True, "second_confirm": True},
+            )
+            self.assertEqual(force_cleanup_ok.status_code, 200)
+            self.assertTrue(force_cleanup_ok.json()["details"]["cleaned"])
+
+            force_cleanup_blocked = client.post(
+                f"/v1/ops/recovery/jobs/{stale_job_id}/actions/force_cleanup_artifacts/execute",
+                headers=h,
+                json={"confirm": True, "second_confirm": True},
+            )
+            self.assertEqual(force_cleanup_blocked.status_code, 409)
+            self.assertEqual(force_cleanup_blocked.json()["detail"]["code"], "ORC_ACTION_NOT_ALLOWED")
 
             invalid_action = client.post(
                 f"/v1/ops/recovery/jobs/{failed_job_id}/actions/not_a_real_action/preview",

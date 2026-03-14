@@ -119,6 +119,7 @@
   .details-content { max-height:70vh; overflow:auto; display:grid; gap:10px; }
   .details-panel { border:1px solid #e5e7eb; border-radius:8px; padding:10px; }
   .danger-zone { border-color:#fecaca; background:#fef2f2; }
+  .warning-banner { border:1px solid #ef4444; background:#fef2f2; color:#991b1b; padding:8px; border-radius:6px; margin-bottom:8px; font-weight:600; }
 </style>
 
 <script>
@@ -223,7 +224,7 @@
         <td>${formatAge(item.progress_age_sec)}<div class="muted">${ctx.progress_text || '—'}</div></td>
         <td>${item.failure_summary || '<span class="muted">none</span>'}</td>
         <td>${renderActions((item.available_actions || []).map((a) => ({...a, job_id: item.job_id})))}</td>
-        <td>${worker.locked_by || '—'}<div class="muted">heartbeat: ${worker.heartbeat_present ? 'present' : 'missing'}</div></td>
+        <td>${worker.worker_role || worker.locked_by || '—'}<div class="muted">hb: ${formatTs(worker.heartbeat_last_seen)} · stale: ${worker.worker_stale ? 'yes' : 'no'}${worker.root_cause_hint ? ` · ${worker.root_cause_hint}` : ''}</div></td>
         <td><button type="button" class="details-btn" data-job-id="${item.job_id}">Open</button></td>
       </tr>`;
     }).join('');
@@ -251,28 +252,34 @@
     const risk = String(preview.risk_level || 'safe');
     const warnings = Array.isArray(preview.warnings) ? preview.warnings : [];
     const preconditions = Array.isArray(preview.preconditions) ? preview.preconditions : [];
+    const stageTokens = Array.isArray(preview.allowed_stage_tokens) ? preview.allowed_stage_tokens : [];
     const risky = risk === 'risky' || action === 'cancel_job';
     const confirmId = `confirm-${jobId}-${action}`;
     const strongId = `strong-${jobId}-${action}`;
+    const tokenId = `stage-token-${jobId}-${action}`;
     actionModalContent.innerHTML = `
       <section class="details-panel ${risky ? 'danger-zone' : ''}">
+        ${risky ? '<div class="warning-banner">Risky action: verify target state and impact before executing.</div>' : ''}
         ${detailList('Allowed', allowed ? 'yes' : 'no')}
         ${detailList('Risk', risk)}
         ${detailList('Summary', String(preview.summary || '—'))}
         <div><strong>Warnings:</strong> ${warnings.length ? warnings.join('; ') : 'none'}</div>
         <div><strong>Preconditions:</strong><pre>${JSON.stringify(preconditions, null, 2)}</pre></div>
+        ${action === 'reenqueue_allowed_stage' ? `<label>Allowed stage token<select id="${tokenId}">${stageTokens.map((t) => `<option value="${t.token}">${t.label || t.token}</option>`).join('')}</select></label>` : ''}
         <label><input id="${confirmId}" type="checkbox"> I confirm execute.</label>
-        ${risky ? `<label><input id="${strongId}" type="text" placeholder="type CANCEL"><span class="muted"> Strong confirm required for cancel_job.</span></label>` : ''}
+        ${risky ? `<label><input id="${strongId}" type="checkbox"> I understand this risky action may be irreversible.</label>` : ''}
         <div><button type="button" id="execute-action-btn" ${allowed ? '' : 'disabled'}>Execute action</button></div>
       </section>`;
     const executeBtn = document.getElementById('execute-action-btn');
     const confirmInput = document.getElementById(confirmId);
     const strongInput = risky ? document.getElementById(strongId) : null;
+    const tokenInput = action === 'reenqueue_allowed_stage' ? document.getElementById(tokenId) : null;
 
     function computeConfirmState() {
       const confirm = !!confirmInput?.checked;
-      const second_confirm = risky ? String(strongInput?.value || '').trim().toUpperCase() === 'CANCEL' : false;
-      return { confirm, second_confirm };
+      const second_confirm = risky ? !!strongInput?.checked : false;
+      const stage_token = tokenInput ? String(tokenInput.value || '').trim() : null;
+      return { confirm, second_confirm, stage_token };
     }
 
     function syncExecuteEnabled() {
@@ -283,15 +290,16 @@
 
     syncExecuteEnabled();
     confirmInput?.addEventListener('change', syncExecuteEnabled);
-    strongInput?.addEventListener('input', syncExecuteEnabled);
+    strongInput?.addEventListener('change', syncExecuteEnabled);
+    tokenInput?.addEventListener('change', syncExecuteEnabled);
 
     executeBtn.addEventListener('click', async () => {
-      const { confirm, second_confirm } = computeConfirmState();
+      const { confirm, second_confirm, stage_token } = computeConfirmState();
       const executeResp = await fetch(actionUrl(actionExecuteUrlTemplate, jobId, action), {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm, second_confirm }),
+        body: JSON.stringify({ confirm, second_confirm, stage_token }),
       });
       const executePayload = await executeResp.json();
       if (!executeResp.ok) {
@@ -299,6 +307,7 @@
         return;
       }
       note.textContent = executePayload.message || 'Action executed successfully.';
+      await openDetails(jobId);
       await loadJobs();
     });
   }
@@ -329,6 +338,7 @@
       const ctx = item.context || {};
       const failure = item.failure_details || {};
       const cleanup = item.cleanup || {};
+      const worker = item.worker_context || {};
       const audits = Array.isArray(item.recent_audit_entries) ? item.recent_audit_entries : [];
       const reasons = Array.isArray(item.category_reasons) ? item.category_reasons : [];
       detailsContent.innerHTML = `
@@ -360,6 +370,10 @@
           ${detailList('Failure stage', failure.stage)}
           ${detailList('Failure attempt', failure.attempt)}
           ${detailList('Stale/stuck explanation', reasons.join('; '))}
+          ${detailList('Worker role', worker.worker_role)}
+          ${detailList('Worker heartbeat', formatTs(worker.heartbeat_last_seen))}
+          ${detailList('Worker stale', worker.worker_stale ? 'yes' : 'no')}
+          ${detailList('Worker root-cause hint', worker.root_cause_hint)}
         </section>
         <section class="details-panel">
           <h4>Artifacts / cleanup hints</h4>

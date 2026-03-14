@@ -92,6 +92,13 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
             self.assertEqual(detail_item["allowed_stage_tokens"], [])
             self.assertIn("allowed_stage_tokens_fallback", detail_item)
 
+            failed_detail = client.get(f"/v1/ops/recovery/jobs/{failed_job}", headers=h)
+            self.assertEqual(failed_detail.status_code, 200)
+            failed_item = failed_detail.json()["item"]
+            self.assertTrue(isinstance(failed_item.get("allowed_stage_tokens"), list))
+            self.assertTrue(failed_item["allowed_stage_tokens"])
+            self.assertIn("worker_stale", failed_item["worker_context"])
+
     def test_recovery_audit_migration_columns_exist(self) -> None:
         with temp_env() as (_, _env0):
             env = Env.load()
