@@ -64,13 +64,31 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
             conn = dbm.connect(env)
             try:
                 cols = conn.execute("PRAGMA table_info(recovery_action_audit)").fetchall()
+                idx_rows = conn.execute("PRAGMA index_list(recovery_action_audit)").fetchall()
             finally:
                 conn.close()
             names = {str(col["name"]) for col in cols}
-            self.assertIn("action", names)
-            self.assertIn("phase", names)
-            self.assertIn("result_payload_json", names)
-            self.assertIn("created_at", names)
+            expected_columns = {
+                "id",
+                "job_id",
+                "action_name",
+                "risk_level",
+                "requested_by",
+                "requested_at",
+                "preview_allowed",
+                "execute_attempted",
+                "result_status",
+                "result_code",
+                "message",
+                "state_before",
+                "state_after",
+                "details_json",
+            }
+            self.assertTrue(expected_columns.issubset(names))
+
+            index_names = {str(row["name"]) for row in idx_rows}
+            self.assertIn("idx_recovery_audit_job_id_requested_at", index_names)
+            self.assertIn("idx_recovery_audit_action_name_requested_at", index_names)
 
 
 if __name__ == "__main__":

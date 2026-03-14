@@ -142,6 +142,26 @@ def insert_recovery_audit(
     ok: bool,
     error_code: str | None = None,
 ) -> None:
+    cols = {
+        str(row.get("name"))
+        for row in conn.execute("PRAGMA table_info(recovery_action_audit)").fetchall()
+        if isinstance(row, dict) and row.get("name")
+    }
+    legacy_write_cols = {
+        "job_id",
+        "action",
+        "phase",
+        "requested_by",
+        "request_payload_json",
+        "result_payload_json",
+        "ok",
+        "error_code",
+        "created_at",
+    }
+    if not legacy_write_cols.issubset(cols):
+        # Read-only slice: migration scaffold may be present without execute/preview write wiring yet.
+        return
+
     conn.execute(
         """
         INSERT INTO recovery_action_audit(

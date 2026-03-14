@@ -470,6 +470,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
             detail_resp = client.get(f"/v1/ops/recovery/jobs/{failed_job_id}", headers=h)
             self.assertEqual(detail_resp.status_code, 200)
             self.assertEqual(int(detail_resp.json()["item"]["job_id"]), failed_job_id)
+            self.assertEqual(detail_resp.json()["item"]["recent_audit_entries"], [])
 
             preview_retry = client.post(
                 f"/v1/ops/recovery/jobs/{failed_job_id}/actions/retry_failed/preview",
@@ -521,12 +522,12 @@ class TestApiMoreEndpoints(unittest.TestCase):
             conn = dbm.connect(env)
             try:
                 rows = conn.execute(
-                    "SELECT action, phase, ok FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
+                    "SELECT id FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
                     (failed_job_id, stale_job_id),
                 ).fetchall()
             finally:
                 conn.close()
-            self.assertGreaterEqual(len(rows), 5)
+            self.assertEqual(rows, [])
 
 
 if __name__ == "__main__":
