@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from services.common import db as dbm
 from services.common.env import Env
+from services.ops.recovery import insert_recovery_audit
 from tests._helpers import basic_auth_header, insert_release_and_job, seed_minimal_db, temp_env
 
 
@@ -117,12 +118,65 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
                 "state_before",
                 "state_after",
                 "details_json",
+                "action",
+                "phase",
+                "request_payload_json",
+                "result_payload_json",
+                "ok",
+                "error_code",
+                "created_at",
             }
             self.assertTrue(expected_columns.issubset(names))
 
             index_names = {str(row["name"]) for row in idx_rows}
             self.assertIn("idx_recovery_audit_job_id_requested_at", index_names)
             self.assertIn("idx_recovery_audit_action_name_requested_at", index_names)
+
+
+    def test_recovery_audit_scaffold_keeps_legacy_write_columns_and_insert_path(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            job_id = insert_release_and_job(env, state="FAILED", stage="RENDER", channel_slug="darkwood-reverie")
+
+            conn = dbm.connect(env)
+            try:
+                cols = conn.execute("PRAGMA table_info(recovery_action_audit)").fetchall()
+                names = {str(col["name"]) for col in cols}
+                legacy_write_columns = {
+                    "job_id",
+                    "action",
+                    "phase",
+                    "requested_by",
+                    "request_payload_json",
+                    "result_payload_json",
+                    "ok",
+                    "error_code",
+                    "created_at",
+                }
+                self.assertTrue(legacy_write_columns.issubset(names))
+
+                insert_recovery_audit(
+                    conn,
+                    job_id=job_id,
+                    action="retry_failed",
+                    phase="execute",
+                    requested_by="tester",
+                    request_payload={"confirm": True},
+                    result_payload={"ok": True},
+                    ok=True,
+                )
+                row = conn.execute(
+                    "SELECT action, phase, ok FROM recovery_action_audit WHERE job_id = ? ORDER BY id DESC LIMIT 1",
+                    (job_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+
+            self.assertIsNotNone(row)
+            self.assertEqual(row["action"], "retry_failed")
+            self.assertEqual(row["phase"], "execute")
+            self.assertEqual(int(row["ok"]), 1)
 
     def test_recovery_detail_returns_empty_recent_audit_for_legacy_schema(self) -> None:
         with temp_env() as (_, _env0):
