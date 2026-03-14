@@ -8,7 +8,8 @@ from pathlib import Path
 
 from services.common.env import Env
 from services.ops_retention.log_policy import CANONICAL_LOG_POLICIES, LogClass
-from services.common.paths import logs_path, storage_root
+from services.ops_retention.config import resolve_log_dir
+from services.common.paths import logs_path
 
 
 _CONFIGURED_FOR: set[str] = set()
@@ -84,7 +85,7 @@ def setup_logging(env: Env, *, service: str) -> None:
     sh.addFilter(_ServiceFilter(service))
     root.addHandler(sh)
 
-    log_dir = storage_root(env) / "logs"
+    log_dir = resolve_log_dir(env)
     log_dir.mkdir(parents=True, exist_ok=True)
     file_name, max_bytes, keep_files = resolve_log_file_policy(service)
     fh = RotatingFileHandler(
