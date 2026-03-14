@@ -166,8 +166,31 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("actionabilityInput.addEventListener('change', loadJobs)", page.text)
             self.assertIn("Action preview ·", page.text)
             self.assertIn("Recent recovery audit entries", page.text)
-            self.assertIn("openActionModal", page.text)
-            self.assertIn("I confirm execute.", page.text)
+
+    def test_recovery_ui_seeded_happy_path_jobs_load_contract_and_hooks(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_recovery_jobs(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            jobs_resp = client.get("/v1/ops/recovery/jobs?actionability=has_actions", headers=h)
+            self.assertEqual(jobs_resp.status_code, 200)
+            self.assertEqual(jobs_resp.headers.get("content-type"), "application/json")
+            payload = jobs_resp.json()
+            self.assertGreaterEqual(len(payload["items"]), 1)
+
+            page_resp = client.get("/ui/recovery", headers=h)
+            self.assertEqual(page_resp.status_code, 200)
+            self.assertIn('id="recovery-action-modal"', page_resp.text)
+            self.assertIn('class="action-preview-btn"', page_resp.text)
+            self.assertIn("Failed to load jobs.", page_resp.text)
+            self.assertIn("openActionModal", page_resp.text)
+            self.assertIn("I confirm execute.", page_resp.text)
 
     def test_playlist_builder_preview_state_guards(self) -> None:
         with temp_env() as (_, _):
