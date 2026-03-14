@@ -2,6 +2,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from enum import Enum
+
+
+class DiskPressureLevel(str, Enum):
+    OK = "OK"
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"
 
 
 @dataclass(frozen=True)
@@ -28,9 +35,19 @@ def load_disk_thresholds(
     )
 
 
-def evaluate_disk_status(*, free_percent: float, free_gib: float, thresholds: DiskThresholds) -> str:
+def evaluate_disk_pressure(*, free_percent: float, free_gib: float, thresholds: DiskThresholds) -> DiskPressureLevel:
     if free_percent < thresholds.fail_percent or free_gib < thresholds.fail_gib:
-        return "FAIL"
+        return DiskPressureLevel.CRITICAL
     if free_percent < thresholds.warn_percent or free_gib < thresholds.warn_gib:
+        return DiskPressureLevel.WARNING
+    return DiskPressureLevel.OK
+
+
+def evaluate_disk_status(*, free_percent: float, free_gib: float, thresholds: DiskThresholds) -> str:
+    """Compatibility wrapper for older smoke checks returning PASS/WARN/FAIL."""
+    pressure = evaluate_disk_pressure(free_percent=free_percent, free_gib=free_gib, thresholds=thresholds)
+    if pressure is DiskPressureLevel.CRITICAL:
+        return "FAIL"
+    if pressure is DiskPressureLevel.WARNING:
         return "WARN"
     return "PASS"
