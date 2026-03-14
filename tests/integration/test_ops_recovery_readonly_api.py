@@ -83,6 +83,12 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
             self.assertIn("available_actions", item)
             self.assertIn("category_reasons", item)
 
+            channel_alias_resp = client.get("/v1/ops/recovery/jobs?channel=darkwood-reverie&actionability=any", headers=h)
+            self.assertEqual(channel_alias_resp.status_code, 200)
+            channel_alias_payload = channel_alias_resp.json()
+            self.assertEqual(channel_alias_payload["total"], 1)
+            self.assertEqual(channel_alias_payload["items"][0]["job_id"], failed_job)
+
             detail = client.get(f"/v1/ops/recovery/jobs/{published_job}", headers=h)
             self.assertEqual(detail.status_code, 200)
             detail_item = detail.json()["item"]
