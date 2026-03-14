@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+import io
+import json
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from scripts import doctor
+from services.ops_health_smoke.formatters import render_human_report
+from services.ops_health_smoke.runner import run_checks_with_error_capture, run_production_smoke
+
+
+class TestDoctorProductionSmoke(unittest.TestCase):
+    def test_smoke_json_schema(self) -> None:
+        report = run_production_smoke(profile="prod", selected_check_ids={"runner_bootstrap"})
+        self.assertEqual(report["schema_version"], "factory_production_smoke/1")
+        self.assertEqual(report["profile"], "prod")
+        self.assertIn(report["overall_status"], {"OK", "WARNING", "FAIL"})
+        self.assertIn("checks", report)
+        self.assertEqual(report["summary"]["total_checks"], len(report["checks"]))
+        first = report["checks"][0]
+        self.assertEqual(first["check_id"], "runner_bootstrap")
+        self.assertEqual(first["result"], "PASS")
+
+    def test_checks_filter_and_runner_error(self) -> None:
+        report = run_production_smoke(profile="local", selected_check_ids={"runner_bootstrap"})
+        self.assertEqual(report["summary"]["total_checks"], 1)
+
+        error_report = run_checks_with_error_capture(profile="local", selected_check_ids={"missing"})
+        self.assertEqual(error_report["overall_status"], "FAIL")
+        self.assertEqual(error_report["exit_code"], 3)
+        self.assertEqual(error_report["summary"]["total_checks"], 1)
+        self.assertEqual(error_report["summary"]["fail_count"], 1)
+        self.assertEqual(len(error_report["checks"]), 1)
+        runner_error = error_report["checks"][0]
+        self.assertEqual(runner_error["check_id"], "runner_error")
+        self.assertEqual(runner_error["result"], "FAIL")
+        self.assertIn("error", runner_error["details"])
+
+    def test_disk_space_missing_paths_report_does_not_degrade_to_runner_error(self) -> None:
+        env = SimpleNamespace(
+            bind="127.0.0.1",
+            port=9999,
+            db_path="/missing/nested/db/factory.sqlite3",
+            storage_root="/missing/nested/storage/root",
+            origin_backend="remote",
+            origin_local_root="/unused/origin",
+        )
+        with patch("services.ops_health_smoke.runner.Env.load", return_value=env):
+            report = run_checks_with_error_capture(profile="local", selected_check_ids={"disk_space"})
+
+        self.assertEqual(report["schema_version"], "factory_production_smoke/1")
+        self.assertEqual(report["summary"]["total_checks"], 1)
+        self.assertEqual(report["checks"][0]["check_id"], "disk_space")
+        self.assertNotEqual(report["checks"][0]["check_id"], "runner_error")
+        self.assertIn(report["checks"][0]["result"], {"WARN", "FAIL", "PASS"})
+
+    def test_human_output_shape(self) -> None:
+        report = run_production_smoke(profile="local", selected_check_ids={"runner_bootstrap"})
+        human = render_human_report(report)
+        self.assertIn("Overall status:", human)
+        self.assertIn("Profile: local", human)
+        self.assertIn("[PASS] runner_bootstrap", human)
+        self.assertIn("Operator hint: System ready", human)
+
+
+    def test_doctor_cli_json_stdout_is_clean_json(self) -> None:
+        with patch("sys.argv", ["doctor.py", "production-smoke", "--json", "--checks", "runner_bootstrap"]):
+            with io.StringIO() as buf, redirect_stdout(buf):
+                with self.assertRaises(SystemExit) as cm:
+                    doctor.main()
+                output = buf.getvalue()
+
+        self.assertEqual(cm.exception.code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["schema_version"], "factory_production_smoke/1")
+        self.assertEqual(payload["overall_status"], "OK")
+
+    def test_doctor_cli_json_out_and_exit_code(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".json") as handle:
+            argv = ["doctor.py", "production-smoke", "--json", "--json-out", handle.name, "--checks", "runner_bootstrap"]
+            with patch("sys.argv", argv):
+                with self.assertRaises(SystemExit) as cm:
+                    doctor.main()
+            self.assertEqual(cm.exception.code, 0)
+            with open(handle.name, "r", encoding="utf-8") as fh:
+                payload = json.loads(fh.read())
+            self.assertEqual(payload["overall_status"], "OK")
+            self.assertEqual(payload["summary"]["total_checks"], 1)
+
+    def test_doctor_cli_human_warning_exit_code(self) -> None:
+        fake_report = {
+            "schema_version": "factory_production_smoke/1",
+            "generated_at": "2025-01-01T00:00:00+00:00",
+            "hostname": "localhost",
+            "profile": "prod",
+            "overall_status": "WARNING",
+            "exit_code": 1,
+            "duration_ms": 5,
+            "summary": {"total_checks": 1, "pass_count": 0, "warn_count": 1, "fail_count": 0, "skip_count": 0},
+            "checks": [
+                {
+                    "check_id": "stub",
+                    "title": "Stub",
+                    "category": "framework",
+                    "severity": "warning",
+                    "result": "WARN",
+                    "message": "stub warning",
+                    "details": {},
+                }
+            ],
+        }
+        with patch("scripts.doctor.run_checks_with_error_capture", return_value=fake_report):
+            with patch("sys.argv", ["doctor.py", "production-smoke"]):
+                with io.StringIO() as buf, redirect_stdout(buf):
+                    with self.assertRaises(SystemExit) as cm:
+                        doctor.main()
+                    output = buf.getvalue()
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("Warnings require attention", output)
+
+
+if __name__ == "__main__":
+    unittest.main()
