@@ -235,6 +235,9 @@ class TestOpsHealthSmokeP0S2(unittest.TestCase):
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     channel_slug TEXT NOT NULL,
                     content_type TEXT NOT NULL,
+                    title TEXT NULL,
+                    publish_at TEXT NULL,
+                    notes TEXT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -259,7 +262,47 @@ class TestOpsHealthSmokeP0S2(unittest.TestCase):
 
         self.assertFalse(ready)
         self.assertFalse(details["planner_table_exists"])
-        self.assertIn("status", details["planner_missing_columns"])
+        self.assertIn("title", details["planner_missing_columns"])
+
+    def test_planner_structures_ready_missing_db_path_is_deterministic_and_non_destructive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "missing.sqlite3"
+
+            ready, details = runner.PipelineReadinessCheck._planner_structures_ready(db_path=str(db_path))
+
+            self.assertFalse(ready)
+            self.assertFalse(db_path.exists())
+            self.assertEqual(details["planner_schema_error"], "planner_db_path_missing")
+            self.assertEqual(details["planner_db_path"], str(db_path.resolve()))
+
+    def test_pipeline_readiness_includes_planner_blocker_with_incomplete_schema(self) -> None:
+        check = runner.PipelineReadinessCheck()
+        env = SimpleNamespace(upload_backend="local", db_path="/tmp/factory.sqlite3")
+        context = SimpleNamespace(
+            profile="prod",
+            env=env,
+            prior_results=(
+                runner.CheckResult("api_health", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("db_access", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("storage_paths", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("ffmpeg_available", "", "", "critical", "PASS", "", {}),
+                runner.CheckResult("required_runtime_roles", "", "", "critical", "PASS", "", {}),
+            ),
+        )
+
+        with patch.object(runner.PipelineReadinessCheck, "_planner_enabled", return_value=True):
+            with patch.object(
+                runner.PipelineReadinessCheck,
+                "_planner_structures_ready",
+                return_value=(False, {"planner_table_exists": True, "planner_missing_columns": ["title"]}),
+            ):
+                with patch("services.ops_health_smoke.runner._resolved_runtime_roles") as resolved:
+                    resolved.return_value = SimpleNamespace(track_catalog_enabled=False)
+                    result = check.run(context)
+
+        self.assertEqual(result.result, "FAIL")
+        self.assertIn("planner_data_structures", result.details["integration_blockers"])
+        self.assertEqual(result.details["planner_missing_columns"], ["title"])
 
     def test_disk_space_missing_nested_paths_is_bounded_and_does_not_raise(self) -> None:
         check = runner.DiskSpaceCheck()
