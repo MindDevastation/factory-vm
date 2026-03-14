@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import sqlite3
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -42,6 +44,8 @@ class RetentionOutcome:
 
 PROTECTED_TOKENS = frozenset({"backup", "backups", "snapshot", "snapshots", "quarantine", "config", "configs", "media", "library", "final_output"})
 ACTIVE_WORKSPACE_MARKERS = (".active", ".lock", ".pid")
+TERMINAL_JOB_STATES = frozenset({"RENDER_FAILED", "FAILED", "QA_FAILED", "UPLOAD_FAILED", "REJECTED", "PUBLISHED", "CANCELLED", "CLEANED"})
+_WORKSPACE_JOB_RE = re.compile(r"^job_(\d+)$")
 
 
 def _now_utc() -> datetime:
@@ -79,6 +83,47 @@ def _is_protected_path(path: Path) -> bool:
 
 def _workspace_has_runtime_reference(path: Path) -> bool:
     return any((path / marker).exists() for marker in ACTIVE_WORKSPACE_MARKERS)
+
+
+def _workspace_job_id(path: Path) -> int | None:
+    match = _WORKSPACE_JOB_RE.match(path.name)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _workspace_has_active_job_reference(path: Path, env: Env) -> tuple[bool, bool]:
+    """Return (is_active, is_uncertain)."""
+    job_id = _workspace_job_id(path)
+    if job_id is None:
+        return False, True
+
+    db_path = Path(env.db_path)
+    if not db_path.exists():
+        return False, True
+
+    try:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute("SELECT state FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    except sqlite3.Error:
+        return False, True
+
+    if row is None:
+        return False, False
+
+    state = str(row[0] or "").strip().upper()
+    if not state:
+        return False, True
+    if state in TERMINAL_JOB_STATES:
+        return False, False
+    return True, False
+
+
+def _workspace_is_active_or_uncertain(path: Path, env: Env) -> bool:
+    if _workspace_has_runtime_reference(path):
+        return True
+    is_active, is_uncertain = _workspace_has_active_job_reference(path, env)
+    return is_active or is_uncertain
 
 
 def _window_seconds(category: ArtifactCategory, windows: RetentionWindows, path: Path) -> int:
@@ -130,14 +175,14 @@ def scan_candidates(allowlist: dict[ArtifactCategory, Path]) -> list[Candidate]:
     return out
 
 
-def decide(candidate: Candidate, windows: RetentionWindows, now: datetime) -> Decision:
+def decide(candidate: Candidate, windows: RetentionWindows, now: datetime, env: Env) -> Decision:
     size_bytes = _size_bytes(candidate.path)
     age_sec = _age_seconds(candidate.path, now)
     if not _inside_scope(candidate.path, candidate.root_path):
         return Decision(candidate, False, "RETENTION_SKIP_OUTSIDE_SCOPE", False, size_bytes, age_sec)
     if _is_protected_path(candidate.path):
         return Decision(candidate, False, "RETENTION_SKIP_PROTECTED_PATH", True, size_bytes, age_sec)
-    if candidate.category == ArtifactCategory.TERMINAL_WORKSPACES and _workspace_has_runtime_reference(candidate.path):
+    if candidate.category == ArtifactCategory.TERMINAL_WORKSPACES and _workspace_is_active_or_uncertain(candidate.path, env):
         return Decision(candidate, False, "RETENTION_SKIP_ACTIVE_WORKSPACE", True, size_bytes, age_sec)
 
     threshold = _window_seconds(candidate.category, windows, candidate.path)
@@ -191,7 +236,7 @@ def execute_retention(
     skipped = 0
     failed = 0
     for candidate in candidates:
-        decision = decide(candidate, windows, now)
+        decision = decide(candidate, windows, now, env)
         if not decision.should_delete:
             skipped += 1
             _emit(logger, event_name="retention.skip", execution_mode=execution_mode, decision=decision, result="skipped", sink=event_sink)
