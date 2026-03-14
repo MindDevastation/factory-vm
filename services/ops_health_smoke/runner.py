@@ -638,15 +638,31 @@ class PipelineReadinessCheck:
 
     @staticmethod
     def _planner_structures_ready(*, db_path: str) -> tuple[bool, dict[str, Any]]:
-        expected_columns = {"id", "channel_slug", "content_type", "status", "created_at", "updated_at"}
+        expected_columns = {
+            "id",
+            "channel_slug",
+            "content_type",
+            "title",
+            "publish_at",
+            "notes",
+            "status",
+            "created_at",
+            "updated_at",
+        }
+        resolved_path = Path(db_path).expanduser().resolve()
         details: dict[str, Any] = {
             "planner_table": "planned_releases",
+            "planner_db_path": str(resolved_path),
             "planner_required_columns": sorted(expected_columns),
             "planner_table_exists": False,
             "planner_missing_columns": sorted(expected_columns),
         }
+        if not resolved_path.is_file():
+            details["planner_schema_error"] = "planner_db_path_missing"
+            return False, details
+
         try:
-            with sqlite3.connect(db_path, timeout=2) as conn:
+            with sqlite3.connect(f"file:{resolved_path}?mode=ro", uri=True, timeout=2) as conn:
                 row = conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
                     ("planned_releases",),
