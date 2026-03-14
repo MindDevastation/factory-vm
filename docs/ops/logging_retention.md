@@ -76,28 +76,42 @@ Default evaluator behavior:
 
 ## 8. What operations are blocked under critical disk
 
-In `ops_retention.py`, urgent extra pruning is **guarded** and only activates at critical disk (`FAIL`). When disk is not critical, `run --urgent` logs `retention.urgent_skipped` and falls back to normal retention scope.
+When app-level disk status is critical, the write-heavy guard blocks only the following operations:
 
-No additional operation blocking is implemented by this script.
+- render-heavy enqueue/start
+- retry paths that create new render-heavy work
+- analyze batch start
+- large transient export generation
+
+The following operations remain allowed under critical disk:
+
+- cleanup
+- retention
+- smoke
+- backup verify/restore
+- read-only UI/API operations
+- safe recovery actions that are not write-heavy
 
 ## 9. Structured retention log event meanings
 
-`ops_retention.py` emits JSON line events:
+Structured retention and disk-pressure events use the following emitted event names:
 
-- `retention.disk_status`: current disk free metrics and evaluated status
-- `retention.scan_complete`: summary after candidate discovery
-- `retention.candidate`: one candidate path found during scan
-- `retention.urgent_skipped`: urgent mode requested but disk not critical
-- `retention.delete`: successful file deletion
-- `retention.delete_error`: deletion failed for a path
-- `retention.run_complete`: final delete counts and mode flags
+- `retention.scan.start`: retention scan requested/started
+- `retention.scan.complete`: retention scan finished with summary counters
+- `retention.delete.success`: a retention delete completed successfully
+- `retention.delete.failure`: a retention delete attempt failed
+- `retention.skip`: retention action skipped (for example, urgent-only behavior requested when preconditions are not met)
+- `retention.urgent.start`: urgent retention flow entered
+- `retention.urgent.complete`: urgent retention flow completed
+- `disk.warning`: disk state evaluated as warning
+- `disk.critical`: disk state evaluated as critical
 
 ## 10. Safe rollout guidance
 
 1. Run scan/report-only first:
    - `python scripts/ops_retention.py scan`
 2. Verify outputs:
-   - review `retention.scan_complete` and sampled `retention.candidate` paths
+   - review `retention.scan.start` / `retention.scan.complete` and any `retention.skip` records
 3. Enable destructive run:
    - `python scripts/ops_retention.py run`
 4. Use urgent mode only for active pressure:
