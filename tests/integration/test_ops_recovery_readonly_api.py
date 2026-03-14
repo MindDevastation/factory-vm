@@ -178,6 +178,37 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
             self.assertEqual(row["phase"], "execute")
             self.assertEqual(int(row["ok"]), 1)
 
+
+    def test_recovery_detail_hides_placeholder_scaffold_legacy_audit_rows(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            failed_job = insert_release_and_job(env, state="FAILED", stage="RENDER", channel_slug="darkwood-reverie")
+
+            conn = dbm.connect(env)
+            try:
+                insert_recovery_audit(
+                    conn,
+                    job_id=failed_job,
+                    action="retry_failed",
+                    phase="execute",
+                    requested_by="tester",
+                    request_payload={"confirm": True},
+                    result_payload={"ok": True},
+                    ok=True,
+                )
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            detail = client.get(f"/v1/ops/recovery/jobs/{failed_job}", headers=h)
+            self.assertEqual(detail.status_code, 200)
+            self.assertEqual(detail.json()["item"]["recent_audit_entries"], [])
+
     def test_recovery_detail_returns_empty_recent_audit_for_legacy_schema(self) -> None:
         with temp_env() as (_, _env0):
             env = Env.load()
