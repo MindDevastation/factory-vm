@@ -521,7 +521,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
             conn = dbm.connect(env)
             try:
                 rows = conn.execute(
-                    "SELECT action_name, result_status FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
+                    "SELECT action, phase, ok FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
                     (failed_job_id, stale_job_id),
                 ).fetchall()
             finally:

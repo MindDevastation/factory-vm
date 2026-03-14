@@ -67,10 +67,10 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
             finally:
                 conn.close()
             names = {str(col["name"]) for col in cols}
-            self.assertIn("action_name", names)
-            self.assertIn("risk_level", names)
-            self.assertIn("requested_at", names)
-            self.assertIn("details_json", names)
+            self.assertIn("action", names)
+            self.assertIn("phase", names)
+            self.assertIn("result_payload_json", names)
+            self.assertIn("created_at", names)
 
 
 if __name__ == "__main__":

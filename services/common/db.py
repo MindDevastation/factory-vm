@@ -542,28 +542,21 @@ def migrate(conn: sqlite3.Connection) -> None:
             ON track_custom_tag_assignments(track_pk, state);
 
         CREATE TABLE IF NOT EXISTS recovery_action_audit (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             job_id INTEGER NOT NULL,
-            action_name TEXT NOT NULL,
-            risk_level TEXT NOT NULL,
-            requested_by TEXT NULL,
-            requested_at TEXT NOT NULL,
-            preview_allowed INTEGER NULL,
-            execute_attempted INTEGER NOT NULL DEFAULT 1,
-            result_status TEXT NOT NULL,
-            result_code TEXT NULL,
-            message TEXT NULL,
-            state_before TEXT NULL,
-            state_after TEXT NULL,
-            details_json TEXT NULL,
+            action TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            requested_by TEXT,
+            request_payload_json TEXT NOT NULL,
+            result_payload_json TEXT NOT NULL,
+            ok INTEGER NOT NULL,
+            error_code TEXT,
+            created_at REAL NOT NULL,
             FOREIGN KEY(job_id) REFERENCES jobs(id)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_recovery_audit_job_id_requested_at
-            ON recovery_action_audit(job_id, requested_at DESC);
-
-        CREATE INDEX IF NOT EXISTS idx_recovery_audit_action_name_requested_at
-            ON recovery_action_audit(action_name, requested_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_recovery_action_audit_job_created
+            ON recovery_action_audit(job_id, created_at DESC);
         """
     )
 
@@ -572,58 +565,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_channels_columns(conn)
     _ensure_ui_job_drafts_columns(conn)
     _ensure_tracks_columns(conn)
-    _ensure_recovery_action_audit_schema(conn)
 
-
-
-def _ensure_recovery_action_audit_schema(conn: sqlite3.Connection) -> None:
-    expected_cols = {
-        "id",
-        "job_id",
-        "action_name",
-        "risk_level",
-        "requested_by",
-        "requested_at",
-        "preview_allowed",
-        "execute_attempted",
-        "result_status",
-        "result_code",
-        "message",
-        "state_before",
-        "state_after",
-        "details_json",
-    }
-    if not _table_exists(conn, "recovery_action_audit"):
-        return
-    if _table_columns(conn, "recovery_action_audit") != expected_cols:
-        _rename_table_to_legacy(conn, "recovery_action_audit")
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS recovery_action_audit (
-                id INTEGER PRIMARY KEY,
-                job_id INTEGER NOT NULL,
-                action_name TEXT NOT NULL,
-                risk_level TEXT NOT NULL,
-                requested_by TEXT NULL,
-                requested_at TEXT NOT NULL,
-                preview_allowed INTEGER NULL,
-                execute_attempted INTEGER NOT NULL DEFAULT 1,
-                result_status TEXT NOT NULL,
-                result_code TEXT NULL,
-                message TEXT NULL,
-                state_before TEXT NULL,
-                state_after TEXT NULL,
-                details_json TEXT NULL,
-                FOREIGN KEY(job_id) REFERENCES jobs(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_recovery_audit_job_id_requested_at
-                ON recovery_action_audit(job_id, requested_at DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_recovery_audit_action_name_requested_at
-                ON recovery_action_audit(action_name, requested_at DESC);
-            """
-        )
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
