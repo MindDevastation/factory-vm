@@ -1,5 +1,7 @@
 # Production smoke (`doctor.py production-smoke`)
 
+> **Runbook canonical note:** This document defines smoke command behavior. Scenario-based operator procedures are maintained in `docs/ops/runbook/` (start at `docs/ops/runbook/README.md`).
+
 ## 1) What smoke is for
 
 Production smoke is a **non-destructive readiness gate** for operators. It summarizes core runtime signals so you can decide whether it is safe to start production jobs.

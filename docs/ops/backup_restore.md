@@ -1,5 +1,7 @@
 # Backup / Restore Operator SOP (P0-S5)
 
+> **Runbook canonical note:** This document defines backup/restore CLI behavior. End-to-end operator workflows are maintained in `docs/ops/runbook/` (see `docs/ops/runbook/sop/backup_and_restore_cli.md` and `docs/ops/runbook/post_restore_verification.md`).
+
 This SOP covers the current backup/restore CLI implemented by `scripts/ops_backup_restore.py`.
 
 ## 1) What is included in backup
