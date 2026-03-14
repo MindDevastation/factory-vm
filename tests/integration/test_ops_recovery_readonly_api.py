@@ -214,7 +214,10 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
 
             detail = client.get(f"/v1/ops/recovery/jobs/{failed_job}", headers=h)
             self.assertEqual(detail.status_code, 200)
-            self.assertEqual(detail.json()["item"]["recent_audit_entries"], [])
+            audits = detail.json()["item"]["recent_audit_entries"]
+            self.assertTrue(audits)
+            self.assertEqual(audits[0]["action_name"], "retry_failed")
+            self.assertEqual(audits[0]["result_status"], "success")
 
     def test_recovery_detail_returns_empty_recent_audit_for_legacy_schema(self) -> None:
         with temp_env() as (_, _env0):

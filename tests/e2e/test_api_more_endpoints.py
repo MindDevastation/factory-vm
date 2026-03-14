@@ -486,9 +486,9 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(row["action"], "retry_failed")
             self.assertEqual(row["phase"], "execute")
             self.assertEqual(int(row["ok"]), 1)
-            self.assertEqual(str(row.get("action_name") or ""), "")
-            self.assertEqual(str(row.get("risk_level") or ""), "unknown")
-            self.assertEqual(str(row.get("result_status") or ""), "legacy")
+            self.assertEqual(str(row.get("action_name") or ""), "retry_failed")
+            self.assertEqual(str(row.get("risk_level") or ""), "safe")
+            self.assertEqual(str(row.get("result_status") or ""), "success")
 
     def test_ops_recovery_preview_execute_and_audit(self) -> None:
         with temp_env() as (_, _env0):

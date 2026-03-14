@@ -330,26 +330,53 @@ def insert_recovery_audit(
         "error_code",
         "created_at",
     }
-    if not legacy_write_cols.issubset(cols):
-        # Read-only slice: migration scaffold may be present without execute/preview write wiring yet.
+    scaffold_cols = {
+        "job_id",
+        "action_name",
+        "risk_level",
+        "requested_by",
+        "requested_at",
+        "preview_allowed",
+        "execute_attempted",
+        "result_status",
+        "result_code",
+        "message",
+        "state_before",
+        "state_after",
+        "details_json",
+    }
+    if not legacy_write_cols.issubset(cols) and not scaffold_cols.issubset(cols):
+        # Read-only slice: migration scaffold may be present without write wiring.
         return None
 
+    now_ts = dbm.now_ts()
+    details_payload = result_payload.get("details") if isinstance(result_payload, dict) else None
+    row_payload: dict[str, Any] = {
+        "job_id": int(job_id),
+        "action": action,
+        "phase": phase,
+        "requested_by": requested_by,
+        "request_payload_json": json.dumps(request_payload, ensure_ascii=False),
+        "result_payload_json": json.dumps(result_payload, ensure_ascii=False),
+        "ok": 1 if ok else 0,
+        "error_code": error_code,
+        "created_at": now_ts,
+        "action_name": action,
+        "risk_level": "risky" if action in RISKY_ACTIONS else "safe",
+        "requested_at": now_ts,
+        "preview_allowed": 1 if ok else 0,
+        "execute_attempted": 1 if phase == "execute" else 0,
+        "result_status": str(result_payload.get("result") or ("success" if ok else "failure")),
+        "result_code": error_code,
+        "message": result_payload.get("message") if isinstance(result_payload, dict) else None,
+        "state_before": result_payload.get("state_before") if isinstance(result_payload, dict) else None,
+        "state_after": result_payload.get("state_after") if isinstance(result_payload, dict) else None,
+        "details_json": json.dumps(details_payload, ensure_ascii=False) if details_payload is not None else None,
+    }
+    write_cols = [name for name in row_payload.keys() if name in cols]
+    placeholders = ", ".join("?" for _ in write_cols)
     cursor = conn.execute(
-        """
-        INSERT INTO recovery_action_audit(
-            job_id, action, phase, requested_by, request_payload_json, result_payload_json, ok, error_code, created_at
-        ) VALUES(?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            int(job_id),
-            action,
-            phase,
-            requested_by,
-            json.dumps(request_payload, ensure_ascii=False),
-            json.dumps(result_payload, ensure_ascii=False),
-            1 if ok else 0,
-            error_code,
-            dbm.now_ts(),
-        ),
+        f"INSERT INTO recovery_action_audit({', '.join(write_cols)}) VALUES({placeholders})",
+        tuple(row_payload[name] for name in write_cols),
     )
     return int(cursor.lastrowid)
