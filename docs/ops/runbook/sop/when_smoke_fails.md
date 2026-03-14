@@ -29,7 +29,8 @@ Provide a deterministic first-response checklist when `production-smoke` returns
    ```bash
    python scripts/ops_retention.py scan
    ```
-6. Route immediately to the matching playbook and follow it fully.
+6. If DB/access checks fail (`db_access`, `pipeline_readiness`), route to `../post_restore_verification.md` (DB/access symptom path) and execute restore verification/remediation via `./backup_and_restore_cli.md` as directed there.
+7. Route immediately to the matching playbook and follow it fully.
 
 ## Expected success result
 - Root failure class is identified (API, workers, disk, DB/access, etc.).
@@ -39,4 +40,5 @@ Provide a deterministic first-response checklist when `production-smoke` returns
 - API path: `../playbooks/api_unhealthy.md`.
 - Worker path: `../playbooks/worker_stalled.md`.
 - Disk path: `../playbooks/disk_pressure_retention.md`.
+- DB/access path: `../post_restore_verification.md` (with `./backup_and_restore_cli.md` for verify/restore procedure).
 - If unresolved after playbook completion, escalate as production incident.
