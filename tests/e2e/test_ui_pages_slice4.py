@@ -70,6 +70,10 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("<h4>Recent recovery audit entries</h4>", r.text)
             self.assertIn('id="recovery-action-modal"', r.text)
             self.assertIn("Strong confirm required for cancel_job.", r.text)
+            self.assertIn("function syncExecuteEnabled()", r.text)
+            self.assertIn("executeBtn.disabled = !(allowed && state.confirm && (!risky || state.second_confirm));", r.text)
+            self.assertIn("confirmInput?.addEventListener('change', syncExecuteEnabled);", r.text)
+            self.assertIn("strongInput?.addEventListener('input', syncExecuteEnabled);", r.text)
 
             details = client.get(f"/v1/ops/recovery/jobs/{seeded['failed']}", headers=h)
             self.assertEqual(details.status_code, 200)
