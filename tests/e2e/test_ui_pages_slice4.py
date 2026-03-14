@@ -75,6 +75,11 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("executeBtn.disabled = !(allowed && state.confirm && (!risky || state.second_confirm));", r.text)
             self.assertIn("confirmInput?.addEventListener('change', syncExecuteEnabled);", r.text)
             self.assertIn("strongInput?.addEventListener('change', syncExecuteEnabled);", r.text)
+            self.assertIn("const tokenId = `stage-token-${jobId}-${action}`;", r.text)
+            self.assertIn("<h4>Failure / stale / stuck details</h4>", r.text)
+            self.assertIn("<h4>Recent recovery audit entries</h4>", r.text)
+            self.assertIn("${detailList('Worker role', worker.worker_role)}", r.text)
+            self.assertIn("<pre>${JSON.stringify(audits, null, 2)}</pre>", r.text)
 
             details = client.get(f"/v1/ops/recovery/jobs/{seeded['failed']}", headers=h)
             self.assertEqual(details.status_code, 200)
