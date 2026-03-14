@@ -636,6 +636,35 @@ class PipelineReadinessCheck:
             return True
         return raw.strip().lower() not in {"0", "false", "no", "off"}
 
+    @staticmethod
+    def _planner_structures_ready(*, db_path: str) -> tuple[bool, dict[str, Any]]:
+        expected_columns = {"id", "channel_slug", "content_type", "status", "created_at", "updated_at"}
+        details: dict[str, Any] = {
+            "planner_table": "planned_releases",
+            "planner_required_columns": sorted(expected_columns),
+            "planner_table_exists": False,
+            "planner_missing_columns": sorted(expected_columns),
+        }
+        try:
+            with sqlite3.connect(db_path, timeout=2) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+                    ("planned_releases",),
+                ).fetchone()
+                if not row:
+                    return False, details
+                details["planner_table_exists"] = True
+
+                rows = conn.execute("PRAGMA table_info(planned_releases)").fetchall()
+                actual_columns = {str(raw[1]) for raw in rows if len(raw) > 1}
+        except sqlite3.Error as exc:
+            details["planner_schema_error"] = str(exc)
+            return False, details
+
+        missing = sorted(expected_columns - actual_columns)
+        details["planner_missing_columns"] = missing
+        return not missing, details
+
     def run(self, context: SmokeContext) -> CheckResult:
         prior = {result.check_id: result for result in context.prior_results}
         resolved_roles = _resolved_runtime_roles(context)
@@ -656,9 +685,10 @@ class PipelineReadinessCheck:
 
         planner_enabled = self._planner_enabled()
         planner_structures_ready = True
+        planner_details: dict[str, Any] = {}
         if planner_enabled:
-            quick_check_result = (db_result.details.get("quick_check_result") if db_result else "") or ""
-            planner_structures_ready = db_ready and quick_check_result.lower() == "ok"
+            db_path = (db_result.details.get("db_path") if db_result else None) or str(context.env.db_path)
+            planner_structures_ready, planner_details = self._planner_structures_ready(db_path=db_path)
 
         blockers: list[str] = []
         if not db_ready:
@@ -698,6 +728,7 @@ class PipelineReadinessCheck:
                 "integration_blockers": unique_blockers,
                 "planner_structures_ready": planner_structures_ready,
                 "api_ready": api_ready,
+                **planner_details,
             },
         )
 
