@@ -7,6 +7,7 @@ from services.ops_retention.artifact_policy import (
 )
 from services.ops_retention.config import OpsRetentionConfig, RetentionWindows, load_ops_retention_config
 from services.ops_retention.log_policy import CANONICAL_LOG_POLICIES, LogClass, LogRetentionPolicy, LogStorageTier
+from services.ops_retention.runner import RetentionOutcome, execute_retention
 
 __all__ = [
     "ArtifactCategory",
@@ -21,4 +22,6 @@ __all__ = [
     "LogClass",
     "LogRetentionPolicy",
     "LogStorageTier",
+    "RetentionOutcome",
+    "execute_retention",
 ]

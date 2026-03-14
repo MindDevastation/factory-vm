@@ -11,10 +11,11 @@ from services.common.env import Env
 @dataclass(frozen=True)
 class RetentionWindows:
     preview_hours: int = 24
-    export_days: int = 14
+    export_days: int = 7
     transient_report_days: int = 7
-    terminal_workspace_hours: int = 12
-    failed_workspace_days: int = 3
+    terminal_workspace_hours: int = 72
+    failed_workspace_days: int = 7
+    stale_scratch_hours: int = 24
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,9 @@ def load_retention_windows() -> RetentionWindows:
         ),
         failed_workspace_days=int(
             os.environ.get("FACTORY_RETENTION_FAILED_WORKSPACE_DAYS", str(defaults.failed_workspace_days))
+        ),
+        stale_scratch_hours=int(
+            os.environ.get("FACTORY_RETENTION_STALE_SCRATCH_HOURS", str(defaults.stale_scratch_hours))
         ),
     )
 
