@@ -54,6 +54,8 @@ class RecoveryClassifier:
         ).fetchall()
         out: list[dict[str, Any]] = []
         for row in rows:
+            if self._is_placeholder_legacy_row(row):
+                continue
             details = self._safe_json(row.get("details_json"))
             out.append(
                 {
@@ -74,6 +76,20 @@ class RecoveryClassifier:
                 }
             )
         return out
+
+    @staticmethod
+    def _is_placeholder_legacy_row(row: dict[str, Any]) -> bool:
+        """Hide legacy-write placeholders from read-only recovery detail responses.
+
+        P0-S1 read-only responses should avoid implying scaffold-native audit semantics
+        when rows were inserted through the legacy write contract and scaffold defaults.
+        """
+        action_name = str(row.get("action_name") or "").strip()
+        requested_at = str(row.get("requested_at") or "").strip()
+        result_status = str(row.get("result_status") or "").strip().lower()
+        if action_name or requested_at:
+            return False
+        return result_status == "legacy"
 
     def _has_scaffold_audit_schema(self) -> bool:
         row = self._conn.execute(
