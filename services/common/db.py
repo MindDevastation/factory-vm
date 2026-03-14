@@ -602,7 +602,7 @@ def _ensure_track_analyzer_schema_tables(conn: sqlite3.Connection) -> None:
 
 def _ensure_recovery_action_audit_schema(conn: sqlite3.Connection) -> None:
     table = "recovery_action_audit"
-    expected = {
+    scaffold_expected = {
         "id",
         "job_id",
         "action_name",
@@ -618,7 +618,34 @@ def _ensure_recovery_action_audit_schema(conn: sqlite3.Connection) -> None:
         "state_after",
         "details_json",
     }
-    if _table_exists(conn, table) and not expected.issubset(_table_columns(conn, table)):
+    legacy_write_columns = {
+        "action",
+        "phase",
+        "request_payload_json",
+        "result_payload_json",
+        "ok",
+        "error_code",
+        "created_at",
+    }
+
+    if _table_exists(conn, table):
+        cols = _table_columns(conn, table)
+        if not scaffold_expected.issubset(cols):
+            # P0-S1 read-only slice must not rewrite/rename legacy audit storage at runtime.
+            return
+        missing_legacy_cols = legacy_write_columns - cols
+        for col, ddl in (
+            ("action", "TEXT"),
+            ("phase", "TEXT"),
+            ("request_payload_json", "TEXT"),
+            ("result_payload_json", "TEXT"),
+            ("ok", "INTEGER"),
+            ("error_code", "TEXT"),
+            ("created_at", "REAL"),
+        ):
+            if col in missing_legacy_cols:
+                with suppress(Exception):
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl};")
         # P0-S1 read-only slice must not rewrite/rename legacy audit storage at runtime.
         return
 
@@ -627,18 +654,25 @@ def _ensure_recovery_action_audit_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS recovery_action_audit (
             id INTEGER PRIMARY KEY,
             job_id INTEGER NOT NULL,
-            action_name TEXT NOT NULL,
-            risk_level TEXT NOT NULL,
+            action_name TEXT NOT NULL DEFAULT '',
+            risk_level TEXT NOT NULL DEFAULT 'unknown',
             requested_by TEXT,
-            requested_at TEXT NOT NULL,
+            requested_at TEXT NOT NULL DEFAULT '',
             preview_allowed INTEGER,
             execute_attempted INTEGER NOT NULL DEFAULT 1,
-            result_status TEXT NOT NULL,
+            result_status TEXT NOT NULL DEFAULT 'legacy',
             result_code TEXT,
             message TEXT,
             state_before TEXT,
             state_after TEXT,
             details_json TEXT,
+            action TEXT,
+            phase TEXT,
+            request_payload_json TEXT,
+            result_payload_json TEXT,
+            ok INTEGER,
+            error_code TEXT,
+            created_at REAL,
             FOREIGN KEY(job_id) REFERENCES jobs(id)
         );
 
