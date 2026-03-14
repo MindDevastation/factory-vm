@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import secrets
+import sqlite3
 import subprocess
 import sys
 import time
@@ -2449,6 +2450,21 @@ class RecoveryActionExecutePayload(BaseModel):
     second_confirm: bool = False
 
 
+def _recovery_requested_by(request: Request) -> str | None:
+    auth = request.headers.get("Authorization") or ""
+    if not auth.startswith("Basic "):
+        return None
+    try:
+        import base64
+
+        raw = base64.b64decode(auth.split(" ", 1)[1]).decode("utf-8")
+        user, _ = raw.split(":", 1)
+        user = user.strip()
+        return user or None
+    except Exception:
+        return None
+
+
 class UiJobsBulkJsonPayload(BaseModel):
     mode: str
     items: list[dict[str, Any]]
@@ -2793,7 +2809,11 @@ def api_ops_recovery_jobs(
                 job_lock_ttl_sec=int(env.job_lock_ttl_sec),
             ),
         )
-        all_items = classifier.list_items(limit=1000)
+        try:
+            all_items = classifier.list_items(limit=1000)
+        except sqlite3.OperationalError as exc:
+            logger.exception("recovery jobs listing unavailable due to DB schema/runtime mismatch: %s", exc)
+            all_items = []
     finally:
         conn.close()
 
@@ -2909,31 +2929,21 @@ def api_ops_recovery_job(job_id: int, _: bool = Depends(require_basic_auth(env))
 
 
 @app.post("/v1/ops/recovery/jobs/{job_id}/actions/{action}/preview")
-def api_ops_recovery_action_preview(job_id: int, action: str, _: bool = Depends(require_basic_auth(env))):
+def api_ops_recovery_action_preview(job_id: int, action: str, request: Request, _: bool = Depends(require_basic_auth(env))):
     if action not in CANONICAL_ACTIONS:
-        raise HTTPException(status_code=404, detail="Unknown recovery action")
+        raise HTTPException(status_code=404, detail={"code": "ORC_ACTION_NOT_SUPPORTED", "message": "Unknown recovery action"})
 
     conn = dbm.connect(env)
     try:
         job = dbm.get_job(conn, job_id)
         if not job:
-            raise HTTPException(404, "job not found")
+            raise HTTPException(404, {"code": "ORC_JOB_NOT_FOUND", "message": "job not found"})
         runtime = RecoveryRuntime(
             retry_backoff_sec=int(env.retry_backoff_sec),
             max_render_attempts=int(env.max_render_attempts),
             job_lock_ttl_sec=int(env.job_lock_ttl_sec),
         )
         preview = recovery_preview_action(conn, job=job, action=action, runtime=runtime)
-        insert_recovery_audit(
-            conn,
-            job_id=job_id,
-            action=action,
-            phase="preview",
-            requested_by=env.basic_user or None,
-            request_payload={},
-            result_payload=preview,
-            ok=True,
-        )
     finally:
         conn.close()
 
@@ -2945,54 +2955,134 @@ def api_ops_recovery_action_execute(
     job_id: int,
     action: str,
     payload: RecoveryActionExecutePayload,
+    request: Request,
     _: bool = Depends(require_basic_auth(env)),
 ):
     if action not in CANONICAL_ACTIONS:
-        raise HTTPException(status_code=404, detail="Unknown recovery action")
+        raise HTTPException(status_code=404, detail={"code": "ORC_ACTION_NOT_SUPPORTED", "message": "Unknown recovery action"})
     if not payload.confirm:
-        raise HTTPException(status_code=409, detail="confirmation is required")
+        raise HTTPException(status_code=409, detail={"code": "ORC_CONFIRM_REQUIRED", "message": "confirmation is required"})
     if action in {"cancel_job", "force_cleanup_artifacts", "reenqueue_allowed_stage"} and not payload.second_confirm:
-        raise HTTPException(status_code=409, detail="second confirmation is required for risky actions")
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "ORC_CONFIRM_REQUIRED", "message": "second confirmation is required for risky actions"},
+        )
 
     conn = dbm.connect(env)
     try:
         job = dbm.get_job(conn, job_id)
         if not job:
-            raise HTTPException(404, "job not found")
+            raise HTTPException(404, {"code": "ORC_JOB_NOT_FOUND", "message": "job not found"})
 
         runtime = RecoveryRuntime(
             retry_backoff_sec=int(env.retry_backoff_sec),
             max_render_attempts=int(env.max_render_attempts),
             job_lock_ttl_sec=int(env.job_lock_ttl_sec),
         )
+        state_before = str(job.get("state") or "")
+        requested_by = _recovery_requested_by(request)
 
         try:
+            preview = recovery_preview_action(conn, job=job, action=action, runtime=runtime)
+            if not preview.get("allowed"):
+                audit_id = insert_recovery_audit(
+                    conn,
+                    job_id=job_id,
+                    action=action,
+                    phase="execute",
+                    requested_by=requested_by,
+                    request_payload=payload.model_dump(),
+                    result_payload={
+                        "result": "blocked",
+                        "message": "Action preconditions are not met",
+                        "state_before": state_before,
+                        "state_after": state_before,
+                    },
+                    ok=False,
+                    error_code="ORC_ACTION_NOT_ALLOWED",
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "ORC_ACTION_NOT_ALLOWED", "message": "Action preconditions are not met", "audit_id": audit_id},
+                )
+
             result = recovery_execute_action(conn, job=job, action=action, runtime=runtime)
-            insert_recovery_audit(
+            job_after = dbm.get_job(conn, job_id)
+            state_after = str((job_after or {}).get("state") or state_before)
+            result_payload = {
+                "result": "success",
+                "message": "Action executed successfully",
+                "state_before": state_before,
+                "state_after": state_after,
+                "details": result,
+            }
+            audit_id = insert_recovery_audit(
                 conn,
                 job_id=job_id,
                 action=action,
                 phase="execute",
-                requested_by=env.basic_user or None,
+                requested_by=requested_by,
                 request_payload=payload.model_dump(),
-                result_payload=result,
+                result_payload=result_payload,
                 ok=True,
             )
-            return {"job_id": job_id, "action": action, "result": result}
+            return {
+                "job_id": job_id,
+                "action": action,
+                "result": "success",
+                "message": "Action executed successfully",
+                "state_before": state_before,
+                "state_after": state_after,
+                "audit_id": audit_id,
+                "details": result,
+            }
         except RecoveryActionError as exc:
-            result_payload = {"ok": False, "message": str(exc)}
-            insert_recovery_audit(
+            code = exc.code
+            status_code = exc.status_code
+            if code not in {"ORC_JOB_NOT_FOUND", "ORC_ACTION_NOT_SUPPORTED", "ORC_ACTION_NOT_ALLOWED"}:
+                code = "ORC_RECOVERY_PRIMITIVE_FAILED"
+                status_code = 409
+            result_payload = {
+                "result": "failure",
+                "message": str(exc),
+                "state_before": state_before,
+                "state_after": state_before,
+            }
+            audit_id = insert_recovery_audit(
                 conn,
                 job_id=job_id,
                 action=action,
                 phase="execute",
-                requested_by=env.basic_user or None,
+                requested_by=requested_by,
                 request_payload=payload.model_dump(),
                 result_payload=result_payload,
                 ok=False,
-                error_code=exc.code,
+                error_code=code,
             )
-            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+            raise HTTPException(status_code=status_code, detail={"code": code, "message": str(exc), "audit_id": audit_id}) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            audit_id = insert_recovery_audit(
+                conn,
+                job_id=job_id,
+                action=action,
+                phase="execute",
+                requested_by=requested_by,
+                request_payload=payload.model_dump(),
+                result_payload={
+                    "result": "failure",
+                    "message": "Internal error during recovery execute",
+                    "state_before": state_before,
+                    "state_after": state_before,
+                },
+                ok=False,
+                error_code="ORC_INTERNAL_ERROR",
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "ORC_INTERNAL_ERROR", "message": "Internal error during recovery execute", "audit_id": audit_id},
+            ) from exc
     finally:
         conn.close()
 

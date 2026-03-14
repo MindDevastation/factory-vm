@@ -11,6 +11,8 @@ from services.ui_jobs import UiJobRetryNotFoundError, UiJobRetryStatusError, ret
 SAFE_ACTIONS = {"retry_failed", "reclaim_stale"}
 RISKY_ACTIONS = {"cancel_job", "force_cleanup_artifacts", "reenqueue_allowed_stage"}
 CANONICAL_ACTIONS = SAFE_ACTIONS | RISKY_ACTIONS
+TERMINAL_STATES = {"PUBLISHED", "CANCELLED", "CLEANED"}
+FAILED_STATES = {"FAILED", "RENDER_FAILED", "QA_FAILED", "UPLOAD_FAILED"}
 
 
 class RecoveryActionError(RuntimeError):
@@ -43,26 +45,72 @@ def preview_action(conn: sqlite3.Connection, *, job: dict[str, Any], action: str
 
     if action == "retry_failed":
         retry_child = conn.execute("SELECT id FROM jobs WHERE retry_of_job_id = ? LIMIT 1", (int(job["id"]),)).fetchone()
+        allowed = bool(state in FAILED_STATES and retry_child is None)
+        summary = "Create or return retry child job from failed source job"
+        warnings = [] if allowed else ["Retry is only available for failed jobs with no existing retry child."]
+        preconditions = [
+            {"name": "job_in_failed_state", "ok": state in FAILED_STATES, "detail": f"state={state}"},
+            {
+                "name": "no_existing_retry_child",
+                "ok": retry_child is None,
+                "detail": "retry child absent" if retry_child is None else f"retry child id={int(retry_child['id'])}",
+            },
+        ]
         return {
-            "allowed": bool(state == "FAILED" and retry_child is None),
+            "allowed": allowed,
+            "risk_level": "safe",
+            "summary": summary,
+            "warnings": warnings,
+            "preconditions": preconditions,
+            "reason": "ok" if allowed else "retry_not_allowed",
             "safe": True,
-            "reason": "ok" if state == "FAILED" and retry_child is None else "retry_not_allowed",
         }
 
     if action == "reclaim_stale":
         stale = _is_stale_locked_job(job, now_ts, runtime.job_lock_ttl_sec)
+        summary = "Reclaim stale lock and route job through retry/fallback path"
+        warnings = [] if stale else ["Job must be stale and lock-expired to reclaim."]
+        preconditions = [
+            {
+                "name": "stale_lock_detected",
+                "ok": stale,
+                "detail": (
+                    f"locked_at={job.get('locked_at')} locked_by={job.get('locked_by')} state={state}"
+                    if not stale
+                    else "lock exceeded ttl"
+                ),
+            }
+        ]
         return {
             "allowed": stale,
+            "risk_level": "safe",
+            "summary": summary,
+            "warnings": warnings,
+            "preconditions": preconditions,
             "safe": True,
             "reason": "ok" if stale else "job_not_stale_or_not_locked",
         }
 
     if action == "cancel_job":
-        terminal = state in {"PUBLISHED", "CANCELLED", "CLEANED"}
+        terminal = state in TERMINAL_STATES
+        allowed = not terminal
+        summary = "Cancel active job and clear lock/retry markers"
+        warnings = ["Risky action: cancellation is not reversible."]
+        preconditions = [
+            {
+                "name": "job_not_terminal",
+                "ok": not terminal,
+                "detail": f"state={state}",
+            }
+        ]
         return {
-            "allowed": not terminal,
+            "allowed": allowed,
+            "risk_level": "risky",
+            "summary": summary,
+            "warnings": warnings,
+            "preconditions": preconditions,
             "safe": False,
-            "reason": "ok" if not terminal else "cancel_not_allowed",
+            "reason": "ok" if allowed else "cancel_not_allowed",
             "warning": "Risky action: this permanently cancels current job execution.",
         }
 
@@ -74,7 +122,7 @@ def preview_action(conn: sqlite3.Connection, *, job: dict[str, Any], action: str
             "warning": "This action is not yet wired to a backend primitive.",
         }
 
-    raise RecoveryActionError("OPS_RECOVERY_ACTION_UNKNOWN", "Unknown recovery action", status_code=404)
+    raise RecoveryActionError("ORC_ACTION_NOT_SUPPORTED", "Unknown recovery action", status_code=404)
 
 
 def execute_action(
@@ -86,7 +134,7 @@ def execute_action(
 ) -> dict[str, Any]:
     preview = preview_action(conn, job=job, action=action, runtime=runtime)
     if not preview.get("allowed"):
-        raise RecoveryActionError("OPS_RECOVERY_PRECONDITION_FAILED", "Action preconditions are not met", status_code=409)
+        raise RecoveryActionError("ORC_ACTION_NOT_ALLOWED", "Action preconditions are not met", status_code=409)
 
     job_id = int(job["id"])
 
@@ -94,9 +142,9 @@ def execute_action(
         try:
             result = retry_failed_ui_job(conn, source_job_id=job_id)
         except UiJobRetryNotFoundError as exc:
-            raise RecoveryActionError("OPS_RECOVERY_JOB_NOT_FOUND", str(exc), status_code=404) from exc
+            raise RecoveryActionError("ORC_JOB_NOT_FOUND", str(exc), status_code=404) from exc
         except UiJobRetryStatusError as exc:
-            raise RecoveryActionError("OPS_RECOVERY_PRECONDITION_FAILED", str(exc), status_code=409) from exc
+            raise RecoveryActionError("ORC_ACTION_NOT_ALLOWED", str(exc), status_code=409) from exc
         return {"ok": True, "retry_job_id": int(result.retry_job_id), "created": bool(result.created)}
 
     if action == "reclaim_stale":
@@ -127,7 +175,7 @@ def execute_action(
         dbm.cancel_job(conn, job_id, reason="cancelled by recovery console")
         return {"ok": True, "cancelled": True}
 
-    raise RecoveryActionError("OPS_RECOVERY_ACTION_UNAVAILABLE", "Action primitive is not available", status_code=409)
+    raise RecoveryActionError("ORC_ACTION_NOT_SUPPORTED", "Action primitive is not available", status_code=409)
 
 
 def insert_recovery_audit(
@@ -141,7 +189,7 @@ def insert_recovery_audit(
     result_payload: dict[str, Any],
     ok: bool,
     error_code: str | None = None,
-) -> None:
+) -> int | None:
     cols = {
         str(row.get("name"))
         for row in conn.execute("PRAGMA table_info(recovery_action_audit)").fetchall()
@@ -160,9 +208,9 @@ def insert_recovery_audit(
     }
     if not legacy_write_cols.issubset(cols):
         # Read-only slice: migration scaffold may be present without execute/preview write wiring yet.
-        return
+        return None
 
-    conn.execute(
+    cursor = conn.execute(
         """
         INSERT INTO recovery_action_audit(
             job_id, action, phase, requested_by, request_payload_json, result_payload_json, ok, error_code, created_at
@@ -180,3 +228,4 @@ def insert_recovery_audit(
             dbm.now_ts(),
         ),
     )
+    return int(cursor.lastrowid)

@@ -461,6 +461,11 @@ class TestApiMoreEndpoints(unittest.TestCase):
                     json={"confirm": True},
                 )
             self.assertEqual(exec_retry.status_code, 200)
+            payload = exec_retry.json()
+            self.assertEqual(payload["result"], "success")
+            self.assertIn("audit_id", payload)
+            self.assertEqual(payload["state_before"], "FAILED")
+            self.assertIn("state_after", payload)
 
             conn = dbm.connect(env)
             try:
@@ -539,6 +544,8 @@ class TestApiMoreEndpoints(unittest.TestCase):
             )
             self.assertEqual(preview_retry.status_code, 200)
             self.assertEqual(preview_retry.json()["preview"]["allowed"], True)
+            self.assertEqual(preview_retry.json()["preview"]["risk_level"], "safe")
+            self.assertIn("preconditions", preview_retry.json()["preview"])
 
             with mock.patch("services.ops.recovery.retry_failed_ui_job") as retry_mock:
                 retry_mock.return_value = type("RetryResult", (), {"retry_job_id": 999, "created": True})()
@@ -548,7 +555,8 @@ class TestApiMoreEndpoints(unittest.TestCase):
                     json={"confirm": True},
                 )
             self.assertEqual(exec_retry.status_code, 200)
-            self.assertIn("retry_job_id", exec_retry.json()["result"])
+            self.assertEqual(exec_retry.json()["result"], "success")
+            self.assertIn("retry_job_id", exec_retry.json()["details"])
 
             preview_reclaim = client.post(
                 f"/v1/ops/recovery/jobs/{stale_job_id}/actions/reclaim_stale/preview",
@@ -556,6 +564,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
             )
             self.assertEqual(preview_reclaim.status_code, 200)
             self.assertEqual(preview_reclaim.json()["preview"]["allowed"], True)
+            self.assertEqual(preview_reclaim.json()["preview"]["risk_level"], "safe")
 
             exec_reclaim = client.post(
                 f"/v1/ops/recovery/jobs/{stale_job_id}/actions/reclaim_stale/execute",
@@ -563,7 +572,8 @@ class TestApiMoreEndpoints(unittest.TestCase):
                 json={"confirm": True},
             )
             self.assertEqual(exec_reclaim.status_code, 200)
-            self.assertEqual(exec_reclaim.json()["result"]["reclaimed"], True)
+            self.assertEqual(exec_reclaim.json()["result"], "success")
+            self.assertEqual(exec_reclaim.json()["details"]["reclaimed"], True)
 
             cancel_missing_confirm = client.post(
                 f"/v1/ops/recovery/jobs/{stale_job_id}/actions/cancel_job/execute",
@@ -571,6 +581,7 @@ class TestApiMoreEndpoints(unittest.TestCase):
                 json={"confirm": True},
             )
             self.assertEqual(cancel_missing_confirm.status_code, 409)
+            self.assertEqual(cancel_missing_confirm.json()["detail"]["code"], "ORC_CONFIRM_REQUIRED")
 
             cancel_ok = client.post(
                 f"/v1/ops/recovery/jobs/{stale_job_id}/actions/cancel_job/execute",
@@ -578,17 +589,51 @@ class TestApiMoreEndpoints(unittest.TestCase):
                 json={"confirm": True, "second_confirm": True},
             )
             self.assertEqual(cancel_ok.status_code, 200)
-            self.assertEqual(cancel_ok.json()["result"]["cancelled"], True)
+            self.assertEqual(cancel_ok.json()["result"], "success")
+            self.assertEqual(cancel_ok.json()["details"]["cancelled"], True)
+
+            invalid_action = client.post(
+                f"/v1/ops/recovery/jobs/{failed_job_id}/actions/not_a_real_action/preview",
+                headers=h,
+            )
+            self.assertEqual(invalid_action.status_code, 404)
+            self.assertEqual(invalid_action.json()["detail"]["code"], "ORC_ACTION_NOT_SUPPORTED")
+
+            blocked_execute = client.post(
+                f"/v1/ops/recovery/jobs/{stale_job_id}/actions/retry_failed/execute",
+                headers=h,
+                json={"confirm": True},
+            )
+            self.assertEqual(blocked_execute.status_code, 409)
+            self.assertEqual(blocked_execute.json()["detail"]["code"], "ORC_ACTION_NOT_ALLOWED")
 
             conn = dbm.connect(env)
             try:
                 rows = conn.execute(
-                    "SELECT id FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
+                    "SELECT id, ok, error_code FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
                     (failed_job_id, stale_job_id),
                 ).fetchall()
             finally:
                 conn.close()
-            self.assertGreaterEqual(len(rows), 5)
+            self.assertGreaterEqual(len(rows), 4)
+            self.assertEqual(int(rows[-1]["ok"]), 0)
+            self.assertEqual(rows[-1]["error_code"], "ORC_ACTION_NOT_ALLOWED")
+
+    def test_ops_recovery_jobs_returns_json_when_schema_not_initialized(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get("/v1/ops/recovery/jobs?actionability=has_actions", headers=h)
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.headers.get("content-type"), "application/json")
+            payload = resp.json()
+            self.assertEqual(payload["items"], [])
+            self.assertEqual(payload["summary"]["total"], 0)
 
 
 if __name__ == "__main__":

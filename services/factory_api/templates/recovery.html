@@ -2,7 +2,7 @@
 {% block body %}
 <main id="recovery-page">
 <h1>Ops Recovery Console</h1>
-<p class="muted">Read-only recovery triage view. Actions are shown as preview only and are disabled in this slice.</p>
+<p class="muted">Recovery triage with preview/execute safeguards. Risky actions require stronger confirmation.</p>
 <p>
   <a href="{{ request.url_for('dashboard') }}">Dashboard</a>
 </p>
@@ -90,6 +90,14 @@
   <div id="recovery-details-content" class="details-content"></div>
 </dialog>
 
+<dialog id="recovery-action-modal">
+  <form method="dialog" class="details-head">
+    <h3 id="action-modal-title">Recovery action</h3>
+    <button type="submit">Close</button>
+  </form>
+  <div id="action-modal-content" class="details-content"></div>
+</dialog>
+
 <style>
   .summary-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
   .summary-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; background: #fafafa; }
@@ -106,9 +114,11 @@
   .action-preview button[disabled] { opacity:0.6; cursor:not-allowed; }
   .severity-row { background:#fff7ed; }
   #recovery-details-modal { width:min(960px, 95vw); border: 1px solid #d1d5db; border-radius:10px; padding: 12px; }
+  #recovery-action-modal { width:min(720px, 95vw); border: 1px solid #d1d5db; border-radius:10px; padding: 12px; }
   .details-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
   .details-content { max-height:70vh; overflow:auto; display:grid; gap:10px; }
   .details-panel { border:1px solid #e5e7eb; border-radius:8px; padding:10px; }
+  .danger-zone { border-color:#fecaca; background:#fef2f2; }
 </style>
 
 <script>
@@ -116,10 +126,15 @@
   const tbody = document.querySelector('#recovery-table tbody');
   const jobsUrl = {{ request.url_for('api_ops_recovery_jobs')|string|tojson }};
   const jobDetailsUrlTemplate = {{ request.url_for('api_ops_recovery_job', job_id=0)|string|tojson }};
+  const actionPreviewUrlTemplate = {{ request.url_for('api_ops_recovery_action_preview', job_id=0, action='__action__')|string|tojson }};
+  const actionExecuteUrlTemplate = {{ request.url_for('api_ops_recovery_action_execute', job_id=0, action='__action__')|string|tojson }};
   const note = document.getElementById('recovery-note');
   const appliedFiltersLabel = document.getElementById('recovery-applied-filters');
   const detailsModal = document.getElementById('recovery-details-modal');
   const detailsContent = document.getElementById('recovery-details-content');
+  const actionModal = document.getElementById('recovery-action-modal');
+  const actionModalTitle = document.getElementById('action-modal-title');
+  const actionModalContent = document.getElementById('action-modal-content');
   const categoryInput = document.getElementById('filter-category');
   const channelInput = document.getElementById('filter-channel');
   const stateInput = document.getElementById('filter-state');
@@ -182,7 +197,9 @@
       const reason = String(entry.reason || 'no reason');
       const allowed = !!entry.allowed;
       const risk = String(entry.risk_level || 'safe');
-      return `<div class="action-preview"><button type="button" disabled title="Read-only slice">${action}</button><span class="muted">${allowed ? 'available' : 'blocked'} · ${risk} · ${reason}</span></div>`;
+      const disabledAttr = allowed ? '' : 'disabled';
+      const title = allowed ? 'Preview action' : 'Blocked by preconditions';
+      return `<div class="action-preview"><button type="button" class="action-preview-btn" data-job-id="${entry.job_id || ''}" data-action="${action}" data-risk="${risk}" ${disabledAttr} title="${title}">${action}</button><span class="muted">${allowed ? 'available' : 'blocked'} · ${risk} · ${reason}</span></div>`;
     }).join('');
   }
 
@@ -205,7 +222,7 @@
         <td>${formatTs(item.updated_at)}</td>
         <td>${formatAge(item.progress_age_sec)}<div class="muted">${ctx.progress_text || '—'}</div></td>
         <td>${item.failure_summary || '<span class="muted">none</span>'}</td>
-        <td>${renderActions(item.available_actions)}</td>
+        <td>${renderActions((item.available_actions || []).map((a) => ({...a, job_id: item.job_id})))}</td>
         <td>${worker.locked_by || '—'}<div class="muted">heartbeat: ${worker.heartbeat_present ? 'present' : 'missing'}</div></td>
         <td><button type="button" class="details-btn" data-job-id="${item.job_id}">Open</button></td>
       </tr>`;
@@ -213,6 +230,76 @@
 
     Array.from(document.querySelectorAll('.details-btn')).forEach((btn) => {
       btn.addEventListener('click', () => openDetails(Number(btn.getAttribute('data-job-id'))));
+    });
+    Array.from(document.querySelectorAll('.action-preview-btn')).forEach((btn) => {
+      btn.addEventListener('click', () => openActionModal(Number(btn.getAttribute('data-job-id')), String(btn.getAttribute('data-action') || '')));
+    });
+  }
+
+  function actionUrl(template, jobId, action) {
+    return template.replace('/0/actions/__action__', `/${jobId}/actions/${encodeURIComponent(action)}`);
+  }
+
+  async function openActionModal(jobId, action) {
+    actionModalTitle.textContent = `Action preview · ${action} · job ${jobId}`;
+    actionModalContent.innerHTML = '<p class="muted">Loading preview…</p>';
+    if (typeof actionModal.showModal === 'function') actionModal.showModal(); else actionModal.setAttribute('open', 'open');
+    const previewResp = await fetch(actionUrl(actionPreviewUrlTemplate, jobId, action), { method: 'POST', credentials: 'same-origin' });
+    const payload = await previewResp.json();
+    const preview = payload.preview || {};
+    const allowed = !!preview.allowed;
+    const risk = String(preview.risk_level || 'safe');
+    const warnings = Array.isArray(preview.warnings) ? preview.warnings : [];
+    const preconditions = Array.isArray(preview.preconditions) ? preview.preconditions : [];
+    const risky = risk === 'risky' || action === 'cancel_job';
+    const confirmId = `confirm-${jobId}-${action}`;
+    const strongId = `strong-${jobId}-${action}`;
+    actionModalContent.innerHTML = `
+      <section class="details-panel ${risky ? 'danger-zone' : ''}">
+        ${detailList('Allowed', allowed ? 'yes' : 'no')}
+        ${detailList('Risk', risk)}
+        ${detailList('Summary', String(preview.summary || '—'))}
+        <div><strong>Warnings:</strong> ${warnings.length ? warnings.join('; ') : 'none'}</div>
+        <div><strong>Preconditions:</strong><pre>${JSON.stringify(preconditions, null, 2)}</pre></div>
+        <label><input id="${confirmId}" type="checkbox"> I confirm execute.</label>
+        ${risky ? `<label><input id="${strongId}" type="text" placeholder="type CANCEL"><span class="muted"> Strong confirm required for cancel_job.</span></label>` : ''}
+        <div><button type="button" id="execute-action-btn" ${allowed ? '' : 'disabled'}>Execute action</button></div>
+      </section>`;
+    const executeBtn = document.getElementById('execute-action-btn');
+    const confirmInput = document.getElementById(confirmId);
+    const strongInput = risky ? document.getElementById(strongId) : null;
+
+    function computeConfirmState() {
+      const confirm = !!confirmInput?.checked;
+      const second_confirm = risky ? String(strongInput?.value || '').trim().toUpperCase() === 'CANCEL' : false;
+      return { confirm, second_confirm };
+    }
+
+    function syncExecuteEnabled() {
+      if (!executeBtn) return;
+      const state = computeConfirmState();
+      executeBtn.disabled = !(allowed && state.confirm && (!risky || state.second_confirm));
+    }
+
+    syncExecuteEnabled();
+    confirmInput?.addEventListener('change', syncExecuteEnabled);
+    strongInput?.addEventListener('input', syncExecuteEnabled);
+
+    executeBtn.addEventListener('click', async () => {
+      const { confirm, second_confirm } = computeConfirmState();
+      const executeResp = await fetch(actionUrl(actionExecuteUrlTemplate, jobId, action), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm, second_confirm }),
+      });
+      const executePayload = await executeResp.json();
+      if (!executeResp.ok) {
+        note.textContent = executePayload?.detail?.message || `Execute failed (${executeResp.status})`;
+        return;
+      }
+      note.textContent = executePayload.message || 'Action executed successfully.';
+      await loadJobs();
     });
   }
 
@@ -281,8 +368,8 @@
           <div><strong>Artifacts:</strong> ${(item.artifacts || []).map((a) => `${a.role || 'role?'}:${a.kind || 'kind?'}:${a.name || a.path || a.asset_id}`).join(', ') || '—'}</div>
         </section>
         <section class="details-panel">
-          <h4>Available actions (read-only preview)</h4>
-          ${renderActions(item.available_actions)}
+          <h4>Available actions</h4>
+          ${renderActions((item.available_actions || []).map((a) => ({...a, job_id: item.job_id})))}
         </section>
         <section class="details-panel">
           <h4>Recent recovery audit entries</h4>

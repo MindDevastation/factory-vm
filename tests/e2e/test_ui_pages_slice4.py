@@ -66,8 +66,14 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("item.channel_slug || '—'", r.text)
             self.assertIn("item.state || '—'", r.text)
             self.assertIn("No recovery jobs match current filters.", r.text)
-            self.assertIn("<h4>Available actions (read-only preview)</h4>", r.text)
+            self.assertIn("<h4>Available actions</h4>", r.text)
             self.assertIn("<h4>Recent recovery audit entries</h4>", r.text)
+            self.assertIn('id="recovery-action-modal"', r.text)
+            self.assertIn("Strong confirm required for cancel_job.", r.text)
+            self.assertIn("function syncExecuteEnabled()", r.text)
+            self.assertIn("executeBtn.disabled = !(allowed && state.confirm && (!risky || state.second_confirm));", r.text)
+            self.assertIn("confirmInput?.addEventListener('change', syncExecuteEnabled);", r.text)
+            self.assertIn("strongInput?.addEventListener('input', syncExecuteEnabled);", r.text)
 
             details = client.get(f"/v1/ops/recovery/jobs/{seeded['failed']}", headers=h)
             self.assertEqual(details.status_code, 200)
@@ -162,9 +168,33 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("registerAutoApplyInput(qInput)", page.text)
             self.assertIn("categoryInput.addEventListener('change', loadJobs)", page.text)
             self.assertIn("actionabilityInput.addEventListener('change', loadJobs)", page.text)
-            self.assertIn("Available actions (read-only preview)", page.text)
+            self.assertIn("Action preview ·", page.text)
             self.assertIn("Recent recovery audit entries", page.text)
-            self.assertIn('<button type="button" disabled title="Read-only slice">', page.text)
+
+    def test_recovery_ui_seeded_happy_path_jobs_load_contract_and_hooks(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_recovery_jobs(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            jobs_resp = client.get("/v1/ops/recovery/jobs?actionability=has_actions", headers=h)
+            self.assertEqual(jobs_resp.status_code, 200)
+            self.assertEqual(jobs_resp.headers.get("content-type"), "application/json")
+            payload = jobs_resp.json()
+            self.assertGreaterEqual(len(payload["items"]), 1)
+
+            page_resp = client.get("/ui/recovery", headers=h)
+            self.assertEqual(page_resp.status_code, 200)
+            self.assertIn('id="recovery-action-modal"', page_resp.text)
+            self.assertIn('class="action-preview-btn"', page_resp.text)
+            self.assertIn("Failed to load jobs.", page_resp.text)
+            self.assertIn("openActionModal", page_resp.text)
+            self.assertIn("I confirm execute.", page_resp.text)
 
     def test_playlist_builder_preview_state_guards(self) -> None:
         with temp_env() as (_, _):
@@ -303,7 +333,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="recovery-table"', r.text)
             self.assertIn('id="recovery-details-modal"', r.text)
             self.assertIn('loadJobs();', r.text)
-            self.assertIn('renderActions(item.available_actions)', r.text)
+            self.assertIn('renderActions((item.available_actions || []).map((a) => ({...a, job_id: item.job_id})))', r.text)
             self.assertNotIn("Not Found", r.text)
             self.assertNotIn('{"detail":"Not Found"}', r.text)
             self.assertIn("jobsUrl", r.text)
