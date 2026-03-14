@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Ops Recovery Console</h1>
+<p class="muted">Use API endpoints for preview → execute workflow. Mutations always require confirmation.</p>
+<ul>
+  <li><code>GET /v1/ops/recovery/jobs</code></li>
+  <li><code>GET /v1/ops/recovery/jobs/{job_id}</code></li>
+  <li><code>POST /v1/ops/recovery/jobs/{job_id}/actions/{action}/preview</code></li>
+  <li><code>POST /v1/ops/recovery/jobs/{job_id}/actions/{action}/execute</code></li>
+</ul>
+<p><a href="/">← Back to Dashboard</a></p>
+{% endblock %}

@@ -441,6 +441,93 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(second.status_code, 200)
             self.assertIn("already connected", second.text.lower())
 
+    def test_ops_recovery_preview_execute_and_audit(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            failed_job_id = insert_release_and_job(env, state="FAILED", stage="RENDER")
+            stale_job_id = insert_release_and_job(env, state="RENDERING", stage="RENDER")
+
+            conn = dbm.connect(env)
+            try:
+                old_lock = dbm.now_ts() - float(env.job_lock_ttl_sec) - 5.0
+                conn.execute(
+                    "UPDATE jobs SET locked_by = ?, locked_at = ?, updated_at = ? WHERE id = ?",
+                    ("worker:stale", old_lock, old_lock, stale_job_id),
+                )
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            list_resp = client.get("/v1/ops/recovery/jobs", headers=h)
+            self.assertEqual(list_resp.status_code, 200)
+            self.assertTrue(list_resp.json().get("jobs"))
+
+            detail_resp = client.get(f"/v1/ops/recovery/jobs/{failed_job_id}", headers=h)
+            self.assertEqual(detail_resp.status_code, 200)
+            self.assertEqual(int(detail_resp.json()["job"]["id"]), failed_job_id)
+
+            preview_retry = client.post(
+                f"/v1/ops/recovery/jobs/{failed_job_id}/actions/retry_failed/preview",
+                headers=h,
+            )
+            self.assertEqual(preview_retry.status_code, 200)
+            self.assertEqual(preview_retry.json()["preview"]["allowed"], True)
+
+            with mock.patch("services.ops.recovery.retry_failed_ui_job") as retry_mock:
+                retry_mock.return_value = type("RetryResult", (), {"retry_job_id": 999, "created": True})()
+                exec_retry = client.post(
+                    f"/v1/ops/recovery/jobs/{failed_job_id}/actions/retry_failed/execute",
+                    headers=h,
+                    json={"confirm": True},
+                )
+            self.assertEqual(exec_retry.status_code, 200)
+            self.assertIn("retry_job_id", exec_retry.json()["result"])
+
+            preview_reclaim = client.post(
+                f"/v1/ops/recovery/jobs/{stale_job_id}/actions/reclaim_stale/preview",
+                headers=h,
+            )
+            self.assertEqual(preview_reclaim.status_code, 200)
+            self.assertEqual(preview_reclaim.json()["preview"]["allowed"], True)
+
+            exec_reclaim = client.post(
+                f"/v1/ops/recovery/jobs/{stale_job_id}/actions/reclaim_stale/execute",
+                headers=h,
+                json={"confirm": True},
+            )
+            self.assertEqual(exec_reclaim.status_code, 200)
+            self.assertEqual(exec_reclaim.json()["result"]["reclaimed"], True)
+
+            cancel_missing_confirm = client.post(
+                f"/v1/ops/recovery/jobs/{stale_job_id}/actions/cancel_job/execute",
+                headers=h,
+                json={"confirm": True},
+            )
+            self.assertEqual(cancel_missing_confirm.status_code, 409)
+
+            cancel_ok = client.post(
+                f"/v1/ops/recovery/jobs/{stale_job_id}/actions/cancel_job/execute",
+                headers=h,
+                json={"confirm": True, "second_confirm": True},
+            )
+            self.assertEqual(cancel_ok.status_code, 200)
+            self.assertEqual(cancel_ok.json()["result"]["cancelled"], True)
+
+            conn = dbm.connect(env)
+            try:
+                rows = conn.execute(
+                    "SELECT action, phase, ok FROM recovery_action_audit WHERE job_id IN (?, ?) ORDER BY id ASC",
+                    (failed_job_id, stale_job_id),
+                ).fetchall()
+            finally:
+                conn.close()
+            self.assertGreaterEqual(len(rows), 5)
+
 
 if __name__ == "__main__":
     unittest.main()

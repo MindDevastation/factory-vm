@@ -540,6 +540,23 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_tcta_track_state
             ON track_custom_tag_assignments(track_pk, state);
+
+        CREATE TABLE IF NOT EXISTS recovery_action_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            requested_by TEXT,
+            request_payload_json TEXT NOT NULL,
+            result_payload_json TEXT NOT NULL,
+            ok INTEGER NOT NULL,
+            error_code TEXT,
+            created_at REAL NOT NULL,
+            FOREIGN KEY(job_id) REFERENCES jobs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_recovery_action_audit_job_created
+            ON recovery_action_audit(job_id, created_at DESC);
         """
     )
 
