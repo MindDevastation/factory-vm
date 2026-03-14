@@ -2640,43 +2640,44 @@ def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
         jobs = dbm.list_jobs(conn, limit=200)
     finally:
         conn.close()
-    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs})
+    return templates.TemplateResponse(request, "index.html", {"request": request, "jobs": jobs})
 
 
 @app.get("/ui/db-viewer", response_class=HTMLResponse)
 def ui_db_viewer_page(request: Request, _: bool = Depends(require_basic_auth(env))):
-    return templates.TemplateResponse("db_viewer.html", {"request": request})
+    return templates.TemplateResponse(request, "db_viewer.html", {"request": request})
 
 
 @app.get("/ui/planner", response_class=HTMLResponse)
 def ui_planner_page(request: Request, _: bool = Depends(require_basic_auth(env))):
-    return templates.TemplateResponse("planner_bulk_releases.html", {"request": request})
+    return templates.TemplateResponse(request, "planner_bulk_releases.html", {"request": request})
 
 
 @app.get("/ui/track-catalog/analysis-report", response_class=HTMLResponse)
 def ui_track_analysis_report_page(request: Request, _: bool = Depends(require_basic_auth(env))):
-    return templates.TemplateResponse("track_analysis_report.html", {"request": request})
+    return templates.TemplateResponse(request, "track_analysis_report.html", {"request": request})
 
 
 @app.get("/ui/recovery", response_class=HTMLResponse)
+@app.get("/ui/recovery/", response_class=HTMLResponse)
 def ui_recovery_page(request: Request, _: bool = Depends(require_basic_auth(env))):
-    return templates.TemplateResponse("recovery.html", {"request": request})
+    return templates.TemplateResponse(request, "recovery.html", {"request": request})
 
 
 @app.get("/ui/tags", response_class=HTMLResponse)
 @app.get("/ui/track-catalog/custom-tags", response_class=HTMLResponse)
 def ui_tags_page(request: Request, _: bool = Depends(require_basic_auth(env))):
-    return templates.TemplateResponse("tags.html", {"request": request})
+    return templates.TemplateResponse(request, "tags.html", {"request": request})
 
 
 @app.get("/ui/track-catalog/custom-tags/dashboard", response_class=HTMLResponse)
 def ui_tags_channel_dashboard_root_page(request: Request, _: bool = Depends(require_basic_auth(env))):
-    return templates.TemplateResponse("tags_channel_dashboard.html", {"request": request, "channel_slug": ""})
+    return templates.TemplateResponse(request, "tags_channel_dashboard.html", {"request": request, "channel_slug": ""})
 
 
 @app.get("/ui/track-catalog/custom-tags/dashboard/{channel_slug}", response_class=HTMLResponse)
 def ui_tags_channel_dashboard_page(channel_slug: str, request: Request, _: bool = Depends(require_basic_auth(env))):
-    return templates.TemplateResponse("tags_channel_dashboard.html", {"request": request, "channel_slug": channel_slug})
+    return templates.TemplateResponse(request, "tags_channel_dashboard.html", {"request": request, "channel_slug": channel_slug})
 
 
 def _all_channels(conn) -> list:
@@ -2719,7 +2720,7 @@ def job_page(job_id: int, request: Request, _: bool = Depends(require_basic_auth
         yt = conn.execute("SELECT * FROM youtube_uploads WHERE job_id = ?", (job_id,)).fetchone()
     finally:
         conn.close()
-    return templates.TemplateResponse("job.html", {"request": request, "job": job, "qa": qa, "yt": yt})
+    return templates.TemplateResponse(request, "job.html", {"request": request, "job": job, "qa": qa, "yt": yt})
 
 
 @app.get("/v1/jobs")
@@ -3669,6 +3670,7 @@ def ui_jobs_create_page(request: Request, _: bool = Depends(require_basic_auth(e
     finally:
         conn.close()
     return templates.TemplateResponse(
+        request,
         "ui_job_form.html",
         {
             "request": request,
@@ -3725,6 +3727,7 @@ async def ui_jobs_create_submit(
         channels = _all_channels(conn)
         if errors:
             return templates.TemplateResponse(
+                request,
                 "ui_job_form.html",
                 {
                     "request": request,
@@ -3741,6 +3744,7 @@ async def ui_jobs_create_submit(
         channel = dbm.get_channel_by_id(conn, payload.channel_id)
         if not channel:
             return templates.TemplateResponse(
+                request,
                 "ui_job_form.html",
                 {
                     "request": request,
@@ -3771,6 +3775,7 @@ async def ui_jobs_create_submit(
         conn.close()
 
     return templates.TemplateResponse(
+        request,
         "ui_job_form.html",
         {
             "request": request,
@@ -3797,6 +3802,7 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
     finally:
         conn.close()
     return templates.TemplateResponse(
+        request,
         "ui_job_form.html",
         {
             "request": request,
@@ -3857,6 +3863,7 @@ async def ui_jobs_edit_submit(
         errors = _ui_validate(payload)
         if errors:
             return templates.TemplateResponse(
+                request,
                 "ui_job_form.html",
                 {
                     "request": request,
@@ -3873,6 +3880,7 @@ async def ui_jobs_edit_submit(
         channel = dbm.get_channel_by_id(conn, payload.channel_id)
         if not channel:
             return templates.TemplateResponse(
+                request,
                 "ui_job_form.html",
                 {
                     "request": request,
@@ -3906,6 +3914,7 @@ async def ui_jobs_edit_submit(
         conn.close()
 
     return templates.TemplateResponse(
+        request,
         "ui_job_form.html",
         {
             "request": request,
