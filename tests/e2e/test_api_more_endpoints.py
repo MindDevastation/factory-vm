@@ -619,6 +619,22 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(int(rows[-1]["ok"]), 0)
             self.assertEqual(rows[-1]["error_code"], "ORC_ACTION_NOT_ALLOWED")
 
+    def test_ops_recovery_jobs_returns_json_when_schema_not_initialized(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get("/v1/ops/recovery/jobs?actionability=has_actions", headers=h)
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.headers.get("content-type"), "application/json")
+            payload = resp.json()
+            self.assertEqual(payload["items"], [])
+            self.assertEqual(payload["summary"]["total"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -265,9 +265,28 @@
         ${risky ? `<label><input id="${strongId}" type="text" placeholder="type CANCEL"><span class="muted"> Strong confirm required for cancel_job.</span></label>` : ''}
         <div><button type="button" id="execute-action-btn" ${allowed ? '' : 'disabled'}>Execute action</button></div>
       </section>`;
-    document.getElementById('execute-action-btn').addEventListener('click', async () => {
-      const confirm = !!document.getElementById(confirmId)?.checked;
-      const second_confirm = risky ? String(document.getElementById(strongId)?.value || '').trim().toUpperCase() === 'CANCEL' : false;
+    const executeBtn = document.getElementById('execute-action-btn');
+    const confirmInput = document.getElementById(confirmId);
+    const strongInput = risky ? document.getElementById(strongId) : null;
+
+    function computeConfirmState() {
+      const confirm = !!confirmInput?.checked;
+      const second_confirm = risky ? String(strongInput?.value || '').trim().toUpperCase() === 'CANCEL' : false;
+      return { confirm, second_confirm };
+    }
+
+    function syncExecuteEnabled() {
+      if (!executeBtn) return;
+      const state = computeConfirmState();
+      executeBtn.disabled = !(allowed && state.confirm && (!risky || state.second_confirm));
+    }
+
+    syncExecuteEnabled();
+    confirmInput?.addEventListener('change', syncExecuteEnabled);
+    strongInput?.addEventListener('input', syncExecuteEnabled);
+
+    executeBtn.addEventListener('click', async () => {
+      const { confirm, second_confirm } = computeConfirmState();
       const executeResp = await fetch(actionUrl(actionExecuteUrlTemplate, jobId, action), {
         method: 'POST',
         credentials: 'same-origin',

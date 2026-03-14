@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import secrets
+import sqlite3
 import subprocess
 import sys
 import time
@@ -2808,7 +2809,11 @@ def api_ops_recovery_jobs(
                 job_lock_ttl_sec=int(env.job_lock_ttl_sec),
             ),
         )
-        all_items = classifier.list_items(limit=1000)
+        try:
+            all_items = classifier.list_items(limit=1000)
+        except sqlite3.OperationalError as exc:
+            logger.exception("recovery jobs listing unavailable due to DB schema/runtime mismatch: %s", exc)
+            all_items = []
     finally:
         conn.close()
 
