@@ -23,6 +23,8 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.common.env import Env
+from services.common.disk_guard import emit_disk_pressure_event, evaluate_disk_pressure_for_env
+from services.common.disk_thresholds import DiskPressureLevel
 from services.common import db as dbm
 from services.common.pydeps import ensure_py_deps_on_sys_path
 from services.factory_api.security import require_basic_auth
@@ -1054,6 +1056,9 @@ def api_track_analysis_report_xlsx(
     channel_slug: str = "",
     _: bool = Depends(require_basic_auth(env)),
 ):
+    blocked = _disk_guard_write_heavy(operation="track_analysis_report_xlsx")
+    if blocked is not None:
+        return blocked
     conn = dbm.connect(env)
     try:
         try:
@@ -2330,6 +2335,9 @@ def api_track_jobs_discover(payload: DiscoverTrackJobPayload, _: bool = Depends(
 
 @app.post("/v1/track_jobs/analyze", status_code=202)
 def api_track_jobs_analyze(payload: AnalyzeTrackJobPayload, _: bool = Depends(require_basic_auth(env))):
+    blocked = _disk_guard_write_heavy(operation="track_jobs_analyze")
+    if blocked is not None:
+        return blocked
     channel_slug = payload.channel_slug.strip()
     conn = dbm.connect(env)
     try:
@@ -3057,7 +3065,18 @@ def _uij_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
+def _disk_guard_write_heavy(*, operation: str) -> JSONResponse | None:
+    snapshot = evaluate_disk_pressure_for_env(env=env)
+    emit_disk_pressure_event(logger=logger, snapshot=snapshot, stage=operation)
+    if snapshot.pressure is not DiskPressureLevel.CRITICAL:
+        return None
+    return _uij_error(503, "DISK_CRITICAL_WRITE_BLOCKED", "Operation blocked due to critical disk pressure")
+
+
 def _render_selected_item(job_id_text: str) -> dict[str, Any]:
+    blocked = _disk_guard_write_heavy(operation="ui_jobs_render_selected")
+    if blocked is not None:
+        return {"job_id": str(job_id_text), "error": {"code": "DISK_CRITICAL_WRITE_BLOCKED", "message": "Operation blocked due to critical disk pressure"}}
     try:
         job_id = int(job_id_text)
     except (TypeError, ValueError):
@@ -3162,6 +3181,9 @@ def api_ui_jobs_render_selected(payload: UiJobsRenderSelectedPayload, _: bool = 
 
 @app.post("/v1/ui/jobs/render_all")
 def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
+    blocked = _disk_guard_write_heavy(operation="ui_jobs_render_all")
+    if blocked is not None:
+        return blocked
     conn = dbm.connect(env)
     try:
         rows = conn.execute(
@@ -3245,6 +3267,9 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
 
 @app.post("/v1/ui/jobs/{job_id}/render")
 def api_ui_job_render(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    blocked = _disk_guard_write_heavy(operation="ui_jobs_render")
+    if blocked is not None:
+        return blocked
     conn = dbm.connect(env)
     try:
         job = dbm.get_job(conn, job_id)
@@ -3309,6 +3334,9 @@ def api_ui_job_render(job_id: int, _: bool = Depends(require_basic_auth(env))):
 
 @app.post("/v1/ui/jobs/{job_id}/retry")
 def api_ui_job_retry(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    blocked = _disk_guard_write_heavy(operation="ui_jobs_retry")
+    if blocked is not None:
+        return blocked
     logger.info("ui.jobs.retry.request", extra={"job_id": job_id, "stage": "request"})
     conn = dbm.connect(env)
     try:

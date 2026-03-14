@@ -7,6 +7,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from services.common import db as dbm
+from services.common.disk_thresholds import DiskPressureLevel
 from services.common.env import Env
 from services.track_analyzer import track_jobs_db
 from services.workers.track_jobs import track_jobs_cycle
@@ -208,6 +209,28 @@ class TestTrackJobsApiSlice1(unittest.TestCase):
             payload = job.get("payload") or {}
             self.assertIn("GDrive token missing or unreadable for channel 'darkwood-reverie'", str(payload.get("last_message") or ""))
             self.assertIn("Generate/Regenerate Drive Token in dashboard.", str(payload.get("last_message") or ""))
+
+    def test_analyze_returns_503_when_disk_pressure_is_critical(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_canon(env, slug="darkwood-reverie")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            mod.evaluate_disk_pressure_for_env = lambda **_kwargs: type("Snap", (), {"pressure": DiskPressureLevel.CRITICAL})()
+            mod.emit_disk_pressure_event = lambda **_kwargs: None
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            r = client.post(
+                "/v1/track_jobs/analyze",
+                headers=h,
+                json={"channel_slug": "darkwood-reverie", "scope": "pending", "max_tracks": 0, "force": False},
+            )
+            self.assertEqual(r.status_code, 503)
+            self.assertEqual(r.json()["error"]["code"], "DISK_CRITICAL_WRITE_BLOCKED")
+
 
 
 if __name__ == "__main__":
