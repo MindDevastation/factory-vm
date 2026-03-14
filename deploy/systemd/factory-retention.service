@@ -1,0 +1,9 @@
+[Unit]
+Description=Factory retention runner
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/factory-vm
+EnvironmentFile=/opt/factory-vm/deploy/env
+ExecStart=/opt/factory-vm/.venv/bin/python /opt/factory-vm/scripts/ops_retention.py run
