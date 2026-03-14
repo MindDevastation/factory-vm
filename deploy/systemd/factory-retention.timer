@@ -1,0 +1,11 @@
+[Unit]
+Description=Factory retention schedule
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=300
+Unit=factory-retention.service
+
+[Install]
+WantedBy=timers.target
