@@ -1,12 +1,338 @@
 {% extends "base.html" %}
 {% block body %}
 <h1>Ops Recovery Console</h1>
-<p class="muted">Use API endpoints for preview → execute workflow. Mutations always require confirmation.</p>
-<ul>
-  <li><code>GET /v1/ops/recovery/jobs</code></li>
-  <li><code>GET /v1/ops/recovery/jobs/{job_id}</code></li>
-  <li><code>POST /v1/ops/recovery/jobs/{job_id}/actions/{action}/preview</code></li>
-  <li><code>POST /v1/ops/recovery/jobs/{job_id}/actions/{action}/execute</code></li>
-</ul>
-<p><a href="/">← Back to Dashboard</a></p>
+<p class="muted">Read-only recovery triage view. Actions are shown as preview only and are disabled in this slice.</p>
+<p>
+  <a href="/">Dashboard</a>
+</p>
+
+<section id="recovery-summary" class="summary-grid">
+  <article class="summary-card"><h3>Failed</h3><p id="summary-failed" class="summary-value">—</p></article>
+  <article class="summary-card"><h3>Stale</h3><p id="summary-stale" class="summary-value">—</p></article>
+  <article class="summary-card"><h3>Stuck</h3><p id="summary-stuck" class="summary-value">—</p></article>
+  <article class="summary-card"><h3>Cleanup pending</h3><p id="summary-cleanup_pending" class="summary-value">—</p></article>
+  <article class="summary-card"><h3>Action required</h3><p id="summary-action_required" class="summary-value">—</p></article>
+</section>
+
+<section class="category-row" aria-label="Category shortcuts">
+  <button type="button" class="chip active" data-category="">All</button>
+  <button type="button" class="chip" data-category="failed">Failed</button>
+  <button type="button" class="chip" data-category="stale">Stale</button>
+  <button type="button" class="chip" data-category="stuck">Stuck</button>
+  <button type="button" class="chip" data-category="cleanup_pending">Cleanup Pending</button>
+</section>
+
+<section class="filters-grid">
+  <label>Category
+    <select id="filter-category">
+      <option value="">All</option>
+      <option value="failed">failed</option>
+      <option value="stale">stale</option>
+      <option value="stuck">stuck</option>
+      <option value="cleanup_pending">cleanup_pending</option>
+      <option value="retryable">retryable</option>
+      <option value="cancellable">cancellable</option>
+      <option value="blocked">blocked</option>
+    </select>
+  </label>
+  <label>Channel
+    <input id="filter-channel" type="text" placeholder="deep-space">
+  </label>
+  <label>State
+    <input id="filter-state" type="text" placeholder="FAILED">
+  </label>
+  <label>Actionability
+    <select id="filter-actionability">
+      <option value="has_actions" selected>has_actions (default)</option>
+      <option value="safe_only">safe_only</option>
+      <option value="risky_present">risky_present</option>
+      <option value="any">any</option>
+    </select>
+  </label>
+  <label>Job ID / q
+    <input id="filter-q" type="text" placeholder="job_id, reason, progress text">
+  </label>
+  <div class="filter-actions">
+    <button type="button" id="filters-apply">Apply</button>
+    <button type="button" id="filters-reset">Reset</button>
+  </div>
+</section>
+
+<p class="muted" id="recovery-note">Loading recovery items...</p>
+
+<table id="recovery-table">
+  <thead>
+    <tr>
+      <th>job_id</th>
+      <th>Category</th>
+      <th>State</th>
+      <th>Channel / Context</th>
+      <th>updated_at</th>
+      <th>Progress age / marker</th>
+      <th>Failure summary</th>
+      <th>Available actions</th>
+      <th>Worker/runtime hint</th>
+      <th>Details</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td colspan="10" class="muted">Loading...</td></tr>
+  </tbody>
+</table>
+
+<dialog id="recovery-details-modal">
+  <form method="dialog" class="details-head">
+    <h3>Recovery job details</h3>
+    <button type="submit">Close</button>
+  </form>
+  <div id="recovery-details-content" class="details-content"></div>
+</dialog>
+
+<style>
+  .summary-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .summary-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; background: #fafafa; }
+  .summary-value { font-size: 1.4rem; margin: 0; font-weight: 700; }
+  .category-row { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px 0; }
+  .chip { border:1px solid #d1d5db; background:#fff; border-radius:999px; padding:4px 10px; cursor:pointer; }
+  .chip.active { background:#111827; color:#fff; border-color:#111827; }
+  .filters-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:10px; margin-bottom: 10px; align-items: end; }
+  .filters-grid label { display:flex; flex-direction:column; gap:4px; font-size: 0.9rem; }
+  .filters-grid input, .filters-grid select { padding:6px; }
+  .filter-actions { display:flex; gap:8px; }
+  .category-pill { display:inline-block; padding:2px 8px; margin:1px 4px 1px 0; border-radius:999px; background:#ecfeff; border:1px solid #a5f3fc; font-size:0.78rem; }
+  .action-preview { margin:0 0 4px 0; display:flex; gap:6px; align-items:center; }
+  .action-preview button[disabled] { opacity:0.6; cursor:not-allowed; }
+  .severity-row { background:#fff7ed; }
+  #recovery-details-modal { width:min(960px, 95vw); border: 1px solid #d1d5db; border-radius:10px; padding: 12px; }
+  .details-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .details-content { max-height:70vh; overflow:auto; display:grid; gap:10px; }
+  .details-panel { border:1px solid #e5e7eb; border-radius:8px; padding:10px; }
+</style>
+
+<script>
+(function () {
+  const tbody = document.querySelector('#recovery-table tbody');
+  const note = document.getElementById('recovery-note');
+  const detailsModal = document.getElementById('recovery-details-modal');
+  const detailsContent = document.getElementById('recovery-details-content');
+  const categoryInput = document.getElementById('filter-category');
+  const channelInput = document.getElementById('filter-channel');
+  const stateInput = document.getElementById('filter-state');
+  const actionabilityInput = document.getElementById('filter-actionability');
+  const qInput = document.getElementById('filter-q');
+
+  function formatTs(value) {
+    if (!value) return '—';
+    try { return new Date(Number(value) * 1000).toLocaleString(); } catch (_) { return String(value); }
+  }
+
+  function formatAge(seconds) {
+    if (seconds === null || seconds === undefined) return '—';
+    const sec = Number(seconds);
+    if (!Number.isFinite(sec) || sec < 0) return '—';
+    const hours = Math.floor(sec / 3600);
+    const minutes = Math.floor((sec % 3600) / 60);
+    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+  }
+
+  function sortRecoveryItems(items) {
+    const severity = { failed: 0, stale: 1, stuck: 2, cleanup_pending: 3 };
+    return items.slice().sort((a, b) => {
+      const aCats = Array.isArray(a.categories) ? a.categories : [];
+      const bCats = Array.isArray(b.categories) ? b.categories : [];
+      const aBest = Math.min(...aCats.map((c) => severity[c]).filter((v) => v !== undefined), 9);
+      const bBest = Math.min(...bCats.map((c) => severity[c]).filter((v) => v !== undefined), 9);
+      if (aBest !== bBest) return aBest - bBest;
+
+      const aAct = String(a.actionability || 'any');
+      const bAct = String(b.actionability || 'any');
+      const actRank = { risky_present: 0, safe_only: 1, has_actions: 2, any: 3 };
+      const actDelta = (actRank[aAct] ?? 9) - (actRank[bAct] ?? 9);
+      if (actDelta !== 0) return actDelta;
+
+      const aAge = Number(a.progress_age_sec ?? -1);
+      const bAge = Number(b.progress_age_sec ?? -1);
+      return bAge - aAge;
+    });
+  }
+
+  function renderSummary(summary, items) {
+    const byCategory = summary && summary.by_category ? summary.by_category : {};
+    document.getElementById('summary-failed').textContent = String(byCategory.failed || 0);
+    document.getElementById('summary-stale').textContent = String(byCategory.stale || 0);
+    document.getElementById('summary-stuck').textContent = String(byCategory.stuck || 0);
+    document.getElementById('summary-cleanup_pending').textContent = String(byCategory.cleanup_pending || 0);
+    const actionRequired = (items || []).filter((item) => {
+      const actionability = String(item.actionability || 'any');
+      return actionability === 'safe_only' || actionability === 'risky_present' || actionability === 'has_actions';
+    }).length;
+    document.getElementById('summary-action_required').textContent = String(actionRequired);
+  }
+
+  function renderActions(actions) {
+    const list = Array.isArray(actions) ? actions : [];
+    if (!list.length) return '<span class="muted">none</span>';
+    return list.map((entry) => {
+      const action = String(entry.action || 'unknown');
+      const reason = String(entry.reason || 'no reason');
+      const allowed = !!entry.allowed;
+      const risk = String(entry.risk_level || 'safe');
+      return `<div class="action-preview"><button type="button" disabled title="Read-only slice">${action}</button><span class="muted">${allowed ? 'available' : 'blocked'} · ${risk} · ${reason}</span></div>`;
+    }).join('');
+  }
+
+  function renderRows(items) {
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="10" class="muted">No recovery jobs match current filters.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map((item) => {
+      const categories = Array.isArray(item.categories) ? item.categories : [];
+      const severe = categories.includes('failed') || categories.includes('stale');
+      const worker = item.worker_context || {};
+      const ctx = item.context || {};
+      return `
+      <tr class="${severe ? 'severity-row' : ''}">
+        <td><strong>${item.job_id}</strong></td>
+        <td>${categories.map((cat) => `<span class="category-pill">${cat}</span>`).join('') || '<span class="muted">—</span>'}</td>
+        <td><span class="pill">${item.state || '—'}</span><div class="muted">${item.actionability || 'any'}</div></td>
+        <td>${item.channel_slug || '—'}<div class="muted">stage=${ctx.stage || '—'} attempt=${ctx.attempt || 0}</div></td>
+        <td>${formatTs(item.updated_at)}</td>
+        <td>${formatAge(item.progress_age_sec)}<div class="muted">${ctx.progress_text || '—'}</div></td>
+        <td>${item.failure_summary || '<span class="muted">none</span>'}</td>
+        <td>${renderActions(item.available_actions)}</td>
+        <td>${worker.locked_by || '—'}<div class="muted">heartbeat: ${worker.heartbeat_present ? 'present' : 'missing'}</div></td>
+        <td><button type="button" class="details-btn" data-job-id="${item.job_id}">Open</button></td>
+      </tr>`;
+    }).join('');
+
+    Array.from(document.querySelectorAll('.details-btn')).forEach((btn) => {
+      btn.addEventListener('click', () => openDetails(Number(btn.getAttribute('data-job-id'))));
+    });
+  }
+
+  function detailList(label, value) {
+    return `<div><strong>${label}:</strong> ${value || '—'}</div>`;
+  }
+
+  async function openDetails(jobId) {
+    note.textContent = `Loading details for job ${jobId}...`;
+    try {
+      const response = await fetch(`/v1/ops/recovery/jobs/${jobId}`, { credentials: 'same-origin' });
+      const payload = await response.json();
+      if (!response.ok || !payload || !payload.item) throw new Error('Failed to load details.');
+      const item = payload.item;
+      const ctx = item.context || {};
+      const failure = item.failure_details || {};
+      const cleanup = item.cleanup || {};
+      const audits = Array.isArray(item.recent_audit_entries) ? item.recent_audit_entries : [];
+      const reasons = Array.isArray(item.category_reasons) ? item.category_reasons : [];
+      detailsContent.innerHTML = `
+        <section class="details-panel">
+          <h4>Status</h4>
+          ${detailList('Job', item.job_id)}
+          ${detailList('State', item.state)}
+          ${detailList('Actionability', item.actionability)}
+          ${detailList('Categories', (item.categories || []).join(', '))}
+        </section>
+        <section class="details-panel">
+          <h4>Channel / Release / Job context</h4>
+          ${detailList('Channel', item.channel_slug)}
+          ${detailList('Stage', ctx.stage)}
+          ${detailList('Attempt', ctx.attempt)}
+          ${detailList('Attempt no', ctx.attempt_no)}
+          ${detailList('Retry child job', ctx.retry_child_job_id)}
+        </section>
+        <section class="details-panel">
+          <h4>Timestamps</h4>
+          ${detailList('Updated at', formatTs(item.updated_at))}
+          ${detailList('Last progress at', formatTs(item.last_progress_at))}
+          ${detailList('Progress age', formatAge(item.progress_age_sec))}
+        </section>
+        <section class="details-panel">
+          <h4>Failure / stale / stuck details</h4>
+          ${detailList('Failure summary', item.failure_summary)}
+          ${detailList('Error reason', failure.error_reason)}
+          ${detailList('Failure stage', failure.stage)}
+          ${detailList('Failure attempt', failure.attempt)}
+          ${detailList('Stale/stuck explanation', reasons.join('; '))}
+        </section>
+        <section class="details-panel">
+          <h4>Artifacts / cleanup hints</h4>
+          ${detailList('Cleanup pending', cleanup.cleanup_pending ? 'yes' : 'no')}
+          ${detailList('delete_mp4_at', formatTs(cleanup.delete_mp4_at))}
+          <div><strong>Artifacts:</strong> ${(item.artifacts || []).map((a) => `${a.role || 'role?'}:${a.kind || 'kind?'}:${a.name || a.path || a.asset_id}`).join(', ') || '—'}</div>
+        </section>
+        <section class="details-panel">
+          <h4>Available actions (read-only preview)</h4>
+          ${renderActions(item.available_actions)}
+        </section>
+        <section class="details-panel">
+          <h4>Recent recovery audit entries</h4>
+          <pre>${JSON.stringify(audits, null, 2)}</pre>
+        </section>`;
+      if (typeof detailsModal.showModal === 'function') {
+        detailsModal.showModal();
+      } else {
+        detailsModal.setAttribute('open', 'open');
+      }
+      note.textContent = `Loaded details for job ${jobId}.`;
+    } catch (error) {
+      note.textContent = (error && error.message) ? error.message : 'Failed to load job details.';
+    }
+  }
+
+  async function loadJobs() {
+    note.textContent = 'Loading recovery items...';
+    const params = new URLSearchParams();
+    if (categoryInput.value) params.set('category', categoryInput.value);
+    if (channelInput.value.trim()) params.set('channel_slug', channelInput.value.trim());
+    if (stateInput.value.trim()) params.set('state', stateInput.value.trim());
+    if (actionabilityInput.value) params.set('actionability', actionabilityInput.value);
+    if (qInput.value.trim()) params.set('q', qInput.value.trim());
+
+    try {
+      const response = await fetch(`/v1/ops/recovery/jobs?${params.toString()}`, { credentials: 'same-origin' });
+      const payload = await response.json();
+      if (!response.ok || !payload) throw new Error(`Failed to load recovery jobs (HTTP ${response.status}).`);
+      const sortedItems = sortRecoveryItems(Array.isArray(payload.items) ? payload.items : []);
+      renderSummary(payload.summary || {}, sortedItems);
+      renderRows(sortedItems);
+      note.textContent = `Loaded ${sortedItems.length} job(s)${payload.total ? ` of ${payload.total}` : ''}.`;
+    } catch (error) {
+      tbody.innerHTML = '<tr><td colspan="10" class="muted">Failed to load jobs.</td></tr>';
+      note.textContent = (error && error.message) ? error.message : 'Failed to load recovery jobs.';
+    }
+  }
+
+  document.getElementById('filters-apply').addEventListener('click', loadJobs);
+  document.getElementById('filters-reset').addEventListener('click', () => {
+    categoryInput.value = '';
+    channelInput.value = '';
+    stateInput.value = '';
+    actionabilityInput.value = 'has_actions';
+    qInput.value = '';
+    setActiveChip('');
+    loadJobs();
+  });
+
+  function setActiveChip(category) {
+    Array.from(document.querySelectorAll('.chip')).forEach((chip) => {
+      const active = chip.getAttribute('data-category') === category;
+      chip.classList.toggle('active', active);
+    });
+  }
+
+  Array.from(document.querySelectorAll('.chip')).forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const category = chip.getAttribute('data-category') || '';
+      categoryInput.value = category;
+      setActiveChip(category);
+      loadJobs();
+    });
+  });
+
+  loadJobs();
+})();
+</script>
 {% endblock %}
