@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import unittest
 
 from fastapi.testclient import TestClient
@@ -8,10 +9,163 @@ from fastapi.testclient import TestClient
 from services.common import db as dbm
 from services.common.env import Env
 
-from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
+from tests._helpers import basic_auth_header, insert_release_and_job, seed_minimal_db, temp_env
 
 
 class TestUiPagesSlice4(unittest.TestCase):
+    def _seed_recovery_jobs(self, env: Env) -> dict[str, int]:
+        failed_job = insert_release_and_job(env, state="FAILED", stage="RENDER", channel_slug="darkwood-reverie")
+        stale_job = insert_release_and_job(env, state="RENDERING", stage="RENDER", channel_slug="channel-b")
+        cleanup_pending_job = insert_release_and_job(env, state="PUBLISHED", stage="APPROVAL", channel_slug="channel-c")
+
+        conn = dbm.connect(env)
+        try:
+            now_ts = dbm.now_ts()
+            conn.execute(
+                "UPDATE jobs SET error_reason = ?, progress_updated_at = ?, progress_text = ? WHERE id = ?",
+                ("ffmpeg mux failed", now_ts - 180.0, "muxing output failed", failed_job),
+            )
+            conn.execute(
+                "UPDATE jobs SET locked_by = ?, locked_at = ?, progress_updated_at = ?, progress_text = ? WHERE id = ?",
+                (
+                    "worker-stale-1",
+                    now_ts - float(env.job_lock_ttl_sec) - 120.0,
+                    now_ts - 1200.0,
+                    "no render progress heartbeat",
+                    stale_job,
+                ),
+            )
+            conn.execute(
+                "UPDATE jobs SET delete_mp4_at = ?, progress_updated_at = ?, progress_text = ? WHERE id = ?",
+                (now_ts - 30.0, now_ts - 300.0, "published awaiting cleanup", cleanup_pending_job),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        return {"failed": failed_job, "stale": stale_job, "cleanup_pending": cleanup_pending_job}
+
+
+    def test_recovery_page_includes_rendered_filter_and_details_sections(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            seeded = self._seed_recovery_jobs(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            r = client.get("/ui/recovery", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn('id="recovery-applied-filters"', r.text)
+            self.assertIn('Applied filters: actionability=has_actions', r.text)
+            self.assertIn("function formatAppliedFilters(params)", r.text)
+            self.assertIn("Applied filters: ${entries.join(' · ')}", r.text)
+            self.assertIn("item.channel_slug || '—'", r.text)
+            self.assertIn("item.state || '—'", r.text)
+            self.assertIn("No recovery jobs match current filters.", r.text)
+            self.assertIn("<h4>Available actions (read-only preview)</h4>", r.text)
+            self.assertIn("<h4>Recent recovery audit entries</h4>", r.text)
+
+            details = client.get(f"/v1/ops/recovery/jobs/{seeded['failed']}", headers=h)
+            self.assertEqual(details.status_code, 200)
+            detail_item = details.json()["item"]
+            self.assertGreaterEqual(len(detail_item.get("available_actions", [])), 1)
+            self.assertIn("recent_audit_entries", detail_item)
+
+    def test_recovery_ui_seeded_data_proves_operator_triage_behaviors(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            seeded = self._seed_recovery_jobs(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            listing = client.get("/v1/ops/recovery/jobs?actionability=any", headers=h)
+            self.assertEqual(listing.status_code, 200)
+            payload = listing.json()
+            items = payload["items"]
+            by_id = {int(item["job_id"]): item for item in items}
+
+            self.assertIn(seeded["failed"], by_id)
+            self.assertIn("failed", by_id[seeded["failed"]]["categories"])
+            self.assertIn(seeded["stale"], by_id)
+            self.assertIn("stale", by_id[seeded["stale"]]["categories"])
+            self.assertIn(seeded["cleanup_pending"], by_id)
+            self.assertIn("cleanup_pending", by_id[seeded["cleanup_pending"]]["categories"])
+
+            self.assertGreaterEqual(payload["summary"]["by_category"].get("failed", 0), 1)
+            self.assertGreaterEqual(payload["summary"]["by_category"].get("stale", 0), 1)
+
+            for job_id in (seeded["failed"], seeded["stale"]):
+                actions = by_id[job_id]["available_actions"]
+                self.assertTrue(any(bool(action.get("allowed")) for action in actions))
+                for action in actions:
+                    self.assertIn("allowed", action)
+                    self.assertIn("risk_level", action)
+                    self.assertIn("reason", action)
+
+            failed_only = client.get("/v1/ops/recovery/jobs?category=failed&actionability=any", headers=h)
+            self.assertEqual(failed_only.status_code, 200)
+            failed_ids = {int(item["job_id"]) for item in failed_only.json()["items"]}
+            self.assertIn(seeded["failed"], failed_ids)
+            self.assertNotIn(seeded["stale"], failed_ids)
+
+            stale_only = client.get("/v1/ops/recovery/jobs?category=stale&actionability=any", headers=h)
+            self.assertEqual(stale_only.status_code, 200)
+            stale_ids = {int(item["job_id"]) for item in stale_only.json()["items"]}
+            self.assertIn(seeded["stale"], stale_ids)
+            self.assertNotIn(seeded["failed"], stale_ids)
+
+            state_only = client.get("/v1/ops/recovery/jobs?state=FAILED&actionability=any", headers=h)
+            self.assertEqual(state_only.status_code, 200)
+            state_ids = {int(item["job_id"]) for item in state_only.json()["items"]}
+            self.assertEqual(state_ids, {seeded["failed"]})
+
+            channel_only = client.get("/v1/ops/recovery/jobs?channel_slug=channel-b&actionability=any", headers=h)
+            self.assertEqual(channel_only.status_code, 200)
+            channel_ids = {int(item["job_id"]) for item in channel_only.json()["items"]}
+            self.assertEqual(channel_ids, {seeded["stale"]})
+
+            risky_present = client.get("/v1/ops/recovery/jobs?actionability=risky_present", headers=h)
+            self.assertEqual(risky_present.status_code, 200)
+            risky_ids = {int(item["job_id"]) for item in risky_present.json()["items"]}
+            self.assertIn(seeded["failed"], risky_ids)
+            self.assertIn(seeded["stale"], risky_ids)
+            self.assertNotIn(seeded["cleanup_pending"], risky_ids)
+
+            q_only = client.get("/v1/ops/recovery/jobs?q=muxing&actionability=any", headers=h)
+            self.assertEqual(q_only.status_code, 200)
+            q_ids = {int(item["job_id"]) for item in q_only.json()["items"]}
+            self.assertEqual(q_ids, {seeded["failed"]})
+
+            details = client.get(f"/v1/ops/recovery/jobs/{seeded['failed']}", headers=h)
+            self.assertEqual(details.status_code, 200)
+            detail_item = details.json()["item"]
+            self.assertEqual(int(detail_item["job_id"]), seeded["failed"])
+            self.assertIn("available_actions", detail_item)
+            self.assertIn("recent_audit_entries", detail_item)
+            self.assertIn("failure_details", detail_item)
+
+            page = client.get("/ui/recovery", headers=h)
+            self.assertEqual(page.status_code, 200)
+            self.assertIn("detailsModal.showModal()", page.text)
+            self.assertIn("Applied filters:", page.text)
+            self.assertIn("formatAppliedFilters(params)", page.text)
+            self.assertIn("registerAutoApplyInput(channelInput)", page.text)
+            self.assertIn("registerAutoApplyInput(stateInput)", page.text)
+            self.assertIn("registerAutoApplyInput(qInput)", page.text)
+            self.assertIn("categoryInput.addEventListener('change', loadJobs)", page.text)
+            self.assertIn("actionabilityInput.addEventListener('change', loadJobs)", page.text)
+            self.assertIn("Available actions (read-only preview)", page.text)
+            self.assertIn("Recent recovery audit entries", page.text)
+            self.assertIn('<button type="button" disabled title="Read-only slice">', page.text)
+
     def test_playlist_builder_preview_state_guards(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
@@ -126,10 +280,17 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('href="/ui/track-catalog/custom-tags"', r.text)
             self.assertIn('href="/ui/track-catalog/analysis-report"', r.text)
             self.assertIn('id="nav-recovery-link"', r.text)
-            self.assertIn('href="/ui/recovery"', r.text)
+            nav_tag_match = re.search(r'<a[^>]*id="nav-recovery-link"[^>]*>', r.text)
+            self.assertIsNotNone(nav_tag_match)
+            assert nav_tag_match is not None
+            href_match = re.search(r'href="([^"]+)"', nav_tag_match.group(0))
+            self.assertIsNotNone(href_match)
+            assert href_match is not None
+            recovery_href = href_match.group(1)
+            self.assertRegex(recovery_href, r'/ui/recovery/?$')
 
-
-            r = client.get("/ui/recovery", headers=h)
+            tested_recovery_path = re.sub(r'^https?://[^/]+', '', recovery_href)
+            r = client.get(tested_recovery_path, headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Ops Recovery Console", r.text)
             self.assertIn('id="recovery-page"', r.text)
@@ -144,8 +305,11 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('loadJobs();', r.text)
             self.assertIn('renderActions(item.available_actions)', r.text)
             self.assertNotIn("Not Found", r.text)
+            self.assertNotIn('{"detail":"Not Found"}', r.text)
+            self.assertIn("jobsUrl", r.text)
+            self.assertIn("jobDetailsUrlTemplate", r.text)
 
-            r = client.get("/ui/recovery/", headers=h)
+            r = client.get(tested_recovery_path + "/", headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Ops Recovery Console", r.text)
 
