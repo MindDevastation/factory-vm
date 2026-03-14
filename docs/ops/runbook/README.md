@@ -43,6 +43,14 @@ If another doc conflicts with this package, follow this runbook and update/depre
 - [`sop/preflight_environment.md`](./sop/preflight_environment.md)
 - [`sop/service_control_and_logs.md`](./sop/service_control_and_logs.md)
 - [`sop/backup_and_restore_cli.md`](./sop/backup_and_restore_cli.md)
+- [`sop/before_batch_run.md`](./sop/before_batch_run.md)
+- [`sop/after_restore.md`](./sop/after_restore.md)
+- [`sop/after_reboot.md`](./sop/after_reboot.md)
+- [`sop/after_deploy.md`](./sop/after_deploy.md)
+- [`sop/before_risky_maintenance.md`](./sop/before_risky_maintenance.md)
+- [`sop/when_smoke_fails.md`](./sop/when_smoke_fails.md)
+- [`sop/when_disk_warning_triggers.md`](./sop/when_disk_warning_triggers.md)
+- [`sop/when_failed_or_stale_jobs_accumulate.md`](./sop/when_failed_or_stale_jobs_accumulate.md)
 
 ## Incident playbooks
 
