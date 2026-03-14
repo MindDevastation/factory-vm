@@ -53,10 +53,12 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
 
             failed_job = insert_release_and_job(env, state="FAILED", stage="RENDER", channel_slug="darkwood-reverie")
             published_job = insert_release_and_job(env, state="PUBLISHED", stage="APPROVAL", channel_slug="channel-b")
+            stuck_job = insert_release_and_job(env, state="RENDERING", stage="RENDER", channel_slug="channel-c")
 
             conn = dbm.connect(env)
             try:
                 ts = dbm.now_ts()
+                stuck_age_sec = max(int(env.job_lock_ttl_sec) * 2, 1800) + 60
                 conn.execute(
                     "UPDATE jobs SET delete_mp4_at = ?, progress_updated_at = ?, error_reason = ? WHERE id = ?",
                     (ts - 3.0, ts - 600.0, "render crash", published_job),
@@ -64,6 +66,10 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
                 conn.execute(
                     "UPDATE jobs SET progress_updated_at = ?, error_reason = ? WHERE id = ?",
                     (ts - 10.0, "ffmpeg failed", failed_job),
+                )
+                conn.execute(
+                    "UPDATE jobs SET progress_updated_at = ?, progress_text = ?, locked_by = NULL, locked_at = NULL WHERE id = ?",
+                    (ts - float(stuck_age_sec), "render heartbeat stale", stuck_job),
                 )
             finally:
                 conn.close()
@@ -83,6 +89,21 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
             self.assertIn("available_actions", item)
             self.assertIn("category_reasons", item)
 
+            channel_alias_resp = client.get("/v1/ops/recovery/jobs?channel=darkwood-reverie&actionability=any", headers=h)
+            self.assertEqual(channel_alias_resp.status_code, 200)
+            channel_alias_payload = channel_alias_resp.json()
+            self.assertEqual(channel_alias_payload["total"], 1)
+            self.assertEqual(channel_alias_payload["items"][0]["job_id"], failed_job)
+
+            channel_precedence_resp = client.get(
+                "/v1/ops/recovery/jobs?channel_slug=darkwood-reverie&channel=channel-b&actionability=any",
+                headers=h,
+            )
+            self.assertEqual(channel_precedence_resp.status_code, 200)
+            channel_precedence_payload = channel_precedence_resp.json()
+            self.assertEqual(channel_precedence_payload["total"], 1)
+            self.assertEqual(channel_precedence_payload["items"][0]["job_id"], failed_job)
+
             detail = client.get(f"/v1/ops/recovery/jobs/{published_job}", headers=h)
             self.assertEqual(detail.status_code, 200)
             detail_item = detail.json()["item"]
@@ -98,6 +119,18 @@ class OpsRecoveryReadonlyApiTests(unittest.TestCase):
             self.assertTrue(isinstance(failed_item.get("allowed_stage_tokens"), list))
             self.assertTrue(failed_item["allowed_stage_tokens"])
             self.assertIn("worker_stale", failed_item["worker_context"])
+
+            stuck_listing = client.get("/v1/ops/recovery/jobs?category=stuck&actionability=any", headers=h)
+            self.assertEqual(stuck_listing.status_code, 200)
+            stuck_payload = stuck_listing.json()
+            self.assertEqual(stuck_payload["total"], 1)
+            self.assertGreaterEqual(stuck_payload["summary"]["by_category"].get("stuck", 0), 1)
+            self.assertEqual(stuck_payload["items"][0]["job_id"], stuck_job)
+            self.assertIn("stuck", stuck_payload["items"][0]["categories"])
+
+            stuck_detail = client.get(f"/v1/ops/recovery/jobs/{stuck_job}", headers=h)
+            self.assertEqual(stuck_detail.status_code, 200)
+            self.assertIn("stuck", stuck_detail.json()["item"]["categories"])
 
     def test_recovery_audit_migration_columns_exist(self) -> None:
         with temp_env() as (_, _env0):

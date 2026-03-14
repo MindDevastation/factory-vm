@@ -2790,6 +2790,7 @@ def api_job(job_id: int, _: bool = Depends(require_basic_auth(env))):
 @app.get("/v1/ops/recovery/jobs")
 def api_ops_recovery_jobs(
     category: Optional[str] = None,
+    channel: Optional[str] = None,
     channel_slug: Optional[str] = None,
     state: Optional[str] = None,
     actionability: str = "any",
@@ -2820,10 +2821,12 @@ def api_ops_recovery_jobs(
 
     query = str(q or "").strip().lower()
 
+    effective_channel = str(channel_slug or channel or "").strip()
+
     def _matches(item: dict[str, Any]) -> bool:
         if category and category not in set(item.get("categories") or []):
             return False
-        if channel_slug and str(item.get("channel_slug") or "") != channel_slug:
+        if effective_channel and str(item.get("channel_slug") or "") != effective_channel:
             return False
         if state and str(item.get("state") or "") != state:
             return False
