@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import re
 import unittest
 
 from fastapi.testclient import TestClient
@@ -126,10 +127,17 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('href="/ui/track-catalog/custom-tags"', r.text)
             self.assertIn('href="/ui/track-catalog/analysis-report"', r.text)
             self.assertIn('id="nav-recovery-link"', r.text)
-            self.assertIn('href="/ui/recovery"', r.text)
+            nav_tag_match = re.search(r'<a[^>]*id="nav-recovery-link"[^>]*>', r.text)
+            self.assertIsNotNone(nav_tag_match)
+            assert nav_tag_match is not None
+            href_match = re.search(r'href="([^"]+)"', nav_tag_match.group(0))
+            self.assertIsNotNone(href_match)
+            assert href_match is not None
+            recovery_href = href_match.group(1)
+            self.assertRegex(recovery_href, r'/ui/recovery/?$')
 
-
-            r = client.get("/ui/recovery", headers=h)
+            tested_recovery_path = re.sub(r'^https?://[^/]+', '', recovery_href)
+            r = client.get(tested_recovery_path, headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Ops Recovery Console", r.text)
             self.assertIn('id="recovery-page"', r.text)
@@ -144,8 +152,11 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('loadJobs();', r.text)
             self.assertIn('renderActions(item.available_actions)', r.text)
             self.assertNotIn("Not Found", r.text)
+            self.assertNotIn('{"detail":"Not Found"}', r.text)
+            self.assertIn("jobsUrl", r.text)
+            self.assertIn("jobDetailsUrlTemplate", r.text)
 
-            r = client.get("/ui/recovery/", headers=h)
+            r = client.get(tested_recovery_path + "/", headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Ops Recovery Console", r.text)
 

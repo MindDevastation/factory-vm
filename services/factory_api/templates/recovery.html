@@ -4,7 +4,7 @@
 <h1>Ops Recovery Console</h1>
 <p class="muted">Read-only recovery triage view. Actions are shown as preview only and are disabled in this slice.</p>
 <p>
-  <a href="/">Dashboard</a>
+  <a href="{{ request.url_for('dashboard') }}">Dashboard</a>
 </p>
 
 <section id="recovery-summary" class="summary-grid">
@@ -113,6 +113,8 @@
 <script>
 (function () {
   const tbody = document.querySelector('#recovery-table tbody');
+  const jobsUrl = {{ request.url_for('api_ops_recovery_jobs')|string|tojson }};
+  const jobDetailsUrlTemplate = {{ request.url_for('api_ops_recovery_job', job_id=0)|string|tojson }};
   const note = document.getElementById('recovery-note');
   const detailsModal = document.getElementById('recovery-details-modal');
   const detailsContent = document.getElementById('recovery-details-content');
@@ -219,7 +221,8 @@
   async function openDetails(jobId) {
     note.textContent = `Loading details for job ${jobId}...`;
     try {
-      const response = await fetch(`/v1/ops/recovery/jobs/${jobId}`, { credentials: 'same-origin' });
+      const detailsUrl = jobDetailsUrlTemplate.replace(/0$/, String(jobId));
+      const response = await fetch(detailsUrl, { credentials: 'same-origin' });
       const payload = await response.json();
       if (!response.ok || !payload || !payload.item) throw new Error('Failed to load details.');
       const item = payload.item;
@@ -293,7 +296,8 @@
     if (qInput.value.trim()) params.set('q', qInput.value.trim());
 
     try {
-      const response = await fetch(`/v1/ops/recovery/jobs?${params.toString()}`, { credentials: 'same-origin' });
+      const query = params.toString();
+      const response = await fetch(query ? `${jobsUrl}?${query}` : jobsUrl, { credentials: 'same-origin' });
       const payload = await response.json();
       if (!response.ok || !payload) throw new Error(`Failed to load recovery jobs (HTTP ${response.status}).`);
       const sortedItems = sortRecoveryItems(Array.isArray(payload.items) ? payload.items : []);
