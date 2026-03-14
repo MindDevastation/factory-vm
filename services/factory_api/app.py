@@ -31,6 +31,14 @@ from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
+from services.ops.recovery import (
+    CANONICAL_ACTIONS,
+    RecoveryActionError,
+    RecoveryRuntime,
+    execute_action as recovery_execute_action,
+    insert_recovery_audit,
+    preview_action as recovery_preview_action,
+)
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
     build_channel_settings_payload,
@@ -2435,6 +2443,11 @@ class UiJobsRenderSelectedPayload(BaseModel):
     job_ids: Optional[list[str]] = None
 
 
+class RecoveryActionExecutePayload(BaseModel):
+    confirm: bool = False
+    second_confirm: bool = False
+
+
 class UiJobsBulkJsonPayload(BaseModel):
     mode: str
     items: list[dict[str, Any]]
@@ -2644,6 +2657,11 @@ def ui_track_analysis_report_page(request: Request, _: bool = Depends(require_ba
     return templates.TemplateResponse("track_analysis_report.html", {"request": request})
 
 
+@app.get("/ui/recovery", response_class=HTMLResponse)
+def ui_recovery_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("recovery.html", {"request": request})
+
+
 @app.get("/ui/tags", response_class=HTMLResponse)
 @app.get("/ui/track-catalog/custom-tags", response_class=HTMLResponse)
 def ui_tags_page(request: Request, _: bool = Depends(require_basic_auth(env))):
@@ -2748,6 +2766,117 @@ def api_job(job_id: int, _: bool = Depends(require_basic_auth(env))):
     finally:
         conn.close()
     return {"job": job, "qa": qa, "youtube": yt}
+
+
+@app.get("/v1/ops/recovery/jobs")
+def api_ops_recovery_jobs(limit: int = 200, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        jobs = dbm.list_jobs(conn, limit=limit)
+    finally:
+        conn.close()
+    return {"jobs": jobs}
+
+
+@app.get("/v1/ops/recovery/jobs/{job_id}")
+def api_ops_recovery_job(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        if not job:
+            raise HTTPException(404, "job not found")
+    finally:
+        conn.close()
+    return {"job": job}
+
+
+@app.post("/v1/ops/recovery/jobs/{job_id}/actions/{action}/preview")
+def api_ops_recovery_action_preview(job_id: int, action: str, _: bool = Depends(require_basic_auth(env))):
+    if action not in CANONICAL_ACTIONS:
+        raise HTTPException(status_code=404, detail="Unknown recovery action")
+
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        if not job:
+            raise HTTPException(404, "job not found")
+        runtime = RecoveryRuntime(
+            retry_backoff_sec=int(env.retry_backoff_sec),
+            max_render_attempts=int(env.max_render_attempts),
+            job_lock_ttl_sec=int(env.job_lock_ttl_sec),
+        )
+        preview = recovery_preview_action(conn, job=job, action=action, runtime=runtime)
+        insert_recovery_audit(
+            conn,
+            job_id=job_id,
+            action=action,
+            phase="preview",
+            requested_by=env.basic_user or None,
+            request_payload={},
+            result_payload=preview,
+            ok=True,
+        )
+    finally:
+        conn.close()
+
+    return {"job_id": job_id, "action": action, "preview": preview}
+
+
+@app.post("/v1/ops/recovery/jobs/{job_id}/actions/{action}/execute")
+def api_ops_recovery_action_execute(
+    job_id: int,
+    action: str,
+    payload: RecoveryActionExecutePayload,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    if action not in CANONICAL_ACTIONS:
+        raise HTTPException(status_code=404, detail="Unknown recovery action")
+    if not payload.confirm:
+        raise HTTPException(status_code=409, detail="confirmation is required")
+    if action in {"cancel_job", "force_cleanup_artifacts", "reenqueue_allowed_stage"} and not payload.second_confirm:
+        raise HTTPException(status_code=409, detail="second confirmation is required for risky actions")
+
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        if not job:
+            raise HTTPException(404, "job not found")
+
+        runtime = RecoveryRuntime(
+            retry_backoff_sec=int(env.retry_backoff_sec),
+            max_render_attempts=int(env.max_render_attempts),
+            job_lock_ttl_sec=int(env.job_lock_ttl_sec),
+        )
+
+        try:
+            result = recovery_execute_action(conn, job=job, action=action, runtime=runtime)
+            insert_recovery_audit(
+                conn,
+                job_id=job_id,
+                action=action,
+                phase="execute",
+                requested_by=env.basic_user or None,
+                request_payload=payload.model_dump(),
+                result_payload=result,
+                ok=True,
+            )
+            return {"job_id": job_id, "action": action, "result": result}
+        except RecoveryActionError as exc:
+            result_payload = {"ok": False, "message": str(exc)}
+            insert_recovery_audit(
+                conn,
+                job_id=job_id,
+                action=action,
+                phase="execute",
+                requested_by=env.basic_user or None,
+                request_payload=payload.model_dump(),
+                result_payload=result_payload,
+                ok=False,
+                error_code=exc.code,
+            )
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+    finally:
+        conn.close()
 
 
 @app.get("/v1/jobs/{job_id}/logs", response_class=PlainTextResponse)
