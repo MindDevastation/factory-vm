@@ -19,6 +19,7 @@ class RecoveryRuntimeContext:
     job_lock_ttl_sec: int
     max_render_attempts: int
     retry_backoff_sec: int
+    worker_stale_after_sec: int = 90
 
 
 class RecoveryClassifier:
@@ -220,14 +221,25 @@ class RecoveryClassifier:
 
         locked_by = str(job.get("locked_by") or "")
         worker = worker_by_id.get(locked_by) if locked_by else None
+        heartbeat_last_seen = worker.get("last_seen") if worker else None
+        worker_role = worker.get("role") if worker else None
+        worker_stale = False
+        if heartbeat_last_seen is not None:
+            worker_stale = float(heartbeat_last_seen) < (now_ts - float(self._runtime.worker_stale_after_sec))
+        root_cause_hint = None
+        if locked_by and not worker:
+            root_cause_hint = "worker_heartbeat_missing"
+        elif worker_stale:
+            root_cause_hint = "worker_heartbeat_stale"
         worker_context = {
             "locked_by": locked_by or None,
             "locked_at": job.get("locked_at"),
-            "heartbeat_last_seen": worker.get("last_seen") if worker else None,
+            "worker_role": worker_role,
+            "heartbeat_last_seen": heartbeat_last_seen,
             "heartbeat_present": bool(worker),
+            "worker_stale": worker_stale,
+            "root_cause_hint": root_cause_hint,
         }
-        if locked_by and not worker:
-            worker_context["fallback"] = "worker heartbeat unavailable; stale derived from lock ttl only"
 
         failure_summary = str(job.get("error_reason") or "").strip() or None
         context = {

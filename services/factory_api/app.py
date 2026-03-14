@@ -2448,6 +2448,7 @@ class UiJobsRenderSelectedPayload(BaseModel):
 class RecoveryActionExecutePayload(BaseModel):
     confirm: bool = False
     second_confirm: bool = False
+    stage_token: str | None = None
 
 
 def _recovery_requested_by(request: Request) -> str | None:
@@ -2920,8 +2921,15 @@ def api_ops_recovery_job(job_id: int, _: bool = Depends(require_basic_auth(env))
             for row in artifact_rows
         ]
         item["cleanup"] = cleanup
-        item["allowed_stage_tokens"] = []
-        item["allowed_stage_tokens_fallback"] = "stage-token derivation primitive unavailable in current runtime"
+        runtime = RecoveryRuntime(
+            retry_backoff_sec=int(env.retry_backoff_sec),
+            max_render_attempts=int(env.max_render_attempts),
+            job_lock_ttl_sec=int(env.job_lock_ttl_sec),
+            storage_root=str(env.storage_root),
+        )
+        stage_preview = recovery_preview_action(conn, job=job, action="reenqueue_allowed_stage", runtime=runtime)
+        item["allowed_stage_tokens"] = stage_preview.get("allowed_stage_tokens") or []
+        item["allowed_stage_tokens_fallback"] = "none" if item["allowed_stage_tokens"] else "no backend-issued stage token available for current state"
         item["recent_audit_entries"] = classifier.list_recent_audit(job_id)
     finally:
         conn.close()
@@ -2942,6 +2950,7 @@ def api_ops_recovery_action_preview(job_id: int, action: str, request: Request, 
             retry_backoff_sec=int(env.retry_backoff_sec),
             max_render_attempts=int(env.max_render_attempts),
             job_lock_ttl_sec=int(env.job_lock_ttl_sec),
+            storage_root=str(env.storage_root),
         )
         preview = recovery_preview_action(conn, job=job, action=action, runtime=runtime)
     finally:
@@ -2978,6 +2987,7 @@ def api_ops_recovery_action_execute(
             retry_backoff_sec=int(env.retry_backoff_sec),
             max_render_attempts=int(env.max_render_attempts),
             job_lock_ttl_sec=int(env.job_lock_ttl_sec),
+            storage_root=str(env.storage_root),
         )
         state_before = str(job.get("state") or "")
         requested_by = _recovery_requested_by(request)
@@ -3006,7 +3016,7 @@ def api_ops_recovery_action_execute(
                     detail={"code": "ORC_ACTION_NOT_ALLOWED", "message": "Action preconditions are not met", "audit_id": audit_id},
                 )
 
-            result = recovery_execute_action(conn, job=job, action=action, runtime=runtime)
+            result = recovery_execute_action(conn, job=job, action=action, runtime=runtime, stage_token=payload.stage_token)
             job_after = dbm.get_job(conn, job_id)
             state_after = str((job_after or {}).get("state") or state_before)
             result_payload = {
@@ -3039,7 +3049,7 @@ def api_ops_recovery_action_execute(
         except RecoveryActionError as exc:
             code = exc.code
             status_code = exc.status_code
-            if code not in {"ORC_JOB_NOT_FOUND", "ORC_ACTION_NOT_SUPPORTED", "ORC_ACTION_NOT_ALLOWED"}:
+            if code not in {"ORC_JOB_NOT_FOUND", "ORC_ACTION_NOT_SUPPORTED", "ORC_ACTION_NOT_ALLOWED", "ORC_STAGE_TOKEN_INVALID"}:
                 code = "ORC_RECOVERY_PRIMITIVE_FAILED"
                 status_code = 409
             result_payload = {

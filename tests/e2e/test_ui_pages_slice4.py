@@ -69,11 +69,17 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("<h4>Available actions</h4>", r.text)
             self.assertIn("<h4>Recent recovery audit entries</h4>", r.text)
             self.assertIn('id="recovery-action-modal"', r.text)
-            self.assertIn("Strong confirm required for cancel_job.", r.text)
+            self.assertIn("Risky action: verify target state and impact before executing.", r.text)
+            self.assertIn("I understand this risky action may be irreversible.", r.text)
             self.assertIn("function syncExecuteEnabled()", r.text)
             self.assertIn("executeBtn.disabled = !(allowed && state.confirm && (!risky || state.second_confirm));", r.text)
             self.assertIn("confirmInput?.addEventListener('change', syncExecuteEnabled);", r.text)
-            self.assertIn("strongInput?.addEventListener('input', syncExecuteEnabled);", r.text)
+            self.assertIn("strongInput?.addEventListener('change', syncExecuteEnabled);", r.text)
+            self.assertIn("const tokenId = `stage-token-${jobId}-${action}`;", r.text)
+            self.assertIn("<h4>Failure / stale / stuck details</h4>", r.text)
+            self.assertIn("<h4>Recent recovery audit entries</h4>", r.text)
+            self.assertIn("${detailList('Worker role', worker.worker_role)}", r.text)
+            self.assertIn("<pre>${JSON.stringify(audits, null, 2)}</pre>", r.text)
 
             details = client.get(f"/v1/ops/recovery/jobs/{seeded['failed']}", headers=h)
             self.assertEqual(details.status_code, 200)
@@ -170,6 +176,8 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("actionabilityInput.addEventListener('change', loadJobs)", page.text)
             self.assertIn("Action preview ·", page.text)
             self.assertIn("Recent recovery audit entries", page.text)
+            self.assertIn("Risky action: verify target state and impact before executing.", page.text)
+            self.assertIn("I understand this risky action may be irreversible.", page.text)
 
     def test_recovery_ui_seeded_happy_path_jobs_load_contract_and_hooks(self) -> None:
         with temp_env() as (_, _):

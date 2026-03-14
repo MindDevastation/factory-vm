@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import os
 import socket
+from pathlib import Path
 
 from services.common.env import Env
 from services.common import db as dbm
@@ -11,6 +12,42 @@ from services.common.logging_setup import get_logger
 
 
 log = get_logger("cleanup")
+
+
+def cleanup_published_artifacts(conn, *, storage_root: str, job_id: int) -> dict[str, object]:
+    job = dbm.get_job(conn, job_id)
+    if not job:
+        return {"ok": False, "reason": "job_not_found"}
+
+    state = str(job.get("state") or "")
+    if state not in {"PUBLISHED", "CLEANED"}:
+        return {"ok": False, "reason": f"state_not_cleanup_eligible:{state}"}
+
+    rows = conn.execute(
+        """
+        SELECT a.id, jo.role, a.path
+        FROM job_outputs jo
+        JOIN assets a ON a.id = jo.asset_id
+        WHERE jo.job_id = ? AND jo.role IN ('MP4', 'PREVIEW_60S')
+        ORDER BY a.id ASC
+        """,
+        (int(job_id),),
+    ).fetchall()
+    if not rows:
+        return {"ok": False, "reason": "no_cleanup_target"}
+
+    removed = 0
+    for row in rows:
+        raw = str(row.get("path") or "").strip()
+        if not raw:
+            continue
+        p = Path(raw)
+        if p.exists():
+            p.unlink(missing_ok=True)
+            removed += 1
+
+    dbm.update_job_state(conn, int(job_id), state="CLEANED", stage="CLEANUP", progress_text="mp4 deleted (forced)")
+    return {"ok": True, "cleaned": True, "removed_files": removed}
 
 
 def cleanup_cycle(*, env: Env, worker_id: str) -> None:
