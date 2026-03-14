@@ -45,6 +45,36 @@ class TestUiPagesSlice4(unittest.TestCase):
 
         return {"failed": failed_job, "stale": stale_job, "cleanup_pending": cleanup_pending_job}
 
+
+    def test_recovery_page_includes_rendered_filter_and_details_sections(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            seeded = self._seed_recovery_jobs(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            r = client.get("/ui/recovery", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn('id="recovery-applied-filters"', r.text)
+            self.assertIn('Applied filters: actionability=has_actions', r.text)
+            self.assertIn("function formatAppliedFilters(params)", r.text)
+            self.assertIn("Applied filters: ${entries.join(' · ')}", r.text)
+            self.assertIn("item.channel_slug || '—'", r.text)
+            self.assertIn("item.state || '—'", r.text)
+            self.assertIn("No recovery jobs match current filters.", r.text)
+            self.assertIn("<h4>Available actions (read-only preview)</h4>", r.text)
+            self.assertIn("<h4>Recent recovery audit entries</h4>", r.text)
+
+            details = client.get(f"/v1/ops/recovery/jobs/{seeded['failed']}", headers=h)
+            self.assertEqual(details.status_code, 200)
+            detail_item = details.json()["item"]
+            self.assertGreaterEqual(len(detail_item.get("available_actions", [])), 1)
+            self.assertIn("recent_audit_entries", detail_item)
+
     def test_recovery_ui_seeded_data_proves_operator_triage_behaviors(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
