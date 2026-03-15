@@ -44,7 +44,9 @@ Legacy/top-level docs may keep implementation reference details, but operator wo
 
 Dashboard: http://<VM_IP>:8080/
 
-Worker heartbeat: http://<VM_IP>:8080/v1/workers
+Worker heartbeat: http://<VM_IP>:8080/v1/workers (Basic Auth required)
+
+Use API Basic Auth credentials from deployment environment config (`FACTORY_BASIC_AUTH_USER` / `FACTORY_BASIC_AUTH_PASS`, typically sourced via `deploy/env` through your service manager `EnvironmentFile`).
 
 VPS API-only mode (without importer):
 - `python scripts/run_stack.py --profile prod --with-bot 1 --no-importer`

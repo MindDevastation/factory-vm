@@ -24,7 +24,7 @@ Validate service recovery and runtime readiness immediately after a backup resto
    ```
 5. Verify workers endpoint:
    ```bash
-   curl -fsS http://127.0.0.1:8080/v1/workers
+   curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
    ```
 6. Check quarantine output under `<FACTORY_BACKUP_DIR>/quarantine/<restore_id>/` for replaced pre-restore files.
 7. Record restore ID and verification timestamp in operator notes.

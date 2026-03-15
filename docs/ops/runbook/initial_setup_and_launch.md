@@ -63,10 +63,10 @@ sudo systemctl enable --now factory-bot.service
 python scripts/doctor.py production-smoke --profile prod
 ```
 
-2. Verify worker heartbeat endpoint from API host:
+2. Verify worker heartbeat endpoint from API host (Basic Auth required via `FACTORY_BASIC_AUTH_USER` / `FACTORY_BASIC_AUTH_PASS` from deployment env):
 
 ```bash
-curl -fsS http://127.0.0.1:8080/v1/workers
+curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
 ```
 
 3. If smoke is not `OK`, follow incident playbooks in `./playbooks/` before starting production jobs.

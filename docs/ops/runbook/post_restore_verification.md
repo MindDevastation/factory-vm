@@ -20,10 +20,11 @@ Automatic service restart after restore is not implemented; start services manua
 
 ## 3) Required validation sequence
 
+> `/health` is intentionally unauthenticated. `/v1/workers` requires API Basic Auth credentials (`FACTORY_BASIC_AUTH_USER` / `FACTORY_BASIC_AUTH_PASS`) from deployment environment config.
 ```bash
 python scripts/doctor.py production-smoke --profile prod
 curl -fsS http://127.0.0.1:8080/health
-curl -fsS http://127.0.0.1:8080/v1/workers
+curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
 ```
 
 ## 4) Restore-specific checks

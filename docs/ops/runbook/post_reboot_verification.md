@@ -16,11 +16,11 @@ systemctl status factory-api.service factory-orchestrator.service factory-qa.ser
 python scripts/doctor.py production-smoke --profile prod
 ```
 
-3. Confirm endpoints:
+3. Confirm endpoints (`/health` unauthenticated, `/v1/workers` requires Basic Auth from deployment env `FACTORY_BASIC_AUTH_USER` / `FACTORY_BASIC_AUTH_PASS`):
 
 ```bash
 curl -fsS http://127.0.0.1:8080/health
-curl -fsS http://127.0.0.1:8080/v1/workers
+curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
 ```
 
 4. If disk pressure is reported as warning/critical in smoke or logs, run retention procedures from `playbooks/low_disk_space.md`.
