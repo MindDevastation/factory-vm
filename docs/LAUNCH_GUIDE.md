@@ -1,5 +1,9 @@
 # Launch guide (MVP v0) — step-by-step
 
+> **Runbook canonical note:** For ongoing production operations (daily/post-deploy/post-reboot/post-restore/monthly workflows), use `docs/ops/runbook/README.md` as the primary operational source.
+
+> **Deprecated/secondary note:** Procedural guidance in this launch guide is for initial bootstrap context only. If any step here conflicts with the runbook package, follow `docs/ops/runbook/*` and treat this guide's operational procedure as secondary.
+
 ## 0) Prepare a VM (Ubuntu 22.04+ recommended)
 1) Ensure you have at least:
    - 2 CPU cores (more is better for CPU render)
