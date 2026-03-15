@@ -26,7 +26,7 @@ Confirm a deployment is production-ready before handing back to normal workload 
    ```
 5. Verify workers endpoint:
    ```bash
-   curl -fsS http://127.0.0.1:8080/v1/workers
+   curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
    ```
 6. If checks pass, mark deploy verification complete in operator notes.
 

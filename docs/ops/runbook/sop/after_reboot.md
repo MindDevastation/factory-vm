@@ -25,7 +25,7 @@ Provide a fast, consistent post-reboot validation before returning the VM to nor
    ```
 4. Verify worker heartbeat endpoint:
    ```bash
-   curl -fsS http://127.0.0.1:8080/v1/workers
+   curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
    ```
 5. If optional importer/bot flow is enabled, verify related service status using deployment-specific service names.
 6. Resume normal operations only after all checks pass.
