@@ -15,22 +15,24 @@ Provide a repeatable pre-batch gate so operators start batch processing only whe
 ## Steps
 1. Run the production smoke gate (preferred path):
    ```bash
-   python scripts/doctor.py production-smoke --profile prod
+   python scripts/ops_smoke.py --scenario pre-batch-run --profile prod
    ```
-2. Confirm smoke exits with `exit_code=0` and `overall_status=OK`.
-3. Check API health endpoint:
+2. Confirm smoke exits with `exit_code=0` and `overall_status=OK` (**OPERATIONAL PASS**).
+3. If smoke exits with `exit_code=1` (`WARNING`), treat it as **OPERATIONAL WARNING** and perform explicit operator review with `../sop/when_smoke_fails.md` before batch start.
+4. If smoke exits with `exit_code>=2`, treat it as **OPERATIONAL FAIL** and stop batch preparation until resolved.
+5. Check API health endpoint:
    ```bash
    curl -fsS http://127.0.0.1:8080/health
    ```
-4. Check worker heartbeat endpoint:
+6. Check worker heartbeat endpoint:
    ```bash
    curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
    ```
-5. If using systemd deployment artifacts, verify core service state:
+7. If using systemd deployment artifacts, verify core service state:
    ```bash
    systemctl status factory-api.service factory-orchestrator.service factory-qa.service factory-uploader.service factory-cleanup.service
    ```
-6. Start batch operations only after all checks above pass.
+8. Start batch operations only after all checks above pass.
 
 ## Expected success result
 - Smoke reports `OK`.

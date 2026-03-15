@@ -36,6 +36,14 @@ Run smoke in these operator moments:
 - **post-restore** (after backup/restore operations)
 - **pre-batch-run** (before scheduling/starting production job batches)
 
+Operational wrapper shortcut for these scenarios:
+
+```bash
+python scripts/ops_smoke.py --scenario <post-deploy|post-reboot|post-restore|pre-batch-run> --profile prod
+```
+
+This wrapper delegates to the same production smoke runner and preserves the same exit-code contract.
+
 ## 3) Command examples
 
 Canonical production smoke command (human-readable):

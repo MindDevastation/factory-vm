@@ -39,6 +39,12 @@ If another doc conflicts with this package, follow this runbook and update/depre
 
 ## Scenario navigation (start here)
 
+Operational smoke shortcut wrapper for scenario gates:
+
+```bash
+python scripts/ops_smoke.py --scenario <post-deploy|post-reboot|post-restore|pre-batch-run> --profile prod
+```
+
 - **Initial setup / production launch (preferred)** → [`initial_setup_and_launch.md`](./initial_setup_and_launch.md)
 - **Daily/routine checks (preferred)** → [`daily_checks.md`](./daily_checks.md)
 - **After deploy (preferred)** → [`post_deploy_verification.md`](./post_deploy_verification.md)
