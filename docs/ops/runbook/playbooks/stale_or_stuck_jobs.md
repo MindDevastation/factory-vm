@@ -21,8 +21,8 @@
    ```
 3. Inspect job details/logs for a stuck job:
    ```bash
-   curl -fsS http://127.0.0.1:8080/v1/jobs/<job_id>
-   curl -fsS "http://127.0.0.1:8080/v1/jobs/<job_id>/logs?tail=200"
+   curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/jobs/<job_id>
+   curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" "http://127.0.0.1:8080/v1/jobs/<job_id>/logs?tail=200"
    ```
 
 ## Actions to take
