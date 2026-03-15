@@ -66,6 +66,113 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("body: JSON.stringify(lastPreviewOverrideSnapshot)", r.text)
             self.assertNotIn("body: JSON.stringify(buildOverride())", r.text)
 
+
+    def test_mtb_page_minimal_operator_flow(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            create_default = client.post(
+                "/v1/metadata/title-templates",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Default Title",
+                    "template_body": "{{channel_display_name}} {{release_year}}",
+                    "make_default": True,
+                },
+            )
+            self.assertEqual(create_default.status_code, 200)
+            default_template = create_default.json()
+
+            create_secondary = client.post(
+                "/v1/metadata/title-templates",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Secondary",
+                    "template_body": "{{channel_slug}} {{release_month_number}}",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(create_secondary.status_code, 200)
+            secondary_template = create_secondary.json()
+
+            page = client.get("/ui/metadata/title-templates", headers=h)
+            self.assertEqual(page.status_code, 200)
+            self.assertIn("Metadata · Title Templates", page.text)
+            self.assertIn('href="/"', page.text)
+            self.assertIn('id="mtb-channel"', page.text)
+            self.assertIn('id="mtb-template-name"', page.text)
+            self.assertIn('id="mtb-template-body"', page.text)
+            self.assertIn('id="mtb-preview-btn"', page.text)
+            self.assertIn('id="mtb-save-btn"', page.text)
+            self.assertIn('id="mtb-set-default-btn"', page.text)
+            self.assertIn('id="mtb-archive-btn"', page.text)
+            self.assertIn('id="mtb-activate-btn"', page.text)
+            self.assertIn('id="mtb-preview-result"', page.text)
+            self.assertIn('id="mtb-substituted-values"', page.text)
+            self.assertIn('id="mtb-missing-variables"', page.text)
+            self.assertIn('id="mtb-validation-errors"', page.text)
+            self.assertIn('/v1/channels', page.text)
+            self.assertIn('/v1/metadata/title-templates/variables', page.text)
+            self.assertIn('/v1/metadata/title-templates?', page.text)
+            self.assertIn('/v1/metadata/title-templates/preview', page.text)
+            self.assertIn('/v1/metadata/title-templates/${activeTemplateId}/${action}', page.text)
+            self.assertIn('archiving current default may leave this channel with no default template', page.text)
+            self.assertIn('active', page.text)
+            self.assertIn('archived', page.text)
+            self.assertIn('valid', page.text)
+
+            preview = client.post(
+                "/v1/metadata/title-templates/preview",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_body": "{{channel_display_name}} {{release_year}}",
+                    "release_date": "2026-01-02",
+                },
+            )
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json()["render_status"], "FULL")
+            self.assertEqual(preview.json()["missing_variables"], [])
+
+            set_default = client.post(
+                f"/v1/metadata/title-templates/{secondary_template['id']}/set-default",
+                headers=h,
+            )
+            self.assertEqual(set_default.status_code, 200)
+            self.assertTrue(set_default.json()["is_default"])
+
+            archive_default = client.post(
+                f"/v1/metadata/title-templates/{default_template['id']}/archive",
+                headers=h,
+            )
+            self.assertEqual(archive_default.status_code, 200)
+            self.assertEqual(archive_default.json()["status"], "ARCHIVED")
+            self.assertFalse(archive_default.json()["is_default"])
+
+            active_list = client.get("/v1/metadata/title-templates?status=active", headers=h)
+            self.assertEqual(active_list.status_code, 200)
+            self.assertTrue(any(item["status"] == "ACTIVE" and item["is_default"] for item in active_list.json().get("items", [])))
+            self.assertTrue(any(item["validation_status"] == "VALID" for item in active_list.json().get("items", [])))
+
+            archived_list = client.get("/v1/metadata/title-templates?status=archived", headers=h)
+            self.assertEqual(archived_list.status_code, 200)
+            self.assertTrue(any(item["status"] == "ARCHIVED" for item in archived_list.json().get("items", [])))
+
+            activate = client.post(
+                f"/v1/metadata/title-templates/{default_template['id']}/activate",
+                headers=h,
+            )
+            self.assertEqual(activate.status_code, 200)
+            self.assertEqual(activate.json()["status"], "ACTIVE")
+
     def test_pages_and_validation(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
@@ -123,6 +230,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="channels-table"', r.text)
             self.assertIn('href="/ui/db-viewer"', r.text)
             self.assertIn('href="/ui/planner"', r.text)
+            self.assertIn('href="/ui/metadata/title-templates"', r.text)
             self.assertIn('href="/ui/track-catalog/custom-tags"', r.text)
             self.assertIn('href="/ui/track-catalog/analysis-report"', r.text)
             self.assertIn('href="/ui/ops/recovery"', r.text)
@@ -141,13 +249,42 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="search-input"', r.text)
             self.assertIn('id="page-size-select"', r.text)
 
-            r = client.get("/ui/planner", headers=h)
+            planner_r = client.get("/ui/planner", headers=h)
+            self.assertEqual(planner_r.status_code, 200)
+            self.assertIn("Planner · Bulk Releases", planner_r.text)
+            self.assertIn('id="planner-tbody"', planner_r.text)
+            self.assertIn('id="bulk-create-modal"', planner_r.text)
+            self.assertIn('id="import-modal"', planner_r.text)
+            self.assertIn('/static/planner_bulk_releases.js', planner_r.text)
+
+            r = client.get("/ui/metadata/title-templates", headers=h)
             self.assertEqual(r.status_code, 200)
-            self.assertIn("Planner · Bulk Releases", r.text)
-            self.assertIn('id="planner-tbody"', r.text)
-            self.assertIn('id="bulk-create-modal"', r.text)
-            self.assertIn('id="import-modal"', r.text)
-            self.assertIn('/static/planner_bulk_releases.js', r.text)
+            self.assertIn("Metadata · Title Templates", r.text)
+            self.assertIn('id="mtb-table"', r.text)
+            self.assertIn('id="mtb-preview-btn"', r.text)
+            self.assertIn('id="mtb-save-btn"', r.text)
+            self.assertIn('id="mtb-set-default-btn"', r.text)
+            self.assertIn('id="mtb-archive-btn"', r.text)
+            self.assertIn('id="mtb-activate-btn"', r.text)
+            self.assertIn("/v1/metadata/title-templates/preview", r.text)
+            self.assertIn("/v1/metadata/title-templates/${activeTemplateId}/${action}", r.text)
+            self.assertIn("Preview complete (not saved).", r.text)
+            self.assertIn("archiving current default may leave this channel with no default template", r.text)
+            self.assertIn("active", r.text)
+            self.assertIn("archived", r.text)
+            self.assertIn("valid", r.text)
+
+            preview = client.post(
+                "/v1/metadata/title-templates/preview",
+                headers=h,
+                json={
+                    "channel_slug": str(ch["slug"]),
+                    "template_body": "{{channel_display_name}} {{release_year}}",
+                    "release_date": "2026-01-02",
+                },
+            )
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json()["render_status"], "FULL")
 
             r = client.get("/ui/track-catalog/analysis-report", headers=h)
             self.assertEqual(r.status_code, 200)

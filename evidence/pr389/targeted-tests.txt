@@ -1,0 +1,18 @@
+test_accepts_valid_placeholders (tests.unit.test_title_template_service.TestTitleTemplateService.test_accepts_valid_placeholders) ... ok
+test_enforces_control_char_ban (tests.unit.test_title_template_service.TestTitleTemplateService.test_enforces_control_char_ban) ... ok
+test_enforces_empty_result_guard (tests.unit.test_title_template_service.TestTitleTemplateService.test_enforces_empty_result_guard) ... ok
+test_enforces_full_render_max_length (tests.unit.test_title_template_service.TestTitleTemplateService.test_enforces_full_render_max_length) ... ok
+test_marks_missing_release_date_variables_explicitly (tests.unit.test_title_template_service.TestTitleTemplateService.test_marks_missing_release_date_variables_explicitly) ... ok
+test_rejects_invalid_syntax (tests.unit.test_title_template_service.TestTitleTemplateService.test_rejects_invalid_syntax) ... ok
+test_rejects_unknown_variables (tests.unit.test_title_template_service.TestTitleTemplateService.test_rejects_unknown_variables) ... ok
+test_whitespace_normalization_deterministic (tests.unit.test_title_template_service.TestTitleTemplateService.test_whitespace_normalization_deterministic) ... ok
+test_preview_channel_not_found (tests.integration.test_metadata_title_template_api.TestMetadataTitleTemplateApi.test_preview_channel_not_found) ... ok
+test_preview_full_render (tests.integration.test_metadata_title_template_api.TestMetadataTitleTemplateApi.test_preview_full_render) ... ok
+test_preview_invalid_syntax_returns_error_payload (tests.integration.test_metadata_title_template_api.TestMetadataTitleTemplateApi.test_preview_invalid_syntax_returns_error_payload) ... ok
+test_preview_partial_render_with_missing_variables (tests.integration.test_metadata_title_template_api.TestMetadataTitleTemplateApi.test_preview_partial_render_with_missing_variables) ... ok
+test_variables_returns_whitelist_catalog (tests.integration.test_metadata_title_template_api.TestMetadataTitleTemplateApi.test_variables_returns_whitelist_catalog) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 2.772s
+
+OK

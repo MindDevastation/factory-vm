@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -65,6 +65,7 @@ from services.track_analysis_report.xlsx_export import export_report_to_xlsx_byt
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
+from services.metadata import title_template_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -142,6 +143,293 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
 
 def _plb_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _mtb_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+class MetadataTitleTemplatePreviewRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_body: str
+    release_date: str | None = None
+
+
+class MetadataTitleTemplateCreateRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_name: str
+    template_body: str
+    make_default: bool = False
+
+
+class MetadataTitleTemplatePatchRequest(BaseModel):
+    template_name: str | None = None
+    template_body: str | None = None
+
+
+@app.get("/v1/metadata/title-templates/variables")
+def api_metadata_title_templates_variables(_: bool = Depends(require_basic_auth(env))):
+    return {"variables": title_template_service.allowed_variables_catalog()}
+
+
+@app.post("/v1/metadata/title-templates/preview")
+def api_metadata_title_templates_preview(
+    payload: MetadataTitleTemplatePreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    parsed_release_date: date | None = None
+    if payload.release_date is not None:
+        try:
+            parsed_release_date = date.fromisoformat(payload.release_date)
+        except ValueError:
+            return _mtb_error(422, "MTB_INVALID_RELEASE_DATE", "release_date must use YYYY-MM-DD format")
+
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_slug(conn, payload.channel_slug)
+    finally:
+        conn.close()
+
+    if not channel:
+        return _mtb_error(404, "MTB_CHANNEL_NOT_FOUND", "Channel not found")
+
+    preview = title_template_service.preview_title_template(
+        channel=channel,
+        template_body=payload.template_body,
+        release_date=parsed_release_date,
+    )
+    log_payload: Dict[str, Any] = {
+        "channel_slug": payload.channel_slug,
+        "render_status": preview.render_status,
+        "missing_variables": list(preview.missing_variables),
+        "validation_error_codes": [error["code"] for error in preview.validation_errors],
+        "template_length": len(payload.template_body),
+    }
+    logger.info("metadata.title_template.previewed", extra=log_payload)
+    if preview.validation_errors:
+        logger.info("metadata.title_template.validation_failed", extra=log_payload)
+
+    return preview.to_dict()
+
+
+@app.post("/v1/metadata/title-templates")
+def api_metadata_title_templates_create(
+    payload: MetadataTitleTemplateCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = title_template_service.create_title_template(
+                conn,
+                channel_slug=payload.channel_slug,
+                template_name=payload.template_name,
+                template_body=payload.template_body,
+                make_default=payload.make_default,
+            )
+        except title_template_service.TemplateValidationError as exc:
+            if exc.code in {"MTB_CHANNEL_NOT_FOUND", "MTB_TEMPLATE_NOT_FOUND"}:
+                return _mtb_error(404, exc.code, exc.message)
+            logger.info(
+                "metadata.title_template.validation_failed",
+                extra={
+                    "template_id": None,
+                    "channel_slug": payload.channel_slug,
+                    "template_name": payload.template_name,
+                    "status": "ACTIVE",
+                    "is_default": payload.make_default,
+                    "validation_status": "INVALID",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtb_error(422, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.created",
+        extra={
+            "template_id": result["id"],
+            "channel_slug": result["channel_slug"],
+            "template_name": result["template_name"],
+            "status": result["status"],
+            "is_default": result["is_default"],
+            "validation_status": result["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return result
+
+
+@app.get("/v1/metadata/title-templates")
+def api_metadata_title_templates_list(
+    channel_slug: str | None = None,
+    status: str = "active",
+    q: str | None = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    status_filter = (status or "active").lower()
+    if status_filter not in {"active", "archived", "all"}:
+        return _mtb_error(422, "MTB_INVALID_STATUS_FILTER", "status must be active|archived|all")
+    conn = dbm.connect(env)
+    try:
+        rows = title_template_service.list_title_templates(
+            conn,
+            channel_slug=channel_slug,
+            status_filter=status_filter,
+            q=q,
+        )
+    finally:
+        conn.close()
+    return {"items": rows}
+
+
+@app.get("/v1/metadata/title-templates/{template_id}")
+def api_metadata_title_templates_detail(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.get_title_template(conn, template_id=template_id)
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_CHANNEL_NOT_FOUND", "MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.patch("/v1/metadata/title-templates/{template_id}")
+def api_metadata_title_templates_patch(
+    template_id: int,
+    payload: MetadataTitleTemplatePatchRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.update_title_template(
+                conn,
+                template_id=template_id,
+                template_name=payload.template_name,
+                template_body=payload.template_body,
+            )
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_CHANNEL_NOT_FOUND", "MTB_TEMPLATE_NOT_FOUND"} else 422
+            if status_code == 422:
+                logger.info(
+                    "metadata.title_template.validation_failed",
+                    extra={
+                        "template_id": template_id,
+                        "channel_slug": None,
+                        "template_name": payload.template_name,
+                        "status": None,
+                        "is_default": None,
+                        "validation_status": "INVALID",
+                        "error_codes": [exc.code],
+                    },
+                )
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.updated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/set-default")
+def api_metadata_title_templates_set_default(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.set_default_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.default_changed",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/archive")
+def api_metadata_title_templates_archive(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.archive_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.archived",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/activate")
+def api_metadata_title_templates_activate(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.activate_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.activated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
 
 
 @app.get("/v1/playlist-builder/channels/{channel_slug}/settings")
@@ -2837,6 +3125,11 @@ def ui_db_viewer_page(request: Request, _: bool = Depends(require_basic_auth(env
 @app.get("/ui/planner", response_class=HTMLResponse)
 def ui_planner_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("planner_bulk_releases.html", {"request": request})
+
+
+@app.get("/ui/metadata/title-templates", response_class=HTMLResponse)
+def ui_metadata_title_templates_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("metadata_title_templates.html", {"request": request})
 
 
 @app.get("/ui/track-catalog/analysis-report", response_class=HTMLResponse)
