@@ -13,7 +13,7 @@
 ## Checks to perform
 1. Check worker heartbeat endpoint:
    ```bash
-   curl -fsS http://127.0.0.1:8080/v1/workers
+   curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
    ```
 2. Check core worker services (systemd deployments):
    ```bash

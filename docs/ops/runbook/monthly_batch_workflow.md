@@ -25,9 +25,10 @@ Preferred production path: run the monthly batch only on the deployment-managed 
   - **STOP/HOLD**: any FAIL/WARN not explicitly accepted.
 
 - [ ] **Recovery queue / recovery console pass (GO/STOP)**
+  - Use deployment API Basic Auth credentials (`FACTORY_BASIC_AUTH_USER` / `FACTORY_BASIC_AUTH_PASS`) for `/v1/workers` checks.
   - [ ] Check worker and queue freshness signal:
     ```bash
-    curl -fsS http://127.0.0.1:8080/v1/workers
+    curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
     ```
   - [ ] If stale/failed jobs are already accumulating, run triage SOP before launch:
     - `sop/when_failed_or_stale_jobs_accumulate.md`
@@ -84,7 +85,7 @@ Do **not** treat `scripts/run_stack.py` or single worker `--once` commands as st
 - [ ] Re-check health quickly after launch:
   ```bash
   curl -fsS http://127.0.0.1:8080/health
-  curl -fsS http://127.0.0.1:8080/v1/workers
+  curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
   python scripts/doctor.py production-smoke --profile prod
   ```
 - [ ] Watch service logs for repeated hard failures/timeouts:

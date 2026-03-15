@@ -13,9 +13,10 @@ python scripts/doctor.py production-smoke --profile prod
 
 ## 2) API and worker heartbeat checks
 
+> `/health` is intentionally unauthenticated for liveness checks. `/v1/workers` requires API Basic Auth using `FACTORY_BASIC_AUTH_USER` / `FACTORY_BASIC_AUTH_PASS` from the deployment environment file.
 ```bash
 curl -fsS http://127.0.0.1:8080/health
-curl -fsS http://127.0.0.1:8080/v1/workers
+curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
 ```
 
 ## 3) Service state review (systemd deployments)
@@ -47,3 +48,9 @@ python scripts/doctor.py production-smoke --profile prod --checks runner_bootstr
 ```
 
 Do not treat these debug forms as replacement for the required smoke command in step 1.
+
+## Source anchors
+
+- Smoke gate command: `scripts/doctor.py`, `docs/ops/production_smoke.md`
+- API worker/health endpoints: `README.md`, `services/factory_api/app.py`
+- Systemd service names/path: `deploy/systemd/*.service`

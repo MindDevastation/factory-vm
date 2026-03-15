@@ -19,7 +19,7 @@ Provide a repeatable operator triage path when job failures or stale worker hear
    ```
 2. Check worker heartbeat state:
    ```bash
-   curl -fsS http://127.0.0.1:8080/v1/workers
+   curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
    ```
 3. Verify core worker services (systemd deployment example):
    ```bash

@@ -24,7 +24,7 @@ Provide a repeatable pre-batch gate so operators start batch processing only whe
    ```
 4. Check worker heartbeat endpoint:
    ```bash
-   curl -fsS http://127.0.0.1:8080/v1/workers
+   curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
    ```
 5. If using systemd deployment artifacts, verify core service state:
    ```bash

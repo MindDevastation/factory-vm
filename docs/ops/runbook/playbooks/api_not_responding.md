@@ -35,7 +35,7 @@
 
 ## Verification after fix
 - `curl -fsS http://127.0.0.1:8080/health` succeeds.
-- `curl -fsS http://127.0.0.1:8080/v1/workers` succeeds.
+- `curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers` succeeds.
 - `python scripts/doctor.py production-smoke --profile prod` returns `overall_status=OK`.
 
 ## Escalation / fallback

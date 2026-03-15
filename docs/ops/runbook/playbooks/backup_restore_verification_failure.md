@@ -27,7 +27,7 @@
    ```bash
    python scripts/doctor.py production-smoke --profile prod
    curl -fsS http://127.0.0.1:8080/health
-   curl -fsS http://127.0.0.1:8080/v1/workers
+   curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
    ```
 
 ## Actions to take
