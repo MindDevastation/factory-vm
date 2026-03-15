@@ -37,8 +37,8 @@ Provide a deterministic first-response checklist when `production-smoke` returns
 - Operator is on a specific remediation playbook, not ad-hoc troubleshooting.
 
 ## Escalation / next document if failed
-- API path: `../playbooks/api_unhealthy.md`.
-- Worker path: `../playbooks/worker_stalled.md`.
-- Disk path: `../playbooks/disk_pressure_retention.md`.
+- API path: `../playbooks/api_not_responding.md`.
+- Worker path: `../playbooks/worker_heartbeat_missing.md`.
+- Disk path: `../playbooks/low_disk_space.md`.
 - DB/access path: `../post_restore_verification.md` (with `./backup_and_restore_cli.md` for verify/restore procedure).
 - If unresolved after playbook completion, escalate as production incident.

@@ -36,7 +36,7 @@ Provide a fast, consistent post-reboot validation before returning the VM to nor
 - API and worker endpoints are healthy.
 
 ## Escalation / next document if failed
-- Use `../playbooks/api_unhealthy.md` for API failures.
-- Use `../playbooks/worker_stalled.md` for missing/stale worker roles.
-- Use `../playbooks/disk_pressure_retention.md` for disk warning/critical conditions.
+- Use `../playbooks/api_not_responding.md` for API failures.
+- Use `../playbooks/worker_heartbeat_missing.md` for missing/stale worker roles.
+- Use `../playbooks/low_disk_space.md` for disk warning/critical conditions.
 - Full scenario reference: `../post_reboot_verification.md`.

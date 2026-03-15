@@ -19,8 +19,8 @@ curl -fsS http://127.0.0.1:8080/v1/workers
 ```
 
 4. If smoke or endpoint checks fail, use:
-   - `playbooks/api_unhealthy.md`
-   - `playbooks/worker_stalled.md`
+   - `playbooks/api_not_responding.md`
+   - `playbooks/worker_heartbeat_missing.md`
 
 ## Pass criteria
 
