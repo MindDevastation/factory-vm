@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -85,38 +86,107 @@ class TestRecoveryConsoleApi(unittest.TestCase):
 
             conn = dbm.connect(env)
             try:
-                job_id = self._create_ui_job(conn, title="Stale", state="RENDERING", stage="RENDER")
+                unsafe_job_id = self._create_ui_job(conn, title="Stale", state="RENDERING", stage="RENDER")
+                cleanupable_job_id = self._create_ui_job(conn, title="Failed", state="FAILED", stage="RENDER")
                 conn.execute(
                     "UPDATE jobs SET locked_by = ?, locked_at = ? WHERE id = ?",
-                    ("worker-y", dbm.now_ts() - (env.job_lock_ttl_sec + 7), job_id),
+                    ("worker-y", dbm.now_ts() - (env.job_lock_ttl_sec + 7), unsafe_job_id),
                 )
             finally:
                 conn.close()
 
-            workspace = Path(env.storage_root) / "workspace" / f"job_{job_id}"
-            workspace.mkdir(parents=True, exist_ok=True)
-            (workspace / "tmp.txt").write_text("x", encoding="utf-8")
+            unsafe_workspace = Path(env.storage_root) / "workspace" / f"job_{unsafe_job_id}"
+            unsafe_workspace.mkdir(parents=True, exist_ok=True)
+            (unsafe_workspace / "tmp.txt").write_text("x", encoding="utf-8")
+
+            cleanupable_workspace = Path(env.storage_root) / "workspace" / f"job_{cleanupable_job_id}"
+            cleanupable_workspace.mkdir(parents=True, exist_ok=True)
+            (cleanupable_workspace / "tmp.txt").write_text("x", encoding="utf-8")
 
             mod = importlib.import_module("services.factory_api.app")
             importlib.reload(mod)
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
-            r = client.post(f"/v1/ops/recovery/jobs/{job_id}/cleanup", headers=h, json={"confirm": False, "reason": "nope"})
+            r = client.post(f"/v1/ops/recovery/jobs/{unsafe_job_id}/cleanup", headers=h, json={"confirm": False, "reason": "nope"})
             self.assertEqual(r.status_code, 409)
 
-            r = client.post(f"/v1/ops/recovery/jobs/{job_id}/reclaim", headers=h, json={"confirm": True, "reason": "manual stale reclaim"})
-            self.assertEqual(r.status_code, 200)
+            r = client.post(
+                f"/v1/ops/recovery/jobs/{unsafe_job_id}/cleanup",
+                headers=h,
+                json={"confirm": True, "reason": "cleanup files"},
+            )
+            self.assertEqual(r.status_code, 409)
+            self.assertTrue(unsafe_workspace.exists())
 
-            r = client.post(f"/v1/ops/recovery/jobs/{job_id}/cleanup", headers=h, json={"confirm": True, "reason": "cleanup files"})
+            r = client.post(
+                f"/v1/ops/recovery/jobs/{cleanupable_job_id}/cleanup",
+                headers=h,
+                json={"confirm": True, "reason": "cleanup files"},
+            )
             self.assertEqual(r.status_code, 200)
-            self.assertFalse(workspace.exists())
+            self.assertFalse(cleanupable_workspace.exists())
+
+            r = client.post(
+                f"/v1/ops/recovery/jobs/{unsafe_job_id}/reclaim",
+                headers=h,
+                json={"confirm": True, "reason": "manual stale reclaim"},
+            )
+            self.assertEqual(r.status_code, 200)
 
             r = client.get("/v1/ops/recovery/audit?limit=10", headers=h)
             self.assertEqual(r.status_code, 200)
             items = r.json()["items"]
             self.assertTrue(any(item.get("action") == "reclaim" for item in items))
-            self.assertTrue(any(item.get("action") == "cleanup" for item in items))
+            cleanup_items = [item for item in items if item.get("action") == "cleanup"]
+            self.assertTrue(any(item.get("result") == "ok" for item in cleanup_items))
+            self.assertTrue(any(item.get("result") == "rejected" for item in cleanup_items))
+
+    def test_recovery_cleanup_failure_records_failed_audit(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                cleanupable_job_id = self._create_ui_job(conn, title="Cleanup Fail", state="FAILED", stage="RENDER")
+            finally:
+                conn.close()
+
+            workspace = Path(env.storage_root) / "workspace" / f"job_{cleanupable_job_id}"
+            workspace.mkdir(parents=True, exist_ok=True)
+            (workspace / "tmp.txt").write_text("x", encoding="utf-8")
+
+            artifacts_dir = Path(env.storage_root) / f"job_{cleanupable_job_id}"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            (artifacts_dir / "render.mp4").write_text("x", encoding="utf-8")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app, raise_server_exceptions=False)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            with patch.object(mod, "_force_cleanup_job_artifacts", side_effect=RuntimeError("simulated cleanup failure")):
+                r = client.post(
+                    f"/v1/ops/recovery/jobs/{cleanupable_job_id}/cleanup",
+                    headers=h,
+                    json={"confirm": True, "reason": "verify failure path"},
+                )
+
+            self.assertEqual(r.status_code, 500)
+            self.assertTrue(workspace.exists())
+            self.assertTrue(artifacts_dir.exists())
+            self.assertTrue((workspace / "tmp.txt").exists())
+            self.assertTrue((artifacts_dir / "render.mp4").exists())
+
+            r = client.get("/v1/ops/recovery/audit?limit=10", headers=h)
+            self.assertEqual(r.status_code, 200)
+            items = [
+                item
+                for item in r.json()["items"]
+                if int(item.get("job_id") or 0) == cleanupable_job_id and item.get("action") == "cleanup"
+            ]
+            self.assertTrue(any(item.get("result") == "failed" for item in items))
 
 
 if __name__ == "__main__":

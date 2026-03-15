@@ -3029,9 +3029,31 @@ def api_recovery_cleanup(job_id: int, payload: RecoveryActionPayload, _: bool = 
         job = dbm.get_job(conn, job_id)
         if not job:
             raise HTTPException(404, "job not found")
+        recovery_job = _build_recovery_job(job, now_ts=dbm.now_ts(), lock_ttl_sec=env.job_lock_ttl_sec)
     finally:
         conn.close()
-    details = _force_cleanup_job_artifacts(job_id)
+
+    if not bool(recovery_job.get("actions", {}).get("cleanupable")):
+        details = {
+            "message": "job is not cleanupable",
+            "state": str(job.get("state") or ""),
+            "issue_flags": recovery_job.get("issue_flags") or {},
+        }
+        _record_recovery_action(job_id=job_id, action="cleanup", reason=reason, result="rejected", details=details)
+        raise HTTPException(409, "job is not cleanupable")
+
+    try:
+        details = _force_cleanup_job_artifacts(job_id)
+    except Exception as exc:
+        _record_recovery_action(
+            job_id=job_id,
+            action="cleanup",
+            reason=reason,
+            result="failed",
+            details={"error": str(exc)},
+        )
+        raise
+
     _record_recovery_action(job_id=job_id, action="cleanup", reason=reason, result="ok", details=details)
     return {"ok": True, "action": "cleanup", "result": details}
 
