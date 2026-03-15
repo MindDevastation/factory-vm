@@ -38,6 +38,6 @@ Provide a repeatable operator triage path when job failures or stale worker hear
 - New job failures stop accumulating from worker unavailability.
 
 ## Escalation / next document if failed
-- Follow `../playbooks/worker_stalled.md` as primary remediation.
-- If API endpoint is unstable, also use `../playbooks/api_unhealthy.md`.
+- Follow `../playbooks/worker_heartbeat_missing.md` as primary remediation.
+- If API endpoint is unstable, also use `../playbooks/api_not_responding.md`.
 - If issue persists after playbook steps, escalate as production incident.

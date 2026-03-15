@@ -36,6 +36,6 @@ Confirm a deployment is production-ready before handing back to normal workload 
 - Required services are active for enabled flows.
 
 ## Escalation / next document if failed
-- Use `../playbooks/api_unhealthy.md` for API issues.
-- Use `../playbooks/worker_stalled.md` for worker/readiness issues.
+- Use `../playbooks/api_not_responding.md` for API issues.
+- Use `../playbooks/worker_heartbeat_missing.md` for worker/readiness issues.
 - Use `../post_deploy_verification.md` for full scenario procedure.

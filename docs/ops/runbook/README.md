@@ -54,9 +54,14 @@ If another doc conflicts with this package, follow this runbook and update/depre
 
 ## Incident playbooks
 
-- [`playbooks/api_unhealthy.md`](./playbooks/api_unhealthy.md)
-- [`playbooks/worker_stalled.md`](./playbooks/worker_stalled.md)
-- [`playbooks/disk_pressure_retention.md`](./playbooks/disk_pressure_retention.md)
+- [`playbooks/smoke_check_failure.md`](./playbooks/smoke_check_failure.md)
+- [`playbooks/api_not_responding.md`](./playbooks/api_not_responding.md)
+- [`playbooks/worker_heartbeat_missing.md`](./playbooks/worker_heartbeat_missing.md)
+- [`playbooks/stale_or_stuck_jobs.md`](./playbooks/stale_or_stuck_jobs.md)
+- [`playbooks/repeated_job_failures.md`](./playbooks/repeated_job_failures.md)
+- [`playbooks/low_disk_space.md`](./playbooks/low_disk_space.md)
+- [`playbooks/token_or_integration_readiness_problem.md`](./playbooks/token_or_integration_readiness_problem.md)
+- [`playbooks/backup_restore_verification_failure.md`](./playbooks/backup_restore_verification_failure.md)
 
 ## Linked ops references
 

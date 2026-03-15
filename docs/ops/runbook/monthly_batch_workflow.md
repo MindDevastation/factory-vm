@@ -129,3 +129,4 @@ Operator actions above are anchored to current repo sources:
 - Retention scan/run: `scripts/ops_retention.py`, `docs/ops/logging_retention.md`
 - Health/worker endpoints: `README.md`, `docs/ops/runbook/sop/before_batch_run.md`
 - Service-managed production path: `deploy/systemd/*.service`, `docs/ops/runbook/initial_setup_and_launch.md`
+If disk warnings/critical conditions appear, run retention workflow from `playbooks/low_disk_space.md`.

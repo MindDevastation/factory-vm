@@ -43,5 +43,5 @@ Handle disk warning/critical signals with the preferred retention workflow befor
 - API remains reachable after retention actions.
 
 ## Escalation / next document if failed
-- Follow full disk playbook: `../playbooks/disk_pressure_retention.md`.
-- If API degrades during cleanup, also use `../playbooks/api_unhealthy.md`.
+- Follow full disk playbook: `../playbooks/low_disk_space.md`.
+- If API degrades during cleanup, also use `../playbooks/api_not_responding.md`.
