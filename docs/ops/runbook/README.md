@@ -72,6 +72,30 @@ These references are part of the operational doc set, but the runbook package ab
 - Recovery console docs: [`recovery_console.md`](./recovery_console.md)
 - Logging/retention docs: [`docs/ops/logging_retention.md`](../logging_retention.md)
 
+
+## Documentation maintenance and alignment workflow
+
+Runbook accuracy is mandatory for operator safety.
+
+### Source-anchor rule
+
+- Every documented operational action (deploy/start/restore/smoke/recovery/retention) must cite at least one source anchor in-repo.
+- Valid anchors include implementation (`scripts/*.py`, `services/*`), deployment artifacts (`deploy/systemd/*`), and canonical ops docs in this package.
+
+### Same-PR update rule
+
+When any operator-visible deploy/start/restore/smoke/recovery/retention path changes, update the runbook in the **same PR/slice**.
+
+### Lightweight drift check for ops-related PRs
+
+Use this check in PR review:
+
+1. Did any operator-visible path or command change?
+2. If yes, was `docs/ops/runbook/` updated in the same PR?
+3. If no runbook update was needed, is the reason explicit in the PR description?
+
+A PR that changes operator behavior but skips runbook alignment is not complete.
+
 ## Deployment-specific command policy
 
 Do not treat deployment-specific service commands/paths as globally canonical unless sourced from deployment artifacts.
