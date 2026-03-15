@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -65,6 +65,7 @@ from services.track_analysis_report.xlsx_export import export_report_to_xlsx_byt
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
+from services.metadata import title_template_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -142,6 +143,61 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
 
 def _plb_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _mtb_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+class MetadataTitleTemplatePreviewRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_body: str = Field(min_length=1)
+    release_date: str | None = None
+
+
+@app.get("/v1/metadata/title-templates/variables")
+def api_metadata_title_templates_variables(_: bool = Depends(require_basic_auth(env))):
+    return {"variables": title_template_service.allowed_variables_catalog()}
+
+
+@app.post("/v1/metadata/title-templates/preview")
+def api_metadata_title_templates_preview(
+    payload: MetadataTitleTemplatePreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    parsed_release_date: date | None = None
+    if payload.release_date is not None:
+        try:
+            parsed_release_date = date.fromisoformat(payload.release_date)
+        except ValueError:
+            return _mtb_error(422, "MTB_INVALID_RELEASE_DATE", "release_date must use YYYY-MM-DD format")
+
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_slug(conn, payload.channel_slug)
+    finally:
+        conn.close()
+
+    if not channel:
+        return _mtb_error(404, "MTB_CHANNEL_NOT_FOUND", "Channel not found")
+
+    preview = title_template_service.preview_title_template(
+        channel=channel,
+        template_body=payload.template_body,
+        release_date=parsed_release_date,
+    )
+    log_payload: Dict[str, Any] = {
+        "channel_slug": payload.channel_slug,
+        "render_status": preview.render_status,
+        "missing_variables": list(preview.missing_variables),
+        "validation_error_codes": [error["code"] for error in preview.validation_errors],
+        "template_length": len(payload.template_body),
+    }
+    logger.info("metadata.title_template.previewed", extra=log_payload)
+    if preview.validation_errors:
+        logger.info("metadata.title_template.validation_failed", extra=log_payload)
+
+    return preview.to_dict()
 
 
 @app.get("/v1/playlist-builder/channels/{channel_slug}/settings")
