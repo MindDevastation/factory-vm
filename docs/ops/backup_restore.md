@@ -79,6 +79,44 @@ Operational notes:
 - If an allowlisted env/config/export path does not exist, backup fails fast with `error_code=OPS_BACKUP_CONFIG_INVALID`.
 - Retention pruning is attempted after successful snapshot creation.
 
+## 4.1) Production scheduling (systemd timer)
+
+Preferred production automation path uses systemd timer units:
+
+- `deploy/systemd/factory-backup.service`
+- `deploy/systemd/factory-backup.timer`
+
+The service runs:
+
+```bash
+python scripts/ops_backup_schedule.py run
+```
+
+Wrapper behavior:
+
+- runs `backup create`,
+- reads `<FACTORY_BACKUP_DIR>/latest_successful`,
+- runs `backup verify --backup-id <latest_successful>`,
+- emits `scheduled_backup_ok backup_id=<backup_id>` on success.
+
+Recommended install/enable:
+
+```bash
+sudo cp deploy/systemd/factory-backup.service /etc/systemd/system/factory-backup.service
+sudo cp deploy/systemd/factory-backup.timer /etc/systemd/system/factory-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now factory-backup.timer
+systemctl list-timers factory-backup.timer
+```
+
+Default schedule from the unit file:
+
+- `OnCalendar=*-*-* 03:17:00`
+- `Persistent=true` (catch-up run after downtime)
+- `RandomizedDelaySec=600`
+
+If production policy requires another window, change only `OnCalendar` in `factory-backup.timer`.
+
 ## 5) How to list/verify backups
 
 List indexed snapshots:
@@ -169,6 +207,40 @@ Policy implemented:
 - keep up to 6 monthly.
 
 Retention labels are recorded per snapshot in `index.json` under `retention_labels`.
+
+## 9.1) Operational checks for schedule + retention
+
+Check scheduler state:
+
+```bash
+systemctl status factory-backup.timer factory-backup.service
+systemctl list-timers factory-backup.timer
+```
+
+Check recent scheduled backup logs:
+
+```bash
+journalctl -u factory-backup.service -n 100 --no-pager
+```
+
+Expected success signals in logs/stdout:
+
+- `backup_created=<FACTORY_BACKUP_DIR>/snapshots/<backup_id>`
+- `verify_ok backup_id=<backup_id> snapshot=<snapshot_path>`
+- `scheduled_backup_ok backup_id=<backup_id>`
+
+Verify snapshots and retention/prune effects:
+
+```bash
+PYTHONPATH=. python scripts/ops_backup_restore.py backup list
+PYTHONPATH=. python scripts/ops_backup_restore.py backup prune
+```
+
+Retention is functioning when:
+
+- old non-retained snapshots disappear from `<FACTORY_BACKUP_DIR>/snapshots`,
+- `backup list` still shows `latest` plus daily/weekly/monthly retained backups,
+- `index.json` entries include expected `retention_labels`.
 
 ## 10) Common failure modes and operator actions
 
