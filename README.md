@@ -26,6 +26,22 @@ A runnable MVP scaffold that:
 8) Run bot: `python -m services.bot`
 9) Drop a release folder on Drive (meta.json + audio + cover). Importer will pick it up.
 
+## Production operations (canonical entrypoint)
+
+For production operations, use the runbook package as the canonical entrypoint:
+
+- Start here: `docs/ops/runbook/README.md`
+- First launch: `docs/ops/runbook/initial_setup_and_launch.md`
+- Post-deploy verification: `docs/ops/runbook/post_deploy_verification.md`
+- Post-reboot verification: `docs/ops/runbook/post_reboot_verification.md`
+- Post-restore verification: `docs/ops/runbook/post_restore_verification.md`
+
+Legacy/top-level docs may keep implementation reference details, but operator workflow precedence is:
+
+1) current runtime behavior
+2) `docs/ops/runbook/*`
+3) older ops references (`docs/ops/*.md`)
+
 Dashboard: http://<VM_IP>:8080/
 
 Worker heartbeat: http://<VM_IP>:8080/v1/workers
