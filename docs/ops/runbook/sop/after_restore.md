@@ -37,4 +37,4 @@ Validate service recovery and runtime readiness immediately after a backup resto
 ## Escalation / next document if failed
 - Re-verify/select backup and follow `backup_and_restore_cli.md`.
 - Use scenario guide `../post_restore_verification.md`.
-- Use `../playbooks/api_unhealthy.md` or `../playbooks/worker_stalled.md` based on failing signal.
+- Use `../playbooks/api_not_responding.md` or `../playbooks/worker_heartbeat_missing.md` based on failing signal.

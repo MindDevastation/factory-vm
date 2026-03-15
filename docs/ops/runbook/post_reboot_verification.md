@@ -23,4 +23,4 @@ curl -fsS http://127.0.0.1:8080/health
 curl -fsS http://127.0.0.1:8080/v1/workers
 ```
 
-4. If disk pressure is reported as warning/critical in smoke or logs, run retention procedures from `playbooks/disk_pressure_retention.md`.
+4. If disk pressure is reported as warning/critical in smoke or logs, run retention procedures from `playbooks/low_disk_space.md`.

@@ -39,4 +39,4 @@ curl -fsS http://127.0.0.1:8080/v1/workers
 python scripts/doctor.py production-smoke --profile prod
 ```
 
-If disk warnings/critical conditions appear, run retention workflow from `playbooks/disk_pressure_retention.md`.
+If disk warnings/critical conditions appear, run retention workflow from `playbooks/low_disk_space.md`.

@@ -38,7 +38,7 @@ Provide a repeatable pre-batch gate so operators start batch processing only whe
 - Required services are active for the enabled production flow.
 
 ## Escalation / next document if failed
-- For API failures, use `../playbooks/api_unhealthy.md`.
-- For missing/stale workers, use `../playbooks/worker_stalled.md`.
-- For disk warnings/critical results, use `../playbooks/disk_pressure_retention.md`.
+- For API failures, use `../playbooks/api_not_responding.md`.
+- For missing/stale workers, use `../playbooks/worker_heartbeat_missing.md`.
+- For disk warnings/critical results, use `../playbooks/low_disk_space.md`.
 - For end-to-end scenario context, use `../monthly_batch_workflow.md`.
