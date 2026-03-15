@@ -125,6 +125,14 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('href="/ui/planner"', r.text)
             self.assertIn('href="/ui/track-catalog/custom-tags"', r.text)
             self.assertIn('href="/ui/track-catalog/analysis-report"', r.text)
+            self.assertIn('href="/ui/ops/recovery"', r.text)
+
+            r = client.get("/ui/ops/recovery", headers=h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("Ops · Recovery Console", r.text)
+            self.assertIn('id="filter-channel"', r.text)
+            self.assertIn('/v1/ops/recovery/jobs', r.text)
+            self.assertIn('/v1/ops/recovery/audit?limit=30', r.text)
 
             r = client.get("/ui/db-viewer", headers=h)
             self.assertEqual(r.status_code, 200)

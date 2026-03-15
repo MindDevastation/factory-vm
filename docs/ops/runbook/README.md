@@ -23,6 +23,14 @@ If another doc conflicts with this package, follow this runbook and update/depre
 3. Linked ops references (`docs/ops/*.md`)
 4. Legacy/general docs (for example `README.md`, `docs/LAUNCH_GUIDE.md`, handoff docs)
 
+
+## Canonical operational doc map (quick navigation)
+
+- **Primary operator entrypoint (production operations):** `docs/ops/runbook/README.md` (this page).
+- **Scenario/SOP/playbook execution:** documents under `docs/ops/runbook/*`.
+- **Initial bootstrap context only:** `docs/LAUNCH_GUIDE.md` (secondary if conflict exists).
+- **Code/runtime truth:** API routes and guards in `services/factory_api/app.py`.
+
 ## Preferred production path policy
 
 - **Preferred production path** = scenario flow + SOPs in this runbook package.
@@ -30,6 +38,12 @@ If another doc conflicts with this package, follow this runbook and update/depre
 - Use alternative/debug-only paths only when the preferred path is blocked, and record the reason in incident notes.
 
 ## Scenario navigation (start here)
+
+Operational smoke shortcut wrapper for scenario gates:
+
+```bash
+python scripts/ops_smoke.py --scenario post-deploy --profile prod
+```
 
 - **Initial setup / production launch (preferred)** → [`initial_setup_and_launch.md`](./initial_setup_and_launch.md)
 - **Daily/routine checks (preferred)** → [`daily_checks.md`](./daily_checks.md)

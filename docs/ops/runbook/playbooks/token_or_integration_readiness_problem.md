@@ -17,7 +17,7 @@
    ```
 2. Check OAuth status endpoint:
    ```bash
-   curl -fsS http://127.0.0.1:8080/v1/oauth/status
+   curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/oauth/status
    ```
 3. Confirm configured env files/paths exist per deployment env settings.
 
