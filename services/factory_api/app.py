@@ -151,7 +151,7 @@ def _mtb_error(status_code: int, code: str, message: str) -> JSONResponse:
 
 class MetadataTitleTemplatePreviewRequest(BaseModel):
     channel_slug: str = Field(min_length=1)
-    template_body: str = Field(min_length=1)
+    template_body: str
     release_date: str | None = None
 
 
