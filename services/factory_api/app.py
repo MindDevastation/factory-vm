@@ -313,6 +313,7 @@ def api_metadata_title_templates_patch(
                 template_name=payload.template_name,
                 template_body=payload.template_body,
             )
+            conn.commit()
         except title_template_service.TemplateValidationError as exc:
             status_code = 404 if exc.code in {"MTB_CHANNEL_NOT_FOUND", "MTB_TEMPLATE_NOT_FOUND"} else 422
             if status_code == 422:
