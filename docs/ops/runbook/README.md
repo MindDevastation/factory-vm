@@ -42,7 +42,7 @@ If another doc conflicts with this package, follow this runbook and update/depre
 Operational smoke shortcut wrapper for scenario gates:
 
 ```bash
-python scripts/ops_smoke.py --scenario <post-deploy|post-reboot|post-restore|pre-batch-run> --profile prod
+python scripts/ops_smoke.py --scenario post-deploy --profile prod
 ```
 
 - **Initial setup / production launch (preferred)** → [`initial_setup_and_launch.md`](./initial_setup_and_launch.md)
