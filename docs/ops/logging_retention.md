@@ -83,6 +83,21 @@ systemd-analyze cat-config systemd/journald.conf
 journalctl --disk-usage
 ```
 
+### 4.1) System logrotate decision (explicit)
+
+`factory-vm` intentionally does **not** ship a `logrotate` policy for project logs.
+
+Reasoning:
+
+- project-owned file logs are already bounded by Python `RotatingFileHandler` policy (`services/ops_retention/log_policy.py`),
+- service stdout/stderr retention is capped by journald via `deploy/systemd/journald-retention.conf`,
+- adding system `logrotate` for the same file surface would duplicate rotation authority and create ambiguous ownership.
+
+Operational rule:
+
+- treat Python rotation + journald caps as the canonical logging retention contour,
+- add system `logrotate` only if a **new unmanaged file-log surface** is introduced and cannot be covered by the existing policy.
+
 ## 5) Disposable vs protected artifact policy
 
 Retention runner deletes only allowlisted disposable categories:
@@ -106,6 +121,13 @@ Protected behavior (never delete):
 - any path outside category root (`RETENTION_SKIP_OUTSIDE_SCOPE`),
 - protected path tokens: `backup`, `backups`, `snapshot`, `snapshots`, `quarantine`, `config`, `configs`, `media`, `library`, `final_output`,
 - active/uncertain workspaces (`.active`, `.lock`, `.pid`, non-terminal DB state, missing/uncertain DB state).
+
+### 5.1) Protected vs disposable contract (operator shortcut)
+
+- **Disposable (retention may delete when window expires):** previews, exported temp files, transient report intermediates, terminal abandoned workspaces, stale scratch dirs.
+- **Protected (retention must never delete):** current DB, backups/snapshots/quarantine, env/config/policy artifacts, canonical taxonomy seeds, media source library, final outputs, active/uncertain workspaces, anything outside allowlisted roots.
+
+If in doubt, run `python scripts/ops_retention.py scan` and verify `retention.skip` reasons before any destructive pass.
 
 ## 6) Retention runner commands
 
