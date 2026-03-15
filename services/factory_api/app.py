@@ -348,6 +348,90 @@ def api_metadata_title_templates_patch(
     return item
 
 
+@app.post("/v1/metadata/title-templates/{template_id}/set-default")
+def api_metadata_title_templates_set_default(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.set_default_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.default_changed",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/archive")
+def api_metadata_title_templates_archive(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.archive_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.archived",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/activate")
+def api_metadata_title_templates_activate(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.activate_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.activated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
 @app.get("/v1/playlist-builder/channels/{channel_slug}/settings")
 def api_playlist_builder_channel_settings_get(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)

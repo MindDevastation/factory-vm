@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib
+import threading
 import unittest
 
 from fastapi.testclient import TestClient
 
 from services.common import db as dbm
+from services.metadata import title_template_service
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
@@ -212,7 +214,294 @@ class TestMetadataTitleTemplateApi(unittest.TestCase):
                 conn.close()
             self.assertEqual(int(row["c"]), 1)
 
-    def test_create_and_patch_do_not_mutate_releases(self) -> None:
+    def test_set_default_on_active_valid_template(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            created = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Active",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+
+            set_default = client.post(
+                f"/v1/metadata/title-templates/{created.json()['id']}/set-default",
+                headers=headers,
+            )
+            self.assertEqual(set_default.status_code, 200)
+            self.assertTrue(set_default.json()["is_default"])
+
+    def test_set_default_switching_unsets_previous_default(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            first = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "A",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": True,
+                },
+            )
+            second = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "B",
+                    "template_body": "{{channel_slug}}",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+
+            switched = client.post(f"/v1/metadata/title-templates/{second.json()['id']}/set-default", headers=headers)
+            self.assertEqual(switched.status_code, 200)
+            self.assertTrue(switched.json()["is_default"])
+
+            first_detail = client.get(f"/v1/metadata/title-templates/{first.json()['id']}", headers=headers)
+            self.assertEqual(first_detail.status_code, 200)
+            self.assertFalse(first_detail.json()["is_default"])
+
+    def test_archived_template_cannot_be_set_as_default(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            created = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "A",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            archived = client.post(f"/v1/metadata/title-templates/{created.json()['id']}/archive", headers=headers)
+            self.assertEqual(archived.status_code, 200)
+
+            denied = client.post(f"/v1/metadata/title-templates/{created.json()['id']}/set-default", headers=headers)
+            self.assertEqual(denied.status_code, 422)
+            self.assertEqual(denied.json()["error"]["code"], "MTB_TEMPLATE_ARCHIVED_NOT_ALLOWED_AS_DEFAULT")
+
+    def test_invalid_template_cannot_be_default(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            created = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "A",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    "UPDATE title_templates SET validation_status = 'INVALID', validation_errors_json = '[\"x\"]' WHERE id = ?",
+                    (created.json()["id"],),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            denied = client.post(f"/v1/metadata/title-templates/{created.json()['id']}/set-default", headers=headers)
+            self.assertEqual(denied.status_code, 422)
+            self.assertEqual(denied.json()["error"]["code"], "MTB_INVALID_TEMPLATE_CANNOT_BE_DEFAULT")
+
+    def test_archive_clears_default_flag(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            created = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "A",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": True,
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+
+            archived = client.post(f"/v1/metadata/title-templates/{created.json()['id']}/archive", headers=headers)
+            self.assertEqual(archived.status_code, 200)
+            self.assertEqual(archived.json()["status"], "ARCHIVED")
+            self.assertFalse(archived.json()["is_default"])
+            self.assertIsNotNone(archived.json()["archived_at"])
+
+    def test_activate_restores_active_but_not_default(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            created = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "A",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": True,
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            client.post(f"/v1/metadata/title-templates/{created.json()['id']}/archive", headers=headers)
+
+            activated = client.post(f"/v1/metadata/title-templates/{created.json()['id']}/activate", headers=headers)
+            self.assertEqual(activated.status_code, 200)
+            self.assertEqual(activated.json()["status"], "ACTIVE")
+            self.assertFalse(activated.json()["is_default"])
+            self.assertIsNone(activated.json()["archived_at"])
+
+    def test_archive_already_archived_is_safe_and_consistent(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            created = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "A",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+
+            first = client.post(f"/v1/metadata/title-templates/{created.json()['id']}/archive", headers=headers)
+            second = client.post(f"/v1/metadata/title-templates/{created.json()['id']}/archive", headers=headers)
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(first.json()["status"], "ARCHIVED")
+            self.assertEqual(second.json()["status"], "ARCHIVED")
+            self.assertEqual(first.json()["archived_at"], second.json()["archived_at"])
+
+    def test_set_default_already_default_is_safe_and_consistent(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            created = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "A",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": True,
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+
+            first = client.post(f"/v1/metadata/title-templates/{created.json()['id']}/set-default", headers=headers)
+            second = client.post(f"/v1/metadata/title-templates/{created.json()['id']}/set-default", headers=headers)
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertTrue(first.json()["is_default"])
+            self.assertTrue(second.json()["is_default"])
+
+    def test_concurrent_default_switching_preserves_single_default_invariant(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                first_id = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="T1",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at=dbm.now_ts(),
+                    created_at=dbm.now_ts(),
+                    updated_at=dbm.now_ts(),
+                    archived_at=None,
+                )
+                second_id = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="T2",
+                    template_body="{{channel_slug}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at=dbm.now_ts(),
+                    created_at=dbm.now_ts(),
+                    updated_at=dbm.now_ts(),
+                    archived_at=None,
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            barrier = threading.Barrier(2)
+            errors: list[str] = []
+
+            def _worker(template_id: int) -> None:
+                worker_conn = dbm.connect(env)
+                try:
+                    barrier.wait(timeout=5)
+                    title_template_service.set_default_title_template(worker_conn, template_id=template_id)
+                    worker_conn.commit()
+                except Exception as exc:
+                    errors.append(str(exc))
+                finally:
+                    worker_conn.close()
+
+            t1 = threading.Thread(target=_worker, args=(first_id,))
+            t2 = threading.Thread(target=_worker, args=(second_id,))
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+
+            self.assertEqual(errors, [])
+            conn = dbm.connect(env)
+            try:
+                count_row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM title_templates WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1",
+                    ("darkwood-reverie",),
+                ).fetchone()
+                ids = {
+                    int(r["id"])
+                    for r in conn.execute(
+                        "SELECT id FROM title_templates WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1",
+                        ("darkwood-reverie",),
+                    ).fetchall()
+                }
+            finally:
+                conn.close()
+            self.assertEqual(int(count_row["c"]), 1)
+            self.assertTrue(ids.issubset({first_id, second_id}))
+
+    def test_lifecycle_operations_do_not_mutate_releases(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
             conn = dbm.connect(env)
@@ -247,6 +536,9 @@ class TestMetadataTitleTemplateApi(unittest.TestCase):
                 headers=headers,
                 json={"template_name": "Main2"},
             )
+            client.post(f"/v1/metadata/title-templates/{created.json()['id']}/set-default", headers=headers)
+            client.post(f"/v1/metadata/title-templates/{created.json()['id']}/archive", headers=headers)
+            client.post(f"/v1/metadata/title-templates/{created.json()['id']}/activate", headers=headers)
 
             conn = dbm.connect(env)
             try:

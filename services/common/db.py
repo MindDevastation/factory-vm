@@ -1169,6 +1169,65 @@ def update_title_template_fields(
     return int(cur.rowcount or 0) > 0
 
 
+def set_title_template_default_flag(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    is_default: bool,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE title_templates
+        SET is_default = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (int(is_default), updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def archive_title_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    updated_at: str,
+    archived_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE title_templates
+        SET status = 'ARCHIVED',
+            is_default = 0,
+            archived_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (archived_at, updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def activate_title_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE title_templates
+        SET status = 'ACTIVE',
+            archived_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
 def _next_job_id(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM jobs").fetchone()
     assert row is not None
