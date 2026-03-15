@@ -1,0 +1,11 @@
+[Unit]
+Description=Factory scheduled backup snapshots
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+RandomizedDelaySec=600
+Unit=factory-backup.service
+
+[Install]
+WantedBy=timers.target
