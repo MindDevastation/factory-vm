@@ -7,10 +7,47 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from services.common.env import Env
-from services.common.paths import logs_path, storage_root
+from services.ops_retention.log_policy import CANONICAL_LOG_POLICIES, LogClass
+from services.ops_retention.config import resolve_log_dir
+from services.common.paths import logs_path
 
 
 _CONFIGURED_FOR: set[str] = set()
+_DEFAULT_STDOUT_LOG_MAX_CHARS = 4096
+
+
+_LOG_CLASS_FILE_NAMES: dict[LogClass, str] = {
+    LogClass.APPLICATION: "app.log",
+    LogClass.WORKER_RUNTIME: "workers.log",
+    LogClass.BOT: "bot.log",
+    LogClass.UPLOADER_RENDER: "pipeline.log",
+    LogClass.RECOVERY_AUDIT: "recovery.log",
+    LogClass.SMOKE_OPS: "ops.log",
+}
+
+
+def resolve_log_class(service: str) -> LogClass:
+    normalized = (service or "").strip().lower()
+    if normalized in {"factory_api", "api", "app", "application"}:
+        return LogClass.APPLICATION
+    if normalized in {"bot", "telegram_bot"}:
+        return LogClass.BOT
+    if normalized.startswith(("worker-uploader", "worker-orchestrator", "worker-track_jobs", "pipeline", "render", "uploader")):
+        return LogClass.UPLOADER_RENDER
+    if normalized.startswith(("worker-cleanup", "recovery", "audit")):
+        return LogClass.RECOVERY_AUDIT
+    if normalized.startswith(("smoke", "ops")):
+        return LogClass.SMOKE_OPS
+    if normalized.startswith("worker-") or normalized in {"workers", "worker"}:
+        return LogClass.WORKER_RUNTIME
+    return LogClass.APPLICATION
+
+
+def resolve_log_file_policy(service: str) -> tuple[Path, int, int]:
+    log_class = resolve_log_class(service)
+    policy = CANONICAL_LOG_POLICIES[log_class]
+    filename = _LOG_CLASS_FILE_NAMES[log_class]
+    return Path(filename), policy.rotate_mib * 1024 * 1024, policy.keep_files
 
 
 class _ServiceFilter(logging.Filter):
@@ -22,6 +59,19 @@ class _ServiceFilter(logging.Filter):
         if not hasattr(record, "service"):
             record.service = self._service
         return True
+
+
+class _TruncatingFormatter(logging.Formatter):
+    def __init__(self, *, max_chars: int, **kwargs):
+        super().__init__(**kwargs)
+        self._max_chars = max(0, int(max_chars))
+
+    def format(self, record: logging.LogRecord) -> str:
+        rendered = super().format(record)
+        if self._max_chars <= 0 or len(rendered) <= self._max_chars:
+            return rendered
+        omitted = len(rendered) - self._max_chars
+        return f"{rendered[:self._max_chars]}… [truncated {omitted} chars]"
 
 
 def setup_logging(env: Env, *, service: str) -> None:
@@ -44,17 +94,26 @@ def setup_logging(env: Env, *, service: str) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    stdout_max_chars = int(os.environ.get("FACTORY_STDOUT_LOG_MAX_CHARS", str(_DEFAULT_STDOUT_LOG_MAX_CHARS)))
+
     sh = logging.StreamHandler(sys.stdout)
-    sh.setFormatter(fmt)
+    sh.setFormatter(
+        _TruncatingFormatter(
+            max_chars=stdout_max_chars,
+            fmt="%(asctime)s | %(levelname)s | %(service)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
     sh.addFilter(_ServiceFilter(service))
     root.addHandler(sh)
 
-    log_dir = storage_root(env) / "logs"
+    log_dir = resolve_log_dir(env)
     log_dir.mkdir(parents=True, exist_ok=True)
+    file_name, max_bytes, keep_files = resolve_log_file_policy(service)
     fh = RotatingFileHandler(
-        filename=str(log_dir / f"{service}.log"),
-        maxBytes=5 * 1024 * 1024,
-        backupCount=5,
+        filename=str(log_dir / file_name),
+        maxBytes=max_bytes,
+        backupCount=keep_files,
         encoding="utf-8",
     )
     fh.setFormatter(fmt)

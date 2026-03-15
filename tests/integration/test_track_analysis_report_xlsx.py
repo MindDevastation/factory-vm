@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 from services.common import db as dbm
+from services.common.disk_thresholds import DiskPressureLevel
 from services.track_analysis_report.xlsx_export import build_group_header_spans, sanitize_sheet_name
 from tests._helpers import basic_auth_header, temp_env
 
@@ -358,6 +359,19 @@ def _col(value: int) -> str:
         current, rem = divmod(current - 1, 26)
         result = chr(65 + rem) + result
     return result
+
+    def test_xlsx_export_returns_503_when_disk_pressure_is_critical(self) -> None:
+        with temp_env() as (_, env):
+            self._seed_channel(env)
+            mod, client = self._new_client()
+            mod.evaluate_disk_pressure_for_env = lambda **_kwargs: type("Snap", (), {"pressure": DiskPressureLevel.CRITICAL})()
+            mod.emit_disk_pressure_event = lambda **_kwargs: None
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get("/v1/track-catalog/analysis-report.xlsx", headers=h, params={"channel_slug": "darkwood-reverie"})
+            self.assertEqual(resp.status_code, 503)
+            self.assertEqual(resp.json()["error"]["code"], "DISK_CRITICAL_WRITE_BLOCKED")
+
 
 
 if __name__ == "__main__":

@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Ops · Recovery Console</h1>
+<p class="muted">Safe-by-default operator console for failed/stale/artifact recovery actions.</p>
+<p>
+  <a href="/">← Back to dashboard</a>
+</p>
+
+<div class="grid" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr; gap: 8px; margin: 12px 0;">
+  <div><strong>Total</strong><div id="sum-total">0</div></div>
+  <div><strong>Failed</strong><div id="sum-failed">0</div></div>
+  <div><strong>Stale/Stuck</strong><div id="sum-stale">0</div></div>
+  <div><strong>Cleanup pending</strong><div id="sum-cleanup">0</div></div>
+  <div><strong>Artifact issues</strong><div id="sum-artifact">0</div></div>
+</div>
+
+<p>
+  <label>Channel
+    <select id="filter-channel"><option value="">All</option></select>
+  </label>
+  <label style="margin-left:12px;">State
+    <select id="filter-state"><option value="">All</option></select>
+  </label>
+  <label style="margin-left:12px;">Actionability
+    <select id="filter-actionability">
+      <option value="">All</option>
+      <option value="retryable">retryable</option>
+      <option value="cancellable">cancellable</option>
+      <option value="reclaimable">reclaimable</option>
+      <option value="cleanupable">cleanupable</option>
+      <option value="restartable">restartable</option>
+    </select>
+  </label>
+  <button type="button" id="refresh-btn" style="margin-left:12px;">Refresh</button>
+</p>
+
+<p class="muted" id="status-line">Loading recovery jobs…</p>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th><th>Channel</th><th>Release</th><th>State</th><th>Flags</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody id="jobs-body"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+</table>
+
+<h2>Recovery audit trail</h2>
+<p class="muted">Last operator actions (reason/actor/timestamp/result).</p>
+<table>
+  <thead>
+    <tr><th>Time</th><th>Actor</th><th>Job</th><th>Action</th><th>Reason</th><th>Result</th></tr>
+  </thead>
+  <tbody id="audit-body"><tr><td colspan="6" class="muted">No actions yet.</td></tr></tbody>
+</table>
+
+<script>
+(function () {
+  const jobsBody = document.getElementById('jobs-body');
+  const auditBody = document.getElementById('audit-body');
+  const statusLine = document.getElementById('status-line');
+  const filterChannel = document.getElementById('filter-channel');
+  const filterState = document.getElementById('filter-state');
+  const filterActionability = document.getElementById('filter-actionability');
+
+  function setSummary(summary) {
+    document.getElementById('sum-total').textContent = String(summary.total || 0);
+    document.getElementById('sum-failed').textContent = String(summary.failed || 0);
+    document.getElementById('sum-stale').textContent = String(summary.stale_or_stuck || 0);
+    document.getElementById('sum-cleanup').textContent = String(summary.cleanup_pending || 0);
+    document.getElementById('sum-artifact').textContent = String(summary.artifact_issue || 0);
+  }
+
+  function optionList(select, items) {
+    const prev = select.value;
+    const opts = ['<option value="">All</option>'].concat(items.map((x) => `<option value="${x}">${x}</option>`));
+    select.innerHTML = opts.join('');
+    if ([...select.options].some((o) => o.value === prev)) {
+      select.value = prev;
+    }
+  }
+
+  function renderJobs(jobs) {
+    if (!jobs.length) {
+      jobsBody.innerHTML = '<tr><td colspan="6" class="muted">No problematic jobs for selected filters.</td></tr>';
+      return;
+    }
+    jobsBody.innerHTML = jobs.map((job) => {
+      const flags = Object.entries(job.issue_flags || {}).filter((pair) => pair[1]).map((pair) => pair[0]).join(', ') || '-';
+      const actions = [];
+      if (job.actions.retryable) actions.push(`<button data-action="retry" data-job-id="${job.id}">Retry</button>`);
+      if (job.actions.reclaimable) actions.push(`<button data-action="reclaim" data-job-id="${job.id}">Reclaim stale</button>`);
+      if (job.actions.cleanupable) actions.push(`<button data-action="cleanup" data-job-id="${job.id}">Force cleanup</button>`);
+      if (job.actions.cancellable) actions.push(`<button data-action="cancel" data-job-id="${job.id}">Cancel</button>`);
+      if (job.actions.restartable) actions.push(`<button data-action="restart" data-job-id="${job.id}">Controlled restart</button>`);
+      return `<tr>
+        <td><a href="/jobs/${job.id}">${job.id}</a></td>
+        <td>${job.channel_name || ''}<div class="muted">${job.channel_slug || ''}</div></td>
+        <td>${job.release_title || ''}${job.error_reason ? `<div style="color:#b91c1c">${job.error_reason}</div>` : ''}</td>
+        <td><span class="pill">${job.state}</span><div class="muted">${job.stage || ''}</div></td>
+        <td>${flags}</td>
+        <td>${actions.join(' ') || '<span class="muted">No safe actions</span>'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderAudit(items) {
+    if (!items.length) {
+      auditBody.innerHTML = '<tr><td colspan="6" class="muted">No actions yet.</td></tr>';
+      return;
+    }
+    auditBody.innerHTML = items.map((item) => `<tr>
+      <td>${item.timestamp || ''}</td>
+      <td>${item.actor || ''}</td>
+      <td><a href="/jobs/${item.job_id}">${item.job_id}</a></td>
+      <td>${item.action || ''}</td>
+      <td>${item.reason || ''}</td>
+      <td>${item.result || ''}</td>
+    </tr>`).join('');
+  }
+
+  async function callAction(jobId, action) {
+    const reason = window.prompt(`Confirm ${action} for job ${jobId}. Enter reason:`);
+    if (reason === null) return;
+    const payload = { confirm: true, reason: reason || 'operator action' };
+    const r = await fetch(`/v1/ops/recovery/jobs/${jobId}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      statusLine.textContent = `Action failed (${r.status}): ${JSON.stringify(body)}`;
+      statusLine.style.color = '#b91c1c';
+      return;
+    }
+    statusLine.textContent = `Action ${action} completed for job ${jobId}`;
+    statusLine.style.color = '#166534';
+    await loadAll();
+  }
+
+  async function loadJobs() {
+    const p = new URLSearchParams();
+    if (filterChannel.value) p.set('channel', filterChannel.value);
+    if (filterState.value) p.set('state', filterState.value);
+    if (filterActionability.value) p.set('actionability', filterActionability.value);
+    const r = await fetch(`/v1/ops/recovery/jobs?${p.toString()}`, { credentials: 'same-origin' });
+    const body = await r.json();
+    setSummary(body.summary || {});
+    optionList(filterChannel, (body.filters && body.filters.channels) || []);
+    optionList(filterState, (body.filters && body.filters.states) || []);
+    renderJobs(body.jobs || []);
+    statusLine.textContent = `Loaded ${((body.jobs || []).length)} jobs`;
+    statusLine.style.color = '';
+  }
+
+  async function loadAudit() {
+    const r = await fetch('/v1/ops/recovery/audit?limit=30', { credentials: 'same-origin' });
+    const body = await r.json();
+    renderAudit(body.items || []);
+  }
+
+  async function loadAll() {
+    await loadJobs();
+    await loadAudit();
+  }
+
+  document.getElementById('refresh-btn').addEventListener('click', loadAll);
+  filterChannel.addEventListener('change', loadAll);
+  filterState.addEventListener('change', loadAll);
+  filterActionability.addEventListener('change', loadAll);
+  jobsBody.addEventListener('click', (event) => {
+    const btn = event.target.closest('button[data-action][data-job-id]');
+    if (!btn) return;
+    callAction(btn.getAttribute('data-job-id'), btn.getAttribute('data-action'));
+  });
+
+  loadAll();
+})();
+</script>
+{% endblock %}

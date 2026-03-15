@@ -7,6 +7,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from services.common import db as dbm
+from services.common.disk_thresholds import DiskPressureLevel
 from services.common.env import Env
 from services.factory_api.oauth_tokens import oauth_token_path
 
@@ -180,6 +181,22 @@ class TestUiJobsRenderOne(unittest.TestCase):
 
             self.assertEqual(resp.status_code, 200)
             self.assertEqual(resp.json(), {"job_id": str(job_id), "enqueued": False, "message": "Already in progress"})
+
+    def test_503_when_disk_pressure_is_critical(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
+            job_id = self._create_draft_job(env)
+
+            mod, client = self._new_client()
+            mod.evaluate_disk_pressure_for_env = lambda **_kwargs: type("Snap", (), {"pressure": DiskPressureLevel.CRITICAL})()
+            mod.emit_disk_pressure_event = lambda **_kwargs: None
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.post(f"/v1/ui/jobs/{job_id}/render", headers=h)
+            self.assertEqual(resp.status_code, 503)
+            self.assertEqual(resp.json()["error"]["code"], "DISK_CRITICAL_WRITE_BLOCKED")
+
 
 
 

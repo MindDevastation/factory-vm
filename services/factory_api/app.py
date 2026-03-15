@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import time
@@ -23,10 +24,12 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.common.env import Env
+from services.common.disk_guard import emit_disk_pressure_event, evaluate_disk_pressure_for_env
+from services.common.disk_thresholds import DiskPressureLevel
 from services.common import db as dbm
 from services.common.pydeps import ensure_py_deps_on_sys_path
 from services.factory_api.security import require_basic_auth
-from services.common.paths import logs_path, qa_path
+from services.common.paths import logs_path, outbox_dir, preview_path, qa_path, workspace_dir
 from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
@@ -1054,6 +1057,9 @@ def api_track_analysis_report_xlsx(
     channel_slug: str = "",
     _: bool = Depends(require_basic_auth(env)),
 ):
+    blocked = _disk_guard_write_heavy(operation="track_analysis_report_xlsx")
+    if blocked is not None:
+        return blocked
     conn = dbm.connect(env)
     try:
         try:
@@ -2330,6 +2336,9 @@ def api_track_jobs_discover(payload: DiscoverTrackJobPayload, _: bool = Depends(
 
 @app.post("/v1/track_jobs/analyze", status_code=202)
 def api_track_jobs_analyze(payload: AnalyzeTrackJobPayload, _: bool = Depends(require_basic_auth(env))):
+    blocked = _disk_guard_write_heavy(operation="track_jobs_analyze")
+    if blocked is not None:
+        return blocked
     channel_slug = payload.channel_slug.strip()
     conn = dbm.connect(env)
     try:
@@ -2419,6 +2428,11 @@ class CancelPayload(BaseModel):
     reason: str = Field(default='cancelled by user', max_length=500)
 
 
+class RecoveryActionPayload(BaseModel):
+    reason: str = Field(default="operator action", max_length=500)
+    confirm: bool = False
+
+
 class UiJobDraftPayload(BaseModel):
     channel_id: int
     title: str
@@ -2464,6 +2478,187 @@ def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
 
 def _bulk_json_invalid(message: str) -> JSONResponse:
     return _uij_error(400, "UIJ_BULK_INVALID_INPUT", message)
+
+
+_RECOVERY_FAIL_STATES = {"FAILED", "RENDER_FAILED", "QA_FAILED", "UPLOAD_FAILED"}
+_RECOVERY_STALE_STATES = {"FETCHING_INPUTS", "RENDERING"}
+_RECOVERY_ACTIONABLE = {"retryable", "cancellable", "reclaimable", "cleanupable", "restartable"}
+
+
+def _recovery_audit_path() -> Path:
+    return Path(env.storage_root).resolve() / "logs" / "recovery_audit.jsonl"
+
+
+def _append_recovery_audit(entry: dict[str, Any]) -> None:
+    path = _recovery_audit_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _load_recovery_audit(limit: int = 50) -> list[dict[str, Any]]:
+    path = _recovery_audit_path()
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    records: list[dict[str, Any]] = []
+    for line in reversed(lines):
+        if len(records) >= limit:
+            break
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(rec, dict):
+            records.append(rec)
+    return records
+
+
+def _build_recovery_job(job: dict[str, Any], *, now_ts: float, lock_ttl_sec: int) -> dict[str, Any]:
+    state = str(job.get("state") or "")
+    error_reason = str(job.get("error_reason") or "")
+    retry_child_exists = bool(job.get("retry_child_job_id"))
+    locked_at_raw = job.get("locked_at")
+    locked_at = float(locked_at_raw) if locked_at_raw is not None else None
+    stale_locked = bool(
+        state in _RECOVERY_STALE_STATES
+        and job.get("locked_by")
+        and locked_at is not None
+        and locked_at < (now_ts - float(lock_ttl_sec))
+    )
+    cleanup_pending = bool(state == "PUBLISHED" and job.get("delete_mp4_at") is not None)
+    artifact_issue = any(token in error_reason.lower() for token in ("artifact", "mp4", "missing", "cleanup"))
+
+    actions = {
+        "retryable": bool(state in _RECOVERY_FAIL_STATES and not retry_child_exists),
+        "cancellable": bool(state not in {"PUBLISHED", "REJECTED", "APPROVED", "CANCELLED", "CLEANED"}),
+        "reclaimable": bool(stale_locked),
+        "cleanupable": bool(state in _RECOVERY_FAIL_STATES or cleanup_pending or artifact_issue),
+        "restartable": bool(state == "DRAFT"),
+    }
+    issue_flags = {
+        "failed": bool(state in _RECOVERY_FAIL_STATES),
+        "stale_or_stuck": bool(stale_locked),
+        "cleanup_pending": bool(cleanup_pending),
+        "artifact_issue": bool(artifact_issue),
+    }
+    return {
+        "id": int(job["id"]),
+        "channel_slug": job.get("channel_slug"),
+        "channel_name": job.get("channel_name"),
+        "release_title": job.get("release_title"),
+        "state": state,
+        "stage": job.get("stage"),
+        "updated_at": job.get("updated_at"),
+        "error_reason": error_reason,
+        "locked_by": job.get("locked_by"),
+        "locked_at": locked_at_raw,
+        "retry_child_job_id": job.get("retry_child_job_id"),
+        "issue_flags": issue_flags,
+        "actions": actions,
+    }
+
+
+def _list_recovery_jobs(conn: Any) -> list[dict[str, Any]]:
+    jobs = dbm.list_jobs(conn, limit=500)
+    job_ids = [int(job["id"]) for job in jobs]
+    retry_child_by_parent_id: dict[int, int] = {}
+    if job_ids:
+        placeholders = ",".join("?" for _ in job_ids)
+        rows = conn.execute(
+            f"SELECT id, retry_of_job_id FROM jobs WHERE retry_of_job_id IN ({placeholders})",
+            job_ids,
+        ).fetchall()
+        retry_child_by_parent_id = {
+            int(row["retry_of_job_id"]): int(row["id"])
+            for row in rows
+            if row.get("retry_of_job_id") is not None
+        }
+
+    now = dbm.now_ts()
+    recovery_jobs = []
+    for job in jobs:
+        job["retry_child_job_id"] = retry_child_by_parent_id.get(int(job["id"]))
+        payload = _build_recovery_job(job, now_ts=now, lock_ttl_sec=env.job_lock_ttl_sec)
+        if any(payload["issue_flags"].values()) or any(payload["actions"].values()):
+            recovery_jobs.append(payload)
+    return recovery_jobs
+
+
+def _force_cleanup_job_artifacts(job_id: int) -> dict[str, Any]:
+    removed: list[str] = []
+    missing: list[str] = []
+    targets = [
+        workspace_dir(env, job_id),
+        outbox_dir(env, job_id),
+        preview_path(env, job_id),
+        qa_path(env, job_id),
+    ]
+    for target in targets:
+        if not target.exists():
+            missing.append(str(target))
+            continue
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        removed.append(str(target))
+    return {"removed": removed, "missing": missing}
+
+
+def _record_recovery_action(*, job_id: int, action: str, reason: str, result: str, details: dict[str, Any] | None = None) -> None:
+    _append_recovery_audit(
+        {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "actor": env.basic_user,
+            "job_id": int(job_id),
+            "action": action,
+            "reason": reason,
+            "result": result,
+            "details": details or {},
+        }
+    )
+
+
+def _manual_reclaim_job(conn: Any, *, job_id: int) -> dict[str, Any]:
+    row = conn.execute(
+        "SELECT id, state, locked_by, locked_at FROM jobs WHERE id = ?",
+        (job_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "job not found")
+    state = str(row.get("state") or "")
+    locked_by = row.get("locked_by")
+    locked_at = row.get("locked_at")
+    now = dbm.now_ts()
+    stale_before = now - float(env.job_lock_ttl_sec)
+    if state not in _RECOVERY_STALE_STATES or not locked_by or locked_at is None or float(locked_at) >= stale_before:
+        raise HTTPException(409, "job is not reclaimable")
+
+    attempt = dbm.increment_attempt(conn, job_id)
+    reclaim_reason = f"reclaimed stale lock from {state}"
+    if attempt < env.max_render_attempts:
+        dbm.schedule_retry(
+            conn,
+            job_id,
+            next_state="READY_FOR_RENDER",
+            stage="FETCH",
+            error_reason=f"attempt={attempt} retry: {reclaim_reason}",
+            backoff_sec=env.retry_backoff_sec,
+        )
+        next_state = "READY_FOR_RENDER"
+    else:
+        dbm.update_job_state(
+            conn,
+            job_id,
+            state="RENDER_FAILED",
+            stage="RENDER",
+            error_reason=f"attempt={attempt} terminal: {reclaim_reason}",
+        )
+        dbm.clear_retry(conn, job_id)
+        dbm.force_unlock(conn, job_id)
+        next_state = "RENDER_FAILED"
+    return {"attempt": attempt, "next_state": next_state}
 
 
 def _validate_create_item(conn: Any, item: dict[str, Any]) -> tuple[UiJobDraftPayload | None, dict[str, Any] | None]:
@@ -2629,6 +2824,11 @@ def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs})
 
 
+@app.get("/ui/ops/recovery", response_class=HTMLResponse)
+def recovery_console(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("recovery_console.html", {"request": request})
+
+
 @app.get("/ui/db-viewer", response_class=HTMLResponse)
 def ui_db_viewer_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("db_viewer.html", {"request": request})
@@ -2734,6 +2934,146 @@ def api_jobs(state: Optional[str] = None, _: bool = Depends(require_basic_auth(e
     finally:
         conn.close()
     return {"jobs": jobs}
+
+
+@app.get("/v1/ops/recovery/jobs")
+def api_recovery_jobs(
+    channel: Optional[str] = None,
+    state: Optional[str] = None,
+    actionability: Optional[str] = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    actionability_normalized = (actionability or "").strip().lower()
+    if actionability_normalized and actionability_normalized not in _RECOVERY_ACTIONABLE:
+        raise HTTPException(422, "invalid actionability")
+
+    conn = dbm.connect(env)
+    try:
+        jobs = _list_recovery_jobs(conn)
+    finally:
+        conn.close()
+
+    if channel:
+        jobs = [job for job in jobs if str(job.get("channel_slug") or "") == channel]
+    if state:
+        jobs = [job for job in jobs if str(job.get("state") or "") == state]
+    if actionability_normalized:
+        jobs = [job for job in jobs if bool(job.get("actions", {}).get(actionability_normalized))]
+
+    summary = {
+        "total": len(jobs),
+        "failed": sum(1 for job in jobs if bool(job.get("issue_flags", {}).get("failed"))),
+        "stale_or_stuck": sum(1 for job in jobs if bool(job.get("issue_flags", {}).get("stale_or_stuck"))),
+        "cleanup_pending": sum(1 for job in jobs if bool(job.get("issue_flags", {}).get("cleanup_pending"))),
+        "artifact_issue": sum(1 for job in jobs if bool(job.get("issue_flags", {}).get("artifact_issue"))),
+        "retryable": sum(1 for job in jobs if bool(job.get("actions", {}).get("retryable"))),
+        "cancellable": sum(1 for job in jobs if bool(job.get("actions", {}).get("cancellable"))),
+        "reclaimable": sum(1 for job in jobs if bool(job.get("actions", {}).get("reclaimable"))),
+        "cleanupable": sum(1 for job in jobs if bool(job.get("actions", {}).get("cleanupable"))),
+        "restartable": sum(1 for job in jobs if bool(job.get("actions", {}).get("restartable"))),
+    }
+    channels = sorted({str(job.get("channel_slug") or "") for job in jobs if str(job.get("channel_slug") or "")})
+    states = sorted({str(job.get("state") or "") for job in jobs if str(job.get("state") or "")})
+    return {"summary": summary, "jobs": jobs, "filters": {"channels": channels, "states": states}}
+
+
+@app.get("/v1/ops/recovery/audit")
+def api_recovery_audit(limit: int = 50, _: bool = Depends(require_basic_auth(env))):
+    safe_limit = max(1, min(int(limit), 200))
+    return {"items": _load_recovery_audit(limit=safe_limit)}
+
+
+def _require_recovery_confirm(payload: RecoveryActionPayload) -> str:
+    if not payload.confirm:
+        raise HTTPException(409, "confirmation is required")
+    return (payload.reason or "operator action").strip() or "operator action"
+
+
+@app.post("/v1/ops/recovery/jobs/{job_id}/retry")
+def api_recovery_retry(job_id: int, payload: RecoveryActionPayload, _: bool = Depends(require_basic_auth(env))):
+    reason = _require_recovery_confirm(payload)
+    result = api_ui_job_retry(job_id, _=True)
+    if isinstance(result, JSONResponse):
+        _record_recovery_action(job_id=job_id, action="retry", reason=reason, result="failed", details={"status": result.status_code})
+        return result
+    _record_recovery_action(job_id=job_id, action="retry", reason=reason, result="ok", details=result)
+    return {"ok": True, "action": "retry", "result": result}
+
+
+@app.post("/v1/ops/recovery/jobs/{job_id}/cancel")
+def api_recovery_cancel(job_id: int, payload: RecoveryActionPayload, _: bool = Depends(require_basic_auth(env))):
+    reason = _require_recovery_confirm(payload)
+    result = api_cancel(job_id, CancelPayload(reason=reason), _=True)
+    _record_recovery_action(job_id=job_id, action="cancel", reason=reason, result="ok", details=result)
+    return {"ok": True, "action": "cancel", "result": result}
+
+
+@app.post("/v1/ops/recovery/jobs/{job_id}/reclaim")
+def api_recovery_reclaim(job_id: int, payload: RecoveryActionPayload, _: bool = Depends(require_basic_auth(env))):
+    reason = _require_recovery_confirm(payload)
+    conn = dbm.connect(env)
+    try:
+        details = _manual_reclaim_job(conn, job_id=job_id)
+    finally:
+        conn.close()
+
+    _record_recovery_action(job_id=job_id, action="reclaim", reason=reason, result="ok", details=details)
+    return {"ok": True, "action": "reclaim", "result": details}
+
+
+@app.post("/v1/ops/recovery/jobs/{job_id}/cleanup")
+def api_recovery_cleanup(job_id: int, payload: RecoveryActionPayload, _: bool = Depends(require_basic_auth(env))):
+    reason = _require_recovery_confirm(payload)
+    conn = dbm.connect(env)
+    try:
+        job = dbm.get_job(conn, job_id)
+        if not job:
+            raise HTTPException(404, "job not found")
+        recovery_job = _build_recovery_job(job, now_ts=dbm.now_ts(), lock_ttl_sec=env.job_lock_ttl_sec)
+    finally:
+        conn.close()
+
+    if not bool(recovery_job.get("actions", {}).get("cleanupable")):
+        details = {
+            "message": "job is not cleanupable",
+            "state": str(job.get("state") or ""),
+            "issue_flags": recovery_job.get("issue_flags") or {},
+        }
+        _record_recovery_action(job_id=job_id, action="cleanup", reason=reason, result="rejected", details=details)
+        raise HTTPException(409, "job is not cleanupable")
+
+    try:
+        details = _force_cleanup_job_artifacts(job_id)
+    except Exception as exc:
+        _record_recovery_action(
+            job_id=job_id,
+            action="cleanup",
+            reason=reason,
+            result="failed",
+            details={"error": str(exc)},
+        )
+        raise
+
+    _record_recovery_action(job_id=job_id, action="cleanup", reason=reason, result="ok", details=details)
+    return {"ok": True, "action": "cleanup", "result": details}
+
+
+@app.post("/v1/ops/recovery/jobs/{job_id}/restart")
+def api_recovery_restart(job_id: int, payload: RecoveryActionPayload, _: bool = Depends(require_basic_auth(env))):
+    reason = _require_recovery_confirm(payload)
+    conn = dbm.connect(env)
+    try:
+        guard = check_ui_render_guard(conn, job_id=job_id)
+    finally:
+        conn.close()
+    if not guard.eligible:
+        raise HTTPException(409, "controlled restart is supported only for Draft jobs with no active inputs")
+    result = api_ui_job_render(job_id, _=True)
+    if isinstance(result, JSONResponse):
+        _record_recovery_action(job_id=job_id, action="restart", reason=reason, result="failed", details={"status": result.status_code})
+        return result
+    _record_recovery_action(job_id=job_id, action="restart", reason=reason, result="ok", details=result)
+    return {"ok": True, "action": "restart", "result": result}
 
 
 @app.get("/v1/jobs/{job_id}")
@@ -3057,7 +3397,18 @@ def _uij_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
+def _disk_guard_write_heavy(*, operation: str) -> JSONResponse | None:
+    snapshot = evaluate_disk_pressure_for_env(env=env)
+    emit_disk_pressure_event(logger=logger, snapshot=snapshot, stage=operation)
+    if snapshot.pressure is not DiskPressureLevel.CRITICAL:
+        return None
+    return _uij_error(503, "DISK_CRITICAL_WRITE_BLOCKED", "Operation blocked due to critical disk pressure")
+
+
 def _render_selected_item(job_id_text: str) -> dict[str, Any]:
+    blocked = _disk_guard_write_heavy(operation="ui_jobs_render_selected")
+    if blocked is not None:
+        return {"job_id": str(job_id_text), "error": {"code": "DISK_CRITICAL_WRITE_BLOCKED", "message": "Operation blocked due to critical disk pressure"}}
     try:
         job_id = int(job_id_text)
     except (TypeError, ValueError):
@@ -3162,6 +3513,9 @@ def api_ui_jobs_render_selected(payload: UiJobsRenderSelectedPayload, _: bool = 
 
 @app.post("/v1/ui/jobs/render_all")
 def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
+    blocked = _disk_guard_write_heavy(operation="ui_jobs_render_all")
+    if blocked is not None:
+        return blocked
     conn = dbm.connect(env)
     try:
         rows = conn.execute(
@@ -3245,6 +3599,9 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
 
 @app.post("/v1/ui/jobs/{job_id}/render")
 def api_ui_job_render(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    blocked = _disk_guard_write_heavy(operation="ui_jobs_render")
+    if blocked is not None:
+        return blocked
     conn = dbm.connect(env)
     try:
         job = dbm.get_job(conn, job_id)
@@ -3309,6 +3666,9 @@ def api_ui_job_render(job_id: int, _: bool = Depends(require_basic_auth(env))):
 
 @app.post("/v1/ui/jobs/{job_id}/retry")
 def api_ui_job_retry(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    blocked = _disk_guard_write_heavy(operation="ui_jobs_retry")
+    if blocked is not None:
+        return blocked
     logger.info("ui.jobs.retry.request", extra={"job_id": job_id, "stage": "request"})
     conn = dbm.connect(env)
     try:
