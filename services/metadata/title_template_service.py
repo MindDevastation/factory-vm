@@ -293,6 +293,79 @@ def update_title_template(
     return _serialize_template(saved)
 
 
+def set_default_title_template(conn: sqlite3.Connection, *, template_id: int) -> Dict[str, Any]:
+    row = dbm.get_title_template_by_id(conn, template_id)
+    if not row:
+        raise TemplateValidationError(code="MTB_TEMPLATE_NOT_FOUND", message="Template not found")
+    if str(row.get("status") or "") == "ARCHIVED":
+        raise TemplateValidationError(
+            code="MTB_TEMPLATE_ARCHIVED_NOT_ALLOWED_AS_DEFAULT",
+            message="Archived template cannot be set as default",
+        )
+    if str(row.get("validation_status") or "") != "VALID":
+        raise TemplateValidationError(
+            code="MTB_INVALID_TEMPLATE_CANNOT_BE_DEFAULT",
+            message="Invalid template cannot be set as default",
+        )
+    if bool(int(row.get("is_default") or 0)):
+        return _serialize_template(row)
+
+    now_iso = _now_iso()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        current = dbm.get_title_template_by_id(conn, template_id)
+        if not current:
+            raise TemplateValidationError(code="MTB_TEMPLATE_NOT_FOUND", message="Template not found")
+        if str(current.get("status") or "") == "ARCHIVED":
+            raise TemplateValidationError(
+                code="MTB_TEMPLATE_ARCHIVED_NOT_ALLOWED_AS_DEFAULT",
+                message="Archived template cannot be set as default",
+            )
+        if str(current.get("validation_status") or "") != "VALID":
+            raise TemplateValidationError(
+                code="MTB_INVALID_TEMPLATE_CANNOT_BE_DEFAULT",
+                message="Invalid template cannot be set as default",
+            )
+        dbm.unset_active_default_title_template(conn, channel_slug=str(current.get("channel_slug") or ""))
+        dbm.set_title_template_default_flag(conn, template_id=template_id, is_default=True, updated_at=now_iso)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    saved = dbm.get_title_template_by_id(conn, template_id)
+    assert saved is not None
+    return _serialize_template(saved)
+
+
+def archive_title_template(conn: sqlite3.Connection, *, template_id: int) -> Dict[str, Any]:
+    row = dbm.get_title_template_by_id(conn, template_id)
+    if not row:
+        raise TemplateValidationError(code="MTB_TEMPLATE_NOT_FOUND", message="Template not found")
+    if str(row.get("status") or "") == "ARCHIVED":
+        return _serialize_template(row)
+
+    now_iso = _now_iso()
+    dbm.archive_title_template(conn, template_id=template_id, updated_at=now_iso, archived_at=now_iso)
+    saved = dbm.get_title_template_by_id(conn, template_id)
+    assert saved is not None
+    return _serialize_template(saved)
+
+
+def activate_title_template(conn: sqlite3.Connection, *, template_id: int) -> Dict[str, Any]:
+    row = dbm.get_title_template_by_id(conn, template_id)
+    if not row:
+        raise TemplateValidationError(code="MTB_TEMPLATE_NOT_FOUND", message="Template not found")
+    if str(row.get("status") or "") == "ACTIVE":
+        return _serialize_template(row)
+
+    now_iso = _now_iso()
+    dbm.activate_title_template(conn, template_id=template_id, updated_at=now_iso)
+    saved = dbm.get_title_template_by_id(conn, template_id)
+    assert saved is not None
+    return _serialize_template(saved)
+
+
 def normalize_whitespace(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
