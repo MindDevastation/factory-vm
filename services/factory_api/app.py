@@ -65,7 +65,7 @@ from services.track_analysis_report.xlsx_export import export_report_to_xlsx_byt
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
-from services.metadata import title_template_service
+from services.metadata import title_template_service, titlegen_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -149,6 +149,10 @@ def _mtb_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
+def _mtg_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
 class MetadataTitleTemplatePreviewRequest(BaseModel):
     channel_slug: str = Field(min_length=1)
     template_body: str
@@ -165,6 +169,124 @@ class MetadataTitleTemplateCreateRequest(BaseModel):
 class MetadataTitleTemplatePatchRequest(BaseModel):
     template_name: str | None = None
     template_body: str | None = None
+
+
+class MetadataTitleGenGenerateRequest(BaseModel):
+    template_id: int | None = None
+
+
+@app.get("/v1/metadata/releases/{release_id}/titlegen/context")
+def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            context = titlegen_service.load_titlegen_context(conn, release_id=release_id)
+        except titlegen_service.TitleGenError as exc:
+            status_code = 404 if exc.code == "MTG_RELEASE_NOT_FOUND" else 422
+            logger.info(
+                "metadata.titlegen.generate_failed",
+                extra={"release_id": release_id, "error_code": exc.code, "template_id": None},
+            )
+            return _mtg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    default_item = None
+    if context.default_template is not None:
+        default_item = {
+            "id": int(context.default_template["id"]),
+            "channel_slug": str(context.default_template["channel_slug"]),
+            "template_name": str(context.default_template["template_name"]),
+            "template_body": str(context.default_template["template_body"]),
+            "status": str(context.default_template["status"]),
+            "is_default": bool(int(context.default_template.get("is_default") or 0)),
+            "validation_status": str(context.default_template["validation_status"]),
+        }
+
+    warnings: list[dict[str, str]] = []
+    if context.overwrite_required:
+        warnings.append(
+            {
+                "code": "MTG_OVERWRITE_REQUIRED",
+                "message": "Release already has a non-empty title; apply would overwrite it",
+            }
+        )
+
+    payload = {
+        "release": {
+            "id": context.release["id"],
+            "channel_slug": context.release["channel_slug"],
+            "title_current": context.release["title"],
+            "planned_at": context.release["planned_at"],
+        },
+        "default_template": default_item,
+        "overwrite_required": context.overwrite_required,
+        "warnings": warnings,
+    }
+    logger.info(
+        "metadata.titlegen.context_loaded",
+        extra={
+            "release_id": context.release["id"],
+            "channel_slug": context.release["channel_slug"],
+            "default_template_id": default_item["id"] if default_item else None,
+            "overwrite_required": context.overwrite_required,
+        },
+    )
+    return payload
+
+
+@app.post("/v1/metadata/releases/{release_id}/titlegen/generate")
+def api_metadata_titlegen_generate(
+    release_id: int,
+    payload: MetadataTitleGenGenerateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=payload.template_id)
+        except titlegen_service.TitleGenError as exc:
+            status_code = 404 if exc.code in {"MTG_RELEASE_NOT_FOUND", "MTG_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.titlegen.generate_failed",
+                extra={"release_id": release_id, "error_code": exc.code, "template_id": payload.template_id},
+            )
+            return _mtg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release": {
+            "id": result.release["id"],
+            "channel_slug": result.release["channel_slug"],
+            "title_current": result.release["title"],
+            "planned_at": result.release["planned_at"],
+        },
+        "template": {
+            "id": int(result.template["id"]),
+            "channel_slug": str(result.template["channel_slug"]),
+            "template_name": str(result.template["template_name"]),
+            "template_body": str(result.template["template_body"]),
+            "status": str(result.template["status"]),
+            "validation_status": str(result.template["validation_status"]),
+            "source": result.template_source,
+        },
+        "proposed_title": result.proposed_title,
+        "overwrite_required": result.overwrite_required,
+        "warnings": result.warnings,
+        "generation_fingerprint": result.generation_fingerprint,
+    }
+    logger.info(
+        "metadata.titlegen.generated",
+        extra={
+            "release_id": result.release["id"],
+            "channel_slug": result.release["channel_slug"],
+            "template_id": int(result.template["id"]),
+            "template_source": result.template_source,
+            "overwrite_required": result.overwrite_required,
+        },
+    )
+    return body
 
 
 @app.get("/v1/metadata/title-templates/variables")
