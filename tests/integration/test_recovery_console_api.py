@@ -176,6 +176,8 @@ class TestRecoveryConsoleApi(unittest.TestCase):
             self.assertEqual(r.status_code, 500)
             self.assertTrue(workspace.exists())
             self.assertTrue(artifacts_dir.exists())
+            self.assertTrue((workspace / "tmp.txt").exists())
+            self.assertTrue((artifacts_dir / "render.mp4").exists())
 
             r = client.get("/v1/ops/recovery/audit?limit=10", headers=h)
             self.assertEqual(r.status_code, 200)
