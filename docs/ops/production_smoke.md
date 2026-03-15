@@ -39,7 +39,7 @@ Run smoke in these operator moments:
 Operational wrapper shortcut for these scenarios:
 
 ```bash
-python scripts/ops_smoke.py --scenario <post-deploy|post-reboot|post-restore|pre-batch-run> --profile prod
+python scripts/ops_smoke.py --scenario post-deploy --profile prod
 ```
 
 This wrapper delegates to the same production smoke runner and preserves the same exit-code contract.

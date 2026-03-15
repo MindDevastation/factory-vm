@@ -69,8 +69,8 @@ def main() -> None:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print(render_human_report(report))
+        print(_render_operational_verdict(int(report["exit_code"]), args.scenario))
 
-    print(_render_operational_verdict(int(report["exit_code"]), args.scenario))
     raise SystemExit(int(report["exit_code"]))
 
 
