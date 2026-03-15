@@ -24,3 +24,9 @@ curl -fsS http://127.0.0.1:8080/v1/workers
 ```
 
 4. If disk pressure is reported as warning/critical in smoke or logs, run retention procedures from `playbooks/low_disk_space.md`.
+
+## Source anchors
+
+- Smoke verification command: `scripts/doctor.py`, `docs/ops/production_smoke.md`
+- API/worker endpoints: `README.md`, `services/factory_api/app.py`
+- Service auto-start units: `deploy/systemd/*.service`

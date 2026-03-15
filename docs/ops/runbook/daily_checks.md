@@ -47,3 +47,9 @@ python scripts/doctor.py production-smoke --profile prod --checks runner_bootstr
 ```
 
 Do not treat these debug forms as replacement for the required smoke command in step 1.
+
+## Source anchors
+
+- Smoke gate command: `scripts/doctor.py`, `docs/ops/production_smoke.md`
+- API worker/health endpoints: `README.md`, `services/factory_api/app.py`
+- Systemd service names/path: `deploy/systemd/*.service`

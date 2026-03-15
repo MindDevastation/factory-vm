@@ -31,11 +31,12 @@ If another doc conflicts with this package, follow this runbook and update/depre
 
 ## Scenario navigation (start here)
 
-- **First launch (preferred)** → [`initial_setup_and_launch.md`](./initial_setup_and_launch.md)
+- **Initial setup / production launch (preferred)** → [`initial_setup_and_launch.md`](./initial_setup_and_launch.md)
+- **Daily/routine checks (preferred)** → [`daily_checks.md`](./daily_checks.md)
 - **After deploy (preferred)** → [`post_deploy_verification.md`](./post_deploy_verification.md)
 - **After reboot (preferred)** → [`post_reboot_verification.md`](./post_reboot_verification.md)
 - **After restore (preferred)** → [`post_restore_verification.md`](./post_restore_verification.md)
-- **Before batch (preferred)** → [`monthly_batch_workflow.md`](./monthly_batch_workflow.md)
+- **Monthly batch workflow/checklist (preferred)** → [`monthly_batch_workflow.md`](./monthly_batch_workflow.md)
 - **Incident handling (preferred)** → [Incident playbooks](#incident-playbooks)
 
 ## SOPs
@@ -56,10 +57,13 @@ If another doc conflicts with this package, follow this runbook and update/depre
 
 - [`playbooks/smoke_check_failure.md`](./playbooks/smoke_check_failure.md)
 - [`playbooks/api_not_responding.md`](./playbooks/api_not_responding.md)
+- [`playbooks/api_unhealthy.md`](./playbooks/api_unhealthy.md)
 - [`playbooks/worker_heartbeat_missing.md`](./playbooks/worker_heartbeat_missing.md)
+- [`playbooks/worker_stalled.md`](./playbooks/worker_stalled.md)
 - [`playbooks/stale_or_stuck_jobs.md`](./playbooks/stale_or_stuck_jobs.md)
 - [`playbooks/repeated_job_failures.md`](./playbooks/repeated_job_failures.md)
 - [`playbooks/low_disk_space.md`](./playbooks/low_disk_space.md)
+- [`playbooks/disk_pressure_retention.md`](./playbooks/disk_pressure_retention.md)
 - [`playbooks/token_or_integration_readiness_problem.md`](./playbooks/token_or_integration_readiness_problem.md)
 - [`playbooks/backup_restore_verification_failure.md`](./playbooks/backup_restore_verification_failure.md)
 

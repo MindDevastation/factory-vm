@@ -70,3 +70,9 @@ curl -fsS http://127.0.0.1:8080/v1/workers
 ```
 
 3. If smoke is not `OK`, follow incident playbooks in `./playbooks/` before starting production jobs.
+
+## Source anchors
+
+- Runtime/bootstrap commands: `README.md`, `scripts/init_db.py`, `scripts/seed_configs.py`
+- Production service path and unit names: `deploy/systemd/*.service`
+- Smoke verification command: `scripts/doctor.py`, `docs/ops/production_smoke.md`

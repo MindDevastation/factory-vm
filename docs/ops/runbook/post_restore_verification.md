@@ -36,3 +36,9 @@ curl -fsS http://127.0.0.1:8080/v1/workers
 PYTHONPATH=. python scripts/ops_backup_restore.py backup list
 PYTHONPATH=. python scripts/ops_backup_restore.py backup verify --backup-id <backup_id>
 ```
+
+## Source anchors
+
+- Restore/list/verify commands: `scripts/ops_backup_restore.py`, `docs/ops/backup_restore.md`
+- Smoke verification command: `scripts/doctor.py`, `docs/ops/production_smoke.md`
+- API/worker endpoints and service startup context: `README.md`, `deploy/systemd/*.service`

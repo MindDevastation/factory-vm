@@ -27,3 +27,9 @@ curl -fsS http://127.0.0.1:8080/v1/workers
 - Smoke returns `exit_code=0` and overall `OK`.
 - `/health` responds successfully.
 - `/v1/workers` returns expected active roles for the enabled production flows.
+
+## Source anchors
+
+- Smoke verification command: `scripts/doctor.py`, `docs/ops/production_smoke.md`
+- API/worker endpoints: `README.md`, `services/factory_api/app.py`
+- Service-manager artifacts: `deploy/systemd/*.service`
