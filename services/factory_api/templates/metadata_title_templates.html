@@ -15,6 +15,7 @@
 </details>
 
 <p class="muted" id="mtb-note">Loading...</p>
+<div id="mtb-error" role="alert" style="display:none;padding:8px;border-radius:8px;background:#fef2f2;color:#b91c1c;margin:8px 0;"></div>
 
 <div class="grid" style="grid-template-columns: 1.2fr 1fr; align-items:start;">
   <section>
@@ -99,6 +100,7 @@
   const tbody = $('mtb-tbody');
   const formModeEl = $('mtb-form-mode');
   const previewStatusEl = $('mtb-preview-result');
+  const errorEl = $('mtb-error');
   const renderedTitleEl = $('mtb-rendered-title');
   const substitutedValuesEl = $('mtb-substituted-values');
   const missingVarsEl = $('mtb-missing-variables');
@@ -107,14 +109,32 @@
   const archiveWarningEl = $('mtb-archive-warning');
 
   let channels = [];
-  let allowedVariables = [];
+  let listById = {};
   let activeTemplateId = null;
   let activeTemplate = null;
 
   function setNote(msg) { noteEl.textContent = msg; }
-  function apiUrl(path) {
+  function setError(msg) {
+    if (!msg) {
+      errorEl.style.display = 'none';
+      errorEl.textContent = '';
+      return;
+    }
+    errorEl.style.display = 'block';
+    errorEl.textContent = msg;
+  }
+  function resolveApiPath(path) {
     if (!path.startsWith('/')) { return `/${path}`; }
     return path;
+  }
+  async function apiFetch(path, options) {
+    const req = Object.assign({ credentials: 'same-origin' }, options || {});
+    return fetch(resolveApiPath(path), req);
+  }
+  function esc(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
   async function readJson(res) {
     const text = await res.text();
@@ -122,23 +142,25 @@
     try { return JSON.parse(text); } catch (_) { return {}; }
   }
   function renderList(items) {
+    listById = {};
     if (!items.length) {
       tbody.innerHTML = '<tr><td colspan="7" class="muted">No templates found.</td></tr>';
       return;
     }
     tbody.innerHTML = items.map((item) => {
+      listById[String(item.id)] = item;
       const defaultBadge = item.is_default ? '<span class="pill">default</span>' : '<span class="muted">—</span>';
       const validationBadge = item.validation_status === 'VALID'
         ? '<span class="pill">valid</span>'
         : `<span class="pill" style="background:#fee2e2;">${item.validation_status || 'invalid'}</span>`;
       return `<tr data-template-id="${item.id}">
         <td><button type="button" data-mtb-open="${item.id}">${item.id}</button></td>
-        <td>${item.channel_slug}</td>
-        <td>${item.template_name}</td>
+        <td>${esc(item.channel_slug)}</td>
+        <td>${esc(item.template_name)}</td>
         <td><span class="pill">${item.status}</span></td>
         <td>${defaultBadge}</td>
         <td>${validationBadge}</td>
-        <td class="muted">${item.updated_at || ''}</td>
+        <td class="muted">${esc(item.updated_at || '')}</td>
       </tr>`;
     }).join('');
   }
@@ -256,7 +278,7 @@
   }
 
   async function loadChannels() {
-    const res = await fetch(apiUrl('/v1/channels'));
+    const res = await apiFetch('/v1/channels');
     if (!res.ok) { throw new Error('Failed to load channels'); }
     channels = await res.json();
     fillChannelOptions($('mtb-filter-channel'), true);
@@ -267,11 +289,11 @@
   }
 
   async function loadAllowedVariables() {
-    const res = await fetch(apiUrl('/v1/metadata/title-templates/variables'));
+    const res = await apiFetch('/v1/metadata/title-templates/variables');
     if (!res.ok) { throw new Error('Failed to load variables catalog'); }
     const body = await res.json();
-    allowedVariables = Array.isArray(body.variables) ? body.variables : [];
-    $('mtb-allowed-variables').innerHTML = `Allowed variables: ${allowedVariables.map((v) => `<code>${v.name}</code>`).join(', ') || 'none'}`;
+    const allowedVariables = Array.isArray(body.variables) ? body.variables : [];
+    $('mtb-allowed-variables').innerHTML = `Allowed variables: ${allowedVariables.map((v) => `<code>${esc(v.name)}</code>`).join(', ') || 'none'}`;
   }
 
   async function loadList() {
@@ -279,7 +301,7 @@
     qs.set('status', $('mtb-filter-status').value || 'active');
     if ($('mtb-filter-channel').value) { qs.set('channel_slug', $('mtb-filter-channel').value); }
     if ($('mtb-filter-q').value.trim()) { qs.set('q', $('mtb-filter-q').value.trim()); }
-    const res = await fetch(apiUrl(`/v1/metadata/title-templates?${qs.toString()}`));
+    const res = await apiFetch(`/v1/metadata/title-templates?${qs.toString()}`);
     const body = await readJson(res);
     if (!res.ok) { throw new Error((body.error && body.error.message) || 'Failed to load templates'); }
     renderList(Array.isArray(body.items) ? body.items : []);
@@ -287,10 +309,9 @@
   }
 
   async function openTemplate(templateId) {
-    const res = await fetch(apiUrl(`/v1/metadata/title-templates/${templateId}`));
-    const body = await readJson(res);
-    if (!res.ok) { throw new Error((body.error && body.error.message) || 'Failed to load template details'); }
-    setFormFromTemplate(body);
+    const selected = listById[String(templateId)] || null;
+    if (!selected) { throw new Error('Template not available in current list view'); }
+    setFormFromTemplate(selected);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -300,7 +321,7 @@
       template_body: $('mtb-template-body').value,
       release_date: $('mtb-release-date').value.trim() || null,
     };
-    const res = await fetch(apiUrl('/v1/metadata/title-templates/preview'), {
+    const res = await apiFetch('/v1/metadata/title-templates/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -325,7 +346,7 @@
       payload.channel_slug = $('mtb-channel').value;
       payload.make_default = false;
     }
-    const res = await fetch(apiUrl(url), {
+    const res = await apiFetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -343,7 +364,7 @@
       const proceed = window.confirm('This template is currently default. Archiving may leave the channel with no default template. Continue?');
       if (!proceed) { return; }
     }
-    const res = await fetch(apiUrl(`/v1/metadata/title-templates/${activeTemplateId}/${action}`), { method: 'POST' });
+    const res = await apiFetch(`/v1/metadata/title-templates/${activeTemplateId}/${action}`, { method: 'POST' });
     const body = await readJson(res);
     if (!res.ok) { throw new Error((body.error && body.error.message) || `${action} failed`); }
     setFormFromTemplate(body);
@@ -355,30 +376,33 @@
     const openId = event.target && event.target.getAttribute ? event.target.getAttribute('data-mtb-open') : null;
     if (!openId) { return; }
     try {
+      setError('');
       await openTemplate(Number(openId));
     } catch (error) {
-      setNote(error && error.message ? error.message : 'Open failed');
+      const msg = error && error.message ? error.message : 'Open failed';
+      setNote(msg);
+      setError(msg);
     }
   });
 
   $('mtb-filter-apply').addEventListener('click', async () => {
-    try { await loadList(); } catch (error) { setNote(error && error.message ? error.message : 'Reload failed'); }
+    try { setError(''); await loadList(); } catch (error) { const msg = error && error.message ? error.message : 'Reload failed'; setNote(msg); setError(msg); }
   });
   $('mtb-create-btn').addEventListener('click', () => setFormFromTemplate(null));
   $('mtb-preview-btn').addEventListener('click', async () => {
-    try { await runPreview(); } catch (error) { setNote(error && error.message ? error.message : 'Preview failed'); }
+    try { setError(''); await runPreview(); } catch (error) { const msg = error && error.message ? error.message : 'Preview failed'; setNote(msg); setError(msg); }
   });
   $('mtb-save-btn').addEventListener('click', async () => {
-    try { await saveTemplate(); } catch (error) { setNote(error && error.message ? error.message : 'Save failed'); }
+    try { setError(''); await saveTemplate(); } catch (error) { const msg = error && error.message ? error.message : 'Save failed'; setNote(msg); setError(msg); }
   });
   $('mtb-set-default-btn').addEventListener('click', async () => {
-    try { await runLifecycle('set-default'); } catch (error) { setNote(error && error.message ? error.message : 'Set default failed'); }
+    try { setError(''); await runLifecycle('set-default'); } catch (error) { const msg = error && error.message ? error.message : 'Set default failed'; setNote(msg); setError(msg); }
   });
   $('mtb-archive-btn').addEventListener('click', async () => {
-    try { await runLifecycle('archive'); } catch (error) { setNote(error && error.message ? error.message : 'Archive failed'); }
+    try { setError(''); await runLifecycle('archive'); } catch (error) { const msg = error && error.message ? error.message : 'Archive failed'; setNote(msg); setError(msg); }
   });
   $('mtb-activate-btn').addEventListener('click', async () => {
-    try { await runLifecycle('activate'); } catch (error) { setNote(error && error.message ? error.message : 'Activate failed'); }
+    try { setError(''); await runLifecycle('activate'); } catch (error) { const msg = error && error.message ? error.message : 'Activate failed'; setNote(msg); setError(msg); }
   });
 
   (async () => {
@@ -387,9 +411,12 @@
       await loadAllowedVariables();
       setFormFromTemplate(null);
       await loadList();
+      setError('');
       setNote('Ready. Preview does not save.');
     } catch (error) {
-      setNote(error && error.message ? error.message : 'Initialization failed');
+      const msg = error && error.message ? error.message : 'Initialization failed';
+      setNote(msg);
+      setError(msg);
     }
   })();
 })();
