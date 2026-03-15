@@ -89,7 +89,7 @@ Preferred production automation path uses systemd timer units:
 The service runs:
 
 ```bash
-python scripts/ops_backup_schedule.py run
+python -m scripts.ops_backup_schedule run
 ```
 
 Wrapper behavior:
