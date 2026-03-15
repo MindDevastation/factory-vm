@@ -123,6 +123,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="channels-table"', r.text)
             self.assertIn('href="/ui/db-viewer"', r.text)
             self.assertIn('href="/ui/planner"', r.text)
+            self.assertIn('href="/ui/metadata/title-templates"', r.text)
             self.assertIn('href="/ui/track-catalog/custom-tags"', r.text)
             self.assertIn('href="/ui/track-catalog/analysis-report"', r.text)
             self.assertIn('href="/ui/ops/recovery"', r.text)
@@ -141,13 +142,42 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="search-input"', r.text)
             self.assertIn('id="page-size-select"', r.text)
 
-            r = client.get("/ui/planner", headers=h)
+            planner_r = client.get("/ui/planner", headers=h)
+            self.assertEqual(planner_r.status_code, 200)
+            self.assertIn("Planner · Bulk Releases", planner_r.text)
+            self.assertIn('id="planner-tbody"', planner_r.text)
+            self.assertIn('id="bulk-create-modal"', planner_r.text)
+            self.assertIn('id="import-modal"', planner_r.text)
+            self.assertIn('/static/planner_bulk_releases.js', planner_r.text)
+
+            r = client.get("/ui/metadata/title-templates", headers=h)
             self.assertEqual(r.status_code, 200)
-            self.assertIn("Planner · Bulk Releases", r.text)
-            self.assertIn('id="planner-tbody"', r.text)
-            self.assertIn('id="bulk-create-modal"', r.text)
-            self.assertIn('id="import-modal"', r.text)
-            self.assertIn('/static/planner_bulk_releases.js', r.text)
+            self.assertIn("Metadata · Title Templates", r.text)
+            self.assertIn('id="mtb-table"', r.text)
+            self.assertIn('id="mtb-preview-btn"', r.text)
+            self.assertIn('id="mtb-save-btn"', r.text)
+            self.assertIn('id="mtb-set-default-btn"', r.text)
+            self.assertIn('id="mtb-archive-btn"', r.text)
+            self.assertIn('id="mtb-activate-btn"', r.text)
+            self.assertIn("/v1/metadata/title-templates/preview", r.text)
+            self.assertIn("/v1/metadata/title-templates/${activeTemplateId}/${action}", r.text)
+            self.assertIn("Preview complete (not saved).", r.text)
+            self.assertIn("archiving current default may leave this channel with no default template", r.text)
+            self.assertIn("active", r.text)
+            self.assertIn("archived", r.text)
+            self.assertIn("valid", r.text)
+
+            preview = client.post(
+                "/v1/metadata/title-templates/preview",
+                headers=h,
+                json={
+                    "channel_slug": str(ch["slug"]),
+                    "template_body": "{{channel_display_name}} {{release_year}}",
+                    "release_date": "2026-01-02",
+                },
+            )
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json()["render_status"], "FULL")
 
             r = client.get("/ui/track-catalog/analysis-report", headers=h)
             self.assertEqual(r.status_code, 200)
