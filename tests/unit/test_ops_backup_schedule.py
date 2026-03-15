@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -59,6 +61,19 @@ class OpsBackupScheduleTests(unittest.TestCase):
 
         self.assertEqual(code, 2)
         self.assertIn("FACTORY_BACKUP_DIR is required", stdout.getvalue())
+
+    def test_module_invocation_help(self) -> None:
+        proc = subprocess.run(
+            [sys.executable, "-m", "scripts.ops_backup_schedule", "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("Scheduled backup wrapper for systemd timers", proc.stdout)
+        self.assertIn("run", proc.stdout)
+
 
 
 if __name__ == "__main__":

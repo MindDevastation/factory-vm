@@ -14,7 +14,7 @@ sudo systemctl enable --now factory-backup.timer
 systemctl list-timers factory-backup.timer
 ```
 
-The timer runs `scripts/ops_backup_schedule.py run`, which executes `backup create` and then `backup verify` for `<FACTORY_BACKUP_DIR>/latest_successful`.
+The timer runs `python -m scripts.ops_backup_schedule run`, which executes `backup create` and then `backup verify` for `<FACTORY_BACKUP_DIR>/latest_successful`.
 
 To validate scheduler health and last runs:
 
