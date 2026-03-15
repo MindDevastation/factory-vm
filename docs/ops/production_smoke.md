@@ -1,6 +1,17 @@
 # Production smoke (`doctor.py production-smoke`)
 
-> **Runbook canonical note:** This document defines smoke command behavior. Scenario-based operator procedures are maintained in `docs/ops/runbook/` (start at `docs/ops/runbook/README.md`).
+> **Runbook canonical note:** The canonical operator workflow now lives in `docs/ops/runbook/README.md` and the linked SOPs/scenarios.
+>
+> **Deprecated/secondary note:** This page is a secondary smoke command reference only. If any procedural step here conflicts with the runbook package, follow `docs/ops/runbook/*` as the operational source of truth.
+
+## Summary (secondary reference)
+
+Use this document for smoke command semantics and output interpretation only. For operator decision flow, use:
+
+- `docs/ops/runbook/sop/when_smoke_fails.md`
+- `docs/ops/runbook/post_deploy_verification.md`
+- `docs/ops/runbook/post_reboot_verification.md`
+- `docs/ops/runbook/post_restore_verification.md`
 
 ## 1) What smoke is for
 

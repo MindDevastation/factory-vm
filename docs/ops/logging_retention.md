@@ -1,5 +1,16 @@
 # Logging retention and disk-pressure operations policy
 
+> **Runbook canonical note:** The canonical operator workflow now lives in `docs/ops/runbook/README.md` and the linked SOPs/playbooks.
+>
+> **Deprecated/secondary note:** This page is a secondary policy/implementation reference. If any procedural step here conflicts with the runbook package, follow `docs/ops/runbook/*` as the operational source of truth.
+
+## Summary (secondary reference)
+
+Use this document for retention policy and disk-pressure implementation detail. For incident/operator flow, use:
+
+- `docs/ops/runbook/playbooks/disk_pressure_retention.md`
+- `docs/ops/runbook/sop/when_disk_warning_triggers.md`
+
 This document defines the operator runbook for `SPEC_OPS_LOGGING_RETENTION_v1.0` P0-S5.
 
 ## 1) What this policy covers
