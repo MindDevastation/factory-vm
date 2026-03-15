@@ -114,6 +114,25 @@ class TestMetadataTitleTemplateApi(unittest.TestCase):
             self.assertEqual(body["render_status"], "ERROR")
             self.assertTrue(any(item["code"] == "MTB_TEMPLATE_SYNTAX" for item in body["validation_errors"]))
 
+    def test_preview_empty_template_body_returns_mtb_title_empty(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.post(
+                "/v1/metadata/title-templates/preview",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_body": "",
+                },
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["render_status"], "ERROR")
+            self.assertTrue(any(item["code"] == "MTB_TITLE_EMPTY" for item in body["validation_errors"]))
+
 
 if __name__ == "__main__":
     unittest.main()
