@@ -97,6 +97,12 @@ class TestMetadataTitleTemplateApi(unittest.TestCase):
             self.assertEqual(patched["template_name"], "Edited")
             self.assertEqual(patched["template_body"], "{{channel_slug}} - {{release_year}}")
 
+            persisted_resp = client.get(f"/v1/metadata/title-templates/{created['id']}", headers=headers)
+            self.assertEqual(persisted_resp.status_code, 200)
+            persisted = persisted_resp.json()
+            self.assertEqual(persisted["template_name"], "Edited")
+            self.assertEqual(persisted["template_body"], "{{channel_slug}} - {{release_year}}")
+
     def test_list_filters_by_channel_status_and_query(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
