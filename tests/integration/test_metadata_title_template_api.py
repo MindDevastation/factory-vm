@@ -175,6 +175,63 @@ class TestMetadataTitleTemplateApi(unittest.TestCase):
             self.assertEqual(resp.status_code, 422)
             self.assertEqual(resp.json()["error"]["code"], "MTB_TEMPLATE_NAME_REQUIRED")
 
+    def test_preview_invalid_release_date_returns_deterministic_error_shape(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.post(
+                "/v1/metadata/title-templates/preview",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_body": "{{channel_display_name}} {{release_year}}",
+                    "release_date": "2026-13-40",
+                },
+            )
+            self.assertEqual(resp.status_code, 422)
+            self.assertEqual(resp.json(), {
+                "error": {
+                    "code": "MTB_INVALID_RELEASE_DATE",
+                    "message": "release_date must use YYYY-MM-DD format",
+                }
+            })
+
+    def test_list_invalid_status_returns_deterministic_error_shape(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get("/v1/metadata/title-templates?status=unknown", headers=headers)
+            self.assertEqual(resp.status_code, 422)
+            self.assertEqual(resp.json(), {
+                "error": {
+                    "code": "MTB_INVALID_STATUS_FILTER",
+                    "message": "status must be active|archived|all",
+                }
+            })
+
+    def test_create_rejects_non_whitelisted_variable(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Main",
+                    "template_body": "{{channel_display_name}} {{artist_name}}",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(resp.status_code, 422)
+            self.assertEqual(resp.json()["error"]["code"], "MTB_TEMPLATE_VARIABLE_NOT_ALLOWED")
+
     def test_create_make_default_enforces_single_default(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
@@ -548,6 +605,58 @@ class TestMetadataTitleTemplateApi(unittest.TestCase):
 
             assert before is not None and after is not None
             self.assertEqual(before["title"], after["title"])
+
+    def test_create_remains_channel_only_when_extra_content_type_is_sent(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            create_resp = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Main",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": False,
+                    "content_type": "video",
+                },
+            )
+            self.assertEqual(create_resp.status_code, 200)
+            created = create_resp.json()
+            self.assertNotIn("content_type", created)
+            self.assertEqual(created["channel_slug"], "darkwood-reverie")
+
+            detail_resp = client.get(f"/v1/metadata/title-templates/{created['id']}", headers=headers)
+            self.assertEqual(detail_resp.status_code, 200)
+            detail = detail_resp.json()
+            self.assertNotIn("content_type", detail)
+            self.assertEqual(detail["channel_slug"], "darkwood-reverie")
+
+    def test_delete_endpoint_not_exposed(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            create_resp = client.post(
+                "/v1/metadata/title-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Main",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(create_resp.status_code, 200)
+
+            resp = client.delete(
+                f"/v1/metadata/title-templates/{create_resp.json()['id']}",
+                headers=headers,
+            )
+            self.assertEqual(resp.status_code, 405)
 
 
 if __name__ == "__main__":
