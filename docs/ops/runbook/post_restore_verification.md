@@ -22,7 +22,7 @@ Automatic service restart after restore is not implemented; start services manua
 
 > `/health` is intentionally unauthenticated. `/v1/workers` requires API Basic Auth credentials (`FACTORY_BASIC_AUTH_USER` / `FACTORY_BASIC_AUTH_PASS`) from deployment environment config.
 ```bash
-python scripts/doctor.py production-smoke --profile prod
+python scripts/ops_smoke.py --scenario post-restore --profile prod
 curl -fsS http://127.0.0.1:8080/health
 curl -fsS -u "${FACTORY_BASIC_AUTH_USER}:${FACTORY_BASIC_AUTH_PASS}" http://127.0.0.1:8080/v1/workers
 ```
@@ -38,8 +38,16 @@ PYTHONPATH=. python scripts/ops_backup_restore.py backup list
 PYTHONPATH=. python scripts/ops_backup_restore.py backup verify --backup-id <backup_id>
 ```
 
+## Pass criteria
+
+- Smoke returns `exit_code=0` and overall `OK` (**OPERATIONAL PASS**).
+- `exit_code=1` (`WARNING`) is **OPERATIONAL WARNING**: complete explicit review/escalation via `sop/when_smoke_fails.md` before resuming normal production flow.
+- `exit_code>=2` is **OPERATIONAL FAIL**: stop and recover via `sop/when_smoke_fails.md`.
+- `/health` responds successfully.
+- `/v1/workers` returns expected active roles for enabled production flows.
+
 ## Source anchors
 
 - Restore/list/verify commands: `scripts/ops_backup_restore.py`, `docs/ops/backup_restore.md`
-- Smoke verification command: `scripts/doctor.py`, `docs/ops/production_smoke.md`
+- Smoke verification command: `scripts/ops_smoke.py`, `scripts/doctor.py`, `docs/ops/production_smoke.md`
 - API/worker endpoints and service startup context: `README.md`, `deploy/systemd/*.service`
