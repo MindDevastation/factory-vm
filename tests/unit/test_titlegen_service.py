@@ -222,9 +222,13 @@ class TestTitleGenService(unittest.TestCase):
         self.assertEqual(result.title_after, "Darkwood Reverie")
 
     def test_apply_same_title_after_internal_whitespace_normalization_is_noop(self) -> None:
-        conn, release_id = self._seed_release(title="Darkwood   Reverie")
+        stored_title = "Darkwood   Reverie"
+        conn, release_id = self._seed_release(title=stored_title)
         tid = self._insert_template(conn, is_default=False, body="{{channel_display_name}}")
         preview = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=tid)
+
+        self.assertEqual(preview.proposed_title, "Darkwood Reverie")
+        self.assertNotEqual(preview.proposed_title, stored_title)
 
         result = titlegen_service.apply_generated_title(
             conn,
@@ -236,10 +240,10 @@ class TestTitleGenService(unittest.TestCase):
 
         self.assertFalse(result.title_updated)
         self.assertFalse(result.overwrite_required)
-        self.assertEqual(result.title_before, "Darkwood   Reverie")
-        self.assertEqual(result.title_after, "Darkwood   Reverie")
+        self.assertEqual(result.title_before, stored_title)
+        self.assertEqual(result.title_after, stored_title)
         row = conn.execute("SELECT title FROM releases WHERE id = ?", (release_id,)).fetchone()
-        self.assertEqual(row["title"], "Darkwood   Reverie")
+        self.assertEqual(row["title"], stored_title)
 
     def test_apply_mutates_only_release_title(self) -> None:
         conn, release_id = self._seed_release(title="Old")
