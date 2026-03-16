@@ -50,6 +50,13 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             archived_at=None,
         )
 
+    def _release_row(self, env, release_id: int):
+        conn = dbm.connect(env)
+        try:
+            return dict(conn.execute("SELECT * FROM releases WHERE id = ?", (release_id,)).fetchone())
+        finally:
+            conn.close()
+
     def test_context_endpoint_with_default_present(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
@@ -204,6 +211,173 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             missing_planned = client.post(f"/v1/metadata/releases/{release_missing_planned}/titlegen/generate", headers=headers, json={})
             self.assertEqual(missing_planned.status_code, 422)
             self.assertEqual(missing_planned.json()["error"]["code"], "MTG_REQUIRED_CONTEXT_MISSING")
+
+    def test_apply_after_generate_updates_only_release_title(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="Manual")
+                self._seed_template(conn, is_default=True, body="{{channel_display_name}} {{release_year}}")
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=headers, json={}).json()
+            before = self._release_row(env, release_id)
+
+            applied = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/apply",
+                headers=headers,
+                json={
+                    "generation_fingerprint": generated["generation_fingerprint"],
+                    "overwrite_confirmed": True,
+                },
+            )
+            self.assertEqual(applied.status_code, 200)
+            body = applied.json()
+            self.assertTrue(body["title_updated"])
+            self.assertEqual(body["title_before"], "Manual")
+
+            after = self._release_row(env, release_id)
+            changed_release_cols = {k for k in before if before[k] != after[k]}
+            self.assertEqual(changed_release_cols, {"title"})
+
+    def test_apply_overwrite_requires_confirmation(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="Existing")
+                self._seed_template(conn, is_default=True, body="{{channel_display_name}}")
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=headers, json={}).json()
+            resp = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/apply",
+                headers=headers,
+                json={"generation_fingerprint": generated["generation_fingerprint"], "overwrite_confirmed": False},
+            )
+            self.assertEqual(resp.status_code, 422)
+            self.assertEqual(resp.json()["error"]["code"], "MTG_OVERWRITE_CONFIRMATION_REQUIRED")
+
+    def test_apply_stale_fingerprint_blocks_apply_for_template_or_schedule_changes(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="")
+                template_id = self._seed_template(conn, is_default=True, body="{{channel_display_name}} {{release_year}}")
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=headers, json={}).json()
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE title_templates SET updated_at = ? WHERE id = ?", ("2026-03-03T00:00:00+00:00", template_id))
+                conn.commit()
+            finally:
+                conn.close()
+            stale_template = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/apply",
+                headers=headers,
+                json={"generation_fingerprint": generated["generation_fingerprint"], "overwrite_confirmed": False},
+            )
+            self.assertEqual(stale_template.status_code, 422)
+            self.assertEqual(stale_template.json()["error"]["code"], "MTG_PREVIEW_STALE")
+
+            regenerated = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=headers, json={}).json()
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE releases SET planned_at = ? WHERE id = ?", ("2027-04-09T12:00:00Z", release_id))
+                conn.commit()
+            finally:
+                conn.close()
+            stale_schedule = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/apply",
+                headers=headers,
+                json={"generation_fingerprint": regenerated["generation_fingerprint"], "overwrite_confirmed": False},
+            )
+            self.assertEqual(stale_schedule.status_code, 422)
+            self.assertEqual(stale_schedule.json()["error"]["code"], "MTG_PREVIEW_STALE")
+
+    def test_apply_default_and_explicit_template_paths_and_same_title_noop(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_default = self._seed_release(conn, title="Darkwood Reverie")
+                release_explicit = self._seed_release(conn, title="")
+                default_template = self._seed_template(conn, is_default=True, body="{{channel_display_name}}")
+                explicit_template = self._seed_template(conn, is_default=False, body="{{channel_slug}}", name="explicit")
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            gen_default = client.post(f"/v1/metadata/releases/{release_default}/titlegen/generate", headers=headers, json={}).json()
+            noop_resp = client.post(
+                f"/v1/metadata/releases/{release_default}/titlegen/apply",
+                headers=headers,
+                json={"generation_fingerprint": gen_default["generation_fingerprint"], "overwrite_confirmed": False},
+            )
+            self.assertEqual(noop_resp.status_code, 200)
+            self.assertFalse(noop_resp.json()["title_updated"])
+            self.assertEqual(noop_resp.json()["used_template_id"], default_template)
+
+            gen_explicit = client.post(
+                f"/v1/metadata/releases/{release_explicit}/titlegen/generate",
+                headers=headers,
+                json={"template_id": explicit_template},
+            ).json()
+            applied_explicit = client.post(
+                f"/v1/metadata/releases/{release_explicit}/titlegen/apply",
+                headers=headers,
+                json={
+                    "template_id": explicit_template,
+                    "generation_fingerprint": gen_explicit["generation_fingerprint"],
+                    "overwrite_confirmed": False,
+                },
+            )
+            self.assertEqual(applied_explicit.status_code, 200)
+            self.assertTrue(applied_explicit.json()["title_updated"])
+            self.assertEqual(applied_explicit.json()["used_template_id"], explicit_template)
+
+    def test_apply_stale_when_title_and_template_change_between_generate_apply(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="Original")
+                template_id = self._seed_template(conn, is_default=True, body="{{channel_display_name}}")
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=headers, json={}).json()
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("Changed by user", release_id))
+                conn.execute("UPDATE title_templates SET updated_at = ? WHERE id = ?", ("2026-02-02T00:00:00+00:00", template_id))
+                conn.commit()
+            finally:
+                conn.close()
+
+            resp = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/apply",
+                headers=headers,
+                json={"generation_fingerprint": generated["generation_fingerprint"], "overwrite_confirmed": True},
+            )
+            self.assertEqual(resp.status_code, 422)
+            self.assertEqual(resp.json()["error"]["code"], "MTG_PREVIEW_STALE")
 
 
 if __name__ == "__main__":

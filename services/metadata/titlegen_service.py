@@ -46,6 +46,18 @@ class GenerateResult:
     generation_fingerprint: str
 
 
+@dataclass(frozen=True)
+class ApplyResult:
+    release_id: int
+    channel_slug: str
+    used_template_id: int
+    title_updated: bool
+    title_before: str
+    title_after: str
+    overwrite_required: bool
+    message: str | None = None
+
+
 def load_titlegen_context(conn: sqlite3.Connection, *, release_id: int) -> ContextResult:
     release = conn.execute(
         """
@@ -204,6 +216,59 @@ def generate_title_preview(
         warnings=warnings,
         generation_fingerprint=fingerprint,
     )
+
+
+def apply_generated_title(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    template_id: int | None,
+    generation_fingerprint: str,
+    overwrite_confirmed: bool,
+) -> ApplyResult:
+    regenerated = generate_title_preview(conn, release_id=release_id, template_id=template_id)
+    if generation_fingerprint != regenerated.generation_fingerprint:
+        raise TitleGenError(code="MTG_PREVIEW_STALE", message="Generated preview is stale; regenerate before apply")
+
+    title_before = regenerated.current_title
+    proposed_title = regenerated.proposed_title
+    normalized_before = _normalize_title(title_before)
+    normalized_proposed = _normalize_title(proposed_title)
+    overwrite_required = bool(normalized_before) and normalized_before != normalized_proposed
+
+    if normalized_before == normalized_proposed:
+        return ApplyResult(
+            release_id=regenerated.release_id,
+            channel_slug=regenerated.channel_slug,
+            used_template_id=int(regenerated.used_template["id"]),
+            title_updated=False,
+            title_before=title_before,
+            title_after=title_before,
+            overwrite_required=False,
+            message="Release title already matches generated result.",
+        )
+
+    if overwrite_required and not overwrite_confirmed:
+        raise TitleGenError(
+            code="MTG_OVERWRITE_CONFIRMATION_REQUIRED",
+            message="overwrite_confirmed=true is required to replace existing release title",
+        )
+
+    conn.execute("UPDATE releases SET title = ? WHERE id = ?", (proposed_title, release_id))
+    conn.commit()
+    return ApplyResult(
+        release_id=regenerated.release_id,
+        channel_slug=regenerated.channel_slug,
+        used_template_id=int(regenerated.used_template["id"]),
+        title_updated=True,
+        title_before=title_before,
+        title_after=proposed_title,
+        overwrite_required=overwrite_required,
+    )
+
+
+def _normalize_title(value: Any) -> str:
+    return str(value or "").strip()
 
 
 def _parse_release_date(value: Any) -> date | None:

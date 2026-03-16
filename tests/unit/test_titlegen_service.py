@@ -139,6 +139,108 @@ class TestTitleGenService(unittest.TestCase):
         r3 = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=t1)
         self.assertNotEqual(r1.generation_fingerprint, r3.generation_fingerprint)
 
+    def test_apply_fingerprint_verification_success(self) -> None:
+        conn, release_id = self._seed_release(title="")
+        tid = self._insert_template(conn, is_default=False, body="{{channel_display_name}} {{release_year}}")
+        preview = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=tid)
+
+        applied = titlegen_service.apply_generated_title(
+            conn,
+            release_id=release_id,
+            template_id=tid,
+            generation_fingerprint=preview.generation_fingerprint,
+            overwrite_confirmed=False,
+        )
+
+        self.assertTrue(applied.title_updated)
+        row = conn.execute("SELECT title FROM releases WHERE id = ?", (release_id,)).fetchone()
+        self.assertEqual(row["title"], preview.proposed_title)
+
+    def test_apply_rejects_stale_fingerprint_for_template_update(self) -> None:
+        conn, release_id = self._seed_release(title="")
+        tid = self._insert_template(conn, is_default=False, body="{{channel_display_name}}")
+        preview = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=tid)
+        conn.execute("UPDATE title_templates SET updated_at = ? WHERE id = ?", ("2026-02-01T00:00:00+00:00", tid))
+        conn.commit()
+
+        with self.assertRaises(titlegen_service.TitleGenError) as ctx:
+            titlegen_service.apply_generated_title(
+                conn,
+                release_id=release_id,
+                template_id=tid,
+                generation_fingerprint=preview.generation_fingerprint,
+                overwrite_confirmed=False,
+            )
+        self.assertEqual(ctx.exception.code, "MTG_PREVIEW_STALE")
+
+    def test_apply_rejects_stale_fingerprint_for_schedule_change(self) -> None:
+        conn, release_id = self._seed_release(title="")
+        tid = self._insert_template(conn, is_default=False, body="{{channel_display_name}} {{release_year}}")
+        preview = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=tid)
+        conn.execute("UPDATE releases SET planned_at = ? WHERE id = ?", ("2027-04-09T18:30:00Z", release_id))
+        conn.commit()
+
+        with self.assertRaises(titlegen_service.TitleGenError) as ctx:
+            titlegen_service.apply_generated_title(
+                conn,
+                release_id=release_id,
+                template_id=tid,
+                generation_fingerprint=preview.generation_fingerprint,
+                overwrite_confirmed=False,
+            )
+        self.assertEqual(ctx.exception.code, "MTG_PREVIEW_STALE")
+
+    def test_apply_requires_overwrite_confirmation_for_different_existing_title(self) -> None:
+        conn, release_id = self._seed_release(title="Manual Title")
+        tid = self._insert_template(conn, is_default=False, body="{{channel_display_name}}")
+        preview = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=tid)
+
+        with self.assertRaises(titlegen_service.TitleGenError) as ctx:
+            titlegen_service.apply_generated_title(
+                conn,
+                release_id=release_id,
+                template_id=tid,
+                generation_fingerprint=preview.generation_fingerprint,
+                overwrite_confirmed=False,
+            )
+        self.assertEqual(ctx.exception.code, "MTG_OVERWRITE_CONFIRMATION_REQUIRED")
+
+    def test_apply_same_title_returns_noop_without_confirmation(self) -> None:
+        conn, release_id = self._seed_release(title="Darkwood Reverie")
+        tid = self._insert_template(conn, is_default=False, body="{{channel_display_name}}")
+        preview = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=tid)
+
+        result = titlegen_service.apply_generated_title(
+            conn,
+            release_id=release_id,
+            template_id=tid,
+            generation_fingerprint=preview.generation_fingerprint,
+            overwrite_confirmed=False,
+        )
+        self.assertFalse(result.title_updated)
+        self.assertEqual(result.title_before, "Darkwood Reverie")
+        self.assertEqual(result.title_after, "Darkwood Reverie")
+
+    def test_apply_mutates_only_release_title(self) -> None:
+        conn, release_id = self._seed_release(title="Old")
+        tid = self._insert_template(conn, is_default=False, body="{{channel_display_name}}")
+        before_release = dict(conn.execute("SELECT * FROM releases WHERE id = ?", (release_id,)).fetchone())
+        before_template = dict(conn.execute("SELECT * FROM title_templates WHERE id = ?", (tid,)).fetchone())
+        preview = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=tid)
+
+        titlegen_service.apply_generated_title(
+            conn,
+            release_id=release_id,
+            template_id=tid,
+            generation_fingerprint=preview.generation_fingerprint,
+            overwrite_confirmed=True,
+        )
+        after_release = dict(conn.execute("SELECT * FROM releases WHERE id = ?", (release_id,)).fetchone())
+        after_template = dict(conn.execute("SELECT * FROM title_templates WHERE id = ?", (tid,)).fetchone())
+        changed_release_cols = {k for k in before_release if before_release[k] != after_release[k]}
+        self.assertEqual(changed_release_cols, {"title"})
+        self.assertEqual(before_template, after_template)
+
 
 if __name__ == "__main__":
     unittest.main()
