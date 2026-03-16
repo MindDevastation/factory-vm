@@ -5,7 +5,7 @@ from time import monotonic
 
 from services.playlist_builder.constraints import duration_band_sec, relaxed_brief_variants
 from services.playlist_builder.history import novelty_against_previous, position_memory_risk
-from services.playlist_builder.models import CandidateScore, PlaylistBrief, PlaylistHistoryEntry, TrackCandidate
+from services.playlist_builder.models import CandidateScore, PlaylistBrief, PlaylistHistoryEntry, RelaxationItem, TrackCandidate
 
 
 class CuratedOptimizationLimitExceeded(RuntimeError):
@@ -114,6 +114,16 @@ def _reuse_penalty(track_pk: int, history: list[PlaylistHistoryEntry]) -> float:
     return used / len(history)
 
 
+def _target_batch_ratio(brief: PlaylistBrief) -> float:
+    return max(0.0, min(1.0, brief.preferred_batch_ratio / 100.0))
+
+
+def _batch_ratio_target_fit(brief: PlaylistBrief, achieved_ratio: float) -> float:
+    if not brief.preferred_month_batch:
+        return 0.5
+    return max(0.0, 1.0 - abs(achieved_ratio - _target_batch_ratio(brief)))
+
+
 def score_candidates(brief: PlaylistBrief, candidates: list[TrackCandidate], history: list[PlaylistHistoryEntry]) -> list[CandidateScore]:
     prev_tracks = history[0].tracks if history else ()
     target_sec = brief.target_duration_min * 60.0
@@ -122,7 +132,7 @@ def score_candidates(brief: PlaylistBrief, candidates: list[TrackCandidate], his
         ok_voice, voice_fit = _voice_policy_fit(brief, c)
         context_fit = 1.0 if c.channel_slug == brief.channel_slug else 0.6
         novelty = novelty_against_previous([c.track_pk], prev_tracks)
-        batch_fit = 1.0 if brief.preferred_month_batch and c.month_batch == brief.preferred_month_batch else 0.5
+        batch_fit = _batch_ratio_target_fit(brief, 1.0 if brief.preferred_month_batch and c.month_batch == brief.preferred_month_batch else 0.0)
         req_fit = 1.0 if not brief.required_tags else len(set(brief.required_tags) & c.tags) / max(len(brief.required_tags), 1)
         reuse_pen = _reuse_penalty(c.track_pk, history)
         duration_fit = max(0.0, 1.0 - abs(c.duration_sec - (target_sec / 8.0)) / max(target_sec / 8.0, 1.0))
@@ -152,10 +162,20 @@ def score_candidates(brief: PlaylistBrief, candidates: list[TrackCandidate], his
     return scores
 
 
-def compose_safe(brief: PlaylistBrief, candidates: list[TrackCandidate], history: list[PlaylistHistoryEntry]) -> tuple[list[TrackCandidate], list[CandidateScore], list[str]]:
+def _relaxation_item(brief: PlaylistBrief, variant: PlaylistBrief, relaxation: str) -> RelaxationItem:
+    if relaxation == "drop_preferred_month_batch":
+        return RelaxationItem(constraint_name="preferred_month_batch", target_value=brief.preferred_month_batch, achieved_value=variant.preferred_month_batch, relaxation_applied=relaxation, reason="Preferred batch filter prevented valid composition within duration constraints.")
+    if relaxation == "lower_novelty_target_min":
+        return RelaxationItem(constraint_name="novelty_target_min", target_value=brief.novelty_target_min, achieved_value=variant.novelty_target_min, relaxation_applied=relaxation, reason="Novelty floor was softened to recover feasible candidates.")
+    if relaxation == "relax_vocal_policy_allow_any":
+        return RelaxationItem(constraint_name="vocal_policy", target_value=brief.vocal_policy, achieved_value=variant.vocal_policy, relaxation_applied=relaxation, reason="Vocal policy was softened in flexible mode to avoid an empty composition.")
+    return RelaxationItem(constraint_name="unknown", target_value=None, achieved_value=None, relaxation_applied=relaxation, reason="Generic relaxation applied.")
+
+
+def compose_safe(brief: PlaylistBrief, candidates: list[TrackCandidate], history: list[PlaylistHistoryEntry]) -> tuple[list[TrackCandidate], list[CandidateScore], list[RelaxationItem]]:
     min_sec, target_sec, max_sec = duration_band_sec(brief)
     by_pk = {c.track_pk: c for c in candidates}
-    relaxations: list[str] = []
+    relaxations: list[RelaxationItem] = []
     best_selected: list[TrackCandidate] = []
     best_scores: list[CandidateScore] = []
 
@@ -177,15 +197,41 @@ def compose_safe(brief: PlaylistBrief, candidates: list[TrackCandidate], history
             ),
             reverse=True,
         )
+        remaining = list(ranked)
         selected: list[TrackCandidate] = []
         total = 0.0
-        for cand in ranked:
+        while remaining:
+            preferred_selected = sum(1 for c in selected if c.month_batch == variant.preferred_month_batch)
+            def _pick_score(cand: TrackCandidate) -> tuple[float, float, float, float, float, float, float, float, int]:
+                sc = score_map[cand.track_pk]
+                if not sc.hard_eligible:
+                    return (-1.0,) * 8 + (-cand.track_pk,)
+                if total + cand.duration_sec > max_sec and total >= min_sec:
+                    return (-1.0,) * 8 + (-cand.track_pk,)
+                next_count = len(selected) + 1
+                next_pref = preferred_selected + (1 if variant.preferred_month_batch and cand.month_batch == variant.preferred_month_batch else 0)
+                next_ratio = next_pref / max(next_count, 1)
+                ratio_fit = _batch_ratio_target_fit(variant, next_ratio)
+                return (
+                    ratio_fit,
+                    sc.novelty_contribution,
+                    sc.required_tags_fit,
+                    sc.voice_policy_fit,
+                    sc.batch_ratio_contribution,
+                    sc.low_reuse_penalty_inverse,
+                    sc.duration_fit_micro,
+                    sc.base_fit,
+                    -cand.track_pk,
+                )
+            cand = max(remaining, key=_pick_score)
             sc = score_map[cand.track_pk]
             if not sc.hard_eligible:
-                continue
+                break
             if total + cand.duration_sec > max_sec and total >= min_sec:
+                remaining.remove(cand)
                 continue
             selected.append(cand)
+            remaining.remove(cand)
             total += cand.duration_sec
             if total >= target_sec:
                 break
@@ -198,11 +244,11 @@ def compose_safe(brief: PlaylistBrief, candidates: list[TrackCandidate], history
             best_selected = selected
             best_scores = [score_map[c.track_pk] for c in selected]
             if relaxation != "none":
-                relaxations.append(relaxation)
+                relaxations.append(_relaxation_item(brief, variant, relaxation))
 
         if selected and min_sec <= total <= max_sec:
             if relaxation != "none":
-                relaxations.append(relaxation)
+                relaxations.append(_relaxation_item(brief, variant, relaxation))
             return selected, [score_map[c.track_pk] for c in selected], relaxations
 
     return best_selected, best_scores, relaxations
@@ -227,7 +273,8 @@ def _selection_objective(brief: PlaylistBrief, selected: list[TrackCandidate], h
     duration_sec = sum(c.duration_sec for c in selected)
     duration_fit = max(0.0, 1.0 - (abs(duration_sec - target_sec) / max(target_sec, 1.0)))
     novelty = achieved_novelty(selected, history)
-    batch_fit = achieved_batch_ratio(selected, brief.preferred_month_batch)
+    achieved_ratio = achieved_batch_ratio(selected, brief.preferred_month_batch)
+    batch_fit = _batch_ratio_target_fit(brief, achieved_ratio)
     diversity = _selection_diversity(selected)
     context_fit = sum(1.0 if c.channel_slug == brief.channel_slug else 0.6 for c in selected) / len(selected)
     return (0.33 * duration_fit) + (0.23 * novelty) + (0.16 * batch_fit) + (0.16 * diversity) + (0.12 * context_fit)

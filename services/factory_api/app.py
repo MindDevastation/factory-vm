@@ -194,6 +194,7 @@ def api_playlist_builder_channel_settings_put(
             position_memory_window=brief.position_memory_window,
             strictness_mode=brief.strictness_mode,
             vocal_policy=brief.vocal_policy,
+            reuse_policy=brief.reuse_policy,
         )
         conn.commit()
         saved = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
@@ -308,17 +309,18 @@ def api_playlist_builder_preview_post(
                 "channel_slug": envelope.brief.channel_slug,
                 "generation_mode": envelope.brief.generation_mode,
                 "strictness_mode": envelope.brief.strictness_mode,
-                "candidate_pool_size": None,
+                "candidate_pool_size": envelope.preview_result.candidate_pool_size,
                 "selected_tracks_count": len(envelope.tracks),
                 "achieved_duration": envelope.preview_result.achieved_duration_sec,
                 "achieved_novelty": envelope.preview_result.achieved_novelty,
                 "achieved_batch_ratio": envelope.preview_result.achieved_batch_ratio,
                 "relaxations": envelope.preview_result.relaxations,
+                "relaxations_structured": [item.model_dump() for item in envelope.preview_result.relaxations_structured],
                 "warnings": envelope.preview_result.warnings,
             },
         )
-        for relaxation in envelope.preview_result.relaxations:
-            logger.info("playlist_builder.relaxation.applied", extra={"job_id": job_id, "relaxation": relaxation})
+        for relaxation in envelope.preview_result.relaxations_structured:
+            logger.info("playlist_builder.relaxation.applied", extra={"job_id": job_id, "relaxation": relaxation.model_dump()})
         return response
     except PlaylistBuilderApiError as exc:
         conn.rollback()
@@ -3796,6 +3798,11 @@ def ui_jobs_create_page(request: Request, _: bool = Depends(require_basic_auth(e
     )
 
 
+@app.get("/ui/jobs/create/")
+def ui_jobs_create_page_trailing_slash(_: bool = Depends(require_basic_auth(env))):
+    return RedirectResponse(url="/ui/jobs/create", status_code=307)
+
+
 @app.post("/ui/jobs/create")
 async def ui_jobs_create_submit(
     request: Request,
@@ -3922,6 +3929,11 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
             "locked": locked,
         },
     )
+
+
+@app.get("/ui/jobs/{job_id}/edit/")
+def ui_jobs_edit_page_trailing_slash(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    return RedirectResponse(url=f"/ui/jobs/{job_id}/edit", status_code=307)
 
 
 @app.post("/ui/jobs/{job_id}/edit")

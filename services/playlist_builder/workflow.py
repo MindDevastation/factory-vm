@@ -200,6 +200,7 @@ def build_preview_response(envelope: PreviewEnvelope) -> dict[str, Any]:
             },
             "warnings": result.warnings,
             "relaxations": result.relaxations,
+            "relaxations_structured": [item.model_dump() for item in result.relaxations_structured],
         },
         "tracks": envelope.tracks,
     }

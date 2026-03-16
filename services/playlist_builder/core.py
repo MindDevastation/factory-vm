@@ -33,6 +33,7 @@ class PlaylistBuilder:
     def _generate_safe(self, conn: object, brief: PlaylistBrief) -> PlaylistPreviewResult:
         history = list_effective_history(conn, channel_slug=brief.channel_slug, window=brief.position_memory_window)
         candidates = list_safe_candidates(conn, brief)
+        candidate_pool_size = len(candidates)
         warnings: list[str] = []
         if not candidates:
             warnings.append("No eligible analyzed candidates found for safe mode.")
@@ -45,6 +46,7 @@ class PlaylistBuilder:
                 warnings=warnings,
                 relaxations=[],
                 ordering_rationale="No candidates passed P0 safe filters.",
+                candidate_pool_size=candidate_pool_size,
             )
 
         selected, scores, relaxations = compose_safe(brief, candidates, history)
@@ -59,6 +61,7 @@ class PlaylistBuilder:
                 warnings=warnings,
                 relaxations=relaxations,
                 ordering_rationale="No candidates could be selected after greedy composition.",
+                candidate_pool_size=candidate_pool_size,
             )
         ordered, rationale = sequence_safe(brief, selected, history)
         return build_preview_result(
@@ -70,11 +73,13 @@ class PlaylistBuilder:
             warnings=warnings,
             relaxations=relaxations,
             ordering_rationale=rationale,
+            candidate_pool_size=candidate_pool_size,
         )
 
     def _generate_smart(self, conn: object, brief: PlaylistBrief) -> PlaylistPreviewResult:
         history = list_effective_history(conn, channel_slug=brief.channel_slug, window=brief.position_memory_window)
         candidates = list_safe_candidates(conn, brief)
+        candidate_pool_size = len(candidates)
         warnings: list[str] = []
         if not candidates:
             warnings.append("No eligible analyzed candidates found for smart mode.")
@@ -87,6 +92,7 @@ class PlaylistBuilder:
                 warnings=warnings,
                 relaxations=[],
                 ordering_rationale="No candidates passed Smart mode candidate filtering.",
+                candidate_pool_size=candidate_pool_size,
             )
 
         selected, scores, relaxations, composition_summary = compose_smart(brief, candidates, history)
@@ -101,6 +107,7 @@ class PlaylistBuilder:
                 warnings=warnings,
                 relaxations=relaxations,
                 ordering_rationale="No candidates could be selected after Smart composition passes.",
+                candidate_pool_size=candidate_pool_size,
             )
 
         ordered, rationale = sequence_smart(brief, selected, history)
@@ -114,11 +121,13 @@ class PlaylistBuilder:
             warnings=warnings,
             relaxations=relaxations,
             ordering_rationale=f"{rationale} Smart mode applied post-selection and post-ordering local refinement beyond Safe.",
+            candidate_pool_size=candidate_pool_size,
         )
 
     def _generate_curated(self, conn: object, brief: PlaylistBrief) -> PlaylistPreviewResult:
         history = list_effective_history(conn, channel_slug=brief.channel_slug, window=brief.position_memory_window)
         candidates = list_safe_candidates(conn, brief)
+        candidate_pool_size = len(candidates)
         warnings: list[str] = []
         if not candidates:
             warnings.append("No eligible analyzed candidates found for curated mode.")
@@ -131,6 +140,7 @@ class PlaylistBuilder:
                 warnings=warnings,
                 relaxations=[],
                 ordering_rationale="No candidates passed Curated mode candidate filtering.",
+                candidate_pool_size=candidate_pool_size,
             )
         try:
             selected, scores, relaxations, composition_summary = compose_curated(brief, candidates, history)
@@ -145,6 +155,7 @@ class PlaylistBuilder:
                     warnings=warnings,
                     relaxations=relaxations,
                     ordering_rationale="No candidates could be selected after Curated composition passes.",
+                    candidate_pool_size=candidate_pool_size,
                 )
             ordered, rationale = sequence_curated(brief, selected, history)
         except (CuratedOptimizationLimitExceeded, CuratedSequencingLimitExceeded) as exc:
@@ -162,6 +173,7 @@ class PlaylistBuilder:
             ordering_rationale=(
                 f"{rationale} Curated mode performed iterative composition/sequencing refinement with bounded best-of-N and beam-like search."
             ),
+            candidate_pool_size=candidate_pool_size,
         )
 
 

@@ -10,6 +10,22 @@ class CuratedSequencingLimitExceeded(RuntimeError):
     pass
 
 
+def _position_reuse_is_hard_blocked(brief: PlaylistBrief, candidate: TrackCandidate, slot: int, history: list[PlaylistHistoryEntry]) -> bool:
+    risk = position_memory_risk(candidate.track_pk, slot, history)
+    if risk <= 0.0:
+        return False
+    if brief.generation_mode == "safe":
+        return brief.reuse_policy != "penalty_only"
+    if brief.strictness_mode in {"balanced", "flexible"} and brief.reuse_policy == "penalty_only":
+        return False
+    return False
+
+
+def _eligible_for_slot(brief: PlaylistBrief, pool: list[TrackCandidate], slot: int, history: list[PlaylistHistoryEntry]) -> list[TrackCandidate]:
+    eligible = [c for c in pool if not _position_reuse_is_hard_blocked(brief, c, slot, history)]
+    return eligible or pool
+
+
 def _transition_compatibility(a: TrackCandidate, b: TrackCandidate) -> float:
     if a.dsp_score is None or b.dsp_score is None:
         return 0.5
@@ -55,8 +71,9 @@ def sequence_safe(brief: PlaylistBrief, selected: list[TrackCandidate], history:
 
     remaining = list(selected)
     total = len(remaining)
+    start_pool = _eligible_for_slot(brief, remaining, 0, history)
     first = max(
-        remaining,
+        start_pool,
         key=lambda c: (
             _position_fit_for_target_slot(c, 0, total),
             1.0 - position_memory_risk(c.track_pk, 0, history),
@@ -72,9 +89,10 @@ def sequence_safe(brief: PlaylistBrief, selected: list[TrackCandidate], history:
     while remaining:
         slot = len(sequence)
         current = sequence[-1]
-        pool = [c for c in remaining if not (len(remaining) > 1 and c.track_pk == end_candidate.track_pk)]
+        slot_pool = _eligible_for_slot(brief, remaining, slot, history)
+        pool = [c for c in slot_pool if not (len(slot_pool) > 1 and c.track_pk == end_candidate.track_pk)]
         if not pool:
-            pool = remaining
+            pool = slot_pool
         nxt = max(
             pool,
             key=lambda b: (
@@ -132,7 +150,7 @@ def sequence_smart(brief: PlaylistBrief, selected: list[TrackCandidate], history
     remaining = sorted(selected, key=lambda c: c.track_pk)
     total = len(remaining)
     seed = max(
-        remaining,
+        _eligible_for_slot(brief, remaining, 0, history),
         key=lambda c: (
             _position_fit_for_target_slot(c, 0, total),
             1.0 - position_memory_risk(c.track_pk, 0, history),
@@ -146,8 +164,9 @@ def sequence_smart(brief: PlaylistBrief, selected: list[TrackCandidate], history
     while remaining:
         slot = len(ordered)
         current = ordered[-1]
+        slot_candidates = _eligible_for_slot(brief, remaining, slot, history)
         nxt = max(
-            remaining,
+            slot_candidates,
             key=lambda cand: (
                 0.30 * _transition_compatibility(current, cand)
                 + 0.20 * _energy_progression_score(current, cand)
