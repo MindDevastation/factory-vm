@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import json
 from datetime import datetime, timedelta
 
 from services.common import db as dbm
@@ -273,6 +274,36 @@ class PlaylistBuilderP0SafeTest(unittest.TestCase):
             compose_curated(brief, selected, history=[], max_iterations=0)
         with self.assertRaises(CuratedSequencingLimitExceeded):
             sequence_curated(brief, selected, history=[], max_iterations=0)
+
+    def test_unified_source_aware_tags_filter_and_back_compat(self) -> None:
+        self.conn.execute(
+            "INSERT INTO custom_tags(id, code, label, category, description, is_active, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            (9101, "gaming", "Gaming", "THEME", None, 1, 1000.0, 1000.0),
+        )
+        self._insert_track(pk=101, track_id="t101", tags="Music, Rain")
+        self.conn.execute(
+            "INSERT INTO track_tags(track_pk, payload_json, computed_at) VALUES(?,?,?)",
+            (101, json.dumps({"advanced_v1": {"semantic": {"mood_tags": ["minimal"], "theme_tags": ["loopable"]}}}), 1001.0),
+        )
+        self.conn.execute(
+            "INSERT INTO track_custom_tag_assignments(track_pk, tag_id, state, assigned_at, updated_at) VALUES(?,?,?,?,?)",
+            (101, 9101, "MANUAL", "2024-01-01T00:00:00", "2024-01-01T00:00:00"),
+        )
+
+        self._insert_track(pk=102, track_id="t102", tags="Speech")
+
+        canon_brief = PlaylistBrief(channel_slug="darkwood-reverie", required_tags=["custom:gaming", "yamnet:Music", "semantic:loopable"])
+        canon_candidates = list_safe_candidates(self.conn, canon_brief)
+        self.assertEqual([c.track_pk for c in canon_candidates], [101])
+
+        excluded_brief = PlaylistBrief(channel_slug="darkwood-reverie", required_tags=["custom:gaming"], excluded_tags=["yamnet:Speech"])
+        excluded_candidates = list_safe_candidates(self.conn, excluded_brief)
+        self.assertEqual([c.track_pk for c in excluded_candidates], [101])
+
+        legacy_brief = PlaylistBrief(channel_slug="darkwood-reverie", required_tags=["gaming", "music", "loopable"])
+        legacy_candidates = list_safe_candidates(self.conn, legacy_brief)
+        self.assertEqual([c.track_pk for c in legacy_candidates], [101])
+
 
 
 if __name__ == "__main__":

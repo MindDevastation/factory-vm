@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from time import monotonic
+import json
 
 from services.playlist_builder.constraints import duration_band_sec, relaxed_brief_variants
 from services.playlist_builder.history import novelty_against_previous, position_memory_risk
 from services.playlist_builder.models import CandidateScore, PlaylistBrief, PlaylistHistoryEntry, RelaxationItem, TrackCandidate
+from services.playlist_builder.tags import candidate_filter_tokens, normalize_filter_token
 
 
 class CuratedOptimizationLimitExceeded(RuntimeError):
@@ -55,9 +57,11 @@ def list_safe_candidates(conn: object, brief: PlaylistBrief) -> list[TrackCandid
             taf.dominant_texture,
             taf.dsp_score,
             taf.yamnet_top_tags_text,
+            tt.payload_json AS tags_payload_json,
             GROUP_CONCAT(CASE WHEN tcta.state IN ('AUTO','MANUAL') THEN LOWER(ct.code) END) AS custom_tag_codes
         FROM tracks t
         JOIN track_analysis_flat taf ON taf.track_pk = t.id
+        LEFT JOIN track_tags tt ON tt.track_pk = t.id
         LEFT JOIN track_custom_tag_assignments tcta ON tcta.track_pk = t.id
         LEFT JOIN custom_tags ct ON ct.id = tcta.tag_id
         WHERE t.analyzed_at IS NOT NULL
@@ -69,8 +73,8 @@ def list_safe_candidates(conn: object, brief: PlaylistBrief) -> list[TrackCandid
         (1 if brief.allow_cross_channel else 0, brief.channel_slug),
     ).fetchall()
 
-    required = {t.lower() for t in brief.required_tags}
-    excluded = {t.lower() for t in brief.excluded_tags}
+    required = {normalize_filter_token(t) for t in brief.required_tags if normalize_filter_token(t)}
+    excluded = {normalize_filter_token(t) for t in brief.excluded_tags if normalize_filter_token(t)}
     result: list[TrackCandidate] = []
     for row in rows:
         dur = row["duration_sec"]
@@ -78,11 +82,24 @@ def list_safe_candidates(conn: object, brief: PlaylistBrief) -> list[TrackCandid
             continue
         tags = set()
         yamnet = str(row["yamnet_top_tags_text"] or "")
-        tags.update(v.strip().lower() for v in yamnet.split(",") if v.strip())
+        yamnet_tags = [v.strip() for v in yamnet.split(",") if v.strip()]
+
+        semantic_tags: list[str] = []
+        payload_text = row["tags_payload_json"]
+        if payload_text:
+            try:
+                payload = json.loads(str(payload_text))
+            except json.JSONDecodeError:
+                payload = {}
+            semantic = ((payload.get("advanced_v1") or {}).get("semantic") or {})
+            for key in ("mood_tags", "theme_tags"):
+                semantic_tags.extend(str(v).strip() for v in (semantic.get(key) or []) if str(v).strip())
+
+        custom_csv = str(row["custom_tag_codes"] or "")
+        custom_codes = [v.strip() for v in custom_csv.split(",") if v.strip()]
+        tags.update(candidate_filter_tokens(custom_codes=custom_codes, yamnet_tags=yamnet_tags, semantic_tags=semantic_tags))
         if row["dominant_texture"]:
             tags.add(str(row["dominant_texture"]).strip().lower())
-        custom_csv = str(row["custom_tag_codes"] or "")
-        tags.update(v.strip().lower() for v in custom_csv.split(",") if v.strip())
         norm_tags = _norm_tag_set(tags)
         if required and not required.issubset(norm_tags):
             continue
