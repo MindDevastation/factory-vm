@@ -103,9 +103,8 @@ class DriveClient:
     def download_to_path(self, file_id: str, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         req = self._svc.files().get_media(fileId=file_id)
-        fh = io.FileIO(dest, "wb")
-        downloader = MediaIoBaseDownload(fh, req)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        fh.close()
+        with io.FileIO(dest, "wb") as fh:
+            downloader = MediaIoBaseDownload(fh, req)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()

@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from services.common import db as dbm
+import services.track_analyzer.analyze as analyze_mod
 from services.track_analyzer.analyze import (
     AnalyzeError,
     FEATURES_REQUIRED_ADVANCED_LIST_PATHS,
@@ -44,6 +45,35 @@ class FakeDrive:
 
 
 class TestTrackAnalyze(unittest.TestCase):
+    def _setup_analyze_db(self, td: str, *, track_count: int = 1) -> Any:
+        conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
+        dbm.migrate(conn)
+        conn.execute(
+            "INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled) VALUES(?,?,?,?,?,?)",
+            ("darkwood-reverie", "Darkwood Reverie", "LONG", 1.0, "long_1080p24", 0),
+        )
+        conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
+        for idx in range(1, track_count + 1):
+            conn.execute(
+                """
+                INSERT INTO tracks(channel_slug, track_id, gdrive_file_id, source, filename, title, artist, duration_sec, discovered_at, analyzed_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    "darkwood-reverie",
+                    f"{idx:03d}",
+                    f"fid-{idx}",
+                    "GDRIVE",
+                    f"{idx:03d}_A.wav",
+                    "A",
+                    None,
+                    None,
+                    dbm.now_ts(),
+                    None,
+                ),
+            )
+        return conn
+
     def _advanced_meta(self) -> dict[str, str]:
         return {
             "analyzer_version": "advanced_track_analyzer_v1.1",
@@ -889,6 +919,91 @@ class TestTrackAnalyze(unittest.TestCase):
                         )
 
                 self.assertEqual(str(ctx.exception), "YAMNET_NOT_INSTALLED: install via UI button and retry")
+            finally:
+                conn.close()
+
+    def test_temp_cleanup_runs_when_analysis_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = self._setup_analyze_db(td)
+            try:
+                with mock.patch("services.track_analyzer.analyze.ffmpeg.ffprobe_json", return_value={"format": {"duration": "12.5"}}), mock.patch(
+                    "services.track_analyzer.analyze.ffmpeg.run",
+                    return_value=(0, "", "[Parsed_ebur128_0] Peak: -2.1 dB"),
+                ), mock.patch(
+                    "services.track_analyzer.analyze.yamnet.analyze_with_yamnet",
+                    side_effect=RuntimeError("yamnet crash"),
+                ):
+                    with self.assertRaises(RuntimeError):
+                        analyze_tracks(
+                            conn,
+                            FakeDrive(),
+                            channel_slug="darkwood-reverie",
+                            storage_root=td,
+                            job_id=110,
+                            scope="pending",
+                            force=False,
+                            max_tracks=10,
+                        )
+
+                self.assertFalse((Path(td) / "tmp" / "track_analyzer" / "110" / "1").exists())
+            finally:
+                conn.close()
+
+    def test_cleanup_retries_on_permission_error(self) -> None:
+        tmp_dir = Path("/tmp") / f"cleanup-retry-{next(tempfile._get_candidate_names())}"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        (tmp_dir / "a.bin").write_bytes(b"x")
+
+        call_count = {"value": 0}
+        original_rmtree = analyze_mod.shutil.rmtree
+
+        def flaky_rmtree(path: Path) -> None:
+            call_count["value"] += 1
+            if call_count["value"] < 3:
+                raise PermissionError("file in use")
+            original_rmtree(path)
+
+        with mock.patch("services.track_analyzer.analyze.shutil.rmtree", side_effect=flaky_rmtree), mock.patch(
+            "services.track_analyzer.analyze.time.sleep",
+            return_value=None,
+        ):
+            analyze_mod._cleanup_track_temp_dir(
+                tmp_dir,
+                track_pk=1,
+                job_id=120,
+                disk_free_before=None,
+            )
+
+        self.assertGreaterEqual(call_count["value"], 3)
+        self.assertFalse(tmp_dir.exists())
+
+    def test_no_temp_accumulation_across_multiple_tracks(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = self._setup_analyze_db(td, track_count=3)
+            try:
+                yamnet_payload = {
+                    "top_classes": [{"label": "Music", "score": 0.95}],
+                    "probabilities": {"speech": 0.03, "voice": 0.12, "music": 0.95},
+                }
+                with mock.patch("services.track_analyzer.analyze.ffmpeg.ffprobe_json", return_value={"format": {"duration": "12.5"}}), mock.patch(
+                    "services.track_analyzer.analyze.ffmpeg.run",
+                    return_value=(0, "", "[Parsed_ebur128_0] Peak: -2.1 dB"),
+                ), mock.patch("services.track_analyzer.analyze.yamnet.analyze_with_yamnet", return_value=yamnet_payload):
+                    stats = analyze_tracks(
+                        conn,
+                        FakeDrive(),
+                        channel_slug="darkwood-reverie",
+                        storage_root=td,
+                        job_id=111,
+                        scope="pending",
+                        force=False,
+                        max_tracks=10,
+                    )
+
+                self.assertEqual(stats.processed, 3)
+                job_tmp_dir = Path(td) / "tmp" / "track_analyzer" / "111"
+                child_entries = list(job_tmp_dir.iterdir()) if job_tmp_dir.exists() else []
+                self.assertEqual(child_entries, [])
             finally:
                 conn.close()
 
