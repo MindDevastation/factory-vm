@@ -244,12 +244,35 @@ class TestPlaylistBuilderApi(unittest.TestCase):
             headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
             resp = client.get("/v1/playlist-builder/tags/options?channel_slug=darkwood-reverie", headers=headers)
             self.assertEqual(resp.status_code, 200)
-            values = {item["value"] for item in resp.json()["options"]}
+            payload = resp.json()
+            values = {item["value"] for item in payload["options"]}
             self.assertIn("custom:intense", values)
             self.assertIn("yamnet:Music", values)
             self.assertIn("yamnet:Rock music", values)
             self.assertIn("semantic:minimal", values)
             self.assertIn("semantic:loopable", values)
+            self.assertEqual(payload["meta"]["channel_slug"], "darkwood-reverie")
+            self.assertGreaterEqual(payload["meta"]["custom_count"], 1)
+            self.assertGreaterEqual(payload["meta"]["yamnet_count"], 2)
+            self.assertGreaterEqual(payload["meta"]["semantic_count"], 2)
+            self.assertEqual(payload["meta"]["reason"], "ok")
+
+
+    def test_tags_options_endpoint_empty_reason_for_channel_without_analyzed_tracks(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+            resp = client.get("/v1/playlist-builder/tags/options?channel_slug=darkwood-reverie", headers=headers)
+            self.assertEqual(resp.status_code, 200)
+            payload = resp.json()
+            self.assertEqual(payload["options"], [])
+            self.assertEqual(payload["meta"]["channel_slug"], "darkwood-reverie")
+            self.assertEqual(payload["meta"]["custom_count"], 0)
+            self.assertEqual(payload["meta"]["yamnet_count"], 0)
+            self.assertEqual(payload["meta"]["semantic_count"], 0)
+            self.assertEqual(payload["meta"]["reason"], "no_tags_found_for_channel")
+
 
 
 

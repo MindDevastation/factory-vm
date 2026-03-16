@@ -19,7 +19,7 @@
     <label>Project* </label>
     <select name="channel_id" {% if locked or mode == 'edit' %}disabled{% endif %}>
       {% for c in channels %}
-      <option value="{{ c.id }}" {% if (form.channel_id|default(0)|int) == c.id %}selected{% endif %}>{{ c.display_name }}</option>
+      <option value="{{ c.id }}" data-channel-slug="{{ c.slug }}" {% if (form.channel_id|default(0)|int) == c.id %}selected{% endif %}>{{ c.display_name }}</option>
       {% endfor %}
     </select>
     {% if locked or mode == 'edit' %}<input type="hidden" name="channel_id" value="{{ form.channel_id|default('') }}">{% endif %}
@@ -181,8 +181,28 @@
   let lastPreviewOverrideSnapshot = null;
   let tagsPickerTargetInput = null;
   let tagsOptionsCache = [];
+  const channelSelectEl = document.querySelector('select[name="channel_id"]');
+  const channelIdToSlug = new Map();
+  if (channelSelectEl) {
+    Array.from(channelSelectEl.options || []).forEach((opt) => {
+      const id = Number(opt.value);
+      const slug = String(opt.dataset.channelSlug || '').trim();
+      if (Number.isInteger(id) && slug) {
+        channelIdToSlug.set(id, slug);
+      }
+    });
+  }
+
   function canRun() {
     return Number.isInteger(activeJobId);
+  }
+
+  function resolveSelectedChannelSlug() {
+    const channelInput = document.querySelector('select[name="channel_id"], input[name="channel_id"]');
+    if (!channelInput) return '';
+    const channelId = Number(channelInput.value);
+    if (!Number.isInteger(channelId)) return '';
+    return channelIdToSlug.get(channelId) || '';
   }
 
   function buildCreatePayload() {
@@ -302,11 +322,17 @@
   }
 
   async function fetchTagOptions() {
-    if (!Number.isInteger(activeJobId)) return [];
-    const briefResp = await fetch(`/v1/playlist-builder/jobs/${activeJobId}/brief`, { credentials: 'same-origin' });
-    const briefPayload = await briefResp.json();
-    if (!briefResp.ok) return [];
-    const channelSlug = briefPayload && briefPayload.brief ? briefPayload.brief.channel_slug : null;
+    let channelSlug = '';
+    if (Number.isInteger(activeJobId)) {
+      const briefResp = await fetch(`/v1/playlist-builder/jobs/${activeJobId}/brief`, { credentials: 'same-origin' });
+      const briefPayload = await briefResp.json();
+      if (briefResp.ok) {
+        channelSlug = briefPayload && briefPayload.brief ? String(briefPayload.brief.channel_slug || '').trim() : '';
+      }
+    }
+    if (!channelSlug) {
+      channelSlug = resolveSelectedChannelSlug();
+    }
     const query = channelSlug ? `?channel_slug=${encodeURIComponent(channelSlug)}` : '';
     const resp = await fetch(`/v1/playlist-builder/tags/options${query}`, { credentials: 'same-origin' });
     const payload = await resp.json();
