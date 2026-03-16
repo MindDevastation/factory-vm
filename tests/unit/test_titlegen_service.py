@@ -229,6 +229,8 @@ class TestTitleGenService(unittest.TestCase):
 
         self.assertEqual(preview.proposed_title, "Darkwood Reverie")
         self.assertNotEqual(preview.proposed_title, stored_title)
+        seeded_row = conn.execute("SELECT title FROM releases WHERE id = ?", (release_id,)).fetchone()
+        self.assertEqual(seeded_row["title"], stored_title)
 
         result = titlegen_service.apply_generated_title(
             conn,
