@@ -226,6 +226,9 @@ class TestTitleGenService(unittest.TestCase):
         tid = self._insert_template(conn, is_default=False, body="{{channel_display_name}}")
         preview = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=tid)
 
+        self.assertEqual(preview.proposed_title, "Darkwood Reverie")
+        self.assertNotEqual(preview.proposed_title, "Darkwood   Reverie")
+
         result = titlegen_service.apply_generated_title(
             conn,
             release_id=release_id,
