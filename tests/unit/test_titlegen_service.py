@@ -231,7 +231,7 @@ class TestTitleGenService(unittest.TestCase):
         preview = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=tid)
 
         self.assertEqual(preview.proposed_title, "Darkwood Reverie")
-        self.assertNotEqual(preview.proposed_title, stored_title)
+        self.assertTrue(preview.proposed_title != stored_title)
 
         result = titlegen_service.apply_generated_title(
             conn,
