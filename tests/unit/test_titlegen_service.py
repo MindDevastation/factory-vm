@@ -223,6 +223,7 @@ class TestTitleGenService(unittest.TestCase):
 
     def test_apply_same_title_after_internal_whitespace_normalization_is_noop(self) -> None:
         stored_title = "Darkwood   Reverie"
+        self.assertEqual(stored_title, "Darkwood   Reverie")
         conn, release_id = self._seed_release(title=stored_title)
         seeded_row = conn.execute("SELECT title FROM releases WHERE id = ?", (release_id,)).fetchone()
         self.assertEqual(seeded_row["title"], stored_title)
