@@ -65,6 +65,10 @@ class TestTitleGenService(unittest.TestCase):
         self.assertTrue(context.can_generate_with_default)
         self.assertIsNotNone(context.default_template)
         self.assertEqual(len(context.active_templates), 2)
+        expected_keys = {"id", "template_name", "status", "is_default"}
+        for item in context.active_templates:
+            self.assertEqual(set(item.keys()), expected_keys)
+            self.assertEqual(item["status"], "ACTIVE")
 
     def test_default_template_resolution_and_fingerprint_and_normalization(self) -> None:
         conn, release_id = self._seed_release()
