@@ -53,6 +53,8 @@ class PlaylistBuilderPreviewCliIntegrationTest(unittest.TestCase):
         payload = run_preview(job_id=self.job_id, override_json=json.dumps({"generation_mode": "safe", "min_duration_min": 10, "max_duration_min": 20}))
         self.assertEqual(core["ordered_track_pks"], payload["preview"]["ordered_track_pks"])
         self.assertEqual(payload["brief"]["generation_mode"], "safe")
+        self.assertEqual(payload["preview"]["candidate_pool_size"], 3)
+        self.assertIn("relaxations_structured", payload["preview"])
 
     def test_apply_happy_path_updates_draft_and_writes_history(self) -> None:
         payload = run_preview(job_id=self.job_id, override_json=json.dumps({"generation_mode": "safe", "min_duration_min": 10, "max_duration_min": 20}))

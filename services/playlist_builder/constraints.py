@@ -16,8 +16,6 @@ def relaxed_brief_variants(brief: PlaylistBrief) -> list[tuple[PlaylistBrief, st
 
     if brief.strictness_mode == "flexible":
         variants.append((brief.model_copy(update={"vocal_policy": "allow_any"}), "relax_vocal_policy_allow_any"))
-        if brief.required_tags:
-            variants.append((brief.model_copy(update={"required_tags": []}), "drop_required_tags"))
     return variants
 
 

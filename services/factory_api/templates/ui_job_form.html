@@ -88,7 +88,7 @@
 
   <fieldset>
     <legend>Month/Batch</legend>
-    <label>Preferred month_batch <input id="plb-preferred-month-batch" placeholder="YYYY-MM"></label>
+    <label>Preferred month_batch <input id="plb-preferred-month-batch" placeholder="e.g. Feb26 or 202501"></label><small>Use exact Audio/&lt;Batch&gt;/... folder names from discovery.</small>
     <label>Target preferred batch ratio % <input id="plb-preferred-batch-ratio" type="number" min="0" max="100" value="70"></label>
   </fieldset>
 
@@ -272,7 +272,7 @@
       <p><b>target batch ratio:</b> ${b.target_preferred ?? ''} · <b>achieved batch ratio:</b> ${b.achieved_preferred ?? ''}</p>
       <p><b>target novelty:</b> ${n.target_min ?? ''} - ${n.target_max ?? ''} · <b>achieved novelty:</b> ${n.achieved ?? ''}</p>
       <p><b>warnings:</b> ${(s.warnings || []).join('; ') || '-'}</p>
-      <p><b>relaxations:</b> ${(s.relaxations || []).join('; ') || '-'}</p>
+      <p><b>relaxations:</b> ${(s.relaxations_structured || []).map(r => `${r.constraint_name}: ${r.relaxation_applied}`).join('; ') || (s.relaxations || []).join('; ') || '-'}</p>
     `;
     summary.style.display = 'block';
 

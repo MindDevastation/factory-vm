@@ -25,6 +25,7 @@ SYSTEM_DEFAULTS: dict[str, Any] = {
     "novelty_target_max": 0.80,
     "position_memory_window": 20,
     "vocal_policy": "allow_any",
+    "reuse_policy": "avoid_recent",
     "required_tags": [],
     "excluded_tags": [],
     "notes": None,
@@ -52,6 +53,7 @@ def channel_settings_row_to_patch(row: dict[str, Any] | None) -> dict[str, Any]:
         "novelty_target_max": row.get("novelty_target_max"),
         "position_memory_window": row.get("position_memory_window"),
         "vocal_policy": row.get("vocal_policy"),
+        "reuse_policy": row.get("reuse_policy"),
     }
 
 

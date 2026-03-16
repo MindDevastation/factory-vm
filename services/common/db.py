@@ -953,6 +953,7 @@ def upsert_playlist_builder_channel_settings(
     position_memory_window: int,
     strictness_mode: str,
     vocal_policy: str,
+    reuse_policy: str = "avoid_recent",
 ) -> None:
     ts = now_ts()
     conn.execute(
@@ -962,7 +963,7 @@ def upsert_playlist_builder_channel_settings(
             tolerance_min, preferred_month_batch, preferred_batch_ratio, allow_cross_channel,
             novelty_target_min, novelty_target_max, position_memory_window,
             strictness_mode, vocal_policy, reuse_policy, created_at, updated_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'avoid_recent', ?, ?)
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(channel_slug) DO UPDATE SET
             default_generation_mode = excluded.default_generation_mode,
             min_duration_min = excluded.min_duration_min,
@@ -976,6 +977,7 @@ def upsert_playlist_builder_channel_settings(
             position_memory_window = excluded.position_memory_window,
             strictness_mode = excluded.strictness_mode,
             vocal_policy = excluded.vocal_policy,
+            reuse_policy = excluded.reuse_policy,
             updated_at = excluded.updated_at
         """,
         (
@@ -992,6 +994,7 @@ def upsert_playlist_builder_channel_settings(
             position_memory_window,
             strictness_mode,
             vocal_policy,
+            reuse_policy,
             ts,
             ts,
         ),

@@ -202,6 +202,14 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("Custom Tags · Channel Dashboard", r.text)
             self.assertIn('id="tags-dash-channel"', r.text)
 
+            create_slash = client.get("/ui/jobs/create/", headers=h, follow_redirects=False)
+            self.assertEqual(create_slash.status_code, 307)
+            self.assertEqual(create_slash.headers.get("location"), "/ui/jobs/create")
+
+            edit_slash = client.get(f"/ui/jobs/{job_id}/edit/", headers=h, follow_redirects=False)
+            self.assertEqual(edit_slash.status_code, 307)
+            self.assertEqual(edit_slash.headers.get("location"), f"/ui/jobs/{job_id}/edit")
+
             r = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Edit Job", r.text)
