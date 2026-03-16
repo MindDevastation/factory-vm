@@ -85,6 +85,10 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             self.assertTrue(body["can_generate_with_default"])
             self.assertEqual(body["default_template"]["id"], default_id)
             self.assertEqual(len(body["active_templates"]), 2)
+            expected_item_keys = {"id", "template_name", "status", "is_default"}
+            for item in body["active_templates"]:
+                self.assertEqual(set(item.keys()), expected_item_keys)
+                self.assertEqual(item["status"], "ACTIVE")
 
     def test_context_endpoint_without_default(self) -> None:
         with temp_env() as (_, env):

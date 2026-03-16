@@ -81,7 +81,7 @@ def load_titlegen_context(conn: sqlite3.Connection, *, release_id: int) -> Conte
 
     active_template_rows = conn.execute(
         """
-        SELECT id, template_name, is_default, validation_status
+        SELECT id, template_name, status, is_default
         FROM title_templates
         WHERE channel_slug = ? AND status = 'ACTIVE'
         ORDER BY id DESC
@@ -92,8 +92,8 @@ def load_titlegen_context(conn: sqlite3.Connection, *, release_id: int) -> Conte
         {
             "id": int(row["id"]),
             "template_name": str(row["template_name"]),
-            "is_default_channel_template": bool(int(row["is_default"] or 0)),
-            "validation_status": str(row["validation_status"] or ""),
+            "status": str(row["status"] or ""),
+            "is_default": bool(int(row["is_default"] or 0)),
         }
         for row in active_template_rows
     ]
