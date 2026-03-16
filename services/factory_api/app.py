@@ -3798,6 +3798,11 @@ def ui_jobs_create_page(request: Request, _: bool = Depends(require_basic_auth(e
     )
 
 
+@app.get("/ui/jobs/create/")
+def ui_jobs_create_page_trailing_slash(_: bool = Depends(require_basic_auth(env))):
+    return RedirectResponse(url="/ui/jobs/create", status_code=307)
+
+
 @app.post("/ui/jobs/create")
 async def ui_jobs_create_submit(
     request: Request,
@@ -3924,6 +3929,11 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
             "locked": locked,
         },
     )
+
+
+@app.get("/ui/jobs/{job_id}/edit/")
+def ui_jobs_edit_page_trailing_slash(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    return RedirectResponse(url=f"/ui/jobs/{job_id}/edit", status_code=307)
 
 
 @app.post("/ui/jobs/{job_id}/edit")
