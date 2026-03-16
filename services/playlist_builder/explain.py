@@ -15,6 +15,7 @@ def build_preview_result(
     relaxations: list[RelaxationItem],
     ordering_rationale: str,
     candidate_pool_size: int,
+    diagnostics: dict | None = None,
 ) -> PlaylistPreviewResult:
     duration_sec = sum(c.duration_sec for c in ordered)
     return PlaylistPreviewResult(
@@ -32,4 +33,5 @@ def build_preview_result(
         per_track_fit_notes=annotate_fit_notes(selected, scores, history),
         ordering_rationale=ordering_rationale,
         candidate_pool_size=candidate_pool_size,
+        diagnostics=diagnostics,
     )

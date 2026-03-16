@@ -141,6 +141,7 @@ class PlaylistPreviewResult(BaseModel):
     per_track_fit_notes: list[dict[str, Any]] = Field(default_factory=list)
     ordering_rationale: str = ""
     candidate_pool_size: int = 0
+    diagnostics: dict[str, Any] | None = None
 
 
 class PlaylistBriefOverrides(BaseModel):
