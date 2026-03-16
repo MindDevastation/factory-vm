@@ -59,6 +59,71 @@ class TestPlaylistBuilderPreviewApplyApi(unittest.TestCase):
         finally:
             conn.close()
 
+
+    def test_create_flow_builder_draft_preview_without_audio_then_apply_updates_playlist(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            self._seed_tracks()
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            conn_lookup = dbm.connect(self.env)
+            try:
+                ch = dbm.get_channel_by_slug(conn_lookup, "darkwood-reverie")
+                assert ch is not None
+                channel_id = int(ch["id"])
+            finally:
+                conn_lookup.close()
+
+            create_resp = client.post(
+                "/v1/ui/jobs/playlist-builder-draft",
+                headers=headers,
+                json={
+                    "channel_id": channel_id,
+                    "title": "plb-create-flow",
+                    "description": "",
+                    "tags_csv": "",
+                    "cover_name": "",
+                    "cover_ext": "",
+                    "background_name": "",
+                    "background_ext": "",
+                },
+            )
+            self.assertEqual(create_resp.status_code, 200)
+            job_id = int(create_resp.json()["job_id"])
+
+            preview_one = client.post(
+                f"/v1/playlist-builder/jobs/{job_id}/preview",
+                headers=headers,
+                json={"override": {"generation_mode": "safe", "min_duration_min": 10, "max_duration_min": 15}},
+            )
+            self.assertEqual(preview_one.status_code, 200)
+            preview_id_one = preview_one.json()["preview_id"]
+
+            preview_two = client.post(
+                f"/v1/playlist-builder/jobs/{job_id}/preview",
+                headers=headers,
+                json={"override": {"generation_mode": "safe", "min_duration_min": 10, "max_duration_min": 15}},
+            )
+            self.assertEqual(preview_two.status_code, 200)
+
+            apply_resp = client.post(
+                f"/v1/playlist-builder/jobs/{job_id}/apply",
+                headers=headers,
+                json={"preview_id": preview_id_one},
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+
+            conn = dbm.connect(self.env)
+            try:
+                draft = dbm.get_ui_job_draft(conn, job_id)
+                self.assertIsNotNone(draft)
+                self.assertRegex(str(draft["audio_ids_text"]), r"^\d+( \d+)*$")
+                draft_count = conn.execute("SELECT COUNT(*) AS c FROM ui_job_drafts WHERE job_id = ?", (job_id,)).fetchone()
+                self.assertEqual(int(draft_count["c"]), 1)
+            finally:
+                conn.close()
+
     def test_preview_and_apply_success_and_idempotent_reapply(self) -> None:
         with temp_env() as (_, self.env):
             seed_minimal_db(self.env)
