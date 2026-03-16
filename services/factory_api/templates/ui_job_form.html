@@ -174,18 +174,43 @@
     };
   }
 
+  function buildPlaylistBuilderDraftPayload() {
+    const payload = buildCreatePayload();
+    return {
+      channel_id: payload.channel_id,
+      title: payload.title,
+      description: payload.description,
+      tags_csv: payload.tags_csv,
+      cover_name: payload.cover_name,
+      cover_ext: payload.cover_ext,
+      background_name: payload.background_name,
+      background_ext: payload.background_ext,
+    };
+  }
+
   async function ensureJobIdForPlaylistBuilder() {
     if (canRun()) return activeJobId;
     status.textContent = 'Creating draft...';
-    const createResp = await fetch('/v1/ui/jobs', {
+    const createResp = await fetch('/v1/ui/jobs/playlist-builder-draft', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildCreatePayload()),
+      body: JSON.stringify(buildPlaylistBuilderDraftPayload()),
     });
     const createPayload = await createResp.json();
     if (!createResp.ok) {
-      status.textContent = 'Draft creation failed. Fill required fields and retry Preview.';
+      const detail = createPayload && createPayload.detail ? createPayload.detail : null;
+      const fieldErrors = detail && detail.field_errors ? detail.field_errors : null;
+      const firstFieldError = fieldErrors
+        ? Object.values(fieldErrors).find((messages) => Array.isArray(messages) && messages.length > 0)
+        : null;
+      if (Array.isArray(firstFieldError) && firstFieldError.length > 0) {
+        status.textContent = `Draft creation failed: ${firstFieldError[0]}`;
+      } else if (detail && detail.message) {
+        status.textContent = `Draft creation failed: ${detail.message}`;
+      } else {
+        status.textContent = 'Draft creation failed. Check required fields (project/title) and retry Preview.';
+      }
       return null;
     }
     activeJobId = Number(createPayload.job_id);

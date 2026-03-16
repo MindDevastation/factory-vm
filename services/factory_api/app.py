@@ -2447,6 +2447,17 @@ class UiJobDraftPayload(BaseModel):
     audio_ids_text: str
 
 
+class UiPlaylistBuilderDraftPayload(BaseModel):
+    channel_id: int
+    title: str
+    description: str = ""
+    tags_csv: str = ""
+    cover_name: str = ""
+    cover_ext: str = ""
+    background_name: str = ""
+    background_ext: str = ""
+
+
 class UiJobsRenderSelectedPayload(BaseModel):
     job_ids: Optional[list[str]] = None
 
@@ -2473,6 +2484,21 @@ def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
         errors["audio"].append("audio ids are required")
     if not payload.background_name.strip() or not payload.background_ext.strip():
         errors["background"].append("background name/ext are required")
+    if "#" in payload.tags_csv:
+        errors["tags"].append("tags must not contain #")
+    return {k: v for k, v in errors.items() if v}
+
+
+def _ui_validate_playlist_builder_draft(payload: UiPlaylistBuilderDraftPayload) -> Dict[str, List[str]]:
+    errors: Dict[str, List[str]] = {
+        "project": [],
+        "title": [],
+        "tags": [],
+    }
+    if payload.channel_id <= 0:
+        errors["project"].append("project is required")
+    if not payload.title.strip():
+        errors["title"].append("title is required")
     if "#" in payload.tags_csv:
         errors["tags"].append("tags must not contain #")
     return {k: v for k, v in errors.items() if v}
@@ -3241,6 +3267,35 @@ def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basi
             background_name=payload.background_name.strip(),
             background_ext=payload.background_ext.strip(),
             audio_ids_text=payload.audio_ids_text.strip(),
+            job_type="UI",
+        )
+    finally:
+        conn.close()
+    return {"ok": True, "job_id": job_id}
+
+
+@app.post("/v1/ui/jobs/playlist-builder-draft")
+def api_create_ui_job_for_playlist_builder(payload: UiPlaylistBuilderDraftPayload, _: bool = Depends(require_basic_auth(env))):
+    errors = _ui_validate_playlist_builder_draft(payload)
+    if errors:
+        raise HTTPException(422, {"field_errors": errors})
+
+    conn = dbm.connect(env)
+    try:
+        ch = dbm.get_channel_by_id(conn, payload.channel_id)
+        if not ch:
+            raise HTTPException(422, {"field_errors": {"project": ["project does not exist"]}})
+        job_id = dbm.create_ui_job_draft(
+            conn,
+            channel_id=payload.channel_id,
+            title=payload.title.strip(),
+            description=payload.description.strip(),
+            tags_csv=payload.tags_csv.strip(),
+            cover_name=payload.cover_name.strip() or None,
+            cover_ext=payload.cover_ext.strip() or None,
+            background_name=payload.background_name.strip(),
+            background_ext=payload.background_ext.strip(),
+            audio_ids_text="",
             job_type="UI",
         )
     finally:
