@@ -16,6 +16,17 @@ VocalPolicy = Literal[
     "require_lyrical",
     "exclude_speech",
 ]
+ReusePolicy = Literal["avoid_recent", "penalty_only", "allow_recent"]
+
+
+class RelaxationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    constraint_name: str
+    target_value: Any = None
+    achieved_value: Any = None
+    relaxation_applied: str
+    reason: str
 
 
 class PlaylistBrief(BaseModel):
@@ -43,6 +54,7 @@ class PlaylistBrief(BaseModel):
     candidate_limit: Optional[int] = None
     preferred_track_count_min: Optional[int] = None
     preferred_track_count_max: Optional[int] = None
+    reuse_policy: ReusePolicy = "avoid_recent"
 
     @property
     def target_duration_min(self) -> float:
@@ -119,6 +131,7 @@ class PlaylistPreviewResult(BaseModel):
     status: Literal["ok", "not_implemented", "empty"]
     warnings: list[str] = Field(default_factory=list)
     relaxations: list[str] = Field(default_factory=list)
+    relaxations_structured: list[RelaxationItem] = Field(default_factory=list)
     selected_track_pks: list[int] = Field(default_factory=list)
     ordered_track_pks: list[int] = Field(default_factory=list)
     achieved_duration_sec: float = 0.0
@@ -127,6 +140,7 @@ class PlaylistPreviewResult(BaseModel):
     achieved_batch_ratio: float = 0.0
     per_track_fit_notes: list[dict[str, Any]] = Field(default_factory=list)
     ordering_rationale: str = ""
+    candidate_pool_size: int = 0
 
 
 class PlaylistBriefOverrides(BaseModel):
@@ -152,6 +166,7 @@ class PlaylistBriefOverrides(BaseModel):
     candidate_limit: Optional[int] = None
     preferred_track_count_min: Optional[int] = None
     preferred_track_count_max: Optional[int] = None
+    reuse_policy: Optional[ReusePolicy] = None
 
     def as_patch_dict(self) -> dict:
         return self.model_dump(exclude_none=True)
@@ -172,6 +187,7 @@ class PlaylistChannelSettingsPatch(BaseModel):
     novelty_target_max: Optional[float] = None
     position_memory_window: Optional[int] = None
     vocal_policy: Optional[VocalPolicy] = None
+    reuse_policy: Optional[ReusePolicy] = None
 
     def as_patch_dict(self) -> dict:
         return self.model_dump(exclude_none=True)

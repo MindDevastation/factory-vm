@@ -131,7 +131,46 @@ class PlaylistBuilderP0SafeTest(unittest.TestCase):
         self.assertIn("drop_preferred_month_batch", labels)
         self.assertIn("lower_novelty_target_min", labels)
         self.assertIn("relax_vocal_policy_allow_any", labels)
-        self.assertIn("drop_required_tags", labels)
+        self.assertNotIn("drop_required_tags", labels)
+
+    def test_safe_mode_blocks_same_slot_reuse_by_default(self) -> None:
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="safe", min_duration_min=8, max_duration_min=10)
+        selected = [
+            TrackCandidate(1, "t1", "darkwood-reverie", 180.0, "2024-01", frozenset({"a"}), False, False, "smooth", 0.20),
+            TrackCandidate(2, "t2", "darkwood-reverie", 180.0, "2024-01", frozenset({"b"}), False, False, "smooth", 0.21),
+        ]
+        history = [
+            type("H", (), {"tracks": (1, 99)})(),
+        ]
+        ordered, _ = sequence_safe(brief, selected, history=history)
+        self.assertNotEqual(ordered[0].track_pk, 1)
+
+    def test_safe_mode_can_downgrade_same_slot_rule_when_policy_allows(self) -> None:
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="safe", reuse_policy="penalty_only", min_duration_min=8, max_duration_min=10)
+        selected = [
+            TrackCandidate(1, "t1", "darkwood-reverie", 180.0, "2024-01", frozenset({"a"}), False, False, "smooth", 0.20),
+            TrackCandidate(2, "t2", "darkwood-reverie", 180.0, "2024-01", frozenset({"b"}), False, False, "smooth", 0.21),
+        ]
+        history = [
+            type("H", (), {"tracks": (1, 99)})(),
+        ]
+        ordered, _ = sequence_safe(brief, selected, history=history)
+        self.assertEqual(len(ordered), 2)
+
+    def test_preferred_batch_ratio_guides_selection_softly(self) -> None:
+        for pk, batch in [(1, "A"), (2, "A"), (3, "A"), (4, "A"), (5, "A"), (6, "A"), (7, "A"), (8, "B"), (9, "B"), (10, "B")]:
+            self._insert_track(pk=pk, track_id=f"t{pk}", duration=60.0, batch=batch, tags="ambient,calm")
+        brief = PlaylistBrief(
+            channel_slug="darkwood-reverie",
+            generation_mode="safe",
+            min_duration_min=9,
+            max_duration_min=11,
+            preferred_month_batch="A",
+            preferred_batch_ratio=70,
+        )
+        selected, _, _ = compose_safe(brief, list_safe_candidates(self.conn, brief), history=[])
+        ratio = sum(1 for c in selected if c.month_batch == "A") / max(len(selected), 1)
+        self.assertLessEqual(abs(ratio - 0.7), 0.2)
 
     def test_safe_composition_and_sequencing(self) -> None:
         self._insert_track(pk=1, track_id="t1", duration=210, batch="2024-01", voice=0, tags="ambient,calm", dsp=0.2)
