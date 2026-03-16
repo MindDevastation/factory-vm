@@ -65,10 +65,10 @@ def list_builder_tag_options(conn: sqlite3.Connection, *, channel_slug: str | No
     analyzer_rows = conn.execute(
         f"""
         SELECT taf.yamnet_top_tags_text, tt.payload_json
-        FROM track_analysis_flat taf
-        JOIN tracks t ON t.id = taf.track_pk
-        LEFT JOIN track_tags tt ON tt.track_pk = taf.track_pk
-        WHERE taf.analysis_status = 'ok'
+        FROM tracks t
+        LEFT JOIN track_analysis_flat taf ON taf.track_pk = t.id
+        LEFT JOIN track_tags tt ON tt.track_pk = t.id
+        WHERE (taf.analysis_status = 'ok' OR tt.payload_json IS NOT NULL)
         {scope_sql}
         """,
         scope_args,
@@ -78,18 +78,36 @@ def list_builder_tag_options(conn: sqlite3.Connection, *, channel_slug: str | No
     semantic_counts: dict[str, int] = defaultdict(int)
 
     for row in analyzer_rows:
+        payload_text = row.get("payload_json")
+        payload: dict[str, object] = {}
+        if payload_text:
+            try:
+                payload = json.loads(str(payload_text))
+            except json.JSONDecodeError:
+                payload = {}
+
+        yamnet_tags = payload.get("yamnet_tags") if isinstance(payload, dict) else None
+        if isinstance(yamnet_tags, list):
+            for raw_tag in yamnet_tags:
+                tag = str(raw_tag or "").strip()
+                if tag:
+                    yamnet_counts[tag] += 1
+
+        classifier_evidence = (((payload.get("advanced_v1") or {}).get("classifier_evidence") or {}) if isinstance(payload, dict) else {})
+        if isinstance(classifier_evidence, dict):
+            for entry in classifier_evidence.get("yamnet_top_classes") or []:
+                if not isinstance(entry, dict):
+                    continue
+                tag = str(entry.get("label") or "").strip()
+                if tag:
+                    yamnet_counts[tag] += 1
+
         yamnet_raw = str(row.get("yamnet_top_tags_text") or "")
         for part in yamnet_raw.split(","):
             tag = part.strip()
             if tag:
                 yamnet_counts[tag] += 1
-        payload_text = row.get("payload_json")
-        if not payload_text:
-            continue
-        try:
-            payload = json.loads(str(payload_text))
-        except json.JSONDecodeError:
-            continue
+
         semantic = ((payload.get("advanced_v1") or {}).get("semantic") or {})
         for key in ("mood_tags", "theme_tags"):
             for raw_tag in semantic.get(key) or []:
