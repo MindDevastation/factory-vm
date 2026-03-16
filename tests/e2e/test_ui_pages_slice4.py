@@ -108,6 +108,9 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="plb-apply-btn"', r.text)
             self.assertIn('id="playlist-builder-save-first"', r.text)
             self.assertIn('Draft will be auto-created on first Preview.', r.text)
+            self.assertIn('data-channel-slug="darkwood-reverie"', r.text)
+            self.assertIn('function resolveSelectedChannelSlug()', r.text)
+            self.assertIn('channelSlug = resolveSelectedChannelSlug();', r.text)
             self.assertIn('name="background_name"', r.text)
             self.assertIn('name="background_ext"', r.text)
 
@@ -220,6 +223,8 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("window.history.replaceState(null, '', `/ui/jobs/${activeJobId}/edit`);", r.text)
             self.assertIn('/v1/playlist-builder/jobs/${jobId}/apply', r.text)
             self.assertIn('/v1/playlist-builder/tags/options', r.text)
+            self.assertIn('const briefResp = await fetch(`/v1/playlist-builder/jobs/${activeJobId}/brief`', r.text)
+            self.assertIn('channelSlug = resolveSelectedChannelSlug();', r.text)
             self.assertIn('id="plb-required-tags-picker-btn"', r.text)
             self.assertIn('id="plb-excluded-tags-picker-btn"', r.text)
             self.assertIn('id="playlist-builder-tags-picker-modal"', r.text)

@@ -152,16 +152,49 @@ def api_playlist_builder_tags_options(channel_slug: str | None = None, _: bool =
         options = list_builder_tag_options(conn, channel_slug=channel_slug)
     finally:
         conn.close()
-    return {"options": [
-        {
-            "source": item.source,
-            "value": item.value,
-            "label": item.label,
-            "group": item.group,
-            "count": item.count,
-        }
-        for item in options
-    ]}
+
+    custom_count = sum(1 for item in options if item.source == "custom")
+    yamnet_count = sum(1 for item in options if item.source == "yamnet")
+    semantic_count = sum(1 for item in options if item.source == "semantic")
+
+    reason = "ok"
+    if not channel_slug:
+        reason = "missing_channel_slug"
+    elif not options:
+        reason = "no_tags_found_for_channel"
+
+    logger.info(
+        "playlist_builder.tags.options",
+        extra={
+            "channel_slug": channel_slug,
+            "custom_count": custom_count,
+            "yamnet_count": yamnet_count,
+            "semantic_count": semantic_count,
+            "final_count": len(options),
+            "reason": reason,
+        },
+    )
+
+    return {
+        "options": [
+            {
+                "source": item.source,
+                "value": item.value,
+                "label": item.label,
+                "group": item.group,
+                "count": item.count,
+            }
+            for item in options
+        ],
+        "meta": {
+            "channel_slug": channel_slug,
+            "custom_count": custom_count,
+            "yamnet_count": yamnet_count,
+            "semantic_count": semantic_count,
+            "final_count": len(options),
+            "reason": reason,
+        },
+    }
 
 
 @app.get("/v1/playlist-builder/channels/{channel_slug}/settings")
