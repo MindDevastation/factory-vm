@@ -175,6 +175,12 @@ class MetadataTitleGenGenerateRequest(BaseModel):
     template_id: int | None = None
 
 
+class MetadataTitleGenApplyRequest(BaseModel):
+    template_id: int | None = None
+    generation_fingerprint: str = Field(min_length=1)
+    overwrite_confirmed: bool = False
+
+
 @app.get("/v1/metadata/releases/{release_id}/titlegen/context")
 def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -279,6 +285,62 @@ def api_metadata_titlegen_generate(
             "template_id": int(result.used_template["id"]),
             "overwrite_required": result.overwrite_required,
             "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.post("/v1/metadata/releases/{release_id}/titlegen/apply")
+def api_metadata_titlegen_apply(
+    release_id: int,
+    payload: MetadataTitleGenApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = titlegen_service.apply_generated_title(
+                conn,
+                release_id=release_id,
+                template_id=payload.template_id,
+                generation_fingerprint=payload.generation_fingerprint,
+                overwrite_confirmed=payload.overwrite_confirmed,
+            )
+        except titlegen_service.TitleGenError as exc:
+            status_code = 404 if exc.code in {"MTG_RELEASE_NOT_FOUND", "MTG_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.titlegen.apply_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": payload.template_id,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "title_updated": result.title_updated,
+        "title_before": result.title_before,
+        "title_after": result.title_after,
+        "used_template_id": result.used_template_id,
+    }
+    if result.message is not None:
+        body["message"] = result.message
+    logger.info(
+        "metadata.titlegen.applied",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "template_id": result.used_template_id,
+            "overwrite_required": result.overwrite_required,
+            "result_status": "no_op" if not result.title_updated else "ok",
             "error_codes": [],
         },
     )
