@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import unittest
 
 from fastapi.testclient import TestClient
@@ -208,6 +209,48 @@ class TestPlaylistBuilderApi(unittest.TestCase):
             invalid_resp = client.get(f"/v1/playlist-builder/jobs/{job_id}/brief", headers=headers)
             self.assertEqual(invalid_resp.status_code, 422)
             self.assertEqual(invalid_resp.json()["error"]["code"], "PLB_INVALID_BRIEF")
+
+    def test_tags_options_endpoint_returns_unified_source_aware_values(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            job_id = self._create_ui_draft(channel_slug="darkwood-reverie", title="plb")
+            conn = dbm.connect(self.env)
+            try:
+                conn.execute(
+                    "INSERT INTO custom_tags(id, code, label, category, description, is_active, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (9001, "intense", "Intense", "MOOD", None, 1, 1000.0, 1000.0),
+                )
+                conn.execute(
+                    "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, duration_sec, month_batch, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (7001, "darkwood-reverie", "trk-1", "g7001", 180.0, "2024-01", 1000.0, 1001.0),
+                )
+                conn.execute(
+                    "INSERT INTO track_analysis_flat(track_pk, channel_slug, track_id, analysis_computed_at, analysis_status, duration_sec, yamnet_top_tags_text, voice_flag, speech_flag, dominant_texture, dsp_score, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (7001, "darkwood-reverie", "trk-1", 1001.0, "ok", 180.0, "Music, Rock music", 0, 0, "smooth", 0.5, "2024-01-01T00:00:00"),
+                )
+                conn.execute(
+                    "INSERT INTO track_tags(track_pk, payload_json, computed_at) VALUES(?,?,?)",
+                    (7001, json.dumps({"advanced_v1": {"semantic": {"mood_tags": ["minimal"], "theme_tags": ["loopable"]}}}), 1001.0),
+                )
+                conn.execute(
+                    "INSERT INTO track_custom_tag_assignments(track_pk, tag_id, state, assigned_at, updated_at) VALUES(?,?,?,?,?)",
+                    (7001, 9001, "MANUAL", "2024-01-01T00:00:00", "2024-01-01T00:00:00"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+            resp = client.get("/v1/playlist-builder/tags/options?channel_slug=darkwood-reverie", headers=headers)
+            self.assertEqual(resp.status_code, 200)
+            values = {item["value"] for item in resp.json()["options"]}
+            self.assertIn("custom:intense", values)
+            self.assertIn("yamnet:Music", values)
+            self.assertIn("yamnet:Rock music", values)
+            self.assertIn("semantic:minimal", values)
+            self.assertIn("semantic:loopable", values)
+
 
 
 if __name__ == "__main__":

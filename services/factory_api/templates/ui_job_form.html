@@ -111,7 +111,13 @@
       </select>
     </label>
     <label>Required tags (comma-separated) <input id="plb-required-tags"></label>
+    <button id="plb-required-tags-picker-btn" type="button">Select tags</button>
     <label>Excluded tags (comma-separated) <input id="plb-excluded-tags"></label>
+    <button id="plb-excluded-tags-picker-btn" type="button">Select tags</button>
+    <small>
+      Tags support multiple sources using canonical values like <code>custom:intense</code>, <code>yamnet:Music</code>, <code>semantic:loopable</code>.
+      Use Select tags to pick valid values; manual input is still supported. Analyzer tags (yamnet/semantic) are different from custom tags.
+    </small>
   </fieldset>
 
   <fieldset>
@@ -130,6 +136,19 @@
   <section id="plb-preview-tracks" style="display:none; max-height:260px; overflow:auto;"></section>
 </dialog>
 
+<dialog id="playlist-builder-tags-picker-modal" style="width:min(760px,95vw)">
+  <h3>Select Playlist Builder Tags</h3>
+  <p><small>Choose canonical tags from available sources. Selected values are inserted as source-aware tokens.</small></p>
+  <p>
+    <label>Search <input id="plb-tags-picker-search" placeholder="Filter tags"></label>
+  </p>
+  <section id="plb-tags-picker-groups" style="max-height:380px; overflow:auto; border:1px solid #ddd; padding:8px;"></section>
+  <p>
+    <button id="plb-tags-picker-add-btn" type="button">Add Selected</button>
+    <button id="plb-tags-picker-close-btn" type="button">Close</button>
+  </p>
+</dialog>
+
 <script>
 (function () {
   const mode = '{{ mode }}';
@@ -144,13 +163,24 @@
   const summary = document.getElementById('plb-preview-summary');
   const tracks = document.getElementById('plb-preview-tracks');
   const audioIdsInput = document.getElementById('audio-ids-input');
+  const requiredTagsInput = document.getElementById('plb-required-tags');
+  const excludedTagsInput = document.getElementById('plb-excluded-tags');
+  const requiredTagsPickerBtn = document.getElementById('plb-required-tags-picker-btn');
+  const excludedTagsPickerBtn = document.getElementById('plb-excluded-tags-picker-btn');
+  const tagsPickerModal = document.getElementById('playlist-builder-tags-picker-modal');
+  const tagsPickerSearch = document.getElementById('plb-tags-picker-search');
+  const tagsPickerGroups = document.getElementById('plb-tags-picker-groups');
+  const tagsPickerAddBtn = document.getElementById('plb-tags-picker-add-btn');
+  const tagsPickerCloseBtn = document.getElementById('plb-tags-picker-close-btn');
 
-  if (!modal || !openBtn || !closeBtn || !previewBtn || !applyBtn || !status || !summary || !tracks || !audioIdsInput) return;
+  if (!modal || !openBtn || !closeBtn || !previewBtn || !applyBtn || !status || !summary || !tracks || !audioIdsInput || !requiredTagsInput || !excludedTagsInput || !requiredTagsPickerBtn || !excludedTagsPickerBtn || !tagsPickerModal || !tagsPickerSearch || !tagsPickerGroups || !tagsPickerAddBtn || !tagsPickerCloseBtn) return;
 
   let activeJobId = Number.isInteger(initialJobId) ? initialJobId : null;
   let lastPreviewId = null;
   let lastTrackPks = [];
   let lastPreviewOverrideSnapshot = null;
+  let tagsPickerTargetInput = null;
+  let tagsOptionsCache = [];
   function canRun() {
     return Number.isInteger(activeJobId);
   }
@@ -250,6 +280,69 @@
     return document.getElementById(id).value.split(',').map((v) => v.trim()).filter(Boolean);
   }
 
+
+  function parseTagListFromInput(inputEl) {
+    return String(inputEl.value || '').split(',').map((v) => v.trim()).filter(Boolean);
+  }
+
+  function mergeCanonicalTagsIntoInput(inputEl, toAdd) {
+    const existing = parseTagListFromInput(inputEl);
+    const lowerExisting = new Set(existing.map((v) => v.toLowerCase()));
+    const merged = [...existing];
+    toAdd.forEach((v) => {
+      const norm = String(v || '').trim();
+      if (!norm) return;
+      const lower = norm.toLowerCase();
+      if (lowerExisting.has(lower)) return;
+      lowerExisting.add(lower);
+      merged.push(norm);
+    });
+    inputEl.value = merged.join(', ');
+    invalidatePreviewState();
+  }
+
+  async function fetchTagOptions() {
+    if (!Number.isInteger(activeJobId)) return [];
+    const briefResp = await fetch(`/v1/playlist-builder/jobs/${activeJobId}/brief`, { credentials: 'same-origin' });
+    const briefPayload = await briefResp.json();
+    if (!briefResp.ok) return [];
+    const channelSlug = briefPayload && briefPayload.brief ? briefPayload.brief.channel_slug : null;
+    const query = channelSlug ? `?channel_slug=${encodeURIComponent(channelSlug)}` : '';
+    const resp = await fetch(`/v1/playlist-builder/tags/options${query}`, { credentials: 'same-origin' });
+    const payload = await resp.json();
+    if (!resp.ok) return [];
+    return Array.isArray(payload.options) ? payload.options : [];
+  }
+
+  function renderTagOptions(filterText) {
+    const activeFilter = String(filterText || '').trim().toLowerCase();
+    const grouped = {};
+    tagsOptionsCache.forEach((option) => {
+      const hay = `${option.group || ''} ${option.label || ''} ${option.value || ''}`.toLowerCase();
+      if (activeFilter && !hay.includes(activeFilter)) return;
+      const key = option.group || option.source || 'Other';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(option);
+    });
+    const groupsHtml = Object.keys(grouped).sort().map((groupName) => {
+      const optionsHtml = grouped[groupName].map((option) => {
+        const usage = Number.isFinite(option.count) ? ` <small>(count: ${option.count})</small>` : '';
+        return `<label style="display:block; margin:2px 0;"><input type="checkbox" data-tag-value="${option.value}"> <b>${option.label}</b> <code>${option.value}</code>${usage}</label>`;
+      }).join('');
+      return `<details open><summary><strong>${groupName}</strong></summary>${optionsHtml || '<p>No tags</p>'}</details>`;
+    }).join('');
+    tagsPickerGroups.innerHTML = groupsHtml || '<p>No tag options found for this channel.</p>';
+  }
+
+  async function openTagsPicker(targetInput) {
+    tagsPickerTargetInput = targetInput;
+    tagsPickerSearch.value = '';
+    tagsPickerGroups.innerHTML = '<p>Loading tags...</p>';
+    tagsPickerModal.showModal();
+    tagsOptionsCache = await fetchTagOptions();
+    renderTagOptions('');
+  }
+
   function buildOverride() {
     const preferredMonthBatch = document.getElementById('plb-preferred-month-batch').value.trim();
     return {
@@ -332,6 +425,26 @@
   });
 
   closeBtn.addEventListener('click', () => modal.close());
+  tagsPickerCloseBtn.addEventListener('click', () => tagsPickerModal.close());
+  requiredTagsPickerBtn.addEventListener('click', async () => {
+    const jobId = await ensureJobIdForPlaylistBuilder();
+    if (!Number.isInteger(jobId)) return;
+    await openTagsPicker(requiredTagsInput);
+  });
+  excludedTagsPickerBtn.addEventListener('click', async () => {
+    const jobId = await ensureJobIdForPlaylistBuilder();
+    if (!Number.isInteger(jobId)) return;
+    await openTagsPicker(excludedTagsInput);
+  });
+  tagsPickerSearch.addEventListener('input', () => renderTagOptions(tagsPickerSearch.value));
+  tagsPickerAddBtn.addEventListener('click', () => {
+    if (!tagsPickerTargetInput) return;
+    const checked = Array.from(tagsPickerGroups.querySelectorAll('input[data-tag-value]:checked'))
+      .map((el) => el.getAttribute('data-tag-value'))
+      .filter(Boolean);
+    mergeCanonicalTagsIntoInput(tagsPickerTargetInput, checked);
+    tagsPickerModal.close();
+  });
 
   previewStateInputIds.forEach((id) => {
     const el = document.getElementById(id);

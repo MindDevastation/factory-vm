@@ -42,6 +42,7 @@ from services.playlist_builder.api_adapter import (
     resolve_playlist_brief,
 )
 from services.playlist_builder.models import PlaylistBriefOverrides, PlaylistChannelSettingsPatch
+from services.playlist_builder.tags import list_builder_tag_options
 from services.playlist_builder.workflow import (
     PlaylistBuilderApiError,
     apply_preview,
@@ -142,6 +143,25 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
 
 def _plb_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+@app.get("/v1/playlist-builder/tags/options")
+def api_playlist_builder_tags_options(channel_slug: str | None = None, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        options = list_builder_tag_options(conn, channel_slug=channel_slug)
+    finally:
+        conn.close()
+    return {"options": [
+        {
+            "source": item.source,
+            "value": item.value,
+            "label": item.label,
+            "group": item.group,
+            "count": item.count,
+        }
+        for item in options
+    ]}
 
 
 @app.get("/v1/playlist-builder/channels/{channel_slug}/settings")
