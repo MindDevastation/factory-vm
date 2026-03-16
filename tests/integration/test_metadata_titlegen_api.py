@@ -33,11 +33,12 @@ class TestMetadataTitleGenApi(unittest.TestCase):
         status: str = "ACTIVE",
         validation_status: str = "VALID",
         body: str = "{{channel_display_name}} {{release_year}}",
+        name: str = "tmpl",
     ) -> int:
         return dbm.create_title_template(
             conn,
             channel_slug=channel_slug,
-            template_name="tmpl",
+            template_name=name,
             template_body=body,
             status=status,
             is_default=is_default,
@@ -55,7 +56,9 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             conn = dbm.connect(env)
             try:
                 release_id = self._seed_release(conn)
-                self._seed_template(conn, is_default=True)
+                default_id = self._seed_template(conn, is_default=True, name="d")
+                self._seed_template(conn, is_default=False, name="a")
+                self._seed_template(conn, status="ARCHIVED", is_default=False, name="arch")
             finally:
                 conn.close()
             client = self._new_client()
@@ -64,8 +67,28 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             resp = client.get(f"/v1/metadata/releases/{release_id}/titlegen/context", headers=headers)
             self.assertEqual(resp.status_code, 200)
             body = resp.json()
-            self.assertIsNotNone(body["default_template"])
-            self.assertTrue(body["overwrite_required"])
+            self.assertEqual(
+                set(body.keys()),
+                {
+                    "release_id",
+                    "channel_slug",
+                    "current_title",
+                    "has_existing_title",
+                    "default_template",
+                    "active_templates",
+                    "can_generate_with_default",
+                },
+            )
+            self.assertEqual(body["release_id"], release_id)
+            self.assertEqual(body["channel_slug"], "darkwood-reverie")
+            self.assertTrue(body["has_existing_title"])
+            self.assertTrue(body["can_generate_with_default"])
+            self.assertEqual(body["default_template"]["id"], default_id)
+            self.assertEqual(len(body["active_templates"]), 2)
+            expected_item_keys = {"id", "template_name", "status", "is_default"}
+            for item in body["active_templates"]:
+                self.assertEqual(set(item.keys()), expected_item_keys)
+                self.assertEqual(item["status"], "ACTIVE")
 
     def test_context_endpoint_without_default(self) -> None:
         with temp_env() as (_, env):
@@ -79,7 +102,9 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             headers = basic_auth_header(env.basic_user, env.basic_pass)
             resp = client.get(f"/v1/metadata/releases/{release_id}/titlegen/context", headers=headers)
             self.assertEqual(resp.status_code, 200)
-            self.assertIsNone(resp.json()["default_template"])
+            body = resp.json()
+            self.assertIsNone(body["default_template"])
+            self.assertFalse(body["can_generate_with_default"])
 
     def test_generate_with_default_template_and_no_release_mutation(self) -> None:
         with temp_env() as (_, env):
@@ -87,7 +112,7 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             conn = dbm.connect(env)
             try:
                 release_id = self._seed_release(conn, title="  Keep Me  ")
-                self._seed_template(conn, is_default=True)
+                template_id = self._seed_template(conn, is_default=True)
                 before = conn.execute("SELECT title FROM releases WHERE id = ?", (release_id,)).fetchone()["title"]
             finally:
                 conn.close()
@@ -96,8 +121,27 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             headers = basic_auth_header(env.basic_user, env.basic_pass)
             resp = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=headers, json={})
             self.assertEqual(resp.status_code, 200)
-            self.assertEqual(resp.json()["proposed_title"], "Darkwood Reverie 2026")
-            self.assertEqual(resp.json()["warnings"][0]["code"], "MTG_OVERWRITE_REQUIRED")
+            body = resp.json()
+            self.assertEqual(
+                set(body.keys()),
+                {
+                    "release_id",
+                    "used_template",
+                    "current_title",
+                    "has_existing_title",
+                    "overwrite_required",
+                    "proposed_title",
+                    "normalized_length",
+                    "generation_fingerprint",
+                    "warnings",
+                },
+            )
+            self.assertEqual(body["release_id"], release_id)
+            self.assertEqual(body["used_template"]["id"], template_id)
+            self.assertTrue(body["used_template"]["is_default_channel_template"])
+            self.assertEqual(body["proposed_title"], "Darkwood Reverie 2026")
+            self.assertEqual(body["normalized_length"], len("Darkwood Reverie 2026"))
+            self.assertEqual(body["warnings"][0]["code"], "MTG_OVERWRITE_REQUIRED")
 
             conn = dbm.connect(env)
             try:
@@ -124,7 +168,8 @@ class TestMetadataTitleGenApi(unittest.TestCase):
 
             ok = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=headers, json={"template_id": good})
             self.assertEqual(ok.status_code, 200)
-            self.assertEqual(ok.json()["template"]["source"], "explicit")
+            self.assertEqual(ok.json()["used_template"]["id"], good)
+            self.assertFalse(ok.json()["used_template"]["is_default_channel_template"])
 
             bad_mismatch = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=headers, json={"template_id": mismatch})
             self.assertEqual(bad_mismatch.status_code, 422)
