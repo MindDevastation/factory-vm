@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,8 +15,18 @@ class DiskPressureSnapshot:
     pressure: DiskPressureLevel
     free_percent: float
     free_gib: float
-    target_path: str
+    total_bytes: int
+    used_bytes: int
+    free_bytes: int
+    checked_path: str
+    resolved_mount_or_anchor: str
     thresholds: DiskThresholds
+
+
+@dataclass(frozen=True)
+class DiskBlockDecision:
+    blocked: bool
+    reason: str
 
 
 
@@ -29,10 +40,34 @@ def _nearest_existing_ancestor(path: Path) -> Path:
         current = parent
     return current
 
+
+def _resolve_mount_or_anchor(path: Path) -> Path:
+    current = path.resolve()
+    while True:
+        parent = current.parent
+        if parent == current:
+            return current
+        if os.stat(parent).st_dev != os.stat(current).st_dev:
+            return current
+        current = parent
+
+
+def classify_write_block(snapshot: DiskPressureSnapshot) -> DiskBlockDecision:
+    low_percent = snapshot.free_percent < snapshot.thresholds.fail_percent
+    low_bytes = snapshot.free_gib < snapshot.thresholds.fail_gib
+    if low_percent and low_bytes:
+        return DiskBlockDecision(blocked=True, reason="free_percent_and_free_bytes_below_critical_threshold")
+    if low_bytes:
+        return DiskBlockDecision(blocked=False, reason="free_bytes_below_critical_threshold_only")
+    if low_percent:
+        return DiskBlockDecision(blocked=False, reason="free_percent_below_critical_threshold_only")
+    return DiskBlockDecision(blocked=False, reason="critical_threshold_not_met")
+
 def evaluate_disk_pressure_for_env(*, env: Env, target_path: Path | None = None) -> DiskPressureSnapshot:
     target = (target_path or Path(env.storage_root)).expanduser().resolve()
-    usage_target = _nearest_existing_ancestor(target)
-    usage = shutil.disk_usage(usage_target)
+    checked_path = _nearest_existing_ancestor(target)
+    resolved_mount_or_anchor = _resolve_mount_or_anchor(checked_path)
+    usage = shutil.disk_usage(checked_path)
     free_percent = (usage.free / usage.total) * 100.0 if usage.total else 0.0
     free_gib = usage.free / (1024**3)
     thresholds = load_disk_thresholds()
@@ -41,7 +76,11 @@ def evaluate_disk_pressure_for_env(*, env: Env, target_path: Path | None = None)
         pressure=pressure,
         free_percent=round(free_percent, 2),
         free_gib=round(free_gib, 2),
-        target_path=str(usage_target),
+        total_bytes=int(usage.total),
+        used_bytes=int(usage.used),
+        free_bytes=int(usage.free),
+        checked_path=str(checked_path),
+        resolved_mount_or_anchor=str(resolved_mount_or_anchor),
         thresholds=thresholds,
     )
 
@@ -54,7 +93,11 @@ def emit_disk_pressure_event(*, logger: logging.Logger, snapshot: DiskPressureSn
         "event_name": event_name,
         "stage": stage,
         "pressure": snapshot.pressure.value,
-        "target_path": snapshot.target_path,
+        "checked_path": snapshot.checked_path,
+        "resolved_mount_or_anchor": snapshot.resolved_mount_or_anchor,
+        "total_bytes": snapshot.total_bytes,
+        "used_bytes": snapshot.used_bytes,
+        "free_bytes": snapshot.free_bytes,
         "free_percent": snapshot.free_percent,
         "free_gib": snapshot.free_gib,
         "thresholds": {
