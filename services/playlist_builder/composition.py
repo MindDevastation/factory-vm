@@ -43,8 +43,8 @@ def _voice_policy_fit(brief: PlaylistBrief, candidate: TrackCandidate) -> tuple[
     return True, 0.5
 
 
-def list_safe_candidates(conn: object, brief: PlaylistBrief) -> list[TrackCandidate]:
-    rows = conn.execute(
+def _base_candidate_rows(conn: object, brief: PlaylistBrief) -> list[dict]:
+    return conn.execute(
         """
         SELECT
             t.id AS track_pk,
@@ -52,6 +52,7 @@ def list_safe_candidates(conn: object, brief: PlaylistBrief) -> list[TrackCandid
             t.channel_slug,
             COALESCE(taf.duration_sec, t.duration_sec) AS duration_sec,
             t.month_batch,
+            taf.analysis_status,
             taf.voice_flag,
             taf.speech_flag,
             taf.dominant_texture,
@@ -60,68 +61,107 @@ def list_safe_candidates(conn: object, brief: PlaylistBrief) -> list[TrackCandid
             tt.payload_json AS tags_payload_json,
             GROUP_CONCAT(CASE WHEN tcta.state IN ('AUTO','MANUAL') THEN LOWER(ct.code) END) AS custom_tag_codes
         FROM tracks t
-        JOIN track_analysis_flat taf ON taf.track_pk = t.id
+        LEFT JOIN track_analysis_flat taf ON taf.track_pk = t.id
         LEFT JOIN track_tags tt ON tt.track_pk = t.id
         LEFT JOIN track_custom_tag_assignments tcta ON tcta.track_pk = t.id
         LEFT JOIN custom_tags ct ON ct.id = tcta.tag_id
-        WHERE t.analyzed_at IS NOT NULL
-          AND taf.analysis_status = 'ok'
-          AND (? = 1 OR t.channel_slug = ?)
+        WHERE (? = 1 OR t.channel_slug = ?)
         GROUP BY t.id
         ORDER BY t.id ASC
         """,
         (1 if brief.allow_cross_channel else 0, brief.channel_slug),
     ).fetchall()
 
+
+def _extract_normalized_tags(row: dict) -> frozenset[str]:
+    tags = set()
+    yamnet = str(row["yamnet_top_tags_text"] or "")
+    yamnet_tags = [v.strip() for v in yamnet.split(",") if v.strip()]
+    semantic_tags: list[str] = []
+    payload_text = row["tags_payload_json"]
+    if payload_text:
+        try:
+            payload = json.loads(str(payload_text))
+        except json.JSONDecodeError:
+            payload = {}
+        semantic = ((payload.get("advanced_v1") or {}).get("semantic") or {})
+        for key in ("mood_tags", "theme_tags"):
+            semantic_tags.extend(str(v).strip() for v in (semantic.get(key) or []) if str(v).strip())
+    custom_csv = str(row["custom_tag_codes"] or "")
+    custom_codes = [v.strip() for v in custom_csv.split(",") if v.strip()]
+    tags.update(candidate_filter_tokens(custom_codes=custom_codes, yamnet_tags=yamnet_tags, semantic_tags=semantic_tags))
+    if row["dominant_texture"]:
+        tags.add(str(row["dominant_texture"]).strip().lower())
+    return _norm_tag_set(tags)
+
+
+def build_candidate_diagnostics(conn: object, brief: PlaylistBrief) -> tuple[list[TrackCandidate], dict[str, int]]:
+    rows = _base_candidate_rows(conn, brief)
     required = {normalize_filter_token(t) for t in brief.required_tags if normalize_filter_token(t)}
     excluded = {normalize_filter_token(t) for t in brief.excluded_tags if normalize_filter_token(t)}
-    result: list[TrackCandidate] = []
-    for row in rows:
+
+    initial_tracks = len(rows)
+    after_channel_scope = initial_tracks
+
+    analyzed_rows = [r for r in rows if str(r.get("analysis_status") or "").lower() == "ok"]
+    after_analyzed_eligible = len(analyzed_rows)
+
+    month_rows = analyzed_rows
+    after_month_batch = len(month_rows)
+
+    with_required: list[dict] = []
+    with_excluded: list[dict] = []
+    candidates: list[TrackCandidate] = []
+
+    for row in month_rows:
         dur = row["duration_sec"]
         if dur is None or float(dur) <= 0:
             continue
-        tags = set()
-        yamnet = str(row["yamnet_top_tags_text"] or "")
-        yamnet_tags = [v.strip() for v in yamnet.split(",") if v.strip()]
-
-        semantic_tags: list[str] = []
-        payload_text = row["tags_payload_json"]
-        if payload_text:
-            try:
-                payload = json.loads(str(payload_text))
-            except json.JSONDecodeError:
-                payload = {}
-            semantic = ((payload.get("advanced_v1") or {}).get("semantic") or {})
-            for key in ("mood_tags", "theme_tags"):
-                semantic_tags.extend(str(v).strip() for v in (semantic.get(key) or []) if str(v).strip())
-
-        custom_csv = str(row["custom_tag_codes"] or "")
-        custom_codes = [v.strip() for v in custom_csv.split(",") if v.strip()]
-        tags.update(candidate_filter_tokens(custom_codes=custom_codes, yamnet_tags=yamnet_tags, semantic_tags=semantic_tags))
-        if row["dominant_texture"]:
-            tags.add(str(row["dominant_texture"]).strip().lower())
-        norm_tags = _norm_tag_set(tags)
+        norm_tags = _extract_normalized_tags(row)
         if required and not required.issubset(norm_tags):
             continue
+        with_required.append(row)
         if excluded and excluded & norm_tags:
             continue
-        candidate = TrackCandidate(
-            track_pk=int(row["track_pk"]),
-            track_id=str(row["track_id"]),
-            channel_slug=str(row["channel_slug"]),
-            duration_sec=float(dur),
-            month_batch=str(row["month_batch"]) if row["month_batch"] else None,
-            tags=norm_tags,
-            voice_flag=None if row["voice_flag"] is None else bool(row["voice_flag"]),
-            speech_flag=None if row["speech_flag"] is None else bool(row["speech_flag"]),
-            dominant_texture=str(row["dominant_texture"]) if row["dominant_texture"] else None,
-            dsp_score=float(row["dsp_score"]) if row["dsp_score"] is not None else None,
+        with_excluded.append(row)
+        candidates.append(
+            TrackCandidate(
+                track_pk=int(row["track_pk"]),
+                track_id=str(row["track_id"]),
+                channel_slug=str(row["channel_slug"]),
+                duration_sec=float(dur),
+                month_batch=str(row["month_batch"]) if row["month_batch"] else None,
+                tags=norm_tags,
+                voice_flag=None if row["voice_flag"] is None else bool(row["voice_flag"]),
+                speech_flag=None if row["speech_flag"] is None else bool(row["speech_flag"]),
+                dominant_texture=str(row["dominant_texture"]) if row["dominant_texture"] else None,
+                dsp_score=float(row["dsp_score"]) if row["dsp_score"] is not None else None,
+            )
         )
-        result.append(candidate)
 
     if brief.candidate_limit:
-        return result[: max(0, int(brief.candidate_limit))]
-    return result
+        candidates = candidates[: max(0, int(brief.candidate_limit))]
+
+    voice_eligible = sum(1 for c in candidates if _voice_policy_fit(brief, c)[0])
+
+    diagnostics = {
+        "initial_tracks": initial_tracks,
+        "after_channel_scope": after_channel_scope,
+        "after_analyzed_eligible": after_analyzed_eligible,
+        "after_month_batch_preference_or_filter": after_month_batch,
+        "after_required_tags": len(with_required),
+        "after_excluded_tags": len(with_excluded),
+        "after_vocal_policy": voice_eligible,
+        "after_history_reuse": voice_eligible,
+        "after_position_memory": voice_eligible,
+        "final_candidates": len(candidates),
+    }
+    return candidates, diagnostics
+
+
+def list_safe_candidates(conn: object, brief: PlaylistBrief) -> list[TrackCandidate]:
+    candidates, _ = build_candidate_diagnostics(conn, brief)
+    return candidates
 
 
 def _reuse_penalty(track_pk: int, history: list[PlaylistHistoryEntry]) -> float:

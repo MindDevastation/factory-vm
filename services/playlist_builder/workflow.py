@@ -17,10 +17,11 @@ EFFECTIVE_HISTORY_WINDOW = 20
 
 
 class PlaylistBuilderApiError(Exception):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, diagnostics: dict[str, Any] | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.diagnostics = diagnostics or {}
 
 
 @dataclass
@@ -101,10 +102,11 @@ def _generate_preview_envelope(
     except CuratedModeLimitExceeded as exc:
         raise PlaylistBuilderApiError("PLB_CURATED_LIMIT_EXCEEDED", str(exc)) from exc
     if result.status == "empty":
-        warnings_joined = " ".join(result.warnings).lower()
-        if "no eligible analyzed candidates" in warnings_joined:
-            raise PlaylistBuilderApiError("PLB_NO_CANDIDATES", "No eligible candidates were found for this brief")
-        raise PlaylistBuilderApiError("PLB_NO_VALID_PLAYLIST", "No valid playlist could be composed")
+        reason = str((result.diagnostics or {}).get("reason") or "")
+        if reason:
+            code = "PLB_NO_CANDIDATES" if "analyzed eligible tracks" in reason.lower() or "candidates remained" in reason.lower() else "PLB_NO_VALID_PLAYLIST"
+            raise PlaylistBuilderApiError(code, reason, diagnostics=result.diagnostics)
+        raise PlaylistBuilderApiError("PLB_NO_VALID_PLAYLIST", "No valid playlist could be composed", diagnostics=result.diagnostics)
 
     preview_id = str(uuid.uuid4())
     created_at = _now_utc()
@@ -201,6 +203,7 @@ def build_preview_response(envelope: PreviewEnvelope) -> dict[str, Any]:
             "warnings": result.warnings,
             "relaxations": result.relaxations,
             "relaxations_structured": [item.model_dump() for item in result.relaxations_structured],
+            "diagnostics": result.diagnostics or {},
         },
         "tracks": envelope.tracks,
     }

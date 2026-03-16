@@ -141,8 +141,11 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
     return rows
 
 
-def _plb_error(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+def _plb_error(status_code: int, code: str, message: str, diagnostics: dict[str, Any] | None = None) -> JSONResponse:
+    payload: dict[str, Any] = {"error": {"code": code, "message": message}}
+    if diagnostics:
+        payload["error"]["diagnostics"] = diagnostics
+    return JSONResponse(status_code=status_code, content=payload)
 
 
 @app.get("/v1/playlist-builder/tags/options")
@@ -372,6 +375,13 @@ def api_playlist_builder_preview_post(
                 "warnings": envelope.preview_result.warnings,
             },
         )
+        logger.info(
+            "playlist_builder.preview.pipeline",
+            extra={
+                "job_id": job_id,
+                "diagnostics": envelope.preview_result.diagnostics or {},
+            },
+        )
         for relaxation in envelope.preview_result.relaxations_structured:
             logger.info("playlist_builder.relaxation.applied", extra={"job_id": job_id, "relaxation": relaxation.model_dump()})
         return response
@@ -384,7 +394,8 @@ def api_playlist_builder_preview_post(
             "PLB_NO_VALID_PLAYLIST": 422,
             "PLB_CURATED_LIMIT_EXCEEDED": 422,
         }.get(exc.code, 409)
-        return _plb_error(status, exc.code, exc.message)
+        logger.info("playlist_builder.preview.pipeline", extra={"job_id": job_id, "diagnostics": exc.diagnostics})
+        return _plb_error(status, exc.code, exc.message, diagnostics=exc.diagnostics)
     finally:
         conn.close()
 
