@@ -232,8 +232,8 @@ def apply_generated_title(
 
     title_before = regenerated.current_title
     proposed_title = regenerated.proposed_title
-    normalized_before = _normalize_title(title_before)
-    normalized_proposed = _normalize_title(proposed_title)
+    normalized_before = title_template_service.normalize_whitespace(title_before)
+    normalized_proposed = title_template_service.normalize_whitespace(proposed_title)
     overwrite_required = bool(normalized_before) and normalized_before != normalized_proposed
 
     if normalized_before == normalized_proposed:
@@ -265,10 +265,6 @@ def apply_generated_title(
         title_after=proposed_title,
         overwrite_required=overwrite_required,
     )
-
-
-def _normalize_title(value: Any) -> str:
-    return str(value or "").strip()
 
 
 def _parse_release_date(value: Any) -> date | None:
