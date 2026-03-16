@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.common.env import Env
-from services.common.disk_guard import emit_disk_pressure_event, evaluate_disk_pressure_for_env
+from services.common.disk_guard import classify_write_block, emit_disk_pressure_event, evaluate_disk_pressure_for_env
 from services.common.disk_thresholds import DiskPressureLevel
 from services.common import db as dbm
 from services.common.pydeps import ensure_py_deps_on_sys_path
@@ -3395,22 +3395,60 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
     }
 
 
-def _uij_error(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+def _uij_error(status_code: int, code: str, message: str, *, details: dict[str, Any] | None = None) -> JSONResponse:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if details is not None:
+        error["details"] = details
+    return JSONResponse(status_code=status_code, content={"error": error})
+
+
+def _disk_pressure_error_details(*, operation: str, snapshot: Any, reason: str) -> dict[str, Any]:
+    threshold_percent = float(snapshot.thresholds.fail_percent)
+    threshold_gb = float(snapshot.thresholds.fail_gib)
+    return {
+        "operation": operation,
+        "checked_path": snapshot.checked_path,
+        "resolved_mount_or_anchor": snapshot.resolved_mount_or_anchor,
+        "free_gb": round(float(snapshot.free_gib), 2),
+        "free_percent": round(float(snapshot.free_percent), 2),
+        "threshold_gb": round(threshold_gb, 2),
+        "threshold_percent": round(threshold_percent, 2),
+        "reason": reason,
+    }
 
 
 def _disk_guard_write_heavy(*, operation: str) -> JSONResponse | None:
     snapshot = evaluate_disk_pressure_for_env(env=env)
     emit_disk_pressure_event(logger=logger, snapshot=snapshot, stage=operation)
-    if snapshot.pressure is not DiskPressureLevel.CRITICAL:
+    decision = classify_write_block(snapshot)
+    if not decision.blocked:
         return None
-    return _uij_error(503, "DISK_CRITICAL_WRITE_BLOCKED", "Operation blocked due to critical disk pressure")
+    details = _disk_pressure_error_details(operation=operation, snapshot=snapshot, reason=decision.reason)
+    logger.warning(
+        "disk.write_blocked",
+        extra={
+            "disk_block": {
+                "operation": operation,
+                "reason": decision.reason,
+                "checked_path": snapshot.checked_path,
+                "resolved_mount_or_anchor": snapshot.resolved_mount_or_anchor,
+                "total_bytes": snapshot.total_bytes,
+                "used_bytes": snapshot.used_bytes,
+                "free_bytes": snapshot.free_bytes,
+                "free_percent": snapshot.free_percent,
+                "threshold_percent": snapshot.thresholds.fail_percent,
+                "threshold_bytes": int(snapshot.thresholds.fail_gib * (1024**3)),
+                "threshold_gib": snapshot.thresholds.fail_gib,
+            }
+        },
+    )
+    return _uij_error(503, "DISK_CRITICAL_WRITE_BLOCKED", "Operation blocked due to critical disk pressure", details=details)
 
 
 def _render_selected_item(job_id_text: str) -> dict[str, Any]:
     blocked = _disk_guard_write_heavy(operation="ui_jobs_render_selected")
     if blocked is not None:
-        return {"job_id": str(job_id_text), "error": {"code": "DISK_CRITICAL_WRITE_BLOCKED", "message": "Operation blocked due to critical disk pressure"}}
+        return {"job_id": str(job_id_text), **json.loads(blocked.body.decode("utf-8"))}
     try:
         job_id = int(job_id_text)
     except (TypeError, ValueError):
