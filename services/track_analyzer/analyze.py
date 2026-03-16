@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -194,7 +195,16 @@ def analyze_tracks(
         file_id = str(row["gdrive_file_id"])
         track_tmp_dir = Path(storage_root) / "tmp" / "track_analyzer" / str(job_id) / str(track_pk)
         local_path = track_tmp_dir / f"{file_id}.wav"
+        disk_free_before = _disk_free_bytes(track_tmp_dir)
+        track_failed = False
         try:
+            log.info(
+                "track analyze temp start: job_id=%s track_pk=%s temp_dir=%s disk_free_before=%s",
+                job_id,
+                track_pk,
+                track_tmp_dir,
+                disk_free_before,
+            )
             drive.download_to_path(file_id, local_path)
             duration_sec = _extract_duration_sec(local_path)
             waveform, sample_rate, channels_count, stereo_waveform = _load_wav_pcm(local_path)
@@ -434,9 +444,26 @@ def analyze_tracks(
             processed += 1
         except Exception:
             failed += 1
+            track_failed = True
             raise
         finally:
-            shutil.rmtree(track_tmp_dir, ignore_errors=True)
+            try:
+                _cleanup_track_temp_dir(
+                    track_tmp_dir,
+                    track_pk=track_pk,
+                    job_id=job_id,
+                    disk_free_before=disk_free_before,
+                )
+            except Exception:
+                if not track_failed:
+                    failed += 1
+                    raise
+                log.exception(
+                    "track analyze temp cleanup failed after track failure: job_id=%s track_pk=%s temp_dir=%s",
+                    job_id,
+                    track_pk,
+                    track_tmp_dir,
+                )
 
     return AnalyzeStats(selected=selected, processed=processed, failed=failed)
 
@@ -462,6 +489,117 @@ def _select_tracks(conn: Any, *, channel_slug: str, scope: str, force: bool, max
         """,
         tuple(args),
     ).fetchall()
+
+
+_TEMP_CLEANUP_ATTEMPTS = 5
+_TEMP_CLEANUP_DELAY_SEC = 0.2
+
+
+def _disk_free_bytes(path: Path) -> int | None:
+    target = path if path.exists() else path.parent
+    try:
+        return int(shutil.disk_usage(target).free)
+    except Exception:
+        return None
+
+
+def _temp_tree_stats(path: Path) -> tuple[int, int]:
+    if not path.exists():
+        return 0, 0
+
+    files_count = 0
+    total_bytes = 0
+    for item in path.rglob("*"):
+        if not item.is_file():
+            continue
+        files_count += 1
+        try:
+            total_bytes += int(item.stat().st_size)
+        except OSError:
+            continue
+    return files_count, total_bytes
+
+
+def _cleanup_track_temp_dir(track_tmp_dir: Path, *, track_pk: int, job_id: int, disk_free_before: int | None) -> None:
+    files_count, total_bytes = _temp_tree_stats(track_tmp_dir)
+    log.info(
+        "track analyze temp cleanup start: job_id=%s track_pk=%s temp_dir=%s files_count=%s total_bytes=%s",
+        job_id,
+        track_pk,
+        track_tmp_dir,
+        files_count,
+        total_bytes,
+    )
+
+    if not track_tmp_dir.exists():
+        disk_free_after = _disk_free_bytes(track_tmp_dir)
+        log.info(
+            "track analyze temp cleanup success: job_id=%s track_pk=%s temp_dir=%s files_count=%s total_bytes=%s disk_free_before=%s disk_free_after=%s",
+            job_id,
+            track_pk,
+            track_tmp_dir,
+            files_count,
+            total_bytes,
+            disk_free_before,
+            disk_free_after,
+        )
+        return
+
+    last_exc: Exception | None = None
+    for attempt in range(1, _TEMP_CLEANUP_ATTEMPTS + 1):
+        try:
+            shutil.rmtree(track_tmp_dir)
+            disk_free_after = _disk_free_bytes(track_tmp_dir)
+            log.info(
+                "track analyze temp cleanup success: job_id=%s track_pk=%s temp_dir=%s files_count=%s total_bytes=%s disk_free_before=%s disk_free_after=%s attempts=%s",
+                job_id,
+                track_pk,
+                track_tmp_dir,
+                files_count,
+                total_bytes,
+                disk_free_before,
+                disk_free_after,
+                attempt,
+            )
+            return
+        except FileNotFoundError:
+            disk_free_after = _disk_free_bytes(track_tmp_dir)
+            log.info(
+                "track analyze temp cleanup success: job_id=%s track_pk=%s temp_dir=%s files_count=%s total_bytes=%s disk_free_before=%s disk_free_after=%s attempts=%s",
+                job_id,
+                track_pk,
+                track_tmp_dir,
+                files_count,
+                total_bytes,
+                disk_free_before,
+                disk_free_after,
+                attempt,
+            )
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            if attempt < _TEMP_CLEANUP_ATTEMPTS:
+                time.sleep(_TEMP_CLEANUP_DELAY_SEC * attempt)
+                continue
+            break
+        except OSError as exc:
+            last_exc = exc
+            break
+
+    disk_free_after = _disk_free_bytes(track_tmp_dir)
+    log.exception(
+        "track analyze temp cleanup failed: job_id=%s track_pk=%s temp_dir=%s files_count=%s total_bytes=%s disk_free_before=%s disk_free_after=%s error_class=%s error_message=%s",
+        job_id,
+        track_pk,
+        track_tmp_dir,
+        files_count,
+        total_bytes,
+        disk_free_before,
+        disk_free_after,
+        last_exc.__class__.__name__ if last_exc is not None else None,
+        str(last_exc) if last_exc is not None else None,
+    )
+    raise AnalyzeError(f"TEMP_CLEANUP_FAILED: track_pk={track_pk}") from last_exc
 
 
 def _build_p0_profiles() -> dict[str, dict[str, Any]]:
