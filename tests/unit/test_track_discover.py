@@ -72,6 +72,40 @@ class TestTrackDiscover(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_discover_persists_month_batch_from_audio_folder_name(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
+            try:
+                dbm.migrate(conn)
+                conn.execute(
+                    "INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled) VALUES(?,?,?,?,?,?)",
+                    ("darkwood-reverie", "Darkwood Reverie", "LONG", 1.0, "long_1080p24", 0),
+                )
+                conn.execute("INSERT INTO canon_channels(value) VALUES(?)", ("darkwood-reverie",))
+                conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
+
+                drive = FakeDrive()
+                drive.add_child("lib", FakeItem("ch", "Darkwood Reverie", _FOLDER))
+                drive.add_child("ch", FakeItem("audio", "Audio", _FOLDER))
+                drive.add_child("audio", FakeItem("m-feb26", "Feb26", _FOLDER))
+                drive.add_child("m-feb26", FakeItem("fid-1", "001_Title.wav", _FILE))
+
+                discover_channel_tracks(
+                    conn,
+                    drive,
+                    gdrive_library_root_id="lib",
+                    channel_slug="darkwood-reverie",
+                )
+
+                row = conn.execute(
+                    "SELECT month_batch FROM tracks WHERE gdrive_file_id = ? LIMIT 1",
+                    ("fid-1",),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual(row["month_batch"], "Feb26")
+            finally:
+                conn.close()
+
     def test_discover_wav_rename_upsert_and_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
@@ -85,10 +119,10 @@ class TestTrackDiscover(unittest.TestCase):
                 conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
                 conn.execute(
                     """
-                    INSERT INTO tracks(channel_slug, track_id, gdrive_file_id, source, filename, title, artist, duration_sec, discovered_at, analyzed_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?)
+                    INSERT INTO tracks(channel_slug, track_id, gdrive_file_id, source, filename, title, artist, duration_sec, month_batch, discovered_at, analyzed_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)
                     """,
-                    ("darkwood-reverie", "099", "fid-upd", "GDRIVE", "old.wav", "Old", None, None, 1.0, None),
+                    ("darkwood-reverie", "099", "fid-upd", "GDRIVE", "old.wav", "Old", None, None, None, 1.0, None),
                 )
 
                 drive = FakeDrive()
@@ -120,13 +154,16 @@ class TestTrackDiscover(unittest.TestCase):
                 self.assertIn(("fid-upd", "003_New Name.wav"), drive.rename_calls)
 
                 rows = conn.execute(
-                    "SELECT channel_slug, track_id, gdrive_file_id, filename FROM tracks WHERE channel_slug=? ORDER BY track_id ASC",
+                    "SELECT channel_slug, track_id, gdrive_file_id, filename, month_batch FROM tracks WHERE channel_slug=? ORDER BY track_id ASC",
                     ("darkwood-reverie",),
                 ).fetchall()
                 self.assertEqual(len(rows), 3)
                 by_id = {r["gdrive_file_id"]: r for r in rows}
                 self.assertEqual(by_id["fid-upd"]["track_id"], "003")
                 self.assertEqual(by_id["fid-noid"]["track_id"], "002")
+                self.assertEqual(by_id["fid-rename"]["month_batch"], "202501")
+                self.assertEqual(by_id["fid-noid"]["month_batch"], "202501")
+                self.assertEqual(by_id["fid-upd"]["month_batch"], "202501")
 
                 stats_second = discover_channel_tracks(
                     conn,

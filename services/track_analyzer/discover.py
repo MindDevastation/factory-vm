@@ -60,6 +60,7 @@ def discover_channel_tracks(conn: Any, drive: Any, *, gdrive_library_root_id: st
 def _process_month(conn: Any, drive: Any, *, channel_slug: str, month_folder: Any, stats: DiscoverStats) -> DiscoverStats:
     children = list(drive.list_children(month_folder.id))
     by_name = {str(item.name): item for item in children}
+    month_batch = str(month_folder.name)
 
     seen_wav = stats.seen_wav
     renamed = stats.renamed
@@ -104,10 +105,10 @@ def _process_month(conn: Any, drive: Any, *, channel_slug: str, month_folder: An
             conn.execute(
                 """
                 UPDATE tracks
-                SET channel_slug = ?, track_id = ?, filename = ?, title = ?, source = COALESCE(source, 'GDRIVE'), discovered_at = ?
+                SET channel_slug = ?, track_id = ?, filename = ?, title = ?, source = COALESCE(source, 'GDRIVE'), month_batch = ?, discovered_at = ?
                 WHERE gdrive_file_id = ?
                 """,
-                (channel_slug, track_id, final_name, title, ts, str(item.id)),
+                (channel_slug, track_id, final_name, title, month_batch, ts, str(item.id)),
             )
             updated += 1
             continue
@@ -119,10 +120,10 @@ def _process_month(conn: Any, drive: Any, *, channel_slug: str, month_folder: An
         if row_by_track is None:
             conn.execute(
                 """
-                INSERT INTO tracks(channel_slug, track_id, gdrive_file_id, source, filename, title, artist, duration_sec, discovered_at, analyzed_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO tracks(channel_slug, track_id, gdrive_file_id, source, filename, title, artist, duration_sec, month_batch, discovered_at, analyzed_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 """,
-                (channel_slug, track_id, str(item.id), "GDRIVE", final_name, title, None, None, ts, None),
+                (channel_slug, track_id, str(item.id), "GDRIVE", final_name, title, None, None, month_batch, ts, None),
             )
             inserted += 1
         else:

@@ -77,6 +77,8 @@ class TestPlaylistBuilderPreviewApplyApi(unittest.TestCase):
             self.assertIn("preview_id", body)
             self.assertIn("summary", body)
             self.assertGreater(len(body["tracks"]), 0)
+            self.assertIn("month_batch", body["tracks"][0])
+            self.assertIn(body["tracks"][0]["month_batch"], {"2024-01", "2024-02"})
             preview_id = body["preview_id"]
 
             apply_resp = client.post(f"/v1/playlist-builder/jobs/{job_id}/apply", headers=headers, json={"preview_id": preview_id})
