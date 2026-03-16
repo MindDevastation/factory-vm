@@ -34,6 +34,7 @@ class TestTitleGenService(unittest.TestCase):
         validation_status: str = "VALID",
         is_default: bool = True,
         name: str = "main",
+        updated_at: str = "2026-01-01T00:00:00+00:00",
     ) -> int:
         return dbm.create_title_template(
             conn,
@@ -46,17 +47,33 @@ class TestTitleGenService(unittest.TestCase):
             validation_errors_json=None,
             last_validated_at="2026-01-01T00:00:00+00:00",
             created_at="2026-01-01T00:00:00+00:00",
-            updated_at="2026-01-01T00:00:00+00:00",
+            updated_at=updated_at,
             archived_at=None,
         )
+
+    def test_context_contract_shape(self) -> None:
+        conn, release_id = self._seed_release(title="  already set  ")
+        self._insert_template(conn, is_default=True, name="default")
+        self._insert_template(conn, is_default=False, name="alt")
+        self._insert_template(conn, status="ARCHIVED", is_default=False, name="old")
+
+        context = titlegen_service.load_titlegen_context(conn, release_id=release_id)
+        self.assertEqual(context.release_id, release_id)
+        self.assertEqual(context.channel_slug, "darkwood-reverie")
+        self.assertEqual(context.current_title, "  already set  ")
+        self.assertTrue(context.has_existing_title)
+        self.assertTrue(context.can_generate_with_default)
+        self.assertIsNotNone(context.default_template)
+        self.assertEqual(len(context.active_templates), 2)
 
     def test_default_template_resolution_and_fingerprint_and_normalization(self) -> None:
         conn, release_id = self._seed_release()
         self._insert_template(conn, body="  {{channel_display_name}}    {{release_year}}  ")
 
         result = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=None)
-        self.assertEqual(result.template_source, "default")
+        self.assertEqual(result.used_template["source"], "default")
         self.assertEqual(result.proposed_title, "Darkwood Reverie 2026")
+        self.assertEqual(result.normalized_length, len("Darkwood Reverie 2026"))
         self.assertTrue(result.generation_fingerprint)
 
     def test_explicit_template_override_validation(self) -> None:
@@ -64,7 +81,7 @@ class TestTitleGenService(unittest.TestCase):
         tid = self._insert_template(conn, is_default=False)
 
         result = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=tid)
-        self.assertEqual(result.template_source, "explicit")
+        self.assertEqual(result.used_template["source"], "explicit")
 
     def test_channel_mismatch_rejected(self) -> None:
         conn, release_id = self._seed_release()
@@ -103,6 +120,20 @@ class TestTitleGenService(unittest.TestCase):
         self._insert_template(conn, body="{{channel_display_name}}")
         res = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=None)
         self.assertFalse(res.overwrite_required)
+
+    def test_fingerprint_changes_with_template_updated_at_and_effective_context(self) -> None:
+        conn, release_id = self._seed_release(planned_at="2026-04-09T18:30:00Z", title="")
+        t1 = self._insert_template(conn, is_default=False, updated_at="2026-01-01T00:00:00+00:00")
+        t2 = self._insert_template(conn, is_default=False, updated_at="2026-01-02T00:00:00+00:00")
+
+        r1 = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=t1)
+        r2 = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=t2)
+        self.assertNotEqual(r1.generation_fingerprint, r2.generation_fingerprint)
+
+        conn.execute("UPDATE releases SET planned_at = ? WHERE id = ?", ("2027-04-09T18:30:00Z", release_id))
+        conn.commit()
+        r3 = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=t1)
+        self.assertNotEqual(r1.generation_fingerprint, r3.generation_fingerprint)
 
 
 if __name__ == "__main__":

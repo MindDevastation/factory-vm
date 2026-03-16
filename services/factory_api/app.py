@@ -184,8 +184,15 @@ def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_bas
         except titlegen_service.TitleGenError as exc:
             status_code = 404 if exc.code == "MTG_RELEASE_NOT_FOUND" else 422
             logger.info(
-                "metadata.titlegen.generate_failed",
-                extra={"release_id": release_id, "error_code": exc.code, "template_id": None},
+                "metadata.titlegen.context_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": None,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
             )
             return _mtg_error(status_code, exc.code, exc.message)
     finally:
@@ -195,41 +202,28 @@ def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_bas
     if context.default_template is not None:
         default_item = {
             "id": int(context.default_template["id"]),
-            "channel_slug": str(context.default_template["channel_slug"]),
             "template_name": str(context.default_template["template_name"]),
-            "template_body": str(context.default_template["template_body"]),
-            "status": str(context.default_template["status"]),
-            "is_default": bool(int(context.default_template.get("is_default") or 0)),
-            "validation_status": str(context.default_template["validation_status"]),
+            "is_default_channel_template": bool(int(context.default_template.get("is_default") or 0)),
         }
 
-    warnings: list[dict[str, str]] = []
-    if context.overwrite_required:
-        warnings.append(
-            {
-                "code": "MTG_OVERWRITE_REQUIRED",
-                "message": "Release already has a non-empty title; apply would overwrite it",
-            }
-        )
-
     payload = {
-        "release": {
-            "id": context.release["id"],
-            "channel_slug": context.release["channel_slug"],
-            "title_current": context.release["title"],
-            "planned_at": context.release["planned_at"],
-        },
+        "release_id": context.release_id,
+        "channel_slug": context.channel_slug,
+        "current_title": context.current_title,
+        "has_existing_title": context.has_existing_title,
         "default_template": default_item,
-        "overwrite_required": context.overwrite_required,
-        "warnings": warnings,
+        "active_templates": context.active_templates,
+        "can_generate_with_default": context.can_generate_with_default,
     }
     logger.info(
         "metadata.titlegen.context_loaded",
         extra={
-            "release_id": context.release["id"],
-            "channel_slug": context.release["channel_slug"],
-            "default_template_id": default_item["id"] if default_item else None,
-            "overwrite_required": context.overwrite_required,
+            "release_id": context.release_id,
+            "channel_slug": context.channel_slug,
+            "template_id": default_item["id"] if default_item else None,
+            "overwrite_required": context.has_existing_title,
+            "result_status": "ok",
+            "error_codes": [],
         },
     )
     return payload
@@ -249,41 +243,43 @@ def api_metadata_titlegen_generate(
             status_code = 404 if exc.code in {"MTG_RELEASE_NOT_FOUND", "MTG_TEMPLATE_NOT_FOUND"} else 422
             logger.info(
                 "metadata.titlegen.generate_failed",
-                extra={"release_id": release_id, "error_code": exc.code, "template_id": payload.template_id},
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": payload.template_id,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
             )
             return _mtg_error(status_code, exc.code, exc.message)
     finally:
         conn.close()
 
     body = {
-        "release": {
-            "id": result.release["id"],
-            "channel_slug": result.release["channel_slug"],
-            "title_current": result.release["title"],
-            "planned_at": result.release["planned_at"],
+        "release_id": result.release_id,
+        "used_template": {
+            "id": int(result.used_template["id"]),
+            "template_name": str(result.used_template["template_name"]),
+            "is_default_channel_template": bool(result.used_template["is_default_channel_template"]),
         },
-        "template": {
-            "id": int(result.template["id"]),
-            "channel_slug": str(result.template["channel_slug"]),
-            "template_name": str(result.template["template_name"]),
-            "template_body": str(result.template["template_body"]),
-            "status": str(result.template["status"]),
-            "validation_status": str(result.template["validation_status"]),
-            "source": result.template_source,
-        },
-        "proposed_title": result.proposed_title,
+        "current_title": result.current_title,
+        "has_existing_title": result.has_existing_title,
         "overwrite_required": result.overwrite_required,
-        "warnings": result.warnings,
+        "proposed_title": result.proposed_title,
+        "normalized_length": result.normalized_length,
         "generation_fingerprint": result.generation_fingerprint,
+        "warnings": result.warnings,
     }
     logger.info(
         "metadata.titlegen.generated",
         extra={
-            "release_id": result.release["id"],
-            "channel_slug": result.release["channel_slug"],
-            "template_id": int(result.template["id"]),
-            "template_source": result.template_source,
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "template_id": int(result.used_template["id"]),
             "overwrite_required": result.overwrite_required,
+            "result_status": "ok",
+            "error_codes": [],
         },
     )
     return body
