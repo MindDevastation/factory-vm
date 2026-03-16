@@ -258,6 +258,62 @@ class TestPlaylistBuilderApi(unittest.TestCase):
             self.assertEqual(payload["meta"]["reason"], "ok")
 
 
+    def test_tags_options_endpoint_reads_yamnet_and_semantic_from_track_tags_without_flat_row(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            conn = dbm.connect(self.env)
+            try:
+                conn.execute(
+                    "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, duration_sec, month_batch, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (7101, "darkwood-reverie", "trk-payload", "g7101", 181.0, "2024-02", 1000.0, 1001.0),
+                )
+                conn.execute(
+                    "INSERT INTO track_tags(track_pk, payload_json, computed_at) VALUES(?,?,?)",
+                    (
+                        7101,
+                        json.dumps(
+                            {
+                                "yamnet_tags": ["Music", "Rain"],
+                                "advanced_v1": {
+                                    "semantic": {
+                                        "mood_tags": ["minimal"],
+                                        "theme_tags": ["loopable"],
+                                    },
+                                    "classifier_evidence": {
+                                        "yamnet_top_classes": [{"label": "Rain", "score": 0.7}],
+                                    },
+                                },
+                            }
+                        ),
+                        1001.0,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+            resp = client.get("/v1/playlist-builder/tags/options?channel_slug=darkwood-reverie", headers=headers)
+            self.assertEqual(resp.status_code, 200)
+            payload = resp.json()
+            options = payload["options"]
+            values = {item["value"] for item in options}
+            self.assertIn("yamnet:Music", values)
+            self.assertIn("yamnet:Rain", values)
+            self.assertIn("semantic:minimal", values)
+            self.assertIn("semantic:loopable", values)
+            by_value = {item["value"]: item for item in options}
+            self.assertEqual(by_value["yamnet:Music"]["group"], "YAMNet tags")
+            self.assertEqual(by_value["yamnet:Rain"]["group"], "YAMNet tags")
+            self.assertEqual(by_value["semantic:minimal"]["group"], "Semantic tags")
+            self.assertEqual(payload["meta"]["channel_slug"], "darkwood-reverie")
+            self.assertEqual(payload["meta"]["custom_count"], 0)
+            self.assertGreaterEqual(payload["meta"]["yamnet_count"], 2)
+            self.assertGreaterEqual(payload["meta"]["semantic_count"], 2)
+            self.assertEqual(payload["meta"]["reason"], "ok")
+
+
     def test_tags_options_endpoint_empty_reason_for_channel_without_analyzed_tracks(self) -> None:
         with temp_env() as (_, self.env):
             seed_minimal_db(self.env)
