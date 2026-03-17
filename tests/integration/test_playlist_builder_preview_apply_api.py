@@ -124,6 +124,82 @@ class TestPlaylistBuilderPreviewApplyApi(unittest.TestCase):
             finally:
                 conn.close()
 
+
+    def test_create_flow_preview_failure_returns_reason_and_diagnostics(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            conn_lookup = dbm.connect(self.env)
+            try:
+                ch = dbm.get_channel_by_slug(conn_lookup, "darkwood-reverie")
+                assert ch is not None
+                channel_id = int(ch["id"])
+            finally:
+                conn_lookup.close()
+
+            create_resp = client.post(
+                "/v1/ui/jobs/playlist-builder-draft",
+                headers=headers,
+                json={
+                    "channel_id": channel_id,
+                    "title": "plb-create-flow-empty",
+                    "description": "",
+                    "tags_csv": "",
+                    "cover_name": "",
+                    "cover_ext": "",
+                    "background_name": "bg",
+                    "background_ext": "jpg",
+                },
+            )
+            self.assertEqual(create_resp.status_code, 200)
+            job_id = int(create_resp.json()["job_id"])
+
+            preview = client.post(
+                f"/v1/playlist-builder/jobs/{job_id}/preview",
+                headers=headers,
+                json={"override": {"generation_mode": "smart", "min_duration_min": 10, "max_duration_min": 15}},
+            )
+            self.assertEqual(preview.status_code, 422)
+            payload = preview.json()
+            self.assertEqual(payload["error"]["message"], "No analyzed eligible tracks found for this channel")
+            diagnostics = payload["error"].get("diagnostics") or {}
+            self.assertEqual(diagnostics.get("resolved_channel_slug"), "darkwood-reverie")
+            self.assertEqual(diagnostics.get("after_analyzed_eligible"), 0)
+            self.assertEqual(diagnostics.get("final_candidates"), 0)
+
+    def test_preview_accepts_complete_analysis_status_tracks(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            job_id = self._create_ui_draft(channel_slug="darkwood-reverie", title="plb-complete-status")
+            conn = dbm.connect(self.env)
+            try:
+                ts = dbm.now_ts()
+                conn.execute(
+                    "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, title, duration_sec, month_batch, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (411, "darkwood-reverie", "t411", "g411", "Track 411", 240.0, "2024-01", ts, ts),
+                )
+                conn.execute(
+                    "INSERT INTO track_analysis_flat(track_pk, channel_slug, track_id, analysis_computed_at, analysis_status, duration_sec, yamnet_top_tags_text, voice_flag, speech_flag, dominant_texture, dsp_score, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+                    (411, "darkwood-reverie", "t411", ts, "COMPLETE", 240.0, "ambient,calm", 0, 0, "smooth", 0.5),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+            preview = client.post(
+                f"/v1/playlist-builder/jobs/{job_id}/preview",
+                headers=headers,
+                json={"override": {"generation_mode": "safe", "min_duration_min": 3, "max_duration_min": 5}},
+            )
+            self.assertEqual(preview.status_code, 200)
+            body = preview.json()
+            self.assertGreaterEqual(len(body.get("tracks", [])), 1)
+            self.assertEqual(body["summary"]["diagnostics"].get("after_analyzed_eligible"), 1)
+
     def test_preview_and_apply_success_and_idempotent_reapply(self) -> None:
         with temp_env() as (_, self.env):
             seed_minimal_db(self.env)

@@ -103,7 +103,8 @@ def build_candidate_diagnostics(conn: object, brief: PlaylistBrief) -> tuple[lis
     initial_tracks = len(rows)
     after_channel_scope = initial_tracks
 
-    analyzed_rows = [r for r in rows if str(r.get("analysis_status") or "").lower() == "ok"]
+    analyzed_statuses = {"ok", "complete"}
+    analyzed_rows = [r for r in rows if str(r.get("analysis_status") or "").strip().lower() in analyzed_statuses]
     after_analyzed_eligible = len(analyzed_rows)
 
     month_rows = analyzed_rows
