@@ -7,6 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from services.common import db as dbm
+from services.playlist_builder.workflow import PreviewTimeBudgetExceeded
 
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
@@ -54,6 +55,24 @@ class TestPlaylistBuilderPreviewApplyApi(unittest.TestCase):
                 conn.execute(
                     "INSERT INTO track_analysis_flat(track_pk, channel_slug, track_id, analysis_computed_at, analysis_status, duration_sec, yamnet_top_tags_text, voice_flag, speech_flag, dominant_texture, dsp_score, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
                     (pk, "darkwood-reverie", tid, ts, "ok", duration, "ambient,calm", 0, 0, "smooth", 0.6),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _seed_many_tracks(self, *, count: int) -> None:
+        conn = dbm.connect(self.env)
+        try:
+            ts = dbm.now_ts()
+            for idx in range(count):
+                pk = 5000 + idx
+                conn.execute(
+                    "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, title, duration_sec, month_batch, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (pk, "darkwood-reverie", f"t{pk}", f"g{pk}", f"Track {pk}", 240.0, "2024-01", ts, ts),
+                )
+                conn.execute(
+                    "INSERT INTO track_analysis_flat(track_pk, channel_slug, track_id, analysis_computed_at, analysis_status, duration_sec, yamnet_top_tags_text, voice_flag, speech_flag, dominant_texture, dsp_score, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+                    (pk, "darkwood-reverie", f"t{pk}", ts, "ok", 240.0, "ambient,calm", 0, 0, "smooth", 0.5),
                 )
             conn.commit()
         finally:
@@ -342,6 +361,61 @@ class TestPlaylistBuilderPreviewApplyApi(unittest.TestCase):
             payload = preview.json()
             self.assertEqual(payload["error"]["code"], "PLB_CURATED_LIMIT_EXCEEDED")
             self.assertIn("guardrail", payload["error"]["message"].lower())
+
+    def test_preview_adds_stage_timings_and_candidate_trim_diagnostics(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            self._seed_many_tracks(count=2505)
+            job_id = self._create_ui_draft(channel_slug="darkwood-reverie", title="plb-large-candidates")
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            preview = client.post(
+                f"/v1/playlist-builder/jobs/{job_id}/preview",
+                headers=headers,
+                json={"override": {"generation_mode": "safe", "min_duration_min": 10, "max_duration_min": 15}},
+            )
+
+            self.assertEqual(preview.status_code, 200)
+            diagnostics = preview.json()["summary"].get("diagnostics") or {}
+            self.assertIn("preview_total_ms", diagnostics)
+            self.assertIn("candidate_extraction_ms", diagnostics)
+            self.assertIn("history_ms", diagnostics)
+            self.assertIn("composition_ms", diagnostics)
+            self.assertIn("sequencing_ms", diagnostics)
+            self.assertIn("preview_persistence_ms", diagnostics)
+            self.assertIn("response_serialization_ms", diagnostics)
+            self.assertIn("job_resolution_ms", diagnostics)
+            self.assertIn("effective_brief_resolution_ms", diagnostics)
+            self.assertEqual(diagnostics.get("candidate_limit_applied"), True)
+            self.assertEqual(diagnostics.get("candidate_limit_value"), 2000)
+            self.assertGreaterEqual(int(diagnostics.get("candidate_limit_trimmed") or 0), 505)
+
+    def test_preview_timeout_returns_clear_error_and_diagnostics(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            self._seed_tracks()
+            job_id = self._create_ui_draft(channel_slug="darkwood-reverie", title="plb-preview-timeout")
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            with patch(
+                "services.factory_api.app.create_preview",
+                side_effect=PreviewTimeBudgetExceeded(stage="evaluating candidate pool", elapsed_ms=8123.456),
+            ):
+                preview = client.post(
+                    f"/v1/playlist-builder/jobs/{job_id}/preview",
+                    headers=headers,
+                    json={"override": {"generation_mode": "safe", "min_duration_min": 10, "max_duration_min": 15}},
+                )
+
+            self.assertEqual(preview.status_code, 422)
+            payload = preview.json()["error"]
+            self.assertEqual(payload["code"], "PLB_PREVIEW_TIMEOUT")
+            self.assertIn("time budget", payload["message"].lower())
+            diagnostics = payload.get("diagnostics") or {}
+            self.assertEqual(diagnostics.get("timeout_stage"), "evaluating candidate pool")
+            self.assertEqual(diagnostics.get("preview_total_ms"), 8123.456)
 
     def test_preview_expired_cannot_apply(self) -> None:
         with temp_env() as (_, self.env):

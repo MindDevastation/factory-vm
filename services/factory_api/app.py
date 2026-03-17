@@ -44,6 +44,7 @@ from services.playlist_builder.api_adapter import (
 from services.playlist_builder.models import PlaylistBriefOverrides, PlaylistChannelSettingsPatch
 from services.playlist_builder.tags import list_builder_tag_options
 from services.playlist_builder.workflow import (
+    PreviewTimeBudgetExceeded,
     PlaylistBuilderApiError,
     apply_preview,
     build_preview_response,
@@ -356,7 +357,11 @@ def api_playlist_builder_preview_post(
     try:
         logger.info("playlist_builder.preview.started", extra={"job_id": job_id})
         envelope = create_preview(conn, job_id=job_id, override=payload.override, created_by=env.basic_user)
+        response_started = time.perf_counter()
         response = build_preview_response(envelope)
+        diagnostics = response.get("summary", {}).get("diagnostics") or {}
+        diagnostics["response_serialization_ms"] = round((time.perf_counter() - response_started) * 1000.0, 3)
+        response["summary"]["diagnostics"] = diagnostics
         conn.commit()
         logger.info(
             "playlist_builder.preview.completed",
@@ -393,9 +398,19 @@ def api_playlist_builder_preview_post(
             "PLB_NO_CANDIDATES": 422,
             "PLB_NO_VALID_PLAYLIST": 422,
             "PLB_CURATED_LIMIT_EXCEEDED": 422,
+            "PLB_PREVIEW_TIMEOUT": 422,
         }.get(exc.code, 409)
         logger.info("playlist_builder.preview.pipeline", extra={"job_id": job_id, "diagnostics": exc.diagnostics})
         return _plb_error(status, exc.code, exc.message, diagnostics=exc.diagnostics)
+    except PreviewTimeBudgetExceeded as exc:
+        conn.rollback()
+        diagnostics = {
+            "reason": str(exc),
+            "timeout_stage": exc.stage,
+            "preview_total_ms": exc.elapsed_ms,
+        }
+        logger.info("playlist_builder.preview.pipeline", extra={"job_id": job_id, "diagnostics": diagnostics})
+        return _plb_error(422, "PLB_PREVIEW_TIMEOUT", str(exc), diagnostics=diagnostics)
     finally:
         conn.close()
 

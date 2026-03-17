@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from time import monotonic
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -14,6 +15,32 @@ from services.playlist_builder.models import PlaylistBrief, PlaylistPreviewResul
 
 PREVIEW_TTL_HOURS = 72
 EFFECTIVE_HISTORY_WINDOW = 20
+PREVIEW_TIME_BUDGET_SECONDS = 8.0
+
+
+class PreviewTimeBudgetExceeded(RuntimeError):
+    def __init__(self, stage: str, elapsed_ms: float):
+        super().__init__(f"Preview exceeded time budget while {stage}")
+        self.stage = stage
+        self.elapsed_ms = elapsed_ms
+
+
+class PreviewTimer:
+    def __init__(self, *, budget_seconds: float):
+        self._started = monotonic()
+        self._budget_seconds = budget_seconds
+        self.timings_ms: dict[str, float] = {}
+
+    def stage(self, name: str, started: float) -> None:
+        self.timings_ms[f"{name}_ms"] = round((monotonic() - started) * 1000.0, 3)
+
+    def assert_within_budget(self, stage: str) -> None:
+        elapsed = monotonic() - self._started
+        if elapsed > self._budget_seconds:
+            raise PreviewTimeBudgetExceeded(stage=stage, elapsed_ms=round(elapsed * 1000.0, 3))
+
+    def finalize(self) -> None:
+        self.timings_ms["preview_total_ms"] = round((monotonic() - self._started) * 1000.0, 3)
 
 
 class PlaylistBuilderApiError(Exception):
@@ -96,11 +123,15 @@ def _generate_preview_envelope(
     brief: PlaylistBrief,
     preview_job_id: int | None,
     created_by: str | None,
+    timer: PreviewTimer,
 ) -> PreviewEnvelope:
     try:
+        builder_started = monotonic()
         result = PlaylistBuilder().generate_preview(conn, brief)
+        timer.stage("builder_generation", builder_started)
     except CuratedModeLimitExceeded as exc:
         raise PlaylistBuilderApiError("PLB_CURATED_LIMIT_EXCEEDED", str(exc)) from exc
+    timer.assert_within_budget("evaluating candidate pool")
     if result.status == "empty":
         reason = str((result.diagnostics or {}).get("reason") or "")
         if reason:
@@ -112,11 +143,14 @@ def _generate_preview_envelope(
     created_at = _now_utc()
     expires_at = created_at + timedelta(hours=PREVIEW_TTL_HOURS)
 
+    fetch_started = monotonic()
     tracks = _fetch_tracks(conn, result.ordered_track_pks)
+    timer.stage("track_fetch", fetch_started)
     notes_by_pk = {int(item.get("track_pk", -1)): str(item.get("fit_note") or item.get("note") or "") for item in result.per_track_fit_notes}
     for track in tracks:
         track["fit_note"] = notes_by_pk.get(int(track["track_pk"]), "")
 
+    persist_started = monotonic()
     conn.execute(
         """
         INSERT INTO playlist_build_previews(
@@ -136,35 +170,57 @@ def _generate_preview_envelope(
             "PREVIEW",
         ),
     )
+    timer.stage("preview_persistence", persist_started)
+
+    diagnostics = result.diagnostics or {}
+    diagnostics.update(timer.timings_ms)
+    result.diagnostics = diagnostics
 
     return PreviewEnvelope(preview_id=preview_id, brief=brief, preview_result=result, tracks=tracks)
 
 def create_preview(conn: object, *, job_id: int, override: dict[str, Any] | None, created_by: str | None = None) -> PreviewEnvelope:
+    timer = PreviewTimer(budget_seconds=PREVIEW_TIME_BUDGET_SECONDS)
+    resolve_job_started = monotonic()
     job = dbm.get_job(conn, job_id)
     draft = dbm.get_ui_job_draft(conn, job_id)
+    timer.stage("job_resolution", resolve_job_started)
     if not job or not draft:
         raise PlaylistBuilderApiError("PLB_JOB_NOT_FOUND", "UI job not found")
 
     try:
+        brief_started = monotonic()
         brief = resolve_effective_brief_for_job(conn, job_id=job_id, request_override=override or {})
+        timer.stage("effective_brief_resolution", brief_started)
     except Exception as exc:
         raise PlaylistBuilderApiError("PLB_INVALID_BRIEF", str(exc)) from exc
+    timer.assert_within_budget("resolving effective brief")
 
-    return _generate_preview_envelope(
+    envelope = _generate_preview_envelope(
         conn,
         brief=brief,
         preview_job_id=job_id,
         created_by=created_by,
+        timer=timer,
     )
+    timer.finalize()
+    envelope.preview_result.diagnostics = envelope.preview_result.diagnostics or {}
+    envelope.preview_result.diagnostics.update(timer.timings_ms)
+    return envelope
 
 
 def create_preview_for_brief(conn: object, *, brief: PlaylistBrief, created_by: str | None = None) -> PreviewEnvelope:
-    return _generate_preview_envelope(
+    timer = PreviewTimer(budget_seconds=PREVIEW_TIME_BUDGET_SECONDS)
+    envelope = _generate_preview_envelope(
         conn,
         brief=brief,
         preview_job_id=brief.job_id,
         created_by=created_by,
+        timer=timer,
     )
+    timer.finalize()
+    envelope.preview_result.diagnostics = envelope.preview_result.diagnostics or {}
+    envelope.preview_result.diagnostics.update(timer.timings_ms)
+    return envelope
 
 
 def get_preview_row(conn: object, *, preview_id: str) -> dict[str, Any] | None:

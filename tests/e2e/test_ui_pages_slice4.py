@@ -237,6 +237,9 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('<th>fit/explanation</th>', r.text)
             self.assertIn('function renderDiagnosticsBlock(diag, reasonText)', r.text)
             self.assertIn('const diagnostics = error.diagnostics || {};', r.text)
+            self.assertIn('previewBtn.disabled = true;', r.text)
+            self.assertIn('window.setTimeout(() => controller.abort(\'preview_timeout\')', r.text)
+            self.assertIn('previewBtn.disabled = false;', r.text)
             self.assertIn('<b>resolved channel_slug:</b>', r.text)
             self.assertIn("after month_batch=${d.after_month_batch_preference_or_filter ?? '-' }".replace(" ",""), r.text.replace(" ",""))
 
