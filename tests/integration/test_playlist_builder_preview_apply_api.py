@@ -188,6 +188,29 @@ class TestPlaylistBuilderPreviewApplyApi(unittest.TestCase):
             self.assertEqual(diagnostics.get("after_analyzed_eligible"), 0)
             self.assertEqual(diagnostics.get("final_candidates"), 0)
 
+
+    def test_preview_internal_failure_returns_structured_error(self) -> None:
+        with temp_env() as (_, self.env):
+            seed_minimal_db(self.env)
+            self._seed_tracks()
+            job_id = self._create_ui_draft(channel_slug="darkwood-reverie", title="plb-preview-failure")
+            client = self._new_client()
+            headers = basic_auth_header(self.env.basic_user, self.env.basic_pass)
+
+            with patch("services.playlist_builder.core.PlaylistBuilder.generate_preview", side_effect=RuntimeError("boom")):
+                preview = client.post(
+                    f"/v1/playlist-builder/jobs/{job_id}/preview",
+                    headers=headers,
+                    json={"override": {"generation_mode": "smart", "min_duration_min": 10, "max_duration_min": 15}},
+                )
+
+            self.assertEqual(preview.status_code, 500)
+            payload = preview.json()
+            self.assertEqual(payload["error"]["code"], "PLB_PREVIEW_FAILED")
+            self.assertIn("message", payload["error"])
+            diagnostics = payload["error"].get("diagnostics") or {}
+            self.assertEqual(diagnostics.get("reason"), "boom")
+
     def test_preview_accepts_complete_analysis_status_tracks(self) -> None:
         with temp_env() as (_, self.env):
             seed_minimal_db(self.env)
