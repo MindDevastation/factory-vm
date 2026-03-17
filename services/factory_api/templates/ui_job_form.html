@@ -404,6 +404,23 @@
     }
   }
 
+  function renderDiagnosticsBlock(diag, reasonText) {
+    if (!diag && !reasonText) return '';
+    const d = diag || {};
+    return `
+      <div style="border:1px solid #ddd; padding:8px; margin-top:8px;">
+        <p><b>failure reason:</b> ${reasonText || d.reason || '-'}</p>
+        <p><b>resolved channel_slug:</b> ${d.resolved_channel_slug || '-'}</p>
+        <p><b>candidate diagnostics:</b>
+          initial=${d.initial_tracks ?? '-'} · analyzed/eligible=${d.after_analyzed_eligible ?? '-'} ·
+          after month_batch=${d.after_month_batch_preference_or_filter ?? '-'} · after tags=${d.after_excluded_tags ?? d.after_required_tags ?? '-'} ·
+          after vocal policy=${d.after_vocal_policy ?? '-'} · after history=${d.after_history_reuse ?? '-'} ·
+          after position memory=${d.after_position_memory ?? '-'} · final=${d.final_candidates ?? '-'}
+        </p>
+      </div>
+    `;
+  }
+
   function renderPreview(payload) {
     const s = payload.summary || {};
     const d = s.duration || {};
@@ -417,6 +434,7 @@
       <p><b>target novelty:</b> ${n.target_min ?? ''} - ${n.target_max ?? ''} · <b>achieved novelty:</b> ${n.achieved ?? ''}</p>
       <p><b>warnings:</b> ${(s.warnings || []).join('; ') || '-'}</p>
       <p><b>relaxations:</b> ${(s.relaxations_structured || []).map(r => `${r.constraint_name}: ${r.relaxation_applied}`).join('; ') || (s.relaxations || []).join('; ') || '-'}</p>
+      ${renderDiagnosticsBlock(s.diagnostics || {}, '')}
     `;
     summary.style.display = 'block';
 
@@ -493,7 +511,14 @@
     });
     const payload = await resp.json();
     if (!resp.ok) {
-      status.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Preview failed';
+      const error = payload.error || {};
+      const diagnostics = error.diagnostics || {};
+      const reason = error.message || diagnostics.reason || 'Preview failed';
+      status.textContent = reason;
+      summary.innerHTML = renderDiagnosticsBlock(diagnostics, reason);
+      summary.style.display = 'block';
+      tracks.innerHTML = '';
+      tracks.style.display = 'none';
       return;
     }
     lastPreviewId = payload.preview_id;

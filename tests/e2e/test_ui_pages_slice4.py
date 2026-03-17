@@ -235,6 +235,10 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('existing playlist will be replaced only after Apply', r.text)
             self.assertIn('<th>month_batch</th>', r.text)
             self.assertIn('<th>fit/explanation</th>', r.text)
+            self.assertIn('function renderDiagnosticsBlock(diag, reasonText)', r.text)
+            self.assertIn('const diagnostics = error.diagnostics || {};', r.text)
+            self.assertIn('<b>resolved channel_slug:</b>', r.text)
+            self.assertIn("after month_batch=${d.after_month_batch_preference_or_filter ?? '-' }".replace(" ",""), r.text.replace(" ",""))
 
             r = client.get(f"/jobs/{job_id}", headers=h)
             self.assertEqual(r.status_code, 200)
