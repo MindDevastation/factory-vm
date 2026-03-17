@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 import json
 from datetime import datetime, timedelta
 
 from services.common import db as dbm
-from services.playlist_builder.composition import CuratedOptimizationLimitExceeded, _attempt_swaps, compose_curated, compose_safe, compose_smart, list_safe_candidates
+from services.playlist_builder.composition import CompositionStateError, CuratedOptimizationLimitExceeded, _attempt_swaps, _assert_selection_state_consistent, compose_curated, compose_safe, compose_smart, list_safe_candidates
 from services.playlist_builder.constraints import relaxed_brief_variants
 from services.playlist_builder.history import (
     batch_distribution_overlap,
@@ -218,6 +219,38 @@ class PlaylistBuilderP0SafeTest(unittest.TestCase):
         self.assertLessEqual(smart_err, safe_err)
         self.assertIn("top-", smart_summary)
         self.assertIn("accepted swap refinement", smart_summary)
+
+
+    def test_selection_state_invariant_detects_duplicates(self) -> None:
+        selected = [
+            TrackCandidate(1, "t1", "darkwood-reverie", 180.0, "2024-01", frozenset(), False, False, "smooth", 0.10),
+            TrackCandidate(1, "t1-dup", "darkwood-reverie", 180.0, "2024-02", frozenset(), False, False, "rough", 0.20),
+        ]
+        with self.assertRaises(CompositionStateError):
+            _assert_selection_state_consistent(selected, {1}, stage="test")
+
+    def test_smart_composition_handles_multi_accept_per_index_without_state_desync(self) -> None:
+        for spec in (
+            (1, 200.0, "2024-01", "smooth", 0.20),
+            (2, 200.0, "2024-01", "smooth", 0.25),
+            (3, 200.0, "2024-01", "smooth", 0.30),
+            (4, 200.0, "2024-02", "rough", 0.80),
+            (5, 200.0, "2024-02", "grain", 0.76),
+            (6, 200.0, "2024-03", "airy", 0.72),
+        ):
+            self._insert_track(pk=spec[0], track_id=f"t{spec[0]}", duration=spec[1], batch=spec[2], texture=spec[3], dsp=spec[4], tags="ambient,calm")
+
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="smart", min_duration_min=10, max_duration_min=10)
+        candidates = list_safe_candidates(self.conn, brief)
+
+        def objective(_brief, selected, _history):
+            return float(sum(c.track_pk for c in selected))
+
+        with patch("services.playlist_builder.composition._selection_objective", side_effect=objective):
+            selected, _, _, _ = compose_smart(brief, candidates, history=[])
+
+        selected_ids = [c.track_pk for c in selected]
+        self.assertEqual(len(selected_ids), len(set(selected_ids)))
 
     def test_smart_sequence_runs_local_reorder_refinement(self) -> None:
         brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="smart", min_duration_min=8, max_duration_min=10)

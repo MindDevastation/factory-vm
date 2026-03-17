@@ -411,6 +411,11 @@ def api_playlist_builder_preview_post(
         }
         logger.info("playlist_builder.preview.pipeline", extra={"job_id": job_id, "diagnostics": diagnostics})
         return _plb_error(422, "PLB_PREVIEW_TIMEOUT", str(exc), diagnostics=diagnostics)
+    except Exception as exc:
+        conn.rollback()
+        diagnostics = {"reason": str(exc), "job_id": job_id}
+        logger.exception("playlist_builder.preview.failed", extra={"job_id": job_id})
+        return _plb_error(500, "PLB_PREVIEW_FAILED", "Playlist preview failed", diagnostics=diagnostics)
     finally:
         conn.close()
 

@@ -106,6 +106,8 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="playlist-builder-modal"', r.text)
             self.assertIn('id="plb-preview-btn"', r.text)
             self.assertIn('id="plb-apply-btn"', r.text)
+            self.assertIn('async function parseJsonSafe(resp)', r.text)
+            self.assertIn('Preview failed due to a server error. Please retry.', r.text)
             self.assertIn('id="playlist-builder-save-first"', r.text)
             self.assertIn('Draft will be auto-created on first Preview.', r.text)
             self.assertIn('data-channel-slug="darkwood-reverie"', r.text)

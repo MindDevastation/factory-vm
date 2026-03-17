@@ -15,6 +15,10 @@ class CuratedOptimizationLimitExceeded(RuntimeError):
     pass
 
 
+class CompositionStateError(RuntimeError):
+    pass
+
+
 @dataclass
 class CandidateExtractionMetrics:
     custom_tag_extraction_ms: float = 0.0
@@ -372,6 +376,20 @@ def _selection_objective(brief: PlaylistBrief, selected: list[TrackCandidate], h
     return (0.33 * duration_fit) + (0.23 * novelty) + (0.16 * batch_fit) + (0.16 * diversity) + (0.12 * context_fit)
 
 
+def _assert_selection_state_consistent(
+    selected: list[TrackCandidate],
+    current_ids: set[int],
+    *,
+    stage: str,
+) -> None:
+    selected_ids = [c.track_pk for c in selected]
+    unique_ids = set(selected_ids)
+    if len(unique_ids) != len(selected_ids):
+        raise CompositionStateError(f"Selection contains duplicate track_pk values while {stage}")
+    if unique_ids != current_ids:
+        raise CompositionStateError(f"Selection ID set mismatch while {stage}")
+
+
 def compose_smart(
     brief: PlaylistBrief,
     candidates: list[TrackCandidate],
@@ -398,6 +416,7 @@ def compose_smart(
     pool_by_pk = {c.track_pk: c for c in pool}
     current = [pool_by_pk.get(c.track_pk, c) for c in initial_selected]
     current_ids = {c.track_pk for c in current}
+    _assert_selection_state_consistent(current, current_ids, stage="initializing smart refinement")
 
     min_sec, _, max_sec = duration_band_sec(brief)
     passes = 0
@@ -407,12 +426,16 @@ def compose_smart(
         improved = False
         passes += 1
         current_obj = _selection_objective(brief, current, history)
-        for idx, out in enumerate(list(current)):
+        for idx in range(len(current)):
             for cand in pool:
                 if cand.track_pk in current_ids:
                     continue
+                out = current[idx]
                 proposal = list(current)
                 proposal[idx] = cand
+                proposal_ids = {c.track_pk for c in proposal}
+                if len(proposal_ids) != len(proposal):
+                    continue
                 proposal_duration = sum(c.duration_sec for c in proposal)
                 if proposal_duration > max_sec + 1e-6:
                     continue
@@ -421,8 +444,8 @@ def compose_smart(
                 proposal_obj = _selection_objective(brief, proposal, history)
                 if proposal_obj > current_obj + 1e-6:
                     current = proposal
-                    current_ids.remove(out.track_pk)
-                    current_ids.add(cand.track_pk)
+                    current_ids = proposal_ids
+                    _assert_selection_state_consistent(current, current_ids, stage="accepting smart swap")
                     current_obj = proposal_obj
                     improvements += 1
                     improved = True
@@ -504,6 +527,7 @@ def compose_curated(
     iterations = 0
     for current in seeds:
         current_ids = {c.track_pk for c in current}
+        _assert_selection_state_consistent(current, current_ids, stage="initializing curated refinement")
         improved = True
         while improved:
             if monotonic() - started > max_wall_seconds:
@@ -517,20 +541,24 @@ def compose_curated(
             improved = False
             iterations += 1
             current_obj = _curated_set_objective(brief, current, history, current)
-            for idx, out in enumerate(list(current)):
+            for idx in range(len(current)):
                 for cand in pool:
                     if cand.track_pk in current_ids:
                         continue
+                    out = current[idx]
                     proposal = list(current)
                     proposal[idx] = cand
+                    proposal_ids = {c.track_pk for c in proposal}
+                    if len(proposal_ids) != len(proposal):
+                        continue
                     proposal_duration = sum(c.duration_sec for c in proposal)
                     if proposal_duration < min_sec - 1e-6 or proposal_duration > max_sec + 1e-6:
                         continue
                     proposal_obj = _curated_set_objective(brief, proposal, history, proposal)
                     if proposal_obj > current_obj + 1e-6:
-                        current_ids.discard(out.track_pk)
-                        current_ids.add(cand.track_pk)
                         current = proposal
+                        current_ids = proposal_ids
+                        _assert_selection_state_consistent(current, current_ids, stage="accepting curated swap")
                         current_obj = proposal_obj
                         improvements += 1
                         improved = True
