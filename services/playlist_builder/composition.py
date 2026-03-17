@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from time import monotonic
 import json
+from dataclasses import dataclass
 
 from services.playlist_builder.constraints import duration_band_sec, relaxed_brief_variants
 from services.playlist_builder.history import novelty_against_previous, position_memory_risk
@@ -12,6 +13,16 @@ from services.playlist_builder.tags import candidate_filter_tokens, normalize_fi
 
 class CuratedOptimizationLimitExceeded(RuntimeError):
     pass
+
+
+@dataclass
+class CandidateExtractionMetrics:
+    custom_tag_extraction_ms: float = 0.0
+    yamnet_tag_extraction_ms: float = 0.0
+    semantic_tag_extraction_ms: float = 0.0
+
+
+DEFAULT_PREVIEW_CANDIDATE_LIMIT = 2000
 
 
 def _norm_tag_set(tags: set[str]) -> frozenset[str]:
@@ -73,13 +84,18 @@ def _base_candidate_rows(conn: object, brief: PlaylistBrief) -> list[dict]:
     ).fetchall()
 
 
-def _extract_normalized_tags(row: dict) -> frozenset[str]:
+def _extract_normalized_tags(row: dict, metrics: CandidateExtractionMetrics | None = None) -> frozenset[str]:
     tags = set()
+    yamnet_started = monotonic()
     yamnet = str(row["yamnet_top_tags_text"] or "")
     yamnet_tags = [v.strip() for v in yamnet.split(",") if v.strip()]
+    if metrics is not None:
+        metrics.yamnet_tag_extraction_ms += (monotonic() - yamnet_started) * 1000.0
+
     semantic_tags: list[str] = []
     payload_text = row["tags_payload_json"]
     if payload_text:
+        semantic_started = monotonic()
         try:
             payload = json.loads(str(payload_text))
         except json.JSONDecodeError:
@@ -87,15 +103,21 @@ def _extract_normalized_tags(row: dict) -> frozenset[str]:
         semantic = ((payload.get("advanced_v1") or {}).get("semantic") or {})
         for key in ("mood_tags", "theme_tags"):
             semantic_tags.extend(str(v).strip() for v in (semantic.get(key) or []) if str(v).strip())
+        if metrics is not None:
+            metrics.semantic_tag_extraction_ms += (monotonic() - semantic_started) * 1000.0
+
+    custom_started = monotonic()
     custom_csv = str(row["custom_tag_codes"] or "")
     custom_codes = [v.strip() for v in custom_csv.split(",") if v.strip()]
+    if metrics is not None:
+        metrics.custom_tag_extraction_ms += (monotonic() - custom_started) * 1000.0
     tags.update(candidate_filter_tokens(custom_codes=custom_codes, yamnet_tags=yamnet_tags, semantic_tags=semantic_tags))
     if row["dominant_texture"]:
         tags.add(str(row["dominant_texture"]).strip().lower())
     return _norm_tag_set(tags)
 
 
-def build_candidate_diagnostics(conn: object, brief: PlaylistBrief) -> tuple[list[TrackCandidate], dict[str, int]]:
+def build_candidate_diagnostics(conn: object, brief: PlaylistBrief) -> tuple[list[TrackCandidate], dict[str, int | float | bool]]:
     rows = _base_candidate_rows(conn, brief)
     required = {normalize_filter_token(t) for t in brief.required_tags if normalize_filter_token(t)}
     excluded = {normalize_filter_token(t) for t in brief.excluded_tags if normalize_filter_token(t)}
@@ -113,12 +135,13 @@ def build_candidate_diagnostics(conn: object, brief: PlaylistBrief) -> tuple[lis
     with_required: list[dict] = []
     with_excluded: list[dict] = []
     candidates: list[TrackCandidate] = []
+    extraction_metrics = CandidateExtractionMetrics()
 
     for row in month_rows:
         dur = row["duration_sec"]
         if dur is None or float(dur) <= 0:
             continue
-        norm_tags = _extract_normalized_tags(row)
+        norm_tags = _extract_normalized_tags(row, extraction_metrics)
         if required and not required.issubset(norm_tags):
             continue
         with_required.append(row)
@@ -140,8 +163,13 @@ def build_candidate_diagnostics(conn: object, brief: PlaylistBrief) -> tuple[lis
             )
         )
 
-    if brief.candidate_limit:
-        candidates = candidates[: max(0, int(brief.candidate_limit))]
+    effective_limit = brief.candidate_limit if brief.candidate_limit is not None else DEFAULT_PREVIEW_CANDIDATE_LIMIT
+    trimmed = 0
+    if effective_limit and effective_limit > 0:
+        limit = max(0, int(effective_limit))
+        if len(candidates) > limit:
+            trimmed = len(candidates) - limit
+            candidates = candidates[:limit]
 
     voice_eligible = sum(1 for c in candidates if _voice_policy_fit(brief, c)[0])
 
@@ -156,6 +184,12 @@ def build_candidate_diagnostics(conn: object, brief: PlaylistBrief) -> tuple[lis
         "after_history_reuse": voice_eligible,
         "after_position_memory": voice_eligible,
         "final_candidates": len(candidates),
+        "candidate_limit_applied": bool(effective_limit and effective_limit > 0),
+        "candidate_limit_value": int(effective_limit) if effective_limit else 0,
+        "candidate_limit_trimmed": trimmed,
+        "custom_tag_extraction_ms": round(extraction_metrics.custom_tag_extraction_ms, 3),
+        "yamnet_tag_extraction_ms": round(extraction_metrics.yamnet_tag_extraction_ms, 3),
+        "semantic_tag_extraction_ms": round(extraction_metrics.semantic_tag_extraction_ms, 3),
     }
     return candidates, diagnostics
 

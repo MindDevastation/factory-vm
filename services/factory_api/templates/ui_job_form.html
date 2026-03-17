@@ -497,36 +497,58 @@
     el.addEventListener('change', invalidatePreviewState);
   });
 
+  const previewRequestTimeoutMs = 20000;
+
   previewBtn.addEventListener('click', async () => {
     const jobId = await ensureJobIdForPlaylistBuilder();
     if (!Number.isInteger(jobId)) return;
     status.textContent = 'Previewing...';
+    previewBtn.disabled = true;
     applyBtn.disabled = true;
     const override = buildOverride();
-    const resp = await fetch(`/v1/playlist-builder/jobs/${jobId}/preview`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ override }),
-    });
-    const payload = await resp.json();
-    if (!resp.ok) {
-      const error = payload.error || {};
-      const diagnostics = error.diagnostics || {};
-      const reason = error.message || diagnostics.reason || 'Preview failed';
-      status.textContent = reason;
-      summary.innerHTML = renderDiagnosticsBlock(diagnostics, reason);
-      summary.style.display = 'block';
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort('preview_timeout'), previewRequestTimeoutMs);
+    try {
+      const resp = await fetch(`/v1/playlist-builder/jobs/${jobId}/preview`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ override }),
+        signal: controller.signal,
+      });
+      const payload = await resp.json();
+      if (!resp.ok) {
+        const error = payload.error || {};
+        const diagnostics = error.diagnostics || {};
+        const reason = error.message || diagnostics.reason || 'Preview failed';
+        const concise = diagnostics.preview_total_ms ? ` (${diagnostics.preview_total_ms} ms)` : '';
+        status.textContent = `${reason}${concise}`;
+        summary.innerHTML = renderDiagnosticsBlock(diagnostics, reason);
+        summary.style.display = 'block';
+        tracks.innerHTML = '';
+        tracks.style.display = 'none';
+        return;
+      }
+      lastPreviewId = payload.preview_id;
+      lastPreviewOverrideSnapshot = override;
+      lastTrackPks = (payload.tracks || []).map((t) => t.track_pk).filter((v) => Number.isInteger(v));
+      renderPreview(payload);
+      status.textContent = `Preview ready: ${lastPreviewId}`;
+      applyBtn.disabled = false;
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        status.textContent = `Preview request timed out after ${previewRequestTimeoutMs / 1000}s. Please retry.`;
+      } else {
+        status.textContent = `Preview failed: ${(err && err.message) ? err.message : 'network error'}`;
+      }
+      summary.innerHTML = '';
+      summary.style.display = 'none';
       tracks.innerHTML = '';
       tracks.style.display = 'none';
-      return;
+    } finally {
+      window.clearTimeout(timeoutId);
+      previewBtn.disabled = false;
     }
-    lastPreviewId = payload.preview_id;
-    lastPreviewOverrideSnapshot = override;
-    lastTrackPks = (payload.tracks || []).map((t) => t.track_pk).filter((v) => Number.isInteger(v));
-    renderPreview(payload);
-    status.textContent = `Preview ready: ${lastPreviewId}`;
-    applyBtn.disabled = false;
   });
 
   applyBtn.addEventListener('click', async () => {
