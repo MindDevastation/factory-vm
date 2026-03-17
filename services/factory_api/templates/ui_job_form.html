@@ -499,6 +499,16 @@
 
   const previewRequestTimeoutMs = 20000;
 
+  async function parseJsonSafe(resp) {
+    const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('application/json')) return null;
+    try {
+      return await resp.json();
+    } catch (_err) {
+      return null;
+    }
+  }
+
   previewBtn.addEventListener('click', async () => {
     const jobId = await ensureJobIdForPlaylistBuilder();
     if (!Number.isInteger(jobId)) return;
@@ -516,15 +526,24 @@
         body: JSON.stringify({ override }),
         signal: controller.signal,
       });
-      const payload = await resp.json();
+      const payload = await parseJsonSafe(resp);
       if (!resp.ok) {
-        const error = payload.error || {};
+        const error = payload && payload.error ? payload.error : {};
         const diagnostics = error.diagnostics || {};
-        const reason = error.message || diagnostics.reason || 'Preview failed';
+        const fallbackReason = resp.status >= 500 ? 'Preview failed due to a server error. Please retry.' : 'Preview failed';
+        const reason = error.message || diagnostics.reason || fallbackReason;
         const concise = diagnostics.preview_total_ms ? ` (${diagnostics.preview_total_ms} ms)` : '';
         status.textContent = `${reason}${concise}`;
         summary.innerHTML = renderDiagnosticsBlock(diagnostics, reason);
         summary.style.display = 'block';
+        tracks.innerHTML = '';
+        tracks.style.display = 'none';
+        return;
+      }
+      if (!payload) {
+        status.textContent = 'Preview failed: server returned an invalid response.';
+        summary.innerHTML = '';
+        summary.style.display = 'none';
         tracks.innerHTML = '';
         tracks.style.display = 'none';
         return;
