@@ -4264,6 +4264,7 @@ def ui_jobs_create_page(request: Request, _: bool = Depends(require_basic_auth(e
             "field_errors": {},
             "form": {},
             "job_id": None,
+            "release_id": None,
             "locked": False,
         },
     )
@@ -4320,6 +4321,7 @@ async def ui_jobs_create_submit(
                     "field_errors": errors,
                     "form": payload.model_dump(),
                     "job_id": None,
+                    "release_id": None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4336,6 +4338,7 @@ async def ui_jobs_create_submit(
                     "field_errors": {"project": ["project is invalid"]},
                     "form": payload.model_dump(),
                     "job_id": None,
+                    "release_id": None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4353,6 +4356,8 @@ async def ui_jobs_create_submit(
             background_ext=payload.background_ext.strip(),
             audio_ids_text=payload.audio_ids_text.strip(),
         )
+        created_job = dbm.get_job(conn, job_id)
+        release_id = int(created_job["release_id"]) if created_job and created_job.get("release_id") is not None else None
         preflight = run_preflight_for_job(conn, env, job_id)
     finally:
         conn.close()
@@ -4366,6 +4371,7 @@ async def ui_jobs_create_submit(
             "field_errors": preflight.field_errors,
             "form": payload.model_dump(),
             "job_id": job_id,
+            "release_id": release_id,
             "locked": False,
         },
     )
@@ -4380,6 +4386,7 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
         channels = _all_channels(conn)
         if not draft or not job:
             raise HTTPException(404)
+        release_id = int(job["release_id"]) if job.get("release_id") is not None else None
         locked = str(job.get("state") or "") != "DRAFT"
     finally:
         conn.close()
@@ -4392,6 +4399,7 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
             "field_errors": {},
             "form": draft,
             "job_id": job_id,
+            "release_id": release_id,
             "locked": locked,
         },
     )
@@ -4452,6 +4460,7 @@ async def ui_jobs_edit_submit(
                     "field_errors": errors,
                     "form": payload.model_dump(),
                     "job_id": job_id,
+                    "release_id": int(job["release_id"]) if job.get("release_id") is not None else None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4468,6 +4477,7 @@ async def ui_jobs_edit_submit(
                     "field_errors": {"project": ["project is invalid"]},
                     "form": payload.model_dump(),
                     "job_id": job_id,
+                    "release_id": int(job["release_id"]) if job.get("release_id") is not None else None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4489,6 +4499,7 @@ async def ui_jobs_edit_submit(
             audio_ids_text=payload.audio_ids_text.strip(),
         )
         preflight = run_preflight_for_job(conn, env, job_id)
+        release_id = int(job["release_id"]) if job.get("release_id") is not None else None
     finally:
         conn.close()
 
@@ -4501,6 +4512,7 @@ async def ui_jobs_edit_submit(
             "field_errors": preflight.field_errors,
             "form": payload.model_dump(),
             "job_id": job_id,
+            "release_id": release_id,
             "locked": False,
         },
     )
