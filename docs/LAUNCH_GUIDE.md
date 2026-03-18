@@ -13,8 +13,9 @@
 
 ## 1) Install system dependencies
 ```bash
-sudo apt update
-sudo apt install -y python3 python3-venv python3-pip ffmpeg
+# Fallback below ignores third-party source fragments (for example apt.llvm.org outages).
+sudo apt-get update || sudo apt-get -o Dir::Etc::sourcelist="sources.list" -o Dir::Etc::sourceparts="-" update
+sudo apt-get install -y python3 python3-venv python3-pip ffmpeg || sudo apt-get -o Dir::Etc::sourcelist="sources.list" -o Dir::Etc::sourceparts="-" install -y python3 python3-venv python3-pip ffmpeg
 ```
 
 ## 2) Put project on server
