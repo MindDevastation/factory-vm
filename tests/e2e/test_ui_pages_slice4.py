@@ -12,6 +12,132 @@ from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
 class TestUiPagesSlice4(unittest.TestCase):
+    def test_job_edit_titlegen_single_release_operator_flow(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="Manual Existing Title",
+                    description="Original Description",
+                    tags_csv="ambient,night",
+                    cover_name="cover",
+                    cover_ext="jpg",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                before_row = conn.execute(
+                    "SELECT title, description, tags_json FROM releases WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+                assert before_row
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            default_tpl = client.post(
+                "/v1/metadata/title-templates",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Default Release Title",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": True,
+                },
+            )
+            self.assertEqual(default_tpl.status_code, 200)
+            secondary_tpl = client.post(
+                "/v1/metadata/title-templates",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Secondary Release Title",
+                    "template_body": "{{channel_slug}} alt",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(secondary_tpl.status_code, 200)
+
+            edit_page = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(edit_page.status_code, 200)
+            self.assertIn('id="titlegen-section"', edit_page.text)
+            self.assertIn('id="titlegen-current-title"', edit_page.text)
+            self.assertIn('id="titlegen-default-template"', edit_page.text)
+            self.assertIn('id="titlegen-template-select"', edit_page.text)
+            self.assertIn('id="titlegen-generate-btn"', edit_page.text)
+            self.assertIn('id="titlegen-regenerate-btn"', edit_page.text)
+            self.assertIn('id="titlegen-apply-btn"', edit_page.text)
+            self.assertIn("Generation does not change the release title until you apply.", edit_page.text)
+            self.assertIn("Applying this generated title will overwrite the existing release title.", edit_page.text)
+
+            context_resp = client.get(f"/v1/metadata/releases/{job_id}/titlegen/context", headers=h)
+            self.assertEqual(context_resp.status_code, 200)
+            context_payload = context_resp.json()
+            self.assertEqual(context_payload["release_id"], job_id)
+            self.assertEqual(context_payload["current_title"], "Manual Existing Title")
+            self.assertEqual(context_payload["default_template"]["template_name"], "Default Release Title")
+            self.assertGreaterEqual(len(context_payload["active_templates"]), 2)
+
+            generate_resp = client.post(
+                f"/v1/metadata/releases/{job_id}/titlegen/generate",
+                headers=h,
+                json={},
+            )
+            self.assertEqual(generate_resp.status_code, 200)
+            generate_payload = generate_resp.json()
+            self.assertTrue(generate_payload["overwrite_required"])
+            self.assertTrue(generate_payload["proposed_title"])
+
+            conn = dbm.connect(env)
+            try:
+                after_generate_row = conn.execute(
+                    "SELECT title, description, tags_json FROM releases WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+                assert after_generate_row
+            finally:
+                conn.close()
+            self.assertEqual(after_generate_row["title"], before_row["title"])
+            self.assertEqual(after_generate_row["description"], before_row["description"])
+            self.assertEqual(after_generate_row["tags_json"], before_row["tags_json"])
+
+            apply_resp = client.post(
+                f"/v1/metadata/releases/{job_id}/titlegen/apply",
+                headers=h,
+                json={
+                    "generation_fingerprint": generate_payload["generation_fingerprint"],
+                    "overwrite_confirmed": True,
+                },
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+            apply_payload = apply_resp.json()
+            self.assertTrue(apply_payload["title_updated"])
+            self.assertNotEqual(apply_payload["title_before"], apply_payload["title_after"])
+
+            conn = dbm.connect(env)
+            try:
+                after_apply_row = conn.execute(
+                    "SELECT title, description, tags_json FROM releases WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+                assert after_apply_row
+            finally:
+                conn.close()
+            self.assertEqual(after_apply_row["title"], apply_payload["title_after"])
+            self.assertEqual(after_apply_row["description"], before_row["description"])
+            self.assertEqual(after_apply_row["tags_json"], before_row["tags_json"])
+
     def test_playlist_builder_preview_state_guards(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()

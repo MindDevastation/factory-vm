@@ -28,6 +28,32 @@
 
   <p><label>Title* <input name="title" value="{{ form.title|default('') }}" {% if locked %}disabled{% endif %}></label></p>
   {% if field_errors.title %}<p style="color:#b91c1c">{{ field_errors.title|join('; ') }}</p>{% endif %}
+  {% if mode == 'edit' and job_id %}
+  <fieldset id="titlegen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
+    <legend><strong>Title Generator (single release)</strong></legend>
+    <p class="muted">Generation does not change the release title until you apply.</p>
+    <p><b>Target release:</b> <span id="titlegen-release-id">#{{ job_id }}</span></p>
+    <p><b>Current release title:</b> <span id="titlegen-current-title">{{ form.title|default('') }}</span></p>
+    <p><b>Default channel template:</b> <span id="titlegen-default-template">Loading...</span></p>
+    <p>
+      <label>Template for this operation:
+        <select id="titlegen-template-select">
+          <option value="">Loading templates...</option>
+        </select>
+      </label>
+      <span id="titlegen-selected-template" class="muted" style="margin-left:8px;"></span>
+    </p>
+    <p><b>Proposed generated title:</b> <span id="titlegen-proposed-title">—</span></p>
+    <p id="titlegen-overwrite-warning" style="display:none; color:#92400e;"><b>Applying this generated title will overwrite the existing release title.</b></p>
+    <p id="titlegen-status" style="min-height:1.4em"></p>
+    <p>
+      <button id="titlegen-generate-btn" type="button" {% if locked %}disabled{% endif %}>Generate Title</button>
+      <button id="titlegen-regenerate-btn" type="button" {% if locked %}disabled{% endif %}>Regenerate</button>
+      <button id="titlegen-apply-btn" type="button" {% if locked %}disabled{% endif %}>Apply Generated Title</button>
+    </p>
+    <p class="muted">Apply changes only <code>release.title</code>. This does not update channel defaults or template configuration.</p>
+  </fieldset>
+  {% endif %}
 
   <p><label>Description <textarea name="description" {% if locked %}disabled{% endif %}>{{ form.description|default('') }}</textarea></label></p>
   <p><label>Tags (comma-separated, no #) <input name="tags_csv" value="{{ form.tags_csv|default('') }}" {% if locked %}disabled{% endif %}></label></p>
@@ -144,6 +170,18 @@
   const summary = document.getElementById('plb-preview-summary');
   const tracks = document.getElementById('plb-preview-tracks');
   const audioIdsInput = document.getElementById('audio-ids-input');
+  const titleInput = document.querySelector('input[name="title"]');
+  const titlegenSection = document.getElementById('titlegen-section');
+  const titlegenStatus = document.getElementById('titlegen-status');
+  const titlegenDefaultTemplate = document.getElementById('titlegen-default-template');
+  const titlegenTemplateSelect = document.getElementById('titlegen-template-select');
+  const titlegenSelectedTemplate = document.getElementById('titlegen-selected-template');
+  const titlegenProposedTitle = document.getElementById('titlegen-proposed-title');
+  const titlegenCurrentTitle = document.getElementById('titlegen-current-title');
+  const titlegenOverwriteWarning = document.getElementById('titlegen-overwrite-warning');
+  const titlegenGenerateBtn = document.getElementById('titlegen-generate-btn');
+  const titlegenRegenerateBtn = document.getElementById('titlegen-regenerate-btn');
+  const titlegenApplyBtn = document.getElementById('titlegen-apply-btn');
 
   if (!modal || !openBtn || !closeBtn || !previewBtn || !applyBtn || !status || !summary || !tracks || !audioIdsInput) return;
 
@@ -260,6 +298,134 @@
     }
   }
 
+  let titlegenContext = null;
+  let titlegenGeneration = null;
+  let titlegenSelectedTemplateId = null;
+
+  function updateTitlegenSelectedLabel() {
+    if (!titlegenTemplateSelect || !titlegenSelectedTemplate) return;
+    const opt = titlegenTemplateSelect.selectedOptions && titlegenTemplateSelect.selectedOptions.length ? titlegenTemplateSelect.selectedOptions[0] : null;
+    titlegenSelectedTemplate.textContent = opt ? `Selected template: ${opt.textContent}` : '';
+  }
+
+  function resetTitlegenGeneration() {
+    titlegenGeneration = null;
+    if (titlegenProposedTitle) titlegenProposedTitle.textContent = '—';
+    if (titlegenOverwriteWarning) titlegenOverwriteWarning.style.display = 'none';
+    if (titlegenApplyBtn) titlegenApplyBtn.disabled = true;
+  }
+
+  function refreshCurrentTitleLabel() {
+    if (!titlegenCurrentTitle || !titleInput) return;
+    const current = String(titleInput.value || '');
+    titlegenCurrentTitle.textContent = current.trim() ? current : '(empty)';
+  }
+
+  function selectedTemplateIdOrNull() {
+    if (!titlegenTemplateSelect) return null;
+    const value = String(titlegenTemplateSelect.value || '').trim();
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+
+  function applyTitlegenContext(context) {
+    if (!titlegenTemplateSelect || !titlegenDefaultTemplate || !titlegenStatus) return;
+    titlegenContext = context;
+    titlegenTemplateSelect.innerHTML = '';
+    (context.active_templates || []).forEach((tpl) => {
+      const opt = document.createElement('option');
+      opt.value = String(tpl.id);
+      opt.textContent = tpl.is_default ? `${tpl.template_name} (default)` : tpl.template_name;
+      titlegenTemplateSelect.appendChild(opt);
+    });
+
+    if (!context.active_templates || !context.active_templates.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No active templates';
+      titlegenTemplateSelect.appendChild(opt);
+    }
+
+    const defaultTemplate = context.default_template;
+    if (defaultTemplate) {
+      titlegenDefaultTemplate.textContent = `${defaultTemplate.template_name} (#${defaultTemplate.id})`;
+      titlegenSelectedTemplateId = Number(defaultTemplate.id);
+      titlegenTemplateSelect.value = String(defaultTemplate.id);
+    } else {
+      titlegenDefaultTemplate.textContent = 'None configured';
+      titlegenSelectedTemplateId = selectedTemplateIdOrNull();
+    }
+    updateTitlegenSelectedLabel();
+    refreshCurrentTitleLabel();
+    resetTitlegenGeneration();
+    titlegenStatus.textContent = 'Ready. Generate preview first (no changes are applied yet).';
+  }
+
+  async function loadTitlegenContext() {
+    if (!titlegenSection || !Number.isInteger(activeJobId) || !titlegenStatus) return;
+    titlegenStatus.textContent = 'Loading title generation context...';
+    const resp = await fetch(`/v1/metadata/releases/${activeJobId}/titlegen/context`, { credentials: 'same-origin' });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      titlegenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Failed to load title generation context';
+      return;
+    }
+    applyTitlegenContext(payload);
+  }
+
+  async function generateTitle() {
+    if (!titlegenSection || !Number.isInteger(activeJobId) || !titlegenStatus) return;
+    const templateId = selectedTemplateIdOrNull();
+    titlegenStatus.textContent = 'Generating title preview...';
+    const resp = await fetch(`/v1/metadata/releases/${activeJobId}/titlegen/generate`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template_id: templateId }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      titlegenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Generate failed';
+      return;
+    }
+    titlegenGeneration = payload;
+    titlegenSelectedTemplateId = templateId === null ? null : templateId;
+    if (titlegenProposedTitle) titlegenProposedTitle.textContent = payload.proposed_title || '—';
+    if (titlegenOverwriteWarning) titlegenOverwriteWarning.style.display = payload.overwrite_required ? 'block' : 'none';
+    if (titlegenApplyBtn) titlegenApplyBtn.disabled = false;
+    titlegenStatus.textContent = 'Generated preview ready. Generation does not change the release title until you apply.';
+    updateTitlegenSelectedLabel();
+  }
+
+  async function applyGeneratedTitle() {
+    if (!titlegenSection || !Number.isInteger(activeJobId) || !titlegenStatus || !titlegenGeneration) return;
+    const templateId = selectedTemplateIdOrNull();
+    const overwriteRequired = Boolean(titlegenGeneration.overwrite_required);
+    titlegenStatus.textContent = 'Applying generated title...';
+    const resp = await fetch(`/v1/metadata/releases/${activeJobId}/titlegen/apply`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template_id: templateId,
+        generation_fingerprint: titlegenGeneration.generation_fingerprint,
+        overwrite_confirmed: overwriteRequired,
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      titlegenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Apply failed';
+      return;
+    }
+    if (titleInput && typeof payload.title_after === 'string') {
+      titleInput.value = payload.title_after;
+    }
+    refreshCurrentTitleLabel();
+    titlegenStatus.textContent = payload.title_updated ? 'Applied. Only release.title was changed.' : (payload.message || 'Title already up to date.');
+    resetTitlegenGeneration();
+  }
+
   function renderPreview(payload) {
     const s = payload.summary || {};
     const d = s.duration || {};
@@ -314,6 +480,18 @@
     el.addEventListener('input', invalidatePreviewState);
     el.addEventListener('change', invalidatePreviewState);
   });
+
+  if (titlegenTemplateSelect) {
+    titlegenTemplateSelect.addEventListener('change', () => {
+      updateTitlegenSelectedLabel();
+      resetTitlegenGeneration();
+    });
+  }
+  if (titlegenGenerateBtn) titlegenGenerateBtn.addEventListener('click', generateTitle);
+  if (titlegenRegenerateBtn) titlegenRegenerateBtn.addEventListener('click', generateTitle);
+  if (titlegenApplyBtn) titlegenApplyBtn.addEventListener('click', applyGeneratedTitle);
+  if (titleInput) titleInput.addEventListener('input', refreshCurrentTitleLabel);
+  loadTitlegenContext();
 
   previewBtn.addEventListener('click', async () => {
     const jobId = await ensureJobIdForPlaylistBuilder();
