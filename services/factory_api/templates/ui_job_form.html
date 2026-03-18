@@ -32,7 +32,7 @@
   <fieldset id="titlegen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
     <legend><strong>Title Generator (single release)</strong></legend>
     <p class="muted">Generation does not change the release title until you apply.</p>
-    <p><b>Target release:</b> <span id="titlegen-release-id">#{{ job_id }}</span></p>
+    <p><b>Target release:</b> <span id="titlegen-release-id">{% if release_id %}#{{ release_id }}{% else %}—{% endif %}</span></p>
     <p><b>Current release title:</b> <span id="titlegen-current-title">{{ form.title|default('') }}</span></p>
     <p><b>Default channel template:</b> <span id="titlegen-default-template">Loading...</span></p>
     <p>
@@ -160,6 +160,7 @@
 (function () {
   const mode = '{{ mode }}';
   const initialJobId = {{ job_id if job_id else 'null' }};
+  const initialReleaseId = {{ release_id if release_id else 'null' }};
   const modal = document.getElementById('playlist-builder-modal');
   const openBtn = document.getElementById('playlist-builder-open-btn');
   const closeBtn = document.getElementById('plb-close-btn');
@@ -186,6 +187,7 @@
   if (!modal || !openBtn || !closeBtn || !previewBtn || !applyBtn || !status || !summary || !tracks || !audioIdsInput) return;
 
   let activeJobId = Number.isInteger(initialJobId) ? initialJobId : null;
+  let activeReleaseId = Number.isInteger(initialReleaseId) ? initialReleaseId : null;
   let lastPreviewId = null;
   let lastTrackPks = [];
   let lastPreviewOverrideSnapshot = null;
@@ -363,9 +365,9 @@
   }
 
   async function loadTitlegenContext() {
-    if (!titlegenSection || !Number.isInteger(activeJobId) || !titlegenStatus) return;
+    if (!titlegenSection || !Number.isInteger(activeReleaseId) || !titlegenStatus) return;
     titlegenStatus.textContent = 'Loading title generation context...';
-    const resp = await fetch(`/v1/metadata/releases/${activeJobId}/titlegen/context`, { credentials: 'same-origin' });
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/titlegen/context`, { credentials: 'same-origin' });
     const payload = await resp.json();
     if (!resp.ok) {
       titlegenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Failed to load title generation context';
@@ -375,10 +377,10 @@
   }
 
   async function generateTitle() {
-    if (!titlegenSection || !Number.isInteger(activeJobId) || !titlegenStatus) return;
+    if (!titlegenSection || !Number.isInteger(activeReleaseId) || !titlegenStatus) return;
     const templateId = selectedTemplateIdOrNull();
     titlegenStatus.textContent = 'Generating title preview...';
-    const resp = await fetch(`/v1/metadata/releases/${activeJobId}/titlegen/generate`, {
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/titlegen/generate`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -399,11 +401,11 @@
   }
 
   async function applyGeneratedTitle() {
-    if (!titlegenSection || !Number.isInteger(activeJobId) || !titlegenStatus || !titlegenGeneration) return;
+    if (!titlegenSection || !Number.isInteger(activeReleaseId) || !titlegenStatus || !titlegenGeneration) return;
     const templateId = selectedTemplateIdOrNull();
     const overwriteRequired = Boolean(titlegenGeneration.overwrite_required);
     titlegenStatus.textContent = 'Applying generated title...';
-    const resp = await fetch(`/v1/metadata/releases/${activeJobId}/titlegen/apply`, {
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/titlegen/apply`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },

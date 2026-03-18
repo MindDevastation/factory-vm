@@ -34,10 +34,16 @@ class TestUiPagesSlice4(unittest.TestCase):
                     audio_ids_text="001",
                 )
                 before_row = conn.execute(
-                    "SELECT title, description, tags_json FROM releases WHERE id = ?",
+                    """
+                    SELECT r.id AS release_id, r.title, r.description, r.tags_json
+                    FROM jobs j
+                    JOIN releases r ON r.id = j.release_id
+                    WHERE j.id = ?
+                    """,
                     (job_id,),
                 ).fetchone()
                 assert before_row
+                release_id = int(before_row["release_id"])
             finally:
                 conn.close()
 
@@ -80,17 +86,22 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="titlegen-apply-btn"', edit_page.text)
             self.assertIn("Generation does not change the release title until you apply.", edit_page.text)
             self.assertIn("Applying this generated title will overwrite the existing release title.", edit_page.text)
+            self.assertIn(f'id="titlegen-release-id">#{release_id}</span>', edit_page.text)
+            self.assertIn(f"const initialReleaseId = {release_id};", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/titlegen/context", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/titlegen/generate", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/titlegen/apply", edit_page.text)
 
-            context_resp = client.get(f"/v1/metadata/releases/{job_id}/titlegen/context", headers=h)
+            context_resp = client.get(f"/v1/metadata/releases/{release_id}/titlegen/context", headers=h)
             self.assertEqual(context_resp.status_code, 200)
             context_payload = context_resp.json()
-            self.assertEqual(context_payload["release_id"], job_id)
+            self.assertEqual(context_payload["release_id"], release_id)
             self.assertEqual(context_payload["current_title"], "Manual Existing Title")
             self.assertEqual(context_payload["default_template"]["template_name"], "Default Release Title")
             self.assertGreaterEqual(len(context_payload["active_templates"]), 2)
 
             generate_resp = client.post(
-                f"/v1/metadata/releases/{job_id}/titlegen/generate",
+                f"/v1/metadata/releases/{release_id}/titlegen/generate",
                 headers=h,
                 json={},
             )
@@ -103,7 +114,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             try:
                 after_generate_row = conn.execute(
                     "SELECT title, description, tags_json FROM releases WHERE id = ?",
-                    (job_id,),
+                    (release_id,),
                 ).fetchone()
                 assert after_generate_row
             finally:
@@ -113,7 +124,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertEqual(after_generate_row["tags_json"], before_row["tags_json"])
 
             apply_resp = client.post(
-                f"/v1/metadata/releases/{job_id}/titlegen/apply",
+                f"/v1/metadata/releases/{release_id}/titlegen/apply",
                 headers=h,
                 json={
                     "generation_fingerprint": generate_payload["generation_fingerprint"],
@@ -129,7 +140,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             try:
                 after_apply_row = conn.execute(
                     "SELECT title, description, tags_json FROM releases WHERE id = ?",
-                    (job_id,),
+                    (release_id,),
                 ).fetchone()
                 assert after_apply_row
             finally:
