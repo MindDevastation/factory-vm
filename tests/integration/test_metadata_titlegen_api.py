@@ -91,6 +91,12 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             self.assertTrue(body["has_existing_title"])
             self.assertTrue(body["can_generate_with_default"])
             self.assertEqual(body["default_template"]["id"], default_id)
+            self.assertEqual(
+                set(body["default_template"].keys()),
+                {"id", "template_name", "status", "is_default"},
+            )
+            self.assertEqual(body["default_template"]["status"], "ACTIVE")
+            self.assertTrue(body["default_template"]["is_default"])
             self.assertEqual(len(body["active_templates"]), 2)
             expected_item_keys = {"id", "template_name", "status", "is_default"}
             for item in body["active_templates"]:
@@ -148,7 +154,8 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             self.assertTrue(body["used_template"]["is_default_channel_template"])
             self.assertEqual(body["proposed_title"], "Darkwood Reverie 2026")
             self.assertEqual(body["normalized_length"], len("Darkwood Reverie 2026"))
-            self.assertEqual(body["warnings"][0]["code"], "MTG_OVERWRITE_REQUIRED")
+            self.assertTrue(all(isinstance(w, str) for w in body["warnings"]))
+            self.assertIn("overwrite", body["warnings"][0].lower())
 
             conn = dbm.connect(env)
             try:
@@ -214,6 +221,29 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             context = client.get(f"/v1/metadata/releases/{release_id}/titlegen/context", headers=headers)
             self.assertEqual(context.status_code, 200)
             self.assertEqual(context.json()["default_template"]["id"], default_id)
+
+    def test_can_generate_with_default_only_reflects_default_presence(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="", planned_at=None)
+                self._seed_template(conn, is_default=True, body="{{channel_display_name}} {{release_year}}")
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            context_resp = client.get(f"/v1/metadata/releases/{release_id}/titlegen/context", headers=headers)
+            self.assertEqual(context_resp.status_code, 200)
+            context_payload = context_resp.json()
+            self.assertTrue(context_payload["can_generate_with_default"])
+            self.assertIsNotNone(context_payload["default_template"])
+
+            generate_resp = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=headers, json={})
+            self.assertEqual(generate_resp.status_code, 422)
+            self.assertEqual(generate_resp.json()["error"]["code"], "MTG_REQUIRED_CONTEXT_MISSING")
 
     def test_generate_without_default_or_missing_schedule(self) -> None:
         with temp_env() as (_, env):

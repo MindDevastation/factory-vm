@@ -209,7 +209,8 @@ def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_bas
         default_item = {
             "id": int(context.default_template["id"]),
             "template_name": str(context.default_template["template_name"]),
-            "is_default_channel_template": bool(int(context.default_template.get("is_default") or 0)),
+            "status": str(context.default_template.get("status") or ""),
+            "is_default": bool(int(context.default_template.get("is_default") or 0)),
         }
 
     payload = {
