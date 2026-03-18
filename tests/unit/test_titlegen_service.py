@@ -119,6 +119,14 @@ class TestTitleGenService(unittest.TestCase):
         ok = titlegen_service.generate_title_preview(conn2, release_id=release_id2, template_id=None)
         self.assertEqual(ok.proposed_title, "Darkwood Reverie")
 
+    def test_release_planned_at_is_canonical_schedule_binding_for_date_variables(self) -> None:
+        # Canonical release scheduling datetime binding in TitleGen v1 is releases.planned_at.
+        # Rendering uses the YYYY-MM-DD date portion (first 10 chars) from that stored value.
+        conn, release_id = self._seed_release(planned_at="2026-12-31T23:59:59-05:00", title="")
+        self._insert_template(conn, body="{{release_year}}-{{release_month_number}}-{{release_day_number}}")
+        result = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=None)
+        self.assertEqual(result.proposed_title, "2026-12-31")
+
     def test_overwrite_detection_trims_current_title(self) -> None:
         conn, release_id = self._seed_release(title="   ")
         self._insert_template(conn, body="{{channel_display_name}}")

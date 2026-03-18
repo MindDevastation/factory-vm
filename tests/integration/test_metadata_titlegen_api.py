@@ -190,6 +190,31 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             self.assertEqual(bad_invalid.status_code, 422)
             self.assertEqual(bad_invalid.json()["error"]["code"], "MTG_TEMPLATE_INVALID")
 
+    def test_explicit_generate_does_not_mutate_channel_default_template(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="")
+                default_id = self._seed_template(conn, is_default=True, body="{{channel_display_name}}", name="default")
+                explicit_id = self._seed_template(conn, is_default=False, body="{{channel_slug}}", name="explicit")
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/generate",
+                headers=headers,
+                json={"template_id": explicit_id},
+            )
+            self.assertEqual(generated.status_code, 200)
+            self.assertEqual(generated.json()["used_template"]["id"], explicit_id)
+
+            context = client.get(f"/v1/metadata/releases/{release_id}/titlegen/context", headers=headers)
+            self.assertEqual(context.status_code, 200)
+            self.assertEqual(context.json()["default_template"]["id"], default_id)
+
     def test_generate_without_default_or_missing_schedule(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
@@ -211,6 +236,37 @@ class TestMetadataTitleGenApi(unittest.TestCase):
             missing_planned = client.post(f"/v1/metadata/releases/{release_missing_planned}/titlegen/generate", headers=headers, json={})
             self.assertEqual(missing_planned.status_code, 422)
             self.assertEqual(missing_planned.json()["error"]["code"], "MTG_REQUIRED_CONTEXT_MISSING")
+
+    def test_generate_and_apply_template_not_found_maps_to_404(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="")
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            missing_generate = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/generate",
+                headers=headers,
+                json={"template_id": 999_999},
+            )
+            self.assertEqual(missing_generate.status_code, 404)
+            self.assertEqual(missing_generate.json()["error"]["code"], "MTG_TEMPLATE_NOT_FOUND")
+
+            missing_apply = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/apply",
+                headers=headers,
+                json={
+                    "template_id": 999_999,
+                    "generation_fingerprint": "x",
+                    "overwrite_confirmed": False,
+                },
+            )
+            self.assertEqual(missing_apply.status_code, 404)
+            self.assertEqual(missing_apply.json()["error"]["code"], "MTG_TEMPLATE_NOT_FOUND")
 
     def test_apply_after_generate_updates_only_release_title(self) -> None:
         with temp_env() as (_, env):
