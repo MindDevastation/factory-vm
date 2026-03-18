@@ -86,6 +86,8 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="titlegen-apply-btn"', edit_page.text)
             self.assertIn("Generation does not change the release title until you apply.", edit_page.text)
             self.assertIn("Applying this generated title will overwrite the existing release title.", edit_page.text)
+            self.assertIn("window.confirm('This will overwrite the current release title. Continue?')", edit_page.text)
+            self.assertIn("overwrite_confirmed: overwriteNeedsConfirm", edit_page.text)
             self.assertIn(f'id="titlegen-release-id">#{release_id}</span>', edit_page.text)
             self.assertIn(f"const initialReleaseId = {release_id};", edit_page.text)
             self.assertIn("/v1/metadata/releases/${activeReleaseId}/titlegen/context", edit_page.text)
@@ -148,6 +150,72 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertEqual(after_apply_row["title"], apply_payload["title_after"])
             self.assertEqual(after_apply_row["description"], before_row["description"])
             self.assertEqual(after_apply_row["tags_json"], before_row["tags_json"])
+
+    def test_titlegen_no_default_requires_explicit_template_selection(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="",
+                    description="",
+                    tags_csv="",
+                    cover_name="cover",
+                    cover_ext="jpg",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                release_id = int(conn.execute("SELECT release_id FROM jobs WHERE id = ?", (job_id,)).fetchone()["release_id"])
+                client_tpl_id = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Non-default template",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            edit_page = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(edit_page.status_code, 200)
+            self.assertIn("placeholder.textContent = (context.active_templates || []).length ? 'Select a template' : 'No active templates';", edit_page.text)
+            self.assertIn("Select a template before generating preview.", edit_page.text)
+
+            context_resp = client.get(f"/v1/metadata/releases/{release_id}/titlegen/context", headers=h)
+            self.assertEqual(context_resp.status_code, 200)
+            context_payload = context_resp.json()
+            self.assertIsNone(context_payload["default_template"])
+            self.assertEqual(len(context_payload["active_templates"]), 1)
+
+            no_selection = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=h, json={})
+            self.assertEqual(no_selection.status_code, 422)
+            self.assertEqual(no_selection.json()["error"]["code"], "MTG_DEFAULT_TEMPLATE_NOT_CONFIGURED")
+
+            explicit = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/generate",
+                headers=h,
+                json={"template_id": client_tpl_id},
+            )
+            self.assertEqual(explicit.status_code, 200)
 
     def test_playlist_builder_preview_state_guards(self) -> None:
         with temp_env() as (_, _):

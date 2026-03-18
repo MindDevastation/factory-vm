@@ -70,6 +70,16 @@ class TestTitleGenService(unittest.TestCase):
             self.assertEqual(set(item.keys()), expected_keys)
             self.assertEqual(item["status"], "ACTIVE")
 
+    def test_can_generate_with_default_depends_only_on_default_presence(self) -> None:
+        conn, release_id = self._seed_release(planned_at=None, title="")
+        self._insert_template(conn, body="{{channel_display_name}} {{release_year}}", is_default=True)
+
+        context = titlegen_service.load_titlegen_context(conn, release_id=release_id)
+        self.assertTrue(context.can_generate_with_default)
+        with self.assertRaises(titlegen_service.TitleGenError) as ctx:
+            titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=None)
+        self.assertEqual(ctx.exception.code, "MTG_REQUIRED_CONTEXT_MISSING")
+
     def test_default_template_resolution_and_fingerprint_and_normalization(self) -> None:
         conn, release_id = self._seed_release()
         self._insert_template(conn, body="  {{channel_display_name}}    {{release_year}}  ")

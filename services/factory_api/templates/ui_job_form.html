@@ -331,23 +331,25 @@
     return Number.isInteger(parsed) ? parsed : null;
   }
 
+  function normalizeTitlegenTitle(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ');
+  }
+
   function applyTitlegenContext(context) {
     if (!titlegenTemplateSelect || !titlegenDefaultTemplate || !titlegenStatus) return;
     titlegenContext = context;
     titlegenTemplateSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = (context.active_templates || []).length ? 'Select a template' : 'No active templates';
+    titlegenTemplateSelect.appendChild(placeholder);
+
     (context.active_templates || []).forEach((tpl) => {
       const opt = document.createElement('option');
       opt.value = String(tpl.id);
       opt.textContent = tpl.is_default ? `${tpl.template_name} (default)` : tpl.template_name;
       titlegenTemplateSelect.appendChild(opt);
     });
-
-    if (!context.active_templates || !context.active_templates.length) {
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = 'No active templates';
-      titlegenTemplateSelect.appendChild(opt);
-    }
 
     const defaultTemplate = context.default_template;
     if (defaultTemplate) {
@@ -356,7 +358,8 @@
       titlegenTemplateSelect.value = String(defaultTemplate.id);
     } else {
       titlegenDefaultTemplate.textContent = 'None configured';
-      titlegenSelectedTemplateId = selectedTemplateIdOrNull();
+      titlegenSelectedTemplateId = null;
+      titlegenTemplateSelect.value = '';
     }
     updateTitlegenSelectedLabel();
     refreshCurrentTitleLabel();
@@ -379,6 +382,10 @@
   async function generateTitle() {
     if (!titlegenSection || !Number.isInteger(activeReleaseId) || !titlegenStatus) return;
     const templateId = selectedTemplateIdOrNull();
+    if (!titlegenContext || !titlegenContext.default_template && templateId === null) {
+      titlegenStatus.textContent = 'Select a template before generating preview.';
+      return;
+    }
     titlegenStatus.textContent = 'Generating title preview...';
     const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/titlegen/generate`, {
       method: 'POST',
@@ -404,6 +411,13 @@
     if (!titlegenSection || !Number.isInteger(activeReleaseId) || !titlegenStatus || !titlegenGeneration) return;
     const templateId = selectedTemplateIdOrNull();
     const overwriteRequired = Boolean(titlegenGeneration.overwrite_required);
+    const currentNormalized = normalizeTitlegenTitle(titlegenGeneration.current_title || '');
+    const proposedNormalized = normalizeTitlegenTitle(titlegenGeneration.proposed_title || '');
+    const overwriteNeedsConfirm = overwriteRequired && currentNormalized !== proposedNormalized;
+    if (overwriteNeedsConfirm && !window.confirm('This will overwrite the current release title. Continue?')) {
+      titlegenStatus.textContent = 'Apply canceled. Confirm overwrite to continue.';
+      return;
+    }
     titlegenStatus.textContent = 'Applying generated title...';
     const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/titlegen/apply`, {
       method: 'POST',
@@ -412,7 +426,7 @@
       body: JSON.stringify({
         template_id: templateId,
         generation_fingerprint: titlegenGeneration.generation_fingerprint,
-        overwrite_confirmed: overwriteRequired,
+        overwrite_confirmed: overwriteNeedsConfirm,
       }),
     });
     const payload = await resp.json();

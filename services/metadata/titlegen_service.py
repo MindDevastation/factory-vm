@@ -42,7 +42,7 @@ class GenerateResult:
     proposed_title: str
     normalized_length: int
     overwrite_required: bool
-    warnings: List[Dict[str, str]]
+    warnings: List[str]
     generation_fingerprint: str
 
 
@@ -182,14 +182,9 @@ def generate_title_preview(
     if preview.render_status != "FULL" or preview.validation_errors or not preview.rendered_title:
         raise TitleGenError(code="MTG_RENDER_FAILED", message="Failed to render proposed title")
 
-    warnings: List[Dict[str, str]] = []
+    warnings: List[str] = []
     if context.has_existing_title:
-        warnings.append(
-            {
-                "code": "MTG_OVERWRITE_REQUIRED",
-                "message": "Release already has a non-empty title; apply would overwrite it",
-            }
-        )
+        warnings.append("Release already has a non-empty title; apply would overwrite it")
 
     fingerprint = _build_generation_fingerprint(
         release_id=context.release_id,
@@ -320,14 +315,5 @@ def _build_effective_render_context(*, channel: Dict[str, Any], release_date: da
 
 
 def _can_generate_with_default(*, channel: Dict[str, Any], planned_at: Any, default_template: Dict[str, Any] | None) -> bool:
-    if default_template is None:
-        return False
-    if str(default_template.get("validation_status") or "") != "VALID":
-        return False
-    body = str(default_template.get("template_body") or "")
-    parsed = title_template_service.parse_template(body)
-    if parsed.errors:
-        return False
-    release_date = _parse_release_date(planned_at)
-    preview = title_template_service.preview_title_template(channel=channel, template_body=body, release_date=release_date)
-    return preview.render_status == "FULL" and not preview.validation_errors and bool(preview.rendered_title)
+    del channel, planned_at
+    return default_template is not None
