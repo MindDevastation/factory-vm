@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.common.env import Env
-from services.common.disk_guard import emit_disk_pressure_event, evaluate_disk_pressure_for_env
+from services.common.disk_guard import classify_write_block, emit_disk_pressure_event, evaluate_disk_pressure_for_env
 from services.common.disk_thresholds import DiskPressureLevel
 from services.common import db as dbm
 from services.common.pydeps import ensure_py_deps_on_sys_path
@@ -42,7 +42,9 @@ from services.playlist_builder.api_adapter import (
     resolve_playlist_brief,
 )
 from services.playlist_builder.models import PlaylistBriefOverrides, PlaylistChannelSettingsPatch
+from services.playlist_builder.tags import list_builder_tag_options
 from services.playlist_builder.workflow import (
+    PreviewTimeBudgetExceeded,
     PlaylistBuilderApiError,
     apply_preview,
     build_preview_response,
@@ -141,8 +143,63 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
     return rows
 
 
-def _plb_error(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+def _plb_error(status_code: int, code: str, message: str, diagnostics: dict[str, Any] | None = None) -> JSONResponse:
+    payload: dict[str, Any] = {"error": {"code": code, "message": message}}
+    if diagnostics:
+        payload["error"]["diagnostics"] = diagnostics
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+@app.get("/v1/playlist-builder/tags/options")
+def api_playlist_builder_tags_options(channel_slug: str | None = None, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        options = list_builder_tag_options(conn, channel_slug=channel_slug)
+    finally:
+        conn.close()
+
+    custom_count = sum(1 for item in options if item.source == "custom")
+    yamnet_count = sum(1 for item in options if item.source == "yamnet")
+    semantic_count = sum(1 for item in options if item.source == "semantic")
+
+    reason = "ok"
+    if not channel_slug:
+        reason = "missing_channel_slug"
+    elif not options:
+        reason = "no_tags_found_for_channel"
+
+    logger.info(
+        "playlist_builder.tags.options",
+        extra={
+            "channel_slug": channel_slug,
+            "custom_count": custom_count,
+            "yamnet_count": yamnet_count,
+            "semantic_count": semantic_count,
+            "final_count": len(options),
+            "reason": reason,
+        },
+    )
+
+    return {
+        "options": [
+            {
+                "source": item.source,
+                "value": item.value,
+                "label": item.label,
+                "group": item.group,
+                "count": item.count,
+            }
+            for item in options
+        ],
+        "meta": {
+            "channel_slug": channel_slug,
+            "custom_count": custom_count,
+            "yamnet_count": yamnet_count,
+            "semantic_count": semantic_count,
+            "final_count": len(options),
+            "reason": reason,
+        },
+    }
 
 
 def _mtb_error(status_code: int, code: str, message: str) -> JSONResponse:
@@ -663,6 +720,7 @@ def api_playlist_builder_channel_settings_put(
             position_memory_window=brief.position_memory_window,
             strictness_mode=brief.strictness_mode,
             vocal_policy=brief.vocal_policy,
+            reuse_policy=brief.reuse_policy,
         )
         conn.commit()
         saved = dbm.get_playlist_builder_channel_settings(conn, channel_slug)
@@ -768,7 +826,11 @@ def api_playlist_builder_preview_post(
     try:
         logger.info("playlist_builder.preview.started", extra={"job_id": job_id})
         envelope = create_preview(conn, job_id=job_id, override=payload.override, created_by=env.basic_user)
+        response_started = time.perf_counter()
         response = build_preview_response(envelope)
+        diagnostics = response.get("summary", {}).get("diagnostics") or {}
+        diagnostics["response_serialization_ms"] = round((time.perf_counter() - response_started) * 1000.0, 3)
+        response["summary"]["diagnostics"] = diagnostics
         conn.commit()
         logger.info(
             "playlist_builder.preview.completed",
@@ -777,17 +839,25 @@ def api_playlist_builder_preview_post(
                 "channel_slug": envelope.brief.channel_slug,
                 "generation_mode": envelope.brief.generation_mode,
                 "strictness_mode": envelope.brief.strictness_mode,
-                "candidate_pool_size": None,
+                "candidate_pool_size": envelope.preview_result.candidate_pool_size,
                 "selected_tracks_count": len(envelope.tracks),
                 "achieved_duration": envelope.preview_result.achieved_duration_sec,
                 "achieved_novelty": envelope.preview_result.achieved_novelty,
                 "achieved_batch_ratio": envelope.preview_result.achieved_batch_ratio,
                 "relaxations": envelope.preview_result.relaxations,
+                "relaxations_structured": [item.model_dump() for item in envelope.preview_result.relaxations_structured],
                 "warnings": envelope.preview_result.warnings,
             },
         )
-        for relaxation in envelope.preview_result.relaxations:
-            logger.info("playlist_builder.relaxation.applied", extra={"job_id": job_id, "relaxation": relaxation})
+        logger.info(
+            "playlist_builder.preview.pipeline",
+            extra={
+                "job_id": job_id,
+                "diagnostics": envelope.preview_result.diagnostics or {},
+            },
+        )
+        for relaxation in envelope.preview_result.relaxations_structured:
+            logger.info("playlist_builder.relaxation.applied", extra={"job_id": job_id, "relaxation": relaxation.model_dump()})
         return response
     except PlaylistBuilderApiError as exc:
         conn.rollback()
@@ -797,8 +867,24 @@ def api_playlist_builder_preview_post(
             "PLB_NO_CANDIDATES": 422,
             "PLB_NO_VALID_PLAYLIST": 422,
             "PLB_CURATED_LIMIT_EXCEEDED": 422,
+            "PLB_PREVIEW_TIMEOUT": 422,
         }.get(exc.code, 409)
-        return _plb_error(status, exc.code, exc.message)
+        logger.info("playlist_builder.preview.pipeline", extra={"job_id": job_id, "diagnostics": exc.diagnostics})
+        return _plb_error(status, exc.code, exc.message, diagnostics=exc.diagnostics)
+    except PreviewTimeBudgetExceeded as exc:
+        conn.rollback()
+        diagnostics = {
+            "reason": str(exc),
+            "timeout_stage": exc.stage,
+            "preview_total_ms": exc.elapsed_ms,
+        }
+        logger.info("playlist_builder.preview.pipeline", extra={"job_id": job_id, "diagnostics": diagnostics})
+        return _plb_error(422, "PLB_PREVIEW_TIMEOUT", str(exc), diagnostics=diagnostics)
+    except Exception as exc:
+        conn.rollback()
+        diagnostics = {"reason": str(exc), "job_id": job_id}
+        logger.exception("playlist_builder.preview.failed", extra={"job_id": job_id})
+        return _plb_error(500, "PLB_PREVIEW_FAILED", "Playlist preview failed", diagnostics=diagnostics)
     finally:
         conn.close()
 
@@ -2914,6 +3000,17 @@ class UiJobDraftPayload(BaseModel):
     audio_ids_text: str
 
 
+class UiPlaylistBuilderDraftPayload(BaseModel):
+    channel_id: int
+    title: str
+    description: str = ""
+    tags_csv: str = ""
+    cover_name: str = ""
+    cover_ext: str = ""
+    background_name: str = ""
+    background_ext: str = ""
+
+
 class UiJobsRenderSelectedPayload(BaseModel):
     job_ids: Optional[list[str]] = None
 
@@ -2940,6 +3037,21 @@ def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
         errors["audio"].append("audio ids are required")
     if not payload.background_name.strip() or not payload.background_ext.strip():
         errors["background"].append("background name/ext are required")
+    if "#" in payload.tags_csv:
+        errors["tags"].append("tags must not contain #")
+    return {k: v for k, v in errors.items() if v}
+
+
+def _ui_validate_playlist_builder_draft(payload: UiPlaylistBuilderDraftPayload) -> Dict[str, List[str]]:
+    errors: Dict[str, List[str]] = {
+        "project": [],
+        "title": [],
+        "tags": [],
+    }
+    if payload.channel_id <= 0:
+        errors["project"].append("project is required")
+    if not payload.title.strip():
+        errors["title"].append("title is required")
     if "#" in payload.tags_csv:
         errors["tags"].append("tags must not contain #")
     return {k: v for k, v in errors.items() if v}
@@ -3720,6 +3832,35 @@ def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basi
     return {"ok": True, "job_id": job_id}
 
 
+@app.post("/v1/ui/jobs/playlist-builder-draft")
+def api_create_ui_job_for_playlist_builder(payload: UiPlaylistBuilderDraftPayload, _: bool = Depends(require_basic_auth(env))):
+    errors = _ui_validate_playlist_builder_draft(payload)
+    if errors:
+        raise HTTPException(422, {"field_errors": errors})
+
+    conn = dbm.connect(env)
+    try:
+        ch = dbm.get_channel_by_id(conn, payload.channel_id)
+        if not ch:
+            raise HTTPException(422, {"field_errors": {"project": ["project does not exist"]}})
+        job_id = dbm.create_ui_job_draft(
+            conn,
+            channel_id=payload.channel_id,
+            title=payload.title.strip(),
+            description=payload.description.strip(),
+            tags_csv=payload.tags_csv.strip(),
+            cover_name=payload.cover_name.strip() or None,
+            cover_ext=payload.cover_ext.strip() or None,
+            background_name=payload.background_name.strip(),
+            background_ext=payload.background_ext.strip(),
+            audio_ids_text="",
+            job_type="UI",
+        )
+    finally:
+        conn.close()
+    return {"ok": True, "job_id": job_id}
+
+
 @app.post("/v1/ui/jobs/bulk-json/preview")
 def api_ui_jobs_bulk_json_preview(payload: UiJobsBulkJsonPayload, _: bool = Depends(require_basic_auth(env))):
     mode, error = _parse_bulk_payload(payload)
@@ -3867,22 +4008,60 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
     }
 
 
-def _uij_error(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+def _uij_error(status_code: int, code: str, message: str, *, details: dict[str, Any] | None = None) -> JSONResponse:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if details is not None:
+        error["details"] = details
+    return JSONResponse(status_code=status_code, content={"error": error})
+
+
+def _disk_pressure_error_details(*, operation: str, snapshot: Any, reason: str) -> dict[str, Any]:
+    threshold_percent = float(snapshot.thresholds.fail_percent)
+    threshold_gb = float(snapshot.thresholds.fail_gib)
+    return {
+        "operation": operation,
+        "checked_path": snapshot.checked_path,
+        "resolved_mount_or_anchor": snapshot.resolved_mount_or_anchor,
+        "free_gb": round(float(snapshot.free_gib), 2),
+        "free_percent": round(float(snapshot.free_percent), 2),
+        "threshold_gb": round(threshold_gb, 2),
+        "threshold_percent": round(threshold_percent, 2),
+        "reason": reason,
+    }
 
 
 def _disk_guard_write_heavy(*, operation: str) -> JSONResponse | None:
     snapshot = evaluate_disk_pressure_for_env(env=env)
     emit_disk_pressure_event(logger=logger, snapshot=snapshot, stage=operation)
-    if snapshot.pressure is not DiskPressureLevel.CRITICAL:
+    decision = classify_write_block(snapshot)
+    if not decision.blocked:
         return None
-    return _uij_error(503, "DISK_CRITICAL_WRITE_BLOCKED", "Operation blocked due to critical disk pressure")
+    details = _disk_pressure_error_details(operation=operation, snapshot=snapshot, reason=decision.reason)
+    logger.warning(
+        "disk.write_blocked",
+        extra={
+            "disk_block": {
+                "operation": operation,
+                "reason": decision.reason,
+                "checked_path": snapshot.checked_path,
+                "resolved_mount_or_anchor": snapshot.resolved_mount_or_anchor,
+                "total_bytes": snapshot.total_bytes,
+                "used_bytes": snapshot.used_bytes,
+                "free_bytes": snapshot.free_bytes,
+                "free_percent": snapshot.free_percent,
+                "threshold_percent": snapshot.thresholds.fail_percent,
+                "threshold_bytes": int(snapshot.thresholds.fail_gib * (1024**3)),
+                "threshold_gib": snapshot.thresholds.fail_gib,
+            }
+        },
+    )
+    return _uij_error(503, "DISK_CRITICAL_WRITE_BLOCKED", "Operation blocked due to critical disk pressure", details=details)
 
 
 def _render_selected_item(job_id_text: str) -> dict[str, Any]:
     blocked = _disk_guard_write_heavy(operation="ui_jobs_render_selected")
     if blocked is not None:
-        return {"job_id": str(job_id_text), "error": {"code": "DISK_CRITICAL_WRITE_BLOCKED", "message": "Operation blocked due to critical disk pressure"}}
+        return {"job_id": str(job_id_text), **json.loads(blocked.body.decode("utf-8"))}
     try:
         job_id = int(job_id_text)
     except (TypeError, ValueError):
@@ -4271,6 +4450,11 @@ def ui_jobs_create_page(request: Request, _: bool = Depends(require_basic_auth(e
     )
 
 
+@app.get("/ui/jobs/create/")
+def ui_jobs_create_page_trailing_slash(_: bool = Depends(require_basic_auth(env))):
+    return RedirectResponse(url="/ui/jobs/create", status_code=307)
+
+
 @app.post("/ui/jobs/create")
 async def ui_jobs_create_submit(
     request: Request,
@@ -4404,6 +4588,11 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
             "locked": locked,
         },
     )
+
+
+@app.get("/ui/jobs/{job_id}/edit/")
+def ui_jobs_edit_page_trailing_slash(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    return RedirectResponse(url=f"/ui/jobs/{job_id}/edit", status_code=307)
 
 
 @app.post("/ui/jobs/{job_id}/edit")

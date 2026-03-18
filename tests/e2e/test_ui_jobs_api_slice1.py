@@ -65,6 +65,72 @@ class TestUiJobsApiSlice1(unittest.TestCase):
             finally:
                 conn2.close()
 
+
+    def test_playlist_builder_draft_create_relaxes_audio_and_background_only_for_builder_flow(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                self.assertIsNotNone(ch)
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            manual_resp = client.post(
+                "/v1/ui/jobs",
+                json={
+                    "channel_id": channel_id,
+                    "title": "Manual strict",
+                    "description": "",
+                    "tags_csv": "",
+                    "cover_name": "",
+                    "cover_ext": "",
+                    "background_name": "",
+                    "background_ext": "",
+                    "audio_ids_text": "",
+                },
+                headers=h,
+            )
+            self.assertEqual(manual_resp.status_code, 422)
+            manual_errors = manual_resp.json()["detail"]["field_errors"]
+            self.assertIn("audio", manual_errors)
+            self.assertIn("background", manual_errors)
+
+            builder_resp = client.post(
+                "/v1/ui/jobs/playlist-builder-draft",
+                json={
+                    "channel_id": channel_id,
+                    "title": "Builder draft",
+                    "description": "",
+                    "tags_csv": "",
+                    "cover_name": "",
+                    "cover_ext": "",
+                    "background_name": "",
+                    "background_ext": "",
+                },
+                headers=h,
+            )
+            self.assertEqual(builder_resp.status_code, 200)
+            job_id = int(builder_resp.json()["job_id"])
+
+            conn2 = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn2, job_id)
+                self.assertIsNotNone(draft)
+                self.assertEqual(str(draft["audio_ids_text"]), "")
+                self.assertEqual(str(draft["background_name"]), "")
+                self.assertEqual(str(draft["background_ext"]), "")
+            finally:
+                conn2.close()
+
     def test_project_immutable_on_update(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()

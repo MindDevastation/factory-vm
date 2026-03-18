@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from time import monotonic
 from typing import Any
 
 from services.common import db as dbm
 from services.playlist_builder.api_adapter import channel_settings_row_to_patch, parse_override_json, resolve_playlist_brief
-from services.playlist_builder.composition import CuratedOptimizationLimitExceeded, compose_curated, compose_safe, compose_smart, list_safe_candidates
+from services.playlist_builder.composition import CuratedOptimizationLimitExceeded, build_candidate_diagnostics, compose_curated, compose_safe, compose_smart
 from services.playlist_builder.explain import build_preview_result
 from services.playlist_builder.history import list_effective_history
 from services.playlist_builder.models import PlaylistBrief, PlaylistPreviewResult
@@ -16,6 +17,36 @@ class CuratedModeLimitExceeded(RuntimeError):
 
 
 class PlaylistBuilder:
+    @staticmethod
+    def _reason_for_empty(brief: PlaylistBrief, diagnostics: dict[str, int], warnings: list[str]) -> str:
+        if diagnostics.get("after_analyzed_eligible", 0) == 0:
+            return "No analyzed eligible tracks found for this channel"
+        if diagnostics.get("after_required_tags", 0) == 0:
+            return "No candidates remained after required tags filtering"
+        if diagnostics.get("after_excluded_tags", 0) == 0:
+            return "No candidates remained after excluded tags filtering"
+        if diagnostics.get("after_vocal_policy", 0) == 0:
+            return "No candidates remained after vocal policy filtering"
+        if diagnostics.get("final_candidates", 0) == 0:
+            return "No candidates remained after candidate filtering"
+        if warnings and any("composition could satisfy" in item.lower() for item in warnings):
+            return "No valid playlist could satisfy duration constraints"
+        return "No valid playlist could be composed"
+
+    @staticmethod
+    def _preview_diagnostics(brief: PlaylistBrief, diagnostics: dict[str, int], reason: str) -> dict[str, Any]:
+        return {
+            **diagnostics,
+            "resolved_channel_slug": brief.channel_slug,
+            "resolved_month_batch": brief.preferred_month_batch,
+            "resolved_generation_mode": brief.generation_mode,
+            "resolved_strictness_mode": brief.strictness_mode,
+            "resolved_min_duration_min": brief.min_duration_min,
+            "resolved_max_duration_min": brief.max_duration_min,
+            "resolved_tolerance_min": brief.tolerance_min,
+            "reason": reason,
+        }
+
     def generate_preview(self, conn: object, brief: PlaylistBrief) -> PlaylistPreviewResult:
         if brief.generation_mode == "safe":
             return self._generate_safe(conn, brief)
@@ -31,12 +62,21 @@ class PlaylistBuilder:
         )
 
     def _generate_safe(self, conn: object, brief: PlaylistBrief) -> PlaylistPreviewResult:
+        preview_started = monotonic()
+        history_started = monotonic()
         history = list_effective_history(conn, channel_slug=brief.channel_slug, window=brief.position_memory_window)
-        candidates = list_safe_candidates(conn, brief)
+        history_ms = round((monotonic() - history_started) * 1000.0, 3)
+        candidate_started = monotonic()
+        candidates, diagnostics = build_candidate_diagnostics(conn, brief)
+        candidate_ms = round((monotonic() - candidate_started) * 1000.0, 3)
+        candidate_pool_size = len(candidates)
         warnings: list[str] = []
+        diagnostics["history_ms"] = history_ms
+        diagnostics["candidate_extraction_ms"] = candidate_ms
         if not candidates:
             warnings.append("No eligible analyzed candidates found for safe mode.")
-            return build_preview_result(
+            reason = self._reason_for_empty(brief, diagnostics, warnings)
+            result = build_preview_result(
                 brief=brief,
                 selected=[],
                 ordered=[],
@@ -45,12 +85,21 @@ class PlaylistBuilder:
                 warnings=warnings,
                 relaxations=[],
                 ordering_rationale="No candidates passed P0 safe filters.",
+                candidate_pool_size=candidate_pool_size,
+                diagnostics=self._preview_diagnostics(brief, diagnostics, reason),
             )
+            result.diagnostics["composition_ms"] = 0.0
+            result.diagnostics["sequencing_ms"] = 0.0
+            result.diagnostics["preview_total_ms"] = round((monotonic() - preview_started) * 1000.0, 3)
+            return result
 
+        composition_started = monotonic()
         selected, scores, relaxations = compose_safe(brief, candidates, history)
+        diagnostics["composition_ms"] = round((monotonic() - composition_started) * 1000.0, 3)
         if not selected:
             warnings.append("No composition could satisfy hard eligibility constraints.")
-            return build_preview_result(
+            reason = self._reason_for_empty(brief, diagnostics, warnings)
+            result = build_preview_result(
                 brief=brief,
                 selected=[],
                 ordered=[],
@@ -59,9 +108,16 @@ class PlaylistBuilder:
                 warnings=warnings,
                 relaxations=relaxations,
                 ordering_rationale="No candidates could be selected after greedy composition.",
+                candidate_pool_size=candidate_pool_size,
+                diagnostics=self._preview_diagnostics(brief, diagnostics, reason),
             )
+            result.diagnostics["sequencing_ms"] = 0.0
+            result.diagnostics["preview_total_ms"] = round((monotonic() - preview_started) * 1000.0, 3)
+            return result
+        sequencing_started = monotonic()
         ordered, rationale = sequence_safe(brief, selected, history)
-        return build_preview_result(
+        diagnostics["sequencing_ms"] = round((monotonic() - sequencing_started) * 1000.0, 3)
+        result = build_preview_result(
             brief=brief,
             selected=selected,
             ordered=ordered,
@@ -70,15 +126,28 @@ class PlaylistBuilder:
             warnings=warnings,
             relaxations=relaxations,
             ordering_rationale=rationale,
+            candidate_pool_size=candidate_pool_size,
+            diagnostics=self._preview_diagnostics(brief, diagnostics, "ok"),
         )
+        result.diagnostics["preview_total_ms"] = round((monotonic() - preview_started) * 1000.0, 3)
+        return result
 
     def _generate_smart(self, conn: object, brief: PlaylistBrief) -> PlaylistPreviewResult:
+        preview_started = monotonic()
+        history_started = monotonic()
         history = list_effective_history(conn, channel_slug=brief.channel_slug, window=brief.position_memory_window)
-        candidates = list_safe_candidates(conn, brief)
+        history_ms = round((monotonic() - history_started) * 1000.0, 3)
+        candidate_started = monotonic()
+        candidates, diagnostics = build_candidate_diagnostics(conn, brief)
+        candidate_ms = round((monotonic() - candidate_started) * 1000.0, 3)
+        candidate_pool_size = len(candidates)
         warnings: list[str] = []
+        diagnostics["history_ms"] = history_ms
+        diagnostics["candidate_extraction_ms"] = candidate_ms
         if not candidates:
             warnings.append("No eligible analyzed candidates found for smart mode.")
-            return build_preview_result(
+            reason = self._reason_for_empty(brief, diagnostics, warnings)
+            result = build_preview_result(
                 brief=brief,
                 selected=[],
                 ordered=[],
@@ -87,12 +156,21 @@ class PlaylistBuilder:
                 warnings=warnings,
                 relaxations=[],
                 ordering_rationale="No candidates passed Smart mode candidate filtering.",
+                candidate_pool_size=candidate_pool_size,
+                diagnostics=self._preview_diagnostics(brief, diagnostics, reason),
             )
+            result.diagnostics["composition_ms"] = 0.0
+            result.diagnostics["sequencing_ms"] = 0.0
+            result.diagnostics["preview_total_ms"] = round((monotonic() - preview_started) * 1000.0, 3)
+            return result
 
+        composition_started = monotonic()
         selected, scores, relaxations, composition_summary = compose_smart(brief, candidates, history)
+        diagnostics["composition_ms"] = round((monotonic() - composition_started) * 1000.0, 3)
         if not selected:
             warnings.append("No composition could satisfy hard eligibility constraints.")
-            return build_preview_result(
+            reason = self._reason_for_empty(brief, diagnostics, warnings)
+            result = build_preview_result(
                 brief=brief,
                 selected=[],
                 ordered=[],
@@ -101,11 +179,18 @@ class PlaylistBuilder:
                 warnings=warnings,
                 relaxations=relaxations,
                 ordering_rationale="No candidates could be selected after Smart composition passes.",
+                candidate_pool_size=candidate_pool_size,
+                diagnostics=self._preview_diagnostics(brief, diagnostics, reason),
             )
+            result.diagnostics["sequencing_ms"] = 0.0
+            result.diagnostics["preview_total_ms"] = round((monotonic() - preview_started) * 1000.0, 3)
+            return result
 
+        sequencing_started = monotonic()
         ordered, rationale = sequence_smart(brief, selected, history)
+        diagnostics["sequencing_ms"] = round((monotonic() - sequencing_started) * 1000.0, 3)
         warnings.append(composition_summary)
-        return build_preview_result(
+        result = build_preview_result(
             brief=brief,
             selected=selected,
             ordered=ordered,
@@ -114,15 +199,28 @@ class PlaylistBuilder:
             warnings=warnings,
             relaxations=relaxations,
             ordering_rationale=f"{rationale} Smart mode applied post-selection and post-ordering local refinement beyond Safe.",
+            candidate_pool_size=candidate_pool_size,
+            diagnostics=self._preview_diagnostics(brief, diagnostics, "ok"),
         )
+        result.diagnostics["preview_total_ms"] = round((monotonic() - preview_started) * 1000.0, 3)
+        return result
 
     def _generate_curated(self, conn: object, brief: PlaylistBrief) -> PlaylistPreviewResult:
+        preview_started = monotonic()
+        history_started = monotonic()
         history = list_effective_history(conn, channel_slug=brief.channel_slug, window=brief.position_memory_window)
-        candidates = list_safe_candidates(conn, brief)
+        history_ms = round((monotonic() - history_started) * 1000.0, 3)
+        candidate_started = monotonic()
+        candidates, diagnostics = build_candidate_diagnostics(conn, brief)
+        candidate_ms = round((monotonic() - candidate_started) * 1000.0, 3)
+        candidate_pool_size = len(candidates)
         warnings: list[str] = []
+        diagnostics["history_ms"] = history_ms
+        diagnostics["candidate_extraction_ms"] = candidate_ms
         if not candidates:
             warnings.append("No eligible analyzed candidates found for curated mode.")
-            return build_preview_result(
+            reason = self._reason_for_empty(brief, diagnostics, warnings)
+            result = build_preview_result(
                 brief=brief,
                 selected=[],
                 ordered=[],
@@ -131,12 +229,21 @@ class PlaylistBuilder:
                 warnings=warnings,
                 relaxations=[],
                 ordering_rationale="No candidates passed Curated mode candidate filtering.",
+                candidate_pool_size=candidate_pool_size,
+                diagnostics=self._preview_diagnostics(brief, diagnostics, reason),
             )
+            result.diagnostics["composition_ms"] = 0.0
+            result.diagnostics["sequencing_ms"] = 0.0
+            result.diagnostics["preview_total_ms"] = round((monotonic() - preview_started) * 1000.0, 3)
+            return result
         try:
+            composition_started = monotonic()
             selected, scores, relaxations, composition_summary = compose_curated(brief, candidates, history)
+            diagnostics["composition_ms"] = round((monotonic() - composition_started) * 1000.0, 3)
             if not selected:
                 warnings.append("No composition could satisfy hard eligibility constraints.")
-                return build_preview_result(
+                reason = self._reason_for_empty(brief, diagnostics, warnings)
+                result = build_preview_result(
                     brief=brief,
                     selected=[],
                     ordered=[],
@@ -145,13 +252,20 @@ class PlaylistBuilder:
                     warnings=warnings,
                     relaxations=relaxations,
                     ordering_rationale="No candidates could be selected after Curated composition passes.",
+                    candidate_pool_size=candidate_pool_size,
+                    diagnostics=self._preview_diagnostics(brief, diagnostics, reason),
                 )
+                result.diagnostics["sequencing_ms"] = 0.0
+                result.diagnostics["preview_total_ms"] = round((monotonic() - preview_started) * 1000.0, 3)
+                return result
+            sequencing_started = monotonic()
             ordered, rationale = sequence_curated(brief, selected, history)
+            diagnostics["sequencing_ms"] = round((monotonic() - sequencing_started) * 1000.0, 3)
         except (CuratedOptimizationLimitExceeded, CuratedSequencingLimitExceeded) as exc:
             raise CuratedModeLimitExceeded(str(exc)) from exc
 
         warnings.append(composition_summary)
-        return build_preview_result(
+        result = build_preview_result(
             brief=brief,
             selected=selected,
             ordered=ordered,
@@ -162,7 +276,11 @@ class PlaylistBuilder:
             ordering_rationale=(
                 f"{rationale} Curated mode performed iterative composition/sequencing refinement with bounded best-of-N and beam-like search."
             ),
+            candidate_pool_size=candidate_pool_size,
+            diagnostics=self._preview_diagnostics(brief, diagnostics, "ok"),
         )
+        result.diagnostics["preview_total_ms"] = round((monotonic() - preview_started) * 1000.0, 3)
+        return result
 
 
 def resolve_effective_brief_for_job(conn: object, *, job_id: int, request_override: dict[str, Any] | None = None) -> PlaylistBrief:

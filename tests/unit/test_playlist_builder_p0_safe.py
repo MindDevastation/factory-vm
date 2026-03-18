@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
+import json
 from datetime import datetime, timedelta
 
 from services.common import db as dbm
-from services.playlist_builder.composition import CuratedOptimizationLimitExceeded, _attempt_swaps, compose_curated, compose_safe, compose_smart, list_safe_candidates
+from services.playlist_builder.composition import CompositionStateError, CuratedOptimizationLimitExceeded, _attempt_swaps, _assert_selection_state_consistent, compose_curated, compose_safe, compose_smart, list_safe_candidates
 from services.playlist_builder.constraints import relaxed_brief_variants
 from services.playlist_builder.history import (
     batch_distribution_overlap,
@@ -131,7 +133,46 @@ class PlaylistBuilderP0SafeTest(unittest.TestCase):
         self.assertIn("drop_preferred_month_batch", labels)
         self.assertIn("lower_novelty_target_min", labels)
         self.assertIn("relax_vocal_policy_allow_any", labels)
-        self.assertIn("drop_required_tags", labels)
+        self.assertNotIn("drop_required_tags", labels)
+
+    def test_safe_mode_blocks_same_slot_reuse_by_default(self) -> None:
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="safe", min_duration_min=8, max_duration_min=10)
+        selected = [
+            TrackCandidate(1, "t1", "darkwood-reverie", 180.0, "2024-01", frozenset({"a"}), False, False, "smooth", 0.20),
+            TrackCandidate(2, "t2", "darkwood-reverie", 180.0, "2024-01", frozenset({"b"}), False, False, "smooth", 0.21),
+        ]
+        history = [
+            type("H", (), {"tracks": (1, 99)})(),
+        ]
+        ordered, _ = sequence_safe(brief, selected, history=history)
+        self.assertNotEqual(ordered[0].track_pk, 1)
+
+    def test_safe_mode_can_downgrade_same_slot_rule_when_policy_allows(self) -> None:
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="safe", reuse_policy="penalty_only", min_duration_min=8, max_duration_min=10)
+        selected = [
+            TrackCandidate(1, "t1", "darkwood-reverie", 180.0, "2024-01", frozenset({"a"}), False, False, "smooth", 0.20),
+            TrackCandidate(2, "t2", "darkwood-reverie", 180.0, "2024-01", frozenset({"b"}), False, False, "smooth", 0.21),
+        ]
+        history = [
+            type("H", (), {"tracks": (1, 99)})(),
+        ]
+        ordered, _ = sequence_safe(brief, selected, history=history)
+        self.assertEqual(len(ordered), 2)
+
+    def test_preferred_batch_ratio_guides_selection_softly(self) -> None:
+        for pk, batch in [(1, "A"), (2, "A"), (3, "A"), (4, "A"), (5, "A"), (6, "A"), (7, "A"), (8, "B"), (9, "B"), (10, "B")]:
+            self._insert_track(pk=pk, track_id=f"t{pk}", duration=60.0, batch=batch, tags="ambient,calm")
+        brief = PlaylistBrief(
+            channel_slug="darkwood-reverie",
+            generation_mode="safe",
+            min_duration_min=9,
+            max_duration_min=11,
+            preferred_month_batch="A",
+            preferred_batch_ratio=70,
+        )
+        selected, _, _ = compose_safe(brief, list_safe_candidates(self.conn, brief), history=[])
+        ratio = sum(1 for c in selected if c.month_batch == "A") / max(len(selected), 1)
+        self.assertLessEqual(abs(ratio - 0.7), 0.2)
 
     def test_safe_composition_and_sequencing(self) -> None:
         self._insert_track(pk=1, track_id="t1", duration=210, batch="2024-01", voice=0, tags="ambient,calm", dsp=0.2)
@@ -178,6 +219,38 @@ class PlaylistBuilderP0SafeTest(unittest.TestCase):
         self.assertLessEqual(smart_err, safe_err)
         self.assertIn("top-", smart_summary)
         self.assertIn("accepted swap refinement", smart_summary)
+
+
+    def test_selection_state_invariant_detects_duplicates(self) -> None:
+        selected = [
+            TrackCandidate(1, "t1", "darkwood-reverie", 180.0, "2024-01", frozenset(), False, False, "smooth", 0.10),
+            TrackCandidate(1, "t1-dup", "darkwood-reverie", 180.0, "2024-02", frozenset(), False, False, "rough", 0.20),
+        ]
+        with self.assertRaises(CompositionStateError):
+            _assert_selection_state_consistent(selected, {1}, stage="test")
+
+    def test_smart_composition_handles_multi_accept_per_index_without_state_desync(self) -> None:
+        for spec in (
+            (1, 200.0, "2024-01", "smooth", 0.20),
+            (2, 200.0, "2024-01", "smooth", 0.25),
+            (3, 200.0, "2024-01", "smooth", 0.30),
+            (4, 200.0, "2024-02", "rough", 0.80),
+            (5, 200.0, "2024-02", "grain", 0.76),
+            (6, 200.0, "2024-03", "airy", 0.72),
+        ):
+            self._insert_track(pk=spec[0], track_id=f"t{spec[0]}", duration=spec[1], batch=spec[2], texture=spec[3], dsp=spec[4], tags="ambient,calm")
+
+        brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="smart", min_duration_min=10, max_duration_min=10)
+        candidates = list_safe_candidates(self.conn, brief)
+
+        def objective(_brief, selected, _history):
+            return float(sum(c.track_pk for c in selected))
+
+        with patch("services.playlist_builder.composition._selection_objective", side_effect=objective):
+            selected, _, _, _ = compose_smart(brief, candidates, history=[])
+
+        selected_ids = [c.track_pk for c in selected]
+        self.assertEqual(len(selected_ids), len(set(selected_ids)))
 
     def test_smart_sequence_runs_local_reorder_refinement(self) -> None:
         brief = PlaylistBrief(channel_slug="darkwood-reverie", generation_mode="smart", min_duration_min=8, max_duration_min=10)
@@ -234,6 +307,36 @@ class PlaylistBuilderP0SafeTest(unittest.TestCase):
             compose_curated(brief, selected, history=[], max_iterations=0)
         with self.assertRaises(CuratedSequencingLimitExceeded):
             sequence_curated(brief, selected, history=[], max_iterations=0)
+
+    def test_unified_source_aware_tags_filter_and_back_compat(self) -> None:
+        self.conn.execute(
+            "INSERT INTO custom_tags(id, code, label, category, description, is_active, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            (9101, "gaming", "Gaming", "THEME", None, 1, 1000.0, 1000.0),
+        )
+        self._insert_track(pk=101, track_id="t101", tags="Music, Rain")
+        self.conn.execute(
+            "INSERT INTO track_tags(track_pk, payload_json, computed_at) VALUES(?,?,?)",
+            (101, json.dumps({"advanced_v1": {"semantic": {"mood_tags": ["minimal"], "theme_tags": ["loopable"]}}}), 1001.0),
+        )
+        self.conn.execute(
+            "INSERT INTO track_custom_tag_assignments(track_pk, tag_id, state, assigned_at, updated_at) VALUES(?,?,?,?,?)",
+            (101, 9101, "MANUAL", "2024-01-01T00:00:00", "2024-01-01T00:00:00"),
+        )
+
+        self._insert_track(pk=102, track_id="t102", tags="Speech")
+
+        canon_brief = PlaylistBrief(channel_slug="darkwood-reverie", required_tags=["custom:gaming", "yamnet:Music", "semantic:loopable"])
+        canon_candidates = list_safe_candidates(self.conn, canon_brief)
+        self.assertEqual([c.track_pk for c in canon_candidates], [101])
+
+        excluded_brief = PlaylistBrief(channel_slug="darkwood-reverie", required_tags=["custom:gaming"], excluded_tags=["yamnet:Speech"])
+        excluded_candidates = list_safe_candidates(self.conn, excluded_brief)
+        self.assertEqual([c.track_pk for c in excluded_candidates], [101])
+
+        legacy_brief = PlaylistBrief(channel_slug="darkwood-reverie", required_tags=["gaming", "music", "loopable"])
+        legacy_candidates = list_safe_candidates(self.conn, legacy_brief)
+        self.assertEqual([c.track_pk for c in legacy_candidates], [101])
+
 
 
 if __name__ == "__main__":

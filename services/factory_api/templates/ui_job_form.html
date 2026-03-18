@@ -19,7 +19,7 @@
     <label>Project* </label>
     <select name="channel_id" {% if locked or mode == 'edit' %}disabled{% endif %}>
       {% for c in channels %}
-      <option value="{{ c.id }}" {% if (form.channel_id|default(0)|int) == c.id %}selected{% endif %}>{{ c.display_name }}</option>
+      <option value="{{ c.id }}" data-channel-slug="{{ c.slug }}" {% if (form.channel_id|default(0)|int) == c.id %}selected{% endif %}>{{ c.display_name }}</option>
       {% endfor %}
     </select>
     {% if locked or mode == 'edit' %}<input type="hidden" name="channel_id" value="{{ form.channel_id|default('') }}">{% endif %}
@@ -114,7 +114,7 @@
 
   <fieldset>
     <legend>Month/Batch</legend>
-    <label>Preferred month_batch <input id="plb-preferred-month-batch" placeholder="YYYY-MM"></label>
+    <label>Preferred month_batch <input id="plb-preferred-month-batch" placeholder="e.g. Feb26 or 202501"></label><small>Use exact Audio/&lt;Batch&gt;/... folder names from discovery.</small>
     <label>Target preferred batch ratio % <input id="plb-preferred-batch-ratio" type="number" min="0" max="100" value="70"></label>
   </fieldset>
 
@@ -137,7 +137,13 @@
       </select>
     </label>
     <label>Required tags (comma-separated) <input id="plb-required-tags"></label>
+    <button id="plb-required-tags-picker-btn" type="button">Select tags</button>
     <label>Excluded tags (comma-separated) <input id="plb-excluded-tags"></label>
+    <button id="plb-excluded-tags-picker-btn" type="button">Select tags</button>
+    <small>
+      Tags support multiple sources using canonical values like <code>custom:intense</code>, <code>yamnet:Music</code>, <code>semantic:loopable</code>.
+      Use Select tags to pick valid values; manual input is still supported. Analyzer tags (yamnet/semantic) are different from custom tags.
+    </small>
   </fieldset>
 
   <fieldset>
@@ -156,6 +162,19 @@
   <section id="plb-preview-tracks" style="display:none; max-height:260px; overflow:auto;"></section>
 </dialog>
 
+<dialog id="playlist-builder-tags-picker-modal" style="width:min(760px,95vw)">
+  <h3>Select Playlist Builder Tags</h3>
+  <p><small>Choose canonical tags from available sources. Selected values are inserted as source-aware tokens.</small></p>
+  <p>
+    <label>Search <input id="plb-tags-picker-search" placeholder="Filter tags"></label>
+  </p>
+  <section id="plb-tags-picker-groups" style="max-height:380px; overflow:auto; border:1px solid #ddd; padding:8px;"></section>
+  <p>
+    <button id="plb-tags-picker-add-btn" type="button">Add Selected</button>
+    <button id="plb-tags-picker-close-btn" type="button">Close</button>
+  </p>
+</dialog>
+
 <script>
 (function () {
   const mode = '{{ mode }}';
@@ -171,28 +190,85 @@
   const summary = document.getElementById('plb-preview-summary');
   const tracks = document.getElementById('plb-preview-tracks');
   const audioIdsInput = document.getElementById('audio-ids-input');
-  const titleInput = document.querySelector('input[name="title"]');
-  const titlegenSection = document.getElementById('titlegen-section');
-  const titlegenStatus = document.getElementById('titlegen-status');
-  const titlegenDefaultTemplate = document.getElementById('titlegen-default-template');
-  const titlegenTemplateSelect = document.getElementById('titlegen-template-select');
-  const titlegenSelectedTemplate = document.getElementById('titlegen-selected-template');
-  const titlegenProposedTitle = document.getElementById('titlegen-proposed-title');
-  const titlegenCurrentTitle = document.getElementById('titlegen-current-title');
-  const titlegenOverwriteWarning = document.getElementById('titlegen-overwrite-warning');
-  const titlegenGenerateBtn = document.getElementById('titlegen-generate-btn');
-  const titlegenRegenerateBtn = document.getElementById('titlegen-regenerate-btn');
-  const titlegenApplyBtn = document.getElementById('titlegen-apply-btn');
+const titleInput = document.querySelector('input[name="title"]');
+const titlegenSection = document.getElementById('titlegen-section');
+const titlegenStatus = document.getElementById('titlegen-status');
+const titlegenDefaultTemplate = document.getElementById('titlegen-default-template');
+const titlegenTemplateSelect = document.getElementById('titlegen-template-select');
+const titlegenSelectedTemplate = document.getElementById('titlegen-selected-template');
+const titlegenProposedTitle = document.getElementById('titlegen-proposed-title');
+const titlegenCurrentTitle = document.getElementById('titlegen-current-title');
+const titlegenOverwriteWarning = document.getElementById('titlegen-overwrite-warning');
+const titlegenGenerateBtn = document.getElementById('titlegen-generate-btn');
+const titlegenRegenerateBtn = document.getElementById('titlegen-regenerate-btn');
+const titlegenApplyBtn = document.getElementById('titlegen-apply-btn');
 
-  if (!modal || !openBtn || !closeBtn || !previewBtn || !applyBtn || !status || !summary || !tracks || !audioIdsInput) return;
+const requiredTagsInput = document.getElementById('plb-required-tags');
+const excludedTagsInput = document.getElementById('plb-excluded-tags');
+const requiredTagsPickerBtn = document.getElementById('plb-required-tags-picker-btn');
+const excludedTagsPickerBtn = document.getElementById('plb-excluded-tags-picker-btn');
+const tagsPickerModal = document.getElementById('playlist-builder-tags-picker-modal');
+const tagsPickerSearch = document.getElementById('plb-tags-picker-search');
+const tagsPickerGroups = document.getElementById('plb-tags-picker-groups');
+const tagsPickerAddBtn = document.getElementById('plb-tags-picker-add-btn');
+const tagsPickerCloseBtn = document.getElementById('plb-tags-picker-close-btn');
 
+if (!modal || !openBtn || !closeBtn || !previewBtn || !applyBtn || !status || !summary || !tracks || !audioIdsInput) return;
+
+const hasTitleGen =
+  !!titleInput &&
+  !!titlegenSection &&
+  !!titlegenStatus &&
+  !!titlegenDefaultTemplate &&
+  !!titlegenTemplateSelect &&
+  !!titlegenSelectedTemplate &&
+  !!titlegenProposedTitle &&
+  !!titlegenCurrentTitle &&
+  !!titlegenOverwriteWarning &&
+  !!titlegenGenerateBtn &&
+  !!titlegenRegenerateBtn &&
+  !!titlegenApplyBtn;
+
+const hasTagsPicker =
+  !!requiredTagsInput &&
+  !!excludedTagsInput &&
+  !!requiredTagsPickerBtn &&
+  !!excludedTagsPickerBtn &&
+  !!tagsPickerModal &&
+  !!tagsPickerSearch &&
+  !!tagsPickerGroups &&
+  !!tagsPickerAddBtn &&
+  !!tagsPickerCloseBtn;
+  
   let activeJobId = Number.isInteger(initialJobId) ? initialJobId : null;
   let activeReleaseId = Number.isInteger(initialReleaseId) ? initialReleaseId : null;
   let lastPreviewId = null;
   let lastTrackPks = [];
   let lastPreviewOverrideSnapshot = null;
+  let tagsPickerTargetInput = null;
+  let tagsOptionsCache = [];
+  const channelSelectEl = document.querySelector('select[name="channel_id"]');
+  const channelIdToSlug = new Map();
+  if (channelSelectEl) {
+    Array.from(channelSelectEl.options || []).forEach((opt) => {
+      const id = Number(opt.value);
+      const slug = String(opt.dataset.channelSlug || '').trim();
+      if (Number.isInteger(id) && slug) {
+        channelIdToSlug.set(id, slug);
+      }
+    });
+  }
+
   function canRun() {
     return Number.isInteger(activeJobId);
+  }
+
+  function resolveSelectedChannelSlug() {
+    const channelInput = document.querySelector('select[name="channel_id"], input[name="channel_id"]');
+    if (!channelInput) return '';
+    const channelId = Number(channelInput.value);
+    if (!Number.isInteger(channelId)) return '';
+    return channelIdToSlug.get(channelId) || '';
   }
 
   function buildCreatePayload() {
@@ -214,18 +290,43 @@
     };
   }
 
+  function buildPlaylistBuilderDraftPayload() {
+    const payload = buildCreatePayload();
+    return {
+      channel_id: payload.channel_id,
+      title: payload.title,
+      description: payload.description,
+      tags_csv: payload.tags_csv,
+      cover_name: payload.cover_name,
+      cover_ext: payload.cover_ext,
+      background_name: payload.background_name,
+      background_ext: payload.background_ext,
+    };
+  }
+
   async function ensureJobIdForPlaylistBuilder() {
     if (canRun()) return activeJobId;
     status.textContent = 'Creating draft...';
-    const createResp = await fetch('/v1/ui/jobs', {
+    const createResp = await fetch('/v1/ui/jobs/playlist-builder-draft', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildCreatePayload()),
+      body: JSON.stringify(buildPlaylistBuilderDraftPayload()),
     });
     const createPayload = await createResp.json();
     if (!createResp.ok) {
-      status.textContent = 'Draft creation failed. Fill required fields and retry Preview.';
+      const detail = createPayload && createPayload.detail ? createPayload.detail : null;
+      const fieldErrors = detail && detail.field_errors ? detail.field_errors : null;
+      const firstFieldError = fieldErrors
+        ? Object.values(fieldErrors).find((messages) => Array.isArray(messages) && messages.length > 0)
+        : null;
+      if (Array.isArray(firstFieldError) && firstFieldError.length > 0) {
+        status.textContent = `Draft creation failed: ${firstFieldError[0]}`;
+      } else if (detail && detail.message) {
+        status.textContent = `Draft creation failed: ${detail.message}`;
+      } else {
+        status.textContent = 'Draft creation failed. Check required fields (project/title) and retry Preview.';
+      }
       return null;
     }
     activeJobId = Number(createPayload.job_id);
@@ -263,6 +364,75 @@
 
   function splitTags(id) {
     return document.getElementById(id).value.split(',').map((v) => v.trim()).filter(Boolean);
+  }
+
+
+  function parseTagListFromInput(inputEl) {
+    return String(inputEl.value || '').split(',').map((v) => v.trim()).filter(Boolean);
+  }
+
+  function mergeCanonicalTagsIntoInput(inputEl, toAdd) {
+    const existing = parseTagListFromInput(inputEl);
+    const lowerExisting = new Set(existing.map((v) => v.toLowerCase()));
+    const merged = [...existing];
+    toAdd.forEach((v) => {
+      const norm = String(v || '').trim();
+      if (!norm) return;
+      const lower = norm.toLowerCase();
+      if (lowerExisting.has(lower)) return;
+      lowerExisting.add(lower);
+      merged.push(norm);
+    });
+    inputEl.value = merged.join(', ');
+    invalidatePreviewState();
+  }
+
+  async function fetchTagOptions() {
+    let channelSlug = '';
+    if (Number.isInteger(activeJobId)) {
+      const briefResp = await fetch(`/v1/playlist-builder/jobs/${activeJobId}/brief`, { credentials: 'same-origin' });
+      const briefPayload = await briefResp.json();
+      if (briefResp.ok) {
+        channelSlug = briefPayload && briefPayload.brief ? String(briefPayload.brief.channel_slug || '').trim() : '';
+      }
+    }
+    if (!channelSlug) {
+      channelSlug = resolveSelectedChannelSlug();
+    }
+    const query = channelSlug ? `?channel_slug=${encodeURIComponent(channelSlug)}` : '';
+    const resp = await fetch(`/v1/playlist-builder/tags/options${query}`, { credentials: 'same-origin' });
+    const payload = await resp.json();
+    if (!resp.ok) return [];
+    return Array.isArray(payload.options) ? payload.options : [];
+  }
+
+  function renderTagOptions(filterText) {
+    const activeFilter = String(filterText || '').trim().toLowerCase();
+    const grouped = {};
+    tagsOptionsCache.forEach((option) => {
+      const hay = `${option.group || ''} ${option.label || ''} ${option.value || ''}`.toLowerCase();
+      if (activeFilter && !hay.includes(activeFilter)) return;
+      const key = option.group || option.source || 'Other';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(option);
+    });
+    const groupsHtml = Object.keys(grouped).sort().map((groupName) => {
+      const optionsHtml = grouped[groupName].map((option) => {
+        const usage = Number.isFinite(option.count) ? ` <small>(count: ${option.count})</small>` : '';
+        return `<label style="display:block; margin:2px 0;"><input type="checkbox" data-tag-value="${option.value}"> <b>${option.label}</b> <code>${option.value}</code>${usage}</label>`;
+      }).join('');
+      return `<details open><summary><strong>${groupName}</strong></summary>${optionsHtml || '<p>No tags</p>'}</details>`;
+    }).join('');
+    tagsPickerGroups.innerHTML = groupsHtml || '<p>No tag options found for this channel.</p>';
+  }
+
+  async function openTagsPicker(targetInput) {
+    tagsPickerTargetInput = targetInput;
+    tagsPickerSearch.value = '';
+    tagsPickerGroups.innerHTML = '<p>Loading tags...</p>';
+    tagsPickerModal.showModal();
+    tagsOptionsCache = await fetchTagOptions();
+    renderTagOptions('');
   }
 
   function buildOverride() {
@@ -440,6 +610,21 @@
     refreshCurrentTitleLabel();
     titlegenStatus.textContent = payload.title_updated ? 'Applied. Only release.title was changed.' : (payload.message || 'Title already up to date.');
     resetTitlegenGeneration();
+  function renderDiagnosticsBlock(diag, reasonText) {
+    if (!diag && !reasonText) return '';
+    const d = diag || {};
+    return `
+      <div style="border:1px solid #ddd; padding:8px; margin-top:8px;">
+        <p><b>failure reason:</b> ${reasonText || d.reason || '-'}</p>
+        <p><b>resolved channel_slug:</b> ${d.resolved_channel_slug || '-'}</p>
+        <p><b>candidate diagnostics:</b>
+          initial=${d.initial_tracks ?? '-'} · analyzed/eligible=${d.after_analyzed_eligible ?? '-'} ·
+          after month_batch=${d.after_month_batch_preference_or_filter ?? '-'} · after tags=${d.after_excluded_tags ?? d.after_required_tags ?? '-'} ·
+          after vocal policy=${d.after_vocal_policy ?? '-'} · after history=${d.after_history_reuse ?? '-'} ·
+          after position memory=${d.after_position_memory ?? '-'} · final=${d.final_candidates ?? '-'}
+        </p>
+      </div>
+    `;
   }
 
   function renderPreview(payload) {
@@ -454,7 +639,8 @@
       <p><b>target batch ratio:</b> ${b.target_preferred ?? ''} · <b>achieved batch ratio:</b> ${b.achieved_preferred ?? ''}</p>
       <p><b>target novelty:</b> ${n.target_min ?? ''} - ${n.target_max ?? ''} · <b>achieved novelty:</b> ${n.achieved ?? ''}</p>
       <p><b>warnings:</b> ${(s.warnings || []).join('; ') || '-'}</p>
-      <p><b>relaxations:</b> ${(s.relaxations || []).join('; ') || '-'}</p>
+      <p><b>relaxations:</b> ${(s.relaxations_structured || []).map(r => `${r.constraint_name}: ${r.relaxation_applied}`).join('; ') || (s.relaxations || []).join('; ') || '-'}</p>
+      ${renderDiagnosticsBlock(s.diagnostics || {}, '')}
     `;
     summary.style.display = 'block';
 
@@ -489,6 +675,26 @@
   });
 
   closeBtn.addEventListener('click', () => modal.close());
+  tagsPickerCloseBtn.addEventListener('click', () => tagsPickerModal.close());
+  requiredTagsPickerBtn.addEventListener('click', async () => {
+    const jobId = await ensureJobIdForPlaylistBuilder();
+    if (!Number.isInteger(jobId)) return;
+    await openTagsPicker(requiredTagsInput);
+  });
+  excludedTagsPickerBtn.addEventListener('click', async () => {
+    const jobId = await ensureJobIdForPlaylistBuilder();
+    if (!Number.isInteger(jobId)) return;
+    await openTagsPicker(excludedTagsInput);
+  });
+  tagsPickerSearch.addEventListener('input', () => renderTagOptions(tagsPickerSearch.value));
+  tagsPickerAddBtn.addEventListener('click', () => {
+    if (!tagsPickerTargetInput) return;
+    const checked = Array.from(tagsPickerGroups.querySelectorAll('input[data-tag-value]:checked'))
+      .map((el) => el.getAttribute('data-tag-value'))
+      .filter(Boolean);
+    mergeCanonicalTagsIntoInput(tagsPickerTargetInput, checked);
+    tagsPickerModal.close();
+  });
 
   previewStateInputIds.forEach((id) => {
     const el = document.getElementById(id);
@@ -508,30 +714,77 @@
   if (titlegenApplyBtn) titlegenApplyBtn.addEventListener('click', applyGeneratedTitle);
   if (titleInput) titleInput.addEventListener('input', refreshCurrentTitleLabel);
   loadTitlegenContext();
+  const previewRequestTimeoutMs = 20000;
+
+  async function parseJsonSafe(resp) {
+    const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('application/json')) return null;
+    try {
+      return await resp.json();
+    } catch (_err) {
+      return null;
+    }
+  }
 
   previewBtn.addEventListener('click', async () => {
     const jobId = await ensureJobIdForPlaylistBuilder();
     if (!Number.isInteger(jobId)) return;
     status.textContent = 'Previewing...';
+    previewBtn.disabled = true;
     applyBtn.disabled = true;
     const override = buildOverride();
-    const resp = await fetch(`/v1/playlist-builder/jobs/${jobId}/preview`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ override }),
-    });
-    const payload = await resp.json();
-    if (!resp.ok) {
-      status.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Preview failed';
-      return;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort('preview_timeout'), previewRequestTimeoutMs);
+    try {
+      const resp = await fetch(`/v1/playlist-builder/jobs/${jobId}/preview`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ override }),
+        signal: controller.signal,
+      });
+      const payload = await parseJsonSafe(resp);
+      if (!resp.ok) {
+        const error = payload && payload.error ? payload.error : {};
+        const diagnostics = error.diagnostics || {};
+        const fallbackReason = resp.status >= 500 ? 'Preview failed due to a server error. Please retry.' : 'Preview failed';
+        const reason = error.message || diagnostics.reason || fallbackReason;
+        const concise = diagnostics.preview_total_ms ? ` (${diagnostics.preview_total_ms} ms)` : '';
+        status.textContent = `${reason}${concise}`;
+        summary.innerHTML = renderDiagnosticsBlock(diagnostics, reason);
+        summary.style.display = 'block';
+        tracks.innerHTML = '';
+        tracks.style.display = 'none';
+        return;
+      }
+      if (!payload) {
+        status.textContent = 'Preview failed: server returned an invalid response.';
+        summary.innerHTML = '';
+        summary.style.display = 'none';
+        tracks.innerHTML = '';
+        tracks.style.display = 'none';
+        return;
+      }
+      lastPreviewId = payload.preview_id;
+      lastPreviewOverrideSnapshot = override;
+      lastTrackPks = (payload.tracks || []).map((t) => t.track_pk).filter((v) => Number.isInteger(v));
+      renderPreview(payload);
+      status.textContent = `Preview ready: ${lastPreviewId}`;
+      applyBtn.disabled = false;
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        status.textContent = `Preview request timed out after ${previewRequestTimeoutMs / 1000}s. Please retry.`;
+      } else {
+        status.textContent = `Preview failed: ${(err && err.message) ? err.message : 'network error'}`;
+      }
+      summary.innerHTML = '';
+      summary.style.display = 'none';
+      tracks.innerHTML = '';
+      tracks.style.display = 'none';
+    } finally {
+      window.clearTimeout(timeoutId);
+      previewBtn.disabled = false;
     }
-    lastPreviewId = payload.preview_id;
-    lastPreviewOverrideSnapshot = override;
-    lastTrackPks = (payload.tracks || []).map((t) => t.track_pk).filter((v) => Number.isInteger(v));
-    renderPreview(payload);
-    status.textContent = `Preview ready: ${lastPreviewId}`;
-    applyBtn.disabled = false;
   });
 
   applyBtn.addEventListener('click', async () => {

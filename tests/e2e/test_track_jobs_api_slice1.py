@@ -218,7 +218,17 @@ class TestTrackJobsApiSlice1(unittest.TestCase):
 
             mod = importlib.import_module("services.factory_api.app")
             importlib.reload(mod)
-            mod.evaluate_disk_pressure_for_env = lambda **_kwargs: type("Snap", (), {"pressure": DiskPressureLevel.CRITICAL})()
+            mod.evaluate_disk_pressure_for_env = lambda **_kwargs: type("Snap", (), {
+                "pressure": DiskPressureLevel.CRITICAL,
+                "free_percent": 2.0,
+                "free_gib": 5.0,
+                "total_bytes": 100 * 1024**3,
+                "used_bytes": 95 * 1024**3,
+                "free_bytes": 5 * 1024**3,
+                "checked_path": "/tmp",
+                "resolved_mount_or_anchor": "/",
+                "thresholds": type("Thresholds", (), {"fail_percent": 8.0, "fail_gib": 10.0})(),
+            })()
             mod.emit_disk_pressure_event = lambda **_kwargs: None
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
@@ -230,6 +240,10 @@ class TestTrackJobsApiSlice1(unittest.TestCase):
             )
             self.assertEqual(r.status_code, 503)
             self.assertEqual(r.json()["error"]["code"], "DISK_CRITICAL_WRITE_BLOCKED")
+            details = r.json()["error"].get("details") or {}
+            self.assertEqual(details.get("operation"), "track_jobs_analyze")
+            self.assertEqual(details.get("checked_path"), "/tmp")
+            self.assertEqual(details.get("reason"), "free_percent_and_free_bytes_below_critical_threshold")
 
 
 
