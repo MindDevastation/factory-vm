@@ -179,15 +179,15 @@ def validate_preset_for_save(*, channel: Dict[str, Any], preset_name: str, prese
     if not str(preset_name or "").strip():
         errors.append({"code": "MTV_PRESET_NAME_REQUIRED", "message": "preset_name is required"})
 
-    body_items = _decode_preset_body_json(preset_body_json)
-    if isinstance(body_items, list):
+    body_items, decode_errors = _decode_preset_body_json(preset_body_json)
+    if decode_errors:
+        errors.extend(decode_errors)
+        body_items = []
+    else:
         if not body_items:
             errors.append({"code": "MTV_PRESET_BODY_EMPTY", "message": "preset_body must be a non-empty array"})
         if any(not isinstance(item, str) for item in body_items):
             errors.append({"code": "MTV_PRESET_BODY_ITEM_TYPE", "message": "preset_body items must all be strings"})
-    else:
-        errors.extend(body_items)
-        body_items = []
 
     syntax_errors: List[str] = []
     used_variables: set[str] = set()
@@ -359,14 +359,14 @@ def load_preview_release_context(
     return row
 
 
-def _decode_preset_body_json(preset_body_json: str) -> List[str] | List[Dict[str, str]]:
+def _decode_preset_body_json(preset_body_json: str) -> tuple[List[Any], List[Dict[str, str]]]:
     try:
         decoded = json.loads(preset_body_json)
     except Exception:
-        return [{"code": "MTV_PRESET_BODY_JSON_INVALID", "message": "preset_body_json must be valid JSON"}]
+        return [], [{"code": "MTV_PRESET_BODY_JSON_INVALID", "message": "preset_body_json must be valid JSON"}]
     if not isinstance(decoded, list):
-        return [{"code": "MTV_PRESET_BODY_NOT_ARRAY", "message": "preset_body_json must decode to an array"}]
-    return decoded
+        return [], [{"code": "MTV_PRESET_BODY_NOT_ARRAY", "message": "preset_body_json must decode to an array"}]
+    return decoded, []
 
 
 def _render_for_estimation(*, channel: Dict[str, Any], parsed_items: Sequence[ParseResult]) -> List[str]:
