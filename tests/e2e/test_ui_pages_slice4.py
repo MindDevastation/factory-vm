@@ -217,6 +217,171 @@ class TestUiPagesSlice4(unittest.TestCase):
             )
             self.assertEqual(explicit.status_code, 200)
 
+    def test_job_edit_descriptiongen_single_release_operator_flow(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="Night Ritual",
+                    description="Manual Existing Description",
+                    tags_csv="ambient,night",
+                    cover_name="cover",
+                    cover_ext="jpg",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                before_row = conn.execute(
+                    "SELECT r.id AS release_id, r.title, r.description, r.tags_json FROM jobs j JOIN releases r ON r.id = j.release_id WHERE j.id = ?",
+                    (job_id,),
+                ).fetchone()
+                assert before_row
+                release_id = int(before_row["release_id"])
+                dbm.create_description_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Default Description",
+                    template_body="{{channel_display_name}}\n\n{{release_title}}",
+                    status="ACTIVE",
+                    is_default=True,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            edit_page = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(edit_page.status_code, 200)
+            self.assertIn('id="descriptiongen-section"', edit_page.text)
+            self.assertIn("Generation does not change the release description until you apply.", edit_page.text)
+            self.assertIn("Applying this generated description will overwrite the existing release description.", edit_page.text)
+            self.assertIn("descriptiongen-overwrite-checkbox", edit_page.text)
+            self.assertIn("overwrite_confirmed: overwriteNeedsConfirm", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/descriptiongen/context", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/descriptiongen/generate", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/descriptiongen/apply", edit_page.text)
+
+            generate_resp = client.post(f"/v1/metadata/releases/{release_id}/descriptiongen/generate", headers=h, json={})
+            self.assertEqual(generate_resp.status_code, 200)
+            generate_payload = generate_resp.json()
+
+            conn = dbm.connect(env)
+            try:
+                after_generate_row = conn.execute("SELECT title, description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone()
+                assert after_generate_row
+            finally:
+                conn.close()
+            self.assertEqual(after_generate_row["description"], before_row["description"])
+            self.assertEqual(after_generate_row["title"], before_row["title"])
+            self.assertEqual(after_generate_row["tags_json"], before_row["tags_json"])
+
+            denied_apply = client.post(
+                f"/v1/metadata/releases/{release_id}/descriptiongen/apply",
+                headers=h,
+                json={
+                    "generation_fingerprint": generate_payload["generation_fingerprint"],
+                    "overwrite_confirmed": False,
+                },
+            )
+            self.assertEqual(denied_apply.status_code, 422)
+            self.assertEqual(denied_apply.json()["error"]["code"], "MTD_OVERWRITE_CONFIRMATION_REQUIRED")
+
+            apply_resp = client.post(
+                f"/v1/metadata/releases/{release_id}/descriptiongen/apply",
+                headers=h,
+                json={
+                    "generation_fingerprint": generate_payload["generation_fingerprint"],
+                    "overwrite_confirmed": True,
+                },
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+            apply_payload = apply_resp.json()
+            self.assertTrue(apply_payload["description_updated"])
+
+            conn = dbm.connect(env)
+            try:
+                after_apply_row = conn.execute("SELECT title, description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone()
+                assert after_apply_row
+            finally:
+                conn.close()
+            self.assertEqual(after_apply_row["description"], apply_payload["description_after"])
+            self.assertEqual(after_apply_row["title"], before_row["title"])
+            self.assertEqual(after_apply_row["tags_json"], before_row["tags_json"])
+
+    def test_descriptiongen_no_default_requires_manual_selection(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="Night Ritual",
+                    description="",
+                    tags_csv="",
+                    cover_name="cover",
+                    cover_ext="jpg",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                release_id = int(conn.execute("SELECT release_id FROM jobs WHERE id = ?", (job_id,)).fetchone()["release_id"])
+                explicit_tpl = dbm.create_description_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Non-default description template",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+            finally:
+                conn.close()
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            edit_page = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(edit_page.status_code, 200)
+            self.assertIn("Select a template before generating preview.", edit_page.text)
+            self.assertIn("descriptiongenTemplateSelect.value = '';", edit_page.text)
+
+            no_selection = client.post(f"/v1/metadata/releases/{release_id}/descriptiongen/generate", headers=h, json={})
+            self.assertEqual(no_selection.status_code, 422)
+            self.assertEqual(no_selection.json()["error"]["code"], "MTD_DEFAULT_TEMPLATE_NOT_CONFIGURED")
+
+            explicit = client.post(
+                f"/v1/metadata/releases/{release_id}/descriptiongen/generate",
+                headers=h,
+                json={"template_id": explicit_tpl},
+            )
+            self.assertEqual(explicit.status_code, 200)
+
     def test_playlist_builder_preview_state_guards(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
