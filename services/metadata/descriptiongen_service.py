@@ -189,7 +189,7 @@ def generate_description_preview(
         channel_slug=context.channel_slug,
         template_id=int(template["id"]),
         template_updated_at=template.get("updated_at"),
-        release_context_version=context.release_row.get("created_at") or context.release_id,
+        release_context_version=_build_release_context_version(context.release_row),
         proposed_description=rendered,
     )
 
@@ -243,3 +243,10 @@ def _build_generation_fingerprint(
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _build_release_context_version(release_row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "title": release_row.get("title"),
+        "planned_at": release_row.get("planned_at"),
+    }
