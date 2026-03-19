@@ -67,7 +67,7 @@ from services.track_analysis_report.xlsx_export import export_report_to_xlsx_byt
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
-from services.metadata import title_template_service, titlegen_service
+from services.metadata import description_template_service, title_template_service, titlegen_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -226,6 +226,12 @@ class MetadataTitleTemplateCreateRequest(BaseModel):
 class MetadataTitleTemplatePatchRequest(BaseModel):
     template_name: str | None = None
     template_body: str | None = None
+
+
+class MetadataDescriptionTemplatePreviewRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_body: str
+    release_id: int | None = None
 
 
 class MetadataTitleGenGenerateRequest(BaseModel):
@@ -447,6 +453,59 @@ def api_metadata_title_templates_preview(
     if preview.validation_errors:
         logger.info("metadata.title_template.validation_failed", extra=log_payload)
 
+    return preview.to_dict()
+
+
+def _mtd_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+@app.get("/v1/metadata/description-templates/variables")
+def api_metadata_description_templates_variables(_: bool = Depends(require_basic_auth(env))):
+    return {"variables": description_template_service.allowed_variables_catalog()}
+
+
+@app.post("/v1/metadata/description-templates/preview")
+def api_metadata_description_templates_preview(
+    payload: MetadataDescriptionTemplatePreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_slug(conn, payload.channel_slug)
+        if not channel:
+            return _mtd_error(404, "MTD_CHANNEL_NOT_FOUND", "Channel not found")
+        try:
+            release_row = description_template_service.load_preview_release_context(
+                conn,
+                channel_slug=payload.channel_slug,
+                release_id=payload.release_id,
+            )
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code == "MTD_RELEASE_NOT_FOUND" else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    preview = description_template_service.preview_description_template(
+        channel=channel,
+        template_body=payload.template_body,
+        release_row=release_row,
+    )
+    log_payload: Dict[str, Any] = {
+        "channel_slug": payload.channel_slug,
+        "release_id": payload.release_id,
+        "render_status": preview.render_status,
+        "missing_variables": list(preview.missing_variables),
+        "used_variables": list(preview.used_variables),
+        "validation_error_codes": [item["code"] for item in preview.validation_errors],
+        "template_length": len(payload.template_body),
+        "normalized_length": preview.normalized_length,
+        "line_count": preview.line_count,
+    }
+    logger.info("metadata.description_template.previewed", extra=log_payload)
+    if preview.validation_errors:
+        logger.info("metadata.description_template.validation_failed", extra=log_payload)
     return preview.to_dict()
 
 
