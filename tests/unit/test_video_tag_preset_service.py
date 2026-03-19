@@ -39,6 +39,23 @@ class TestVideoTagPresetService(unittest.TestCase):
         )
         self.assertIn("MTV_PRESET_BODY_ITEM_TYPE", [item["code"] for item in result.validation_errors])
 
+
+    def test_preset_body_json_invalid_returns_json_invalid_code(self) -> None:
+        result = svc.validate_preset_for_save(
+            channel=self.channel,
+            preset_name="Main",
+            preset_body_json="notjson",
+        )
+        self.assertIn("MTV_PRESET_BODY_JSON_INVALID", [item["code"] for item in result.validation_errors])
+
+    def test_preset_body_json_object_returns_not_array_code(self) -> None:
+        result = svc.validate_preset_for_save(
+            channel=self.channel,
+            preset_name="Main",
+            preset_body_json='{"a":1}',
+        )
+        self.assertIn("MTV_PRESET_BODY_NOT_ARRAY", [item["code"] for item in result.validation_errors])
+
     def test_release_title_usability_logic(self) -> None:
         missing = svc.preview_video_tag_preset(
             channel=self.channel,
