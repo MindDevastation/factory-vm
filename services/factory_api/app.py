@@ -246,6 +246,18 @@ class MetadataVideoTagPresetPreviewRequest(BaseModel):
     release_id: int | None = None
 
 
+class MetadataVideoTagPresetCreateRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    preset_name: str
+    preset_body: list[str]
+    make_default: bool = False
+
+
+class MetadataVideoTagPresetPatchRequest(BaseModel):
+    preset_name: str | None = None
+    preset_body: list[str] | None = None
+
+
 class MetadataDescriptionTemplateCreateRequest(BaseModel):
     channel_slug: str = Field(min_length=1)
     template_name: str
@@ -666,6 +678,10 @@ def _mtd_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
+def _mtv_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
 @app.get("/v1/metadata/description-templates/variables")
 def api_metadata_description_templates_variables(_: bool = Depends(require_basic_auth(env))):
     return {"variables": description_template_service.allowed_variables_catalog()}
@@ -729,7 +745,7 @@ def api_metadata_video_tag_presets_preview(
     try:
         channel = dbm.get_channel_by_slug(conn, payload.channel_slug)
         if not channel:
-            return _mtd_error(404, "MTV_CHANNEL_NOT_FOUND", "Channel not found")
+            return _mtv_error(404, "MTV_CHANNEL_NOT_FOUND", "Channel not found")
         try:
             release_row = video_tag_preset_service.load_preview_release_context(
                 conn,
@@ -738,7 +754,7 @@ def api_metadata_video_tag_presets_preview(
             )
         except video_tag_preset_service.VideoTagPresetError as exc:
             status_code = 404 if exc.code == "MTV_RELEASE_NOT_FOUND" else 422
-            return _mtd_error(status_code, exc.code, exc.message)
+            return _mtv_error(status_code, exc.code, exc.message)
     finally:
         conn.close()
 
@@ -761,6 +777,216 @@ def api_metadata_video_tag_presets_preview(
     if preview.validation_errors:
         logger.info("metadata.video_tag_preset.validation_failed", extra=log_payload)
     return preview.to_dict()
+
+
+@app.post("/v1/metadata/video-tag-presets")
+def api_metadata_video_tag_presets_create(
+    payload: MetadataVideoTagPresetCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = video_tag_preset_service.create_video_tag_preset(
+                conn,
+                channel_slug=payload.channel_slug,
+                preset_name=payload.preset_name,
+                preset_body=payload.preset_body,
+                make_default=payload.make_default,
+            )
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.video_tag_preset.validation_failed",
+                extra={
+                    "preset_id": None,
+                    "channel_slug": payload.channel_slug,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.video_tag_preset.created",
+        extra={
+            "preset_id": result["id"],
+            "channel_slug": result["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return result
+
+
+@app.get("/v1/metadata/video-tag-presets")
+def api_metadata_video_tag_presets_list(
+    channel_slug: str | None = None,
+    status: str = "active",
+    q: str | None = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    status_filter = (status or "active").lower()
+    if status_filter not in {"active", "archived", "all"}:
+        return _mtv_error(422, "MTV_INVALID_STATUS_FILTER", "status must be active|archived|all")
+    conn = dbm.connect(env)
+    try:
+        rows = video_tag_preset_service.list_video_tag_presets(
+            conn,
+            channel_slug=channel_slug,
+            status_filter=status_filter,
+            q=q,
+        )
+    finally:
+        conn.close()
+    return {"items": rows}
+
+
+@app.get("/v1/metadata/video-tag-presets/{preset_id}")
+def api_metadata_video_tag_presets_detail(preset_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = video_tag_preset_service.get_video_tag_preset(conn, preset_id=preset_id)
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.patch("/v1/metadata/video-tag-presets/{preset_id}")
+def api_metadata_video_tag_presets_patch(
+    preset_id: int,
+    payload: MetadataVideoTagPresetPatchRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = video_tag_preset_service.update_video_tag_preset(
+                conn,
+                preset_id=preset_id,
+                preset_name=payload.preset_name,
+                preset_body=payload.preset_body,
+            )
+            conn.commit()
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.video_tag_preset.validation_failed",
+                extra={
+                    "preset_id": preset_id,
+                    "channel_slug": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.video_tag_preset.updated",
+        extra={
+            "preset_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/video-tag-presets/{preset_id}/set-default")
+def api_metadata_video_tag_presets_set_default(preset_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = video_tag_preset_service.set_default_video_tag_preset(conn, preset_id=preset_id)
+            conn.commit()
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.video_tag_preset.validation_failed",
+                extra={
+                    "preset_id": preset_id,
+                    "channel_slug": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.video_tag_preset.default_changed",
+        extra={
+            "preset_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/video-tag-presets/{preset_id}/archive")
+def api_metadata_video_tag_presets_archive(preset_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = video_tag_preset_service.archive_video_tag_preset(conn, preset_id=preset_id)
+            conn.commit()
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.video_tag_preset.archived",
+        extra={
+            "preset_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/video-tag-presets/{preset_id}/activate")
+def api_metadata_video_tag_presets_activate(preset_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = video_tag_preset_service.activate_video_tag_preset(conn, preset_id=preset_id)
+            conn.commit()
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.video_tag_preset.activated",
+        extra={
+            "preset_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
 
 
 @app.post("/v1/metadata/description-templates")

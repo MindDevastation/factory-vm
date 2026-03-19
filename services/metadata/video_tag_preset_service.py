@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Sequence
 from services.common import db as dbm
 
 _VARIABLE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-_RELEASE_TITLE_ESTIMATED_MAX_LEN = 1000
+_RELEASE_TITLE_ESTIMATED_MAX_LEN = 100
 _MAX_TAG_ITEM_LEN = 500
 _MAX_TAG_COUNT = 500
 _MAX_COMBINED_CHARS = 5000
@@ -335,6 +335,195 @@ def preview_video_tag_preset(*, channel: Dict[str, Any], preset_body: Sequence[s
     )
 
 
+def create_video_tag_preset(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    preset_name: str,
+    preset_body: Sequence[str],
+    make_default: bool,
+) -> Dict[str, Any]:
+    channel = dbm.get_channel_by_slug(conn, channel_slug)
+    if not channel:
+        raise VideoTagPresetError(code="MTV_CHANNEL_NOT_FOUND", message="Channel not found")
+
+    result = validate_preset_for_save(
+        channel=channel,
+        preset_name=preset_name,
+        preset_body_json=json.dumps(list(preset_body)),
+    )
+    if result.validation_errors:
+        first = result.validation_errors[0]
+        raise VideoTagPresetError(code=str(first["code"]), message=str(first["message"]))
+
+    now = _now_iso()
+    preset_body_json = json.dumps(list(preset_body))
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if make_default:
+            dbm.unset_active_default_video_tag_preset(conn, channel_slug=channel_slug)
+        preset_id = dbm.create_video_tag_preset(
+            conn,
+            channel_slug=channel_slug,
+            preset_name=preset_name.strip(),
+            preset_body_json=preset_body_json,
+            status="ACTIVE",
+            is_default=make_default,
+            validation_status="VALID",
+            validation_errors_json=None,
+            last_validated_at=now,
+            created_at=now,
+            updated_at=now,
+            archived_at=None,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    row = dbm.get_video_tag_preset_by_id(conn, preset_id)
+    assert row is not None
+    return _serialize_preset(row)
+
+
+def list_video_tag_presets(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str | None,
+    status_filter: str,
+    q: str | None,
+) -> List[Dict[str, Any]]:
+    status: str | None
+    if status_filter == "active":
+        status = "ACTIVE"
+    elif status_filter == "archived":
+        status = "ARCHIVED"
+    else:
+        status = None
+    rows = dbm.list_video_tag_presets(conn, channel_slug=channel_slug, status=status, q=(q or None))
+    return [_serialize_preset(row) for row in rows]
+
+
+def get_video_tag_preset(conn: sqlite3.Connection, *, preset_id: int) -> Dict[str, Any]:
+    row = dbm.get_video_tag_preset_by_id(conn, preset_id)
+    if not row:
+        raise VideoTagPresetError(code="MTV_PRESET_NOT_FOUND", message="Preset not found")
+    return _serialize_preset(row)
+
+
+def update_video_tag_preset(
+    conn: sqlite3.Connection,
+    *,
+    preset_id: int,
+    preset_name: str | None,
+    preset_body: Sequence[str] | None,
+) -> Dict[str, Any]:
+    row = dbm.get_video_tag_preset_by_id(conn, preset_id)
+    if not row:
+        raise VideoTagPresetError(code="MTV_PRESET_NOT_FOUND", message="Preset not found")
+    channel = dbm.get_channel_by_slug(conn, str(row.get("channel_slug") or ""))
+    if not channel:
+        raise VideoTagPresetError(code="MTV_CHANNEL_NOT_FOUND", message="Channel not found")
+
+    next_name = (preset_name if preset_name is not None else str(row.get("preset_name") or "")).strip()
+    next_body = preset_body if preset_body is not None else dbm.json_loads(str(row.get("preset_body_json") or "[]"))
+    result = validate_preset_for_save(
+        channel=channel,
+        preset_name=next_name,
+        preset_body_json=json.dumps(list(next_body)),
+    )
+    if result.validation_errors:
+        first = result.validation_errors[0]
+        raise VideoTagPresetError(code=str(first["code"]), message=str(first["message"]))
+
+    now = _now_iso()
+    dbm.update_video_tag_preset_fields(
+        conn,
+        preset_id=preset_id,
+        preset_name=next_name,
+        preset_body_json=json.dumps(list(next_body)),
+        validation_status="VALID",
+        validation_errors_json=None,
+        last_validated_at=now,
+        updated_at=now,
+    )
+    saved = dbm.get_video_tag_preset_by_id(conn, preset_id)
+    assert saved is not None
+    return _serialize_preset(saved)
+
+
+def set_default_video_tag_preset(conn: sqlite3.Connection, *, preset_id: int) -> Dict[str, Any]:
+    row = dbm.get_video_tag_preset_by_id(conn, preset_id)
+    if not row:
+        raise VideoTagPresetError(code="MTV_PRESET_NOT_FOUND", message="Preset not found")
+    if str(row.get("status") or "") != "ACTIVE":
+        raise VideoTagPresetError(
+            code="MTV_PRESET_ARCHIVED_NOT_ALLOWED_AS_DEFAULT",
+            message="Archived preset cannot be set as default",
+        )
+    if str(row.get("validation_status") or "") != "VALID":
+        raise VideoTagPresetError(
+            code="MTV_INVALID_PRESET_CANNOT_BE_DEFAULT",
+            message="Invalid preset cannot be set as default",
+        )
+    if bool(int(row.get("is_default") or 0)):
+        return _serialize_preset(row)
+
+    now = _now_iso()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        current = dbm.get_video_tag_preset_by_id(conn, preset_id)
+        if not current:
+            raise VideoTagPresetError(code="MTV_PRESET_NOT_FOUND", message="Preset not found")
+        if str(current.get("status") or "") != "ACTIVE":
+            raise VideoTagPresetError(
+                code="MTV_PRESET_ARCHIVED_NOT_ALLOWED_AS_DEFAULT",
+                message="Archived preset cannot be set as default",
+            )
+        if str(current.get("validation_status") or "") != "VALID":
+            raise VideoTagPresetError(
+                code="MTV_INVALID_PRESET_CANNOT_BE_DEFAULT",
+                message="Invalid preset cannot be set as default",
+            )
+        dbm.unset_active_default_video_tag_preset(conn, channel_slug=str(current.get("channel_slug") or ""))
+        dbm.set_video_tag_preset_default_flag(conn, preset_id=preset_id, is_default=True, updated_at=now)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    saved = dbm.get_video_tag_preset_by_id(conn, preset_id)
+    assert saved is not None
+    return _serialize_preset(saved)
+
+
+def archive_video_tag_preset(conn: sqlite3.Connection, *, preset_id: int) -> Dict[str, Any]:
+    row = dbm.get_video_tag_preset_by_id(conn, preset_id)
+    if not row:
+        raise VideoTagPresetError(code="MTV_PRESET_NOT_FOUND", message="Preset not found")
+    if str(row.get("status") or "") == "ARCHIVED":
+        return _serialize_preset(row)
+
+    now = _now_iso()
+    dbm.archive_video_tag_preset(conn, preset_id=preset_id, updated_at=now, archived_at=now)
+    saved = dbm.get_video_tag_preset_by_id(conn, preset_id)
+    assert saved is not None
+    return _serialize_preset(saved)
+
+
+def activate_video_tag_preset(conn: sqlite3.Connection, *, preset_id: int) -> Dict[str, Any]:
+    row = dbm.get_video_tag_preset_by_id(conn, preset_id)
+    if not row:
+        raise VideoTagPresetError(code="MTV_PRESET_NOT_FOUND", message="Preset not found")
+    if str(row.get("status") or "") == "ACTIVE":
+        return _serialize_preset(row)
+
+    now = _now_iso()
+    dbm.activate_video_tag_preset(conn, preset_id=preset_id, updated_at=now)
+    saved = dbm.get_video_tag_preset_by_id(conn, preset_id)
+    assert saved is not None
+    return _serialize_preset(saved)
+
+
 def load_preview_release_context(
     conn: sqlite3.Connection,
     *,
@@ -473,3 +662,24 @@ def _release_date_from_row(release_row: Dict[str, Any] | None) -> date | None:
         return datetime.fromisoformat(planned_at.replace("Z", "+00:00")).astimezone(timezone.utc).date()
     except ValueError:
         return None
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _serialize_preset(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "channel_slug": str(row["channel_slug"]),
+        "preset_name": str(row["preset_name"]),
+        "preset_body": dbm.json_loads(str(row["preset_body_json"])),
+        "status": str(row["status"]),
+        "is_default": bool(int(row.get("is_default") or 0)),
+        "validation_status": str(row["validation_status"]),
+        "validation_errors": dbm.json_loads(str(row["validation_errors_json"])) if row.get("validation_errors_json") else [],
+        "last_validated_at": row.get("last_validated_at"),
+        "created_at": str(row["created_at"]),
+        "updated_at": str(row["updated_at"]),
+        "archived_at": row.get("archived_at"),
+    }

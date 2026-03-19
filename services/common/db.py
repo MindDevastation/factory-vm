@@ -1477,6 +1477,186 @@ def activate_description_template(
     return int(cur.rowcount or 0) > 0
 
 
+def create_video_tag_preset(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    preset_name: str,
+    preset_body_json: str,
+    status: str,
+    is_default: bool,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    created_at: str,
+    updated_at: str,
+    archived_at: str | None,
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO video_tag_presets(
+            channel_slug, preset_name, preset_body_json, status, is_default,
+            validation_status, validation_errors_json, last_validated_at,
+            created_at, updated_at, archived_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            channel_slug,
+            preset_name,
+            preset_body_json,
+            status,
+            int(is_default),
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            created_at,
+            updated_at,
+            archived_at,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def unset_active_default_video_tag_preset(conn: sqlite3.Connection, *, channel_slug: str) -> None:
+    conn.execute(
+        """
+        UPDATE video_tag_presets
+        SET is_default = 0
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1
+        """,
+        (channel_slug,),
+    )
+
+
+def get_video_tag_preset_by_id(conn: sqlite3.Connection, preset_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute("SELECT * FROM video_tag_presets WHERE id = ?", (preset_id,)).fetchone()
+
+
+def list_video_tag_presets(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str | None,
+    status: str | None,
+    q: str | None,
+) -> List[Dict[str, Any]]:
+    where: list[str] = []
+    args: list[Any] = []
+    if channel_slug:
+        where.append("channel_slug = ?")
+        args.append(channel_slug)
+    if status == "ACTIVE":
+        where.append("status = 'ACTIVE'")
+    elif status == "ARCHIVED":
+        where.append("status = 'ARCHIVED'")
+    if q:
+        where.append("preset_name LIKE ?")
+        args.append(f"%{q}%")
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+    return conn.execute(
+        f"""
+        SELECT *
+        FROM video_tag_presets
+        {where_clause}
+        ORDER BY updated_at DESC, id DESC
+        """,
+        tuple(args),
+    ).fetchall()
+
+
+def update_video_tag_preset_fields(
+    conn: sqlite3.Connection,
+    *,
+    preset_id: int,
+    preset_name: str,
+    preset_body_json: str,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE video_tag_presets
+        SET preset_name = ?,
+            preset_body_json = ?,
+            validation_status = ?,
+            validation_errors_json = ?,
+            last_validated_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            preset_name,
+            preset_body_json,
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            updated_at,
+            preset_id,
+        ),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def set_video_tag_preset_default_flag(
+    conn: sqlite3.Connection,
+    *,
+    preset_id: int,
+    is_default: bool,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE video_tag_presets
+        SET is_default = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (int(is_default), updated_at, preset_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def archive_video_tag_preset(
+    conn: sqlite3.Connection,
+    *,
+    preset_id: int,
+    updated_at: str,
+    archived_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE video_tag_presets
+        SET status = 'ARCHIVED',
+            is_default = 0,
+            archived_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (archived_at, updated_at, preset_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def activate_video_tag_preset(
+    conn: sqlite3.Connection,
+    *,
+    preset_id: int,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE video_tag_presets
+        SET status = 'ACTIVE',
+            archived_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (updated_at, preset_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
 def _next_job_id(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM jobs").fetchone()
     assert row is not None
