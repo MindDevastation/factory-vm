@@ -128,6 +128,18 @@ class TestDescriptionGenService(unittest.TestCase):
         r2 = descriptiongen_service.generate_description_preview(conn, release_id=release_id, template_id=t2)
         self.assertNotEqual(r1.generation_fingerprint, r2.generation_fingerprint)
 
+    def test_fingerprint_changes_when_release_context_changes(self) -> None:
+        conn, release_id = self._seed_release(title="title-a", description="")
+        tid = self._insert_template(conn, is_default=False, body="{{channel_display_name}}")
+        before = descriptiongen_service.generate_description_preview(conn, release_id=release_id, template_id=tid)
+
+        conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("title-b", release_id))
+        conn.commit()
+
+        after = descriptiongen_service.generate_description_preview(conn, release_id=release_id, template_id=tid)
+        self.assertEqual(before.proposed_description, after.proposed_description)
+        self.assertNotEqual(before.generation_fingerprint, after.generation_fingerprint)
+
     def test_multiline_normalization_parity_with_builder(self) -> None:
         conn, release_id = self._seed_release(title="Night Ritual", description="")
         template_body = " \r\n{{channel_display_name}}   \r\n\r\n{{release_title}}  \r\n"
