@@ -325,7 +325,7 @@ def load_preview_release_context(
 def normalize_multiline(value: str) -> str:
     normalized_newlines = value.replace("\r\n", "\n").replace("\r", "\n")
     trimmed_lines = [line.rstrip(" ") for line in normalized_newlines.split("\n")]
-    return "\n".join(trimmed_lines).strip()
+    return "\n".join(trimmed_lines).strip(" \n\r")
 
 
 def _structural_errors(normalized: str) -> List[Dict[str, str]]:
@@ -420,3 +420,200 @@ def _release_date_from_row(release_row: Dict[str, Any] | None) -> date | None:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def create_description_template(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    template_name: str,
+    template_body: str,
+    make_default: bool,
+) -> Dict[str, Any]:
+    channel = dbm.get_channel_by_slug(conn, channel_slug)
+    if not channel:
+        raise DescriptionTemplateError(code="MTD_CHANNEL_NOT_FOUND", message="Channel not found")
+    _validate_for_write(channel=channel, template_name=template_name, template_body=template_body)
+
+    now = now_iso()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if make_default:
+            dbm.unset_active_default_description_template(conn, channel_slug=channel_slug)
+        template_id = dbm.create_description_template(
+            conn,
+            channel_slug=channel_slug,
+            template_name=template_name.strip(),
+            template_body=template_body,
+            status="ACTIVE",
+            is_default=make_default,
+            validation_status="VALID",
+            validation_errors_json=None,
+            last_validated_at=now,
+            created_at=now,
+            updated_at=now,
+            archived_at=None,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    row = dbm.get_description_template_by_id(conn, template_id)
+    assert row is not None
+    return _serialize_template(row)
+
+
+def list_description_templates(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str | None,
+    status_filter: str,
+    q: str | None,
+) -> List[Dict[str, Any]]:
+    status: str | None
+    if status_filter == "active":
+        status = "ACTIVE"
+    elif status_filter == "archived":
+        status = "ARCHIVED"
+    else:
+        status = None
+    rows = dbm.list_description_templates(conn, channel_slug=channel_slug, status=status, q=(q or None))
+    return [_serialize_template(row) for row in rows]
+
+
+def get_description_template(conn: sqlite3.Connection, *, template_id: int) -> Dict[str, Any]:
+    row = dbm.get_description_template_by_id(conn, template_id)
+    if not row:
+        raise DescriptionTemplateError(code="MTD_TEMPLATE_NOT_FOUND", message="Template not found")
+    return _serialize_template(row)
+
+
+def update_description_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    template_name: str | None,
+    template_body: str | None,
+) -> Dict[str, Any]:
+    row = dbm.get_description_template_by_id(conn, template_id)
+    if not row:
+        raise DescriptionTemplateError(code="MTD_TEMPLATE_NOT_FOUND", message="Template not found")
+    channel = dbm.get_channel_by_slug(conn, str(row.get("channel_slug") or ""))
+    if not channel:
+        raise DescriptionTemplateError(code="MTD_CHANNEL_NOT_FOUND", message="Channel not found")
+
+    next_name = (template_name if template_name is not None else str(row.get("template_name") or "")).strip()
+    next_body = template_body if template_body is not None else str(row.get("template_body") or "")
+    _validate_for_write(channel=channel, template_name=next_name, template_body=next_body)
+
+    now = now_iso()
+    dbm.update_description_template_fields(
+        conn,
+        template_id=template_id,
+        template_name=next_name,
+        template_body=next_body,
+        validation_status="VALID",
+        validation_errors_json=None,
+        last_validated_at=now,
+        updated_at=now,
+    )
+    saved = dbm.get_description_template_by_id(conn, template_id)
+    assert saved is not None
+    return _serialize_template(saved)
+
+
+def set_default_description_template(conn: sqlite3.Connection, *, template_id: int) -> Dict[str, Any]:
+    row = dbm.get_description_template_by_id(conn, template_id)
+    if not row:
+        raise DescriptionTemplateError(code="MTD_TEMPLATE_NOT_FOUND", message="Template not found")
+    if str(row.get("status") or "") != "ACTIVE":
+        raise DescriptionTemplateError(
+            code="MTD_TEMPLATE_ARCHIVED_NOT_ALLOWED_AS_DEFAULT",
+            message="Archived template cannot be set as default",
+        )
+    if str(row.get("validation_status") or "") != "VALID":
+        raise DescriptionTemplateError(
+            code="MTD_INVALID_TEMPLATE_CANNOT_BE_DEFAULT",
+            message="Invalid template cannot be set as default",
+        )
+    if bool(int(row.get("is_default") or 0)):
+        return _serialize_template(row)
+
+    now = now_iso()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        current = dbm.get_description_template_by_id(conn, template_id)
+        if not current:
+            raise DescriptionTemplateError(code="MTD_TEMPLATE_NOT_FOUND", message="Template not found")
+        if str(current.get("status") or "") != "ACTIVE":
+            raise DescriptionTemplateError(
+                code="MTD_TEMPLATE_ARCHIVED_NOT_ALLOWED_AS_DEFAULT",
+                message="Archived template cannot be set as default",
+            )
+        if str(current.get("validation_status") or "") != "VALID":
+            raise DescriptionTemplateError(
+                code="MTD_INVALID_TEMPLATE_CANNOT_BE_DEFAULT",
+                message="Invalid template cannot be set as default",
+            )
+        dbm.unset_active_default_description_template(conn, channel_slug=str(current.get("channel_slug") or ""))
+        dbm.set_description_template_default_flag(conn, template_id=template_id, is_default=True, updated_at=now)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    saved = dbm.get_description_template_by_id(conn, template_id)
+    assert saved is not None
+    return _serialize_template(saved)
+
+
+def archive_description_template(conn: sqlite3.Connection, *, template_id: int) -> Dict[str, Any]:
+    row = dbm.get_description_template_by_id(conn, template_id)
+    if not row:
+        raise DescriptionTemplateError(code="MTD_TEMPLATE_NOT_FOUND", message="Template not found")
+    if str(row.get("status") or "") == "ARCHIVED":
+        return _serialize_template(row)
+
+    now = now_iso()
+    dbm.archive_description_template(conn, template_id=template_id, updated_at=now, archived_at=now)
+    saved = dbm.get_description_template_by_id(conn, template_id)
+    assert saved is not None
+    return _serialize_template(saved)
+
+
+def activate_description_template(conn: sqlite3.Connection, *, template_id: int) -> Dict[str, Any]:
+    row = dbm.get_description_template_by_id(conn, template_id)
+    if not row:
+        raise DescriptionTemplateError(code="MTD_TEMPLATE_NOT_FOUND", message="Template not found")
+    if str(row.get("status") or "") == "ACTIVE":
+        return _serialize_template(row)
+
+    now = now_iso()
+    dbm.activate_description_template(conn, template_id=template_id, updated_at=now)
+    saved = dbm.get_description_template_by_id(conn, template_id)
+    assert saved is not None
+    return _serialize_template(saved)
+
+
+def _validate_for_write(*, channel: Dict[str, Any], template_name: str, template_body: str) -> None:
+    result = validate_template_for_save(channel=channel, template_name=template_name, template_body=template_body)
+    if result.validation_errors:
+        first = result.validation_errors[0]
+        raise DescriptionTemplateError(code=str(first["code"]), message=str(first["message"]))
+
+
+def _serialize_template(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "channel_slug": str(row["channel_slug"]),
+        "template_name": str(row["template_name"]),
+        "template_body": str(row["template_body"]),
+        "status": str(row["status"]),
+        "is_default": bool(int(row.get("is_default") or 0)),
+        "validation_status": str(row["validation_status"]),
+        "validation_errors": dbm.json_loads(str(row["validation_errors_json"])) if row.get("validation_errors_json") else [],
+        "last_validated_at": row.get("last_validated_at"),
+        "created_at": str(row["created_at"]),
+        "updated_at": str(row["updated_at"]),
+        "archived_at": row.get("archived_at"),
+    }
