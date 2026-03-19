@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Sequence
 from services.common import db as dbm
 
 _VARIABLE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-_RELEASE_TITLE_ESTIMATED_MAX_LEN = 100
+_RELEASE_TITLE_ESTIMATED_MAX_LEN = 1000
 _MAX_TAG_ITEM_LEN = 500
 _MAX_TAG_COUNT = 500
 _MAX_COMBINED_CHARS = 5000
