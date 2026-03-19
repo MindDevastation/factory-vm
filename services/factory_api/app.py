@@ -260,6 +260,12 @@ class MetadataTitleGenApplyRequest(BaseModel):
     overwrite_confirmed: bool = False
 
 
+class MetadataDescriptionGenApplyRequest(BaseModel):
+    template_id: int | None = None
+    generation_fingerprint: str = Field(min_length=1)
+    overwrite_confirmed: bool = False
+
+
 @app.get("/v1/metadata/releases/{release_id}/titlegen/context")
 def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -537,6 +543,62 @@ def api_metadata_titlegen_apply(
             "template_id": result.used_template_id,
             "overwrite_required": result.overwrite_required,
             "result_status": "no_op" if not result.title_updated else "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.post("/v1/metadata/releases/{release_id}/descriptiongen/apply")
+def api_metadata_descriptiongen_apply(
+    release_id: int,
+    payload: MetadataDescriptionGenApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = descriptiongen_service.apply_generated_description(
+                conn,
+                release_id=release_id,
+                template_id=payload.template_id,
+                generation_fingerprint=payload.generation_fingerprint,
+                overwrite_confirmed=payload.overwrite_confirmed,
+            )
+        except descriptiongen_service.DescriptionGenError as exc:
+            status_code = 404 if exc.code in {"MTD_RELEASE_NOT_FOUND", "MTD_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.descriptiongen.apply_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": payload.template_id,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "description_updated": result.description_updated,
+        "description_before": result.description_before,
+        "description_after": result.description_after,
+        "used_template_id": result.used_template_id,
+    }
+    if result.message is not None:
+        body["message"] = result.message
+    logger.info(
+        "metadata.descriptiongen.applied",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "template_id": result.used_template_id,
+            "overwrite_required": result.overwrite_required,
+            "result_status": "no_op" if not result.description_updated else "ok",
             "error_codes": [],
         },
     )

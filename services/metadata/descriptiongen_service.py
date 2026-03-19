@@ -46,6 +46,18 @@ class GenerateResult:
     generation_fingerprint: str
 
 
+@dataclass(frozen=True)
+class ApplyResult:
+    release_id: int
+    channel_slug: str
+    used_template_id: int
+    description_updated: bool
+    description_before: str
+    description_after: str
+    overwrite_required: bool
+    message: str | None = None
+
+
 def load_descriptiongen_context(conn: sqlite3.Connection, *, release_id: int) -> ContextResult:
     release = conn.execute(
         """
@@ -209,6 +221,55 @@ def generate_description_preview(
         overwrite_required=context.has_existing_description,
         warnings=warnings,
         generation_fingerprint=fingerprint,
+    )
+
+
+def apply_generated_description(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    template_id: int | None,
+    generation_fingerprint: str,
+    overwrite_confirmed: bool,
+) -> ApplyResult:
+    regenerated = generate_description_preview(conn, release_id=release_id, template_id=template_id)
+    if generation_fingerprint != regenerated.generation_fingerprint:
+        raise DescriptionGenError(code="MTD_PREVIEW_STALE", message="Generated preview is stale; regenerate before apply")
+
+    description_before = regenerated.current_description
+    proposed_description = regenerated.proposed_description
+    normalized_before = description_template_service.normalize_multiline(description_before)
+    normalized_proposed = description_template_service.normalize_multiline(proposed_description)
+    overwrite_required = bool(normalized_before) and normalized_before != normalized_proposed
+
+    if normalized_before == normalized_proposed:
+        return ApplyResult(
+            release_id=regenerated.release_id,
+            channel_slug=regenerated.channel_slug,
+            used_template_id=int(regenerated.used_template["id"]),
+            description_updated=False,
+            description_before=description_before,
+            description_after=description_before,
+            overwrite_required=False,
+            message="Release description already matches generated result.",
+        )
+
+    if overwrite_required and not overwrite_confirmed:
+        raise DescriptionGenError(
+            code="MTD_OVERWRITE_CONFIRMATION_REQUIRED",
+            message="overwrite_confirmed=true is required to replace existing release description",
+        )
+
+    conn.execute("UPDATE releases SET description = ? WHERE id = ?", (proposed_description, release_id))
+    conn.commit()
+    return ApplyResult(
+        release_id=regenerated.release_id,
+        channel_slug=regenerated.channel_slug,
+        used_template_id=int(regenerated.used_template["id"]),
+        description_updated=True,
+        description_before=description_before,
+        description_after=proposed_description,
+        overwrite_required=overwrite_required,
     )
 
 

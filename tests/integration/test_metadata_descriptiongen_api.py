@@ -42,7 +42,7 @@ class TestMetadataDescriptionGenApi(unittest.TestCase):
         validation_status: str = "VALID",
         body: str = "{{channel_display_name}}\n\n{{release_title}}",
         name: str = "tmpl",
-    ) -> int:
+        ) -> int:
         return dbm.create_description_template(
             conn,
             channel_slug=channel_slug,
@@ -57,6 +57,15 @@ class TestMetadataDescriptionGenApi(unittest.TestCase):
             updated_at="2026-01-01T00:00:00+00:00",
             archived_at=None,
         )
+
+    def _release_row(self, env, release_id: int):
+        conn = dbm.connect(env)
+        try:
+            row = conn.execute("SELECT * FROM releases WHERE id = ?", (release_id,)).fetchone()
+            assert row is not None
+            return dict(row)
+        finally:
+            conn.close()
 
     def test_context_endpoint_with_default_present(self) -> None:
         with temp_env() as (_, env):
@@ -213,6 +222,118 @@ class TestMetadataDescriptionGenApi(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(before, after)
+
+    def test_apply_after_generate_updates_only_release_description(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, description="Existing description text")
+                self._seed_template(conn, is_default=True)
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/descriptiongen/generate", headers=headers, json={}).json()
+            before = self._release_row(env, release_id)
+
+            applied = client.post(
+                f"/v1/metadata/releases/{release_id}/descriptiongen/apply",
+                headers=headers,
+                json={"generation_fingerprint": generated["generation_fingerprint"], "overwrite_confirmed": True},
+            )
+            self.assertEqual(applied.status_code, 200)
+            self.assertTrue(applied.json()["description_updated"])
+
+            after = self._release_row(env, release_id)
+            changed_release_cols = {k for k in before if before[k] != after[k]}
+            self.assertEqual(changed_release_cols, {"description"})
+
+    def test_apply_overwrite_requires_confirmation(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, description="Manual description")
+                self._seed_template(conn, is_default=True)
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/descriptiongen/generate", headers=headers, json={}).json()
+            resp = client.post(
+                f"/v1/metadata/releases/{release_id}/descriptiongen/apply",
+                headers=headers,
+                json={"generation_fingerprint": generated["generation_fingerprint"], "overwrite_confirmed": False},
+            )
+            self.assertEqual(resp.status_code, 422)
+            self.assertEqual(resp.json()["error"]["code"], "MTD_OVERWRITE_CONFIRMATION_REQUIRED")
+
+    def test_apply_stale_fingerprint_blocks_template_and_release_context_changes(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="Night Ritual", description="")
+                template_id = self._seed_template(conn, is_default=True)
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/descriptiongen/generate", headers=headers, json={}).json()
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE description_templates SET updated_at = ? WHERE id = ?", ("2026-03-03T00:00:00+00:00", template_id))
+                conn.commit()
+            finally:
+                conn.close()
+            stale_template = client.post(
+                f"/v1/metadata/releases/{release_id}/descriptiongen/apply",
+                headers=headers,
+                json={"generation_fingerprint": generated["generation_fingerprint"], "overwrite_confirmed": False},
+            )
+            self.assertEqual(stale_template.status_code, 422)
+            self.assertEqual(stale_template.json()["error"]["code"], "MTD_PREVIEW_STALE")
+
+            regenerated = client.post(f"/v1/metadata/releases/{release_id}/descriptiongen/generate", headers=headers, json={}).json()
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("Night Ritual v2", release_id))
+                conn.commit()
+            finally:
+                conn.close()
+            stale_context = client.post(
+                f"/v1/metadata/releases/{release_id}/descriptiongen/apply",
+                headers=headers,
+                json={"generation_fingerprint": regenerated["generation_fingerprint"], "overwrite_confirmed": False},
+            )
+            self.assertEqual(stale_context.status_code, 422)
+            self.assertEqual(stale_context.json()["error"]["code"], "MTD_PREVIEW_STALE")
+
+    def test_apply_same_description_is_safe_noop(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, description="Darkwood Reverie\n\nNight Ritual")
+                template_id = self._seed_template(conn, is_default=True)
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/descriptiongen/generate", headers=headers, json={})
+            self.assertEqual(generated.status_code, 200)
+            applied = client.post(
+                f"/v1/metadata/releases/{release_id}/descriptiongen/apply",
+                headers=headers,
+                json={"generation_fingerprint": generated.json()["generation_fingerprint"], "overwrite_confirmed": False},
+            )
+            self.assertEqual(applied.status_code, 200)
+            body = applied.json()
+            self.assertFalse(body["description_updated"])
+            self.assertEqual(body["used_template_id"], template_id)
+            self.assertIn("already matches", body["message"])
 
 
 if __name__ == "__main__":
