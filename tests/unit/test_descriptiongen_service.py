@@ -152,6 +152,16 @@ class TestDescriptionGenService(unittest.TestCase):
         )
         self.assertEqual(result.proposed_description, preview.rendered_description_preview)
 
+    def test_generate_overwrite_false_when_normalized_description_is_same(self) -> None:
+        conn, release_id = self._seed_release(
+            title="Night Ritual",
+            description=" Darkwood Reverie  \r\n\r\nNight Ritual \r\n",
+        )
+        self._insert_template(conn, body="{{channel_display_name}}\n\n{{release_title}}")
+        result = descriptiongen_service.generate_description_preview(conn, release_id=release_id, template_id=None)
+        self.assertFalse(result.overwrite_required)
+        self.assertEqual(result.warnings, [])
+
 
 if __name__ == "__main__":
     unittest.main()

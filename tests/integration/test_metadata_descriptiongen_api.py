@@ -86,6 +86,10 @@ class TestMetadataDescriptionGenApi(unittest.TestCase):
             body = resp.json()
             self.assertEqual(body["release_id"], release_id)
             self.assertEqual(body["default_template"]["id"], default_id)
+            self.assertEqual(
+                sorted(body["default_template"].keys()),
+                ["id", "is_default", "status", "template_name"],
+            )
             self.assertEqual(len(body["active_templates"]), 2)
             self.assertTrue(body["can_generate_with_default"])
 
@@ -215,6 +219,7 @@ class TestMetadataDescriptionGenApi(unittest.TestCase):
             self.assertEqual(generated.status_code, 200)
             self.assertTrue(generated.json()["overwrite_required"])
             self.assertTrue(generated.json()["warnings"])
+            self.assertTrue(all(isinstance(item, str) for item in generated.json()["warnings"]))
 
             conn = dbm.connect(env)
             try:
@@ -222,6 +227,23 @@ class TestMetadataDescriptionGenApi(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(before, after)
+
+    def test_generate_overwrite_and_warnings_consider_normalized_equality(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, description=" Darkwood Reverie \r\n\r\nNight Ritual  \r\n")
+                self._seed_template(conn, is_default=True)
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/descriptiongen/generate", headers=headers, json={})
+            self.assertEqual(generated.status_code, 200)
+            self.assertFalse(generated.json()["overwrite_required"])
+            self.assertEqual(generated.json()["warnings"], [])
 
     def test_apply_after_generate_updates_only_release_description(self) -> None:
         with temp_env() as (_, env):
