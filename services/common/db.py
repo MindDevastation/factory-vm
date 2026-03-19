@@ -395,6 +395,40 @@ def migrate(conn: sqlite3.Connection) -> None:
             ON description_templates(channel_slug)
             WHERE status = 'ACTIVE' AND is_default = 1;
 
+        CREATE TABLE IF NOT EXISTS video_tag_presets (
+            id INTEGER PRIMARY KEY,
+            channel_slug TEXT NOT NULL,
+            preset_name TEXT NOT NULL,
+            preset_body_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            validation_status TEXT NOT NULL,
+            validation_errors_json TEXT NULL,
+            last_validated_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT NULL,
+            CHECK(status IN ('ACTIVE','ARCHIVED')),
+            CHECK(validation_status IN ('VALID','INVALID')),
+            CHECK(LENGTH(TRIM(preset_name)) > 0),
+            CHECK(json_valid(preset_body_json)),
+            CHECK(json_type(preset_body_json) = 'array'),
+            CHECK(json_array_length(preset_body_json) > 0)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_video_tag_presets_channel_slug
+            ON video_tag_presets(channel_slug);
+
+        CREATE INDEX IF NOT EXISTS idx_video_tag_presets_channel_slug_status
+            ON video_tag_presets(channel_slug, status);
+
+        CREATE INDEX IF NOT EXISTS idx_video_tag_presets_channel_slug_updated_at
+            ON video_tag_presets(channel_slug, updated_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_video_tag_presets_active_default_unique
+            ON video_tag_presets(channel_slug)
+            WHERE status = 'ACTIVE' AND is_default = 1;
+
         CREATE TABLE IF NOT EXISTS canon_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             value TEXT NOT NULL UNIQUE

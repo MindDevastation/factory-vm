@@ -67,7 +67,13 @@ from services.track_analysis_report.xlsx_export import export_report_to_xlsx_byt
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
-from services.metadata import description_template_service, descriptiongen_service, title_template_service, titlegen_service
+from services.metadata import (
+    description_template_service,
+    descriptiongen_service,
+    title_template_service,
+    titlegen_service,
+    video_tag_preset_service,
+)
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -231,6 +237,12 @@ class MetadataTitleTemplatePatchRequest(BaseModel):
 class MetadataDescriptionTemplatePreviewRequest(BaseModel):
     channel_slug: str = Field(min_length=1)
     template_body: str
+    release_id: int | None = None
+
+
+class MetadataVideoTagPresetPreviewRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    preset_body: list[str]
     release_id: int | None = None
 
 
@@ -700,6 +712,54 @@ def api_metadata_description_templates_preview(
     logger.info("metadata.description_template.previewed", extra=log_payload)
     if preview.validation_errors:
         logger.info("metadata.description_template.validation_failed", extra=log_payload)
+    return preview.to_dict()
+
+
+@app.get("/v1/metadata/video-tag-presets/variables")
+def api_metadata_video_tag_presets_variables(_: bool = Depends(require_basic_auth(env))):
+    return {"variables": video_tag_preset_service.allowed_variables_catalog()}
+
+
+@app.post("/v1/metadata/video-tag-presets/preview")
+def api_metadata_video_tag_presets_preview(
+    payload: MetadataVideoTagPresetPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_slug(conn, payload.channel_slug)
+        if not channel:
+            return _mtd_error(404, "MTV_CHANNEL_NOT_FOUND", "Channel not found")
+        try:
+            release_row = video_tag_preset_service.load_preview_release_context(
+                conn,
+                channel_slug=payload.channel_slug,
+                release_id=payload.release_id,
+            )
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            status_code = 404 if exc.code == "MTV_RELEASE_NOT_FOUND" else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    preview = video_tag_preset_service.preview_video_tag_preset(
+        channel=channel,
+        preset_body=payload.preset_body,
+        release_row=release_row,
+    )
+    log_payload: Dict[str, Any] = {
+        "channel_slug": payload.channel_slug,
+        "release_id": payload.release_id,
+        "render_status": preview.render_status,
+        "missing_variables": list(preview.missing_variables),
+        "used_variables": list(preview.used_variables),
+        "validation_error_codes": [item["code"] for item in preview.validation_errors],
+        "preset_item_count": len(payload.preset_body),
+        "normalized_count": preview.normalized_count,
+    }
+    logger.info("metadata.video_tag_preset.previewed", extra=log_payload)
+    if preview.validation_errors:
+        logger.info("metadata.video_tag_preset.validation_failed", extra=log_payload)
     return preview.to_dict()
 
 
