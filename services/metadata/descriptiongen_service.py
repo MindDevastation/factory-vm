@@ -191,8 +191,12 @@ def generate_description_preview(
             raise DescriptionGenError(code="MTD_RENDER_FAILED", message="Rendered description failed validation")
         raise DescriptionGenError(code="MTD_REQUIRED_CONTEXT_MISSING", message="Required render context is missing")
 
+    normalized_current = description_template_service.normalize_multiline(context.current_description)
+    normalized_proposed = description_template_service.normalize_multiline(preview.rendered_description_preview)
+    overwrite_required = bool(normalized_current) and normalized_current != normalized_proposed
+
     warnings: List[str] = []
-    if context.has_existing_description:
+    if overwrite_required:
         warnings.append("Applying this result will overwrite the existing release description.")
 
     rendered = preview.rendered_description_preview
@@ -218,7 +222,7 @@ def generate_description_preview(
         proposed_description=rendered,
         normalized_length=preview.normalized_length,
         line_count=preview.line_count,
-        overwrite_required=context.has_existing_description,
+        overwrite_required=overwrite_required,
         warnings=warnings,
         generation_fingerprint=fingerprint,
     )
