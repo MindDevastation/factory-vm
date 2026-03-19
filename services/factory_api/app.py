@@ -67,7 +67,7 @@ from services.track_analysis_report.xlsx_export import export_report_to_xlsx_byt
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
-from services.metadata import description_template_service, title_template_service, titlegen_service
+from services.metadata import description_template_service, descriptiongen_service, title_template_service, titlegen_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -250,6 +250,10 @@ class MetadataTitleGenGenerateRequest(BaseModel):
     template_id: int | None = None
 
 
+class MetadataDescriptionGenGenerateRequest(BaseModel):
+    template_id: int | None = None
+
+
 class MetadataTitleGenApplyRequest(BaseModel):
     template_id: int | None = None
     generation_fingerprint: str = Field(min_length=1)
@@ -309,6 +313,122 @@ def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_bas
         },
     )
     return payload
+
+
+@app.get("/v1/metadata/releases/{release_id}/descriptiongen/context")
+def api_metadata_descriptiongen_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            context = descriptiongen_service.load_descriptiongen_context(conn, release_id=release_id)
+        except descriptiongen_service.DescriptionGenError as exc:
+            status_code = 404 if exc.code == "MTD_RELEASE_NOT_FOUND" else 422
+            logger.info(
+                "metadata.descriptiongen.context_loaded",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": None,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    default_item = None
+    if context.default_template is not None:
+        default_item = {
+            "id": int(context.default_template["id"]),
+            "template_name": str(context.default_template["template_name"]),
+            "status": str(context.default_template.get("status") or ""),
+            "is_default": bool(int(context.default_template.get("is_default") or 0)),
+        }
+
+    payload = {
+        "release_id": context.release_id,
+        "channel_slug": context.channel_slug,
+        "current_description": context.current_description,
+        "has_existing_description": context.has_existing_description,
+        "default_template": default_item,
+        "active_templates": context.active_templates,
+        "can_generate_with_default": context.can_generate_with_default,
+    }
+    logger.info(
+        "metadata.descriptiongen.context_loaded",
+        extra={
+            "release_id": context.release_id,
+            "channel_slug": context.channel_slug,
+            "template_id": default_item["id"] if default_item else None,
+            "overwrite_required": context.has_existing_description,
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return payload
+
+
+@app.post("/v1/metadata/releases/{release_id}/descriptiongen/generate")
+def api_metadata_descriptiongen_generate(
+    release_id: int,
+    payload: MetadataDescriptionGenGenerateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = descriptiongen_service.generate_description_preview(
+                conn,
+                release_id=release_id,
+                template_id=payload.template_id,
+            )
+        except descriptiongen_service.DescriptionGenError as exc:
+            status_code = 404 if exc.code in {"MTD_RELEASE_NOT_FOUND", "MTD_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.descriptiongen.generate_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": payload.template_id,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "used_template": {
+            "id": int(result.used_template["id"]),
+            "template_name": str(result.used_template["template_name"]),
+            "is_default_channel_template": bool(result.used_template["is_default_channel_template"]),
+        },
+        "current_description": result.current_description,
+        "has_existing_description": result.has_existing_description,
+        "overwrite_required": result.overwrite_required,
+        "proposed_description": result.proposed_description,
+        "normalized_length": result.normalized_length,
+        "line_count": result.line_count,
+        "generation_fingerprint": result.generation_fingerprint,
+        "warnings": result.warnings,
+    }
+    logger.info(
+        "metadata.descriptiongen.generated",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "template_id": int(result.used_template["id"]),
+            "overwrite_required": result.overwrite_required,
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return body
 
 
 @app.post("/v1/metadata/releases/{release_id}/titlegen/generate")
