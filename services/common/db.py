@@ -363,6 +363,38 @@ def migrate(conn: sqlite3.Connection) -> None:
             ON title_templates(channel_slug)
             WHERE status = 'ACTIVE' AND is_default = 1;
 
+        CREATE TABLE IF NOT EXISTS description_templates (
+            id INTEGER PRIMARY KEY,
+            channel_slug TEXT NOT NULL,
+            template_name TEXT NOT NULL,
+            template_body TEXT NOT NULL,
+            status TEXT NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            validation_status TEXT NOT NULL,
+            validation_errors_json TEXT NULL,
+            last_validated_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT NULL,
+            CHECK(status IN ('ACTIVE','ARCHIVED')),
+            CHECK(validation_status IN ('VALID','INVALID')),
+            CHECK(LENGTH(TRIM(template_name)) > 0),
+            CHECK(LENGTH(TRIM(template_body)) > 0)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_description_templates_channel_slug
+            ON description_templates(channel_slug);
+
+        CREATE INDEX IF NOT EXISTS idx_description_templates_channel_slug_status
+            ON description_templates(channel_slug, status);
+
+        CREATE INDEX IF NOT EXISTS idx_description_templates_channel_slug_updated_at
+            ON description_templates(channel_slug, updated_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_description_templates_active_default_unique
+            ON description_templates(channel_slug)
+            WHERE status = 'ACTIVE' AND is_default = 1;
+
         CREATE TABLE IF NOT EXISTS canon_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             value TEXT NOT NULL UNIQUE
