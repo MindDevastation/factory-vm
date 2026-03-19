@@ -234,6 +234,18 @@ class MetadataDescriptionTemplatePreviewRequest(BaseModel):
     release_id: int | None = None
 
 
+class MetadataDescriptionTemplateCreateRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_name: str
+    template_body: str
+    make_default: bool = False
+
+
+class MetadataDescriptionTemplatePatchRequest(BaseModel):
+    template_name: str | None = None
+    template_body: str | None = None
+
+
 class MetadataTitleGenGenerateRequest(BaseModel):
     template_id: int | None = None
 
@@ -507,6 +519,204 @@ def api_metadata_description_templates_preview(
     if preview.validation_errors:
         logger.info("metadata.description_template.validation_failed", extra=log_payload)
     return preview.to_dict()
+
+
+@app.post("/v1/metadata/description-templates")
+def api_metadata_description_templates_create(
+    payload: MetadataDescriptionTemplateCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = description_template_service.create_description_template(
+                conn,
+                channel_slug=payload.channel_slug,
+                template_name=payload.template_name,
+                template_body=payload.template_body,
+                make_default=payload.make_default,
+            )
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_CHANNEL_NOT_FOUND", "MTD_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.description_template.validation_failed",
+                extra={
+                    "template_id": None,
+                    "channel_slug": payload.channel_slug,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.description_template.created",
+        extra={
+            "template_id": result["id"],
+            "channel_slug": result["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return result
+
+
+@app.get("/v1/metadata/description-templates")
+def api_metadata_description_templates_list(
+    channel_slug: str | None = None,
+    status: str = "active",
+    q: str | None = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    status_filter = (status or "active").lower()
+    if status_filter not in {"active", "archived", "all"}:
+        return _mtd_error(422, "MTD_INVALID_STATUS_FILTER", "status must be active|archived|all")
+    conn = dbm.connect(env)
+    try:
+        rows = description_template_service.list_description_templates(
+            conn,
+            channel_slug=channel_slug,
+            status_filter=status_filter,
+            q=q,
+        )
+    finally:
+        conn.close()
+    return {"items": rows}
+
+
+@app.get("/v1/metadata/description-templates/{template_id}")
+def api_metadata_description_templates_detail(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = description_template_service.get_description_template(conn, template_id=template_id)
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_CHANNEL_NOT_FOUND", "MTD_TEMPLATE_NOT_FOUND"} else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.patch("/v1/metadata/description-templates/{template_id}")
+def api_metadata_description_templates_patch(
+    template_id: int,
+    payload: MetadataDescriptionTemplatePatchRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = description_template_service.update_description_template(
+                conn,
+                template_id=template_id,
+                template_name=payload.template_name,
+                template_body=payload.template_body,
+            )
+            conn.commit()
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_CHANNEL_NOT_FOUND", "MTD_TEMPLATE_NOT_FOUND"} else 422
+            if status_code == 422:
+                logger.info(
+                    "metadata.description_template.validation_failed",
+                    extra={
+                        "template_id": template_id,
+                        "channel_slug": None,
+                        "result_status": "error",
+                        "error_codes": [exc.code],
+                    },
+                )
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.description_template.updated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/description-templates/{template_id}/set-default")
+def api_metadata_description_templates_set_default(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = description_template_service.set_default_description_template(conn, template_id=template_id)
+            conn.commit()
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_TEMPLATE_NOT_FOUND"} else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.description_template.default_changed",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/description-templates/{template_id}/archive")
+def api_metadata_description_templates_archive(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = description_template_service.archive_description_template(conn, template_id=template_id)
+            conn.commit()
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_TEMPLATE_NOT_FOUND"} else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.description_template.archived",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/description-templates/{template_id}/activate")
+def api_metadata_description_templates_activate(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = description_template_service.activate_description_template(conn, template_id=template_id)
+            conn.commit()
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_TEMPLATE_NOT_FOUND"} else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.description_template.activated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
 
 
 @app.post("/v1/metadata/title-templates")
