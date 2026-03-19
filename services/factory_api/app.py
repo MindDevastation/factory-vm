@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -67,6 +67,7 @@ from services.track_analysis_report.xlsx_export import export_report_to_xlsx_byt
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
+from services.metadata import title_template_service, titlegen_service
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -199,6 +200,474 @@ def api_playlist_builder_tags_options(channel_slug: str | None = None, _: bool =
             "reason": reason,
         },
     }
+
+
+def _mtb_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _mtg_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+class MetadataTitleTemplatePreviewRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_body: str
+    release_date: str | None = None
+
+
+class MetadataTitleTemplateCreateRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_name: str
+    template_body: str
+    make_default: bool = False
+
+
+class MetadataTitleTemplatePatchRequest(BaseModel):
+    template_name: str | None = None
+    template_body: str | None = None
+
+
+class MetadataTitleGenGenerateRequest(BaseModel):
+    template_id: int | None = None
+
+
+class MetadataTitleGenApplyRequest(BaseModel):
+    template_id: int | None = None
+    generation_fingerprint: str = Field(min_length=1)
+    overwrite_confirmed: bool = False
+
+
+@app.get("/v1/metadata/releases/{release_id}/titlegen/context")
+def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            context = titlegen_service.load_titlegen_context(conn, release_id=release_id)
+        except titlegen_service.TitleGenError as exc:
+            status_code = 404 if exc.code == "MTG_RELEASE_NOT_FOUND" else 422
+            logger.info(
+                "metadata.titlegen.context_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": None,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    default_item = None
+    if context.default_template is not None:
+        default_item = {
+            "id": int(context.default_template["id"]),
+            "template_name": str(context.default_template["template_name"]),
+            "status": str(context.default_template.get("status") or ""),
+            "is_default": bool(int(context.default_template.get("is_default") or 0)),
+        }
+
+    payload = {
+        "release_id": context.release_id,
+        "channel_slug": context.channel_slug,
+        "current_title": context.current_title,
+        "has_existing_title": context.has_existing_title,
+        "default_template": default_item,
+        "active_templates": context.active_templates,
+        "can_generate_with_default": context.can_generate_with_default,
+    }
+    logger.info(
+        "metadata.titlegen.context_loaded",
+        extra={
+            "release_id": context.release_id,
+            "channel_slug": context.channel_slug,
+            "template_id": default_item["id"] if default_item else None,
+            "overwrite_required": context.has_existing_title,
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return payload
+
+
+@app.post("/v1/metadata/releases/{release_id}/titlegen/generate")
+def api_metadata_titlegen_generate(
+    release_id: int,
+    payload: MetadataTitleGenGenerateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=payload.template_id)
+        except titlegen_service.TitleGenError as exc:
+            status_code = 404 if exc.code in {"MTG_RELEASE_NOT_FOUND", "MTG_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.titlegen.generate_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": payload.template_id,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "used_template": {
+            "id": int(result.used_template["id"]),
+            "template_name": str(result.used_template["template_name"]),
+            "is_default_channel_template": bool(result.used_template["is_default_channel_template"]),
+        },
+        "current_title": result.current_title,
+        "has_existing_title": result.has_existing_title,
+        "overwrite_required": result.overwrite_required,
+        "proposed_title": result.proposed_title,
+        "normalized_length": result.normalized_length,
+        "generation_fingerprint": result.generation_fingerprint,
+        "warnings": result.warnings,
+    }
+    logger.info(
+        "metadata.titlegen.generated",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "template_id": int(result.used_template["id"]),
+            "overwrite_required": result.overwrite_required,
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.post("/v1/metadata/releases/{release_id}/titlegen/apply")
+def api_metadata_titlegen_apply(
+    release_id: int,
+    payload: MetadataTitleGenApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = titlegen_service.apply_generated_title(
+                conn,
+                release_id=release_id,
+                template_id=payload.template_id,
+                generation_fingerprint=payload.generation_fingerprint,
+                overwrite_confirmed=payload.overwrite_confirmed,
+            )
+        except titlegen_service.TitleGenError as exc:
+            status_code = 404 if exc.code in {"MTG_RELEASE_NOT_FOUND", "MTG_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.titlegen.apply_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": payload.template_id,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "title_updated": result.title_updated,
+        "title_before": result.title_before,
+        "title_after": result.title_after,
+        "used_template_id": result.used_template_id,
+    }
+    if result.message is not None:
+        body["message"] = result.message
+    logger.info(
+        "metadata.titlegen.applied",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "template_id": result.used_template_id,
+            "overwrite_required": result.overwrite_required,
+            "result_status": "no_op" if not result.title_updated else "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.get("/v1/metadata/title-templates/variables")
+def api_metadata_title_templates_variables(_: bool = Depends(require_basic_auth(env))):
+    return {"variables": title_template_service.allowed_variables_catalog()}
+
+
+@app.post("/v1/metadata/title-templates/preview")
+def api_metadata_title_templates_preview(
+    payload: MetadataTitleTemplatePreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    parsed_release_date: date | None = None
+    if payload.release_date is not None:
+        try:
+            parsed_release_date = date.fromisoformat(payload.release_date)
+        except ValueError:
+            return _mtb_error(422, "MTB_INVALID_RELEASE_DATE", "release_date must use YYYY-MM-DD format")
+
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_slug(conn, payload.channel_slug)
+    finally:
+        conn.close()
+
+    if not channel:
+        return _mtb_error(404, "MTB_CHANNEL_NOT_FOUND", "Channel not found")
+
+    preview = title_template_service.preview_title_template(
+        channel=channel,
+        template_body=payload.template_body,
+        release_date=parsed_release_date,
+    )
+    log_payload: Dict[str, Any] = {
+        "channel_slug": payload.channel_slug,
+        "render_status": preview.render_status,
+        "missing_variables": list(preview.missing_variables),
+        "validation_error_codes": [error["code"] for error in preview.validation_errors],
+        "template_length": len(payload.template_body),
+    }
+    logger.info("metadata.title_template.previewed", extra=log_payload)
+    if preview.validation_errors:
+        logger.info("metadata.title_template.validation_failed", extra=log_payload)
+
+    return preview.to_dict()
+
+
+@app.post("/v1/metadata/title-templates")
+def api_metadata_title_templates_create(
+    payload: MetadataTitleTemplateCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = title_template_service.create_title_template(
+                conn,
+                channel_slug=payload.channel_slug,
+                template_name=payload.template_name,
+                template_body=payload.template_body,
+                make_default=payload.make_default,
+            )
+        except title_template_service.TemplateValidationError as exc:
+            if exc.code in {"MTB_CHANNEL_NOT_FOUND", "MTB_TEMPLATE_NOT_FOUND"}:
+                return _mtb_error(404, exc.code, exc.message)
+            logger.info(
+                "metadata.title_template.validation_failed",
+                extra={
+                    "template_id": None,
+                    "channel_slug": payload.channel_slug,
+                    "template_name": payload.template_name,
+                    "status": "ACTIVE",
+                    "is_default": payload.make_default,
+                    "validation_status": "INVALID",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtb_error(422, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.created",
+        extra={
+            "template_id": result["id"],
+            "channel_slug": result["channel_slug"],
+            "template_name": result["template_name"],
+            "status": result["status"],
+            "is_default": result["is_default"],
+            "validation_status": result["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return result
+
+
+@app.get("/v1/metadata/title-templates")
+def api_metadata_title_templates_list(
+    channel_slug: str | None = None,
+    status: str = "active",
+    q: str | None = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    status_filter = (status or "active").lower()
+    if status_filter not in {"active", "archived", "all"}:
+        return _mtb_error(422, "MTB_INVALID_STATUS_FILTER", "status must be active|archived|all")
+    conn = dbm.connect(env)
+    try:
+        rows = title_template_service.list_title_templates(
+            conn,
+            channel_slug=channel_slug,
+            status_filter=status_filter,
+            q=q,
+        )
+    finally:
+        conn.close()
+    return {"items": rows}
+
+
+@app.get("/v1/metadata/title-templates/{template_id}")
+def api_metadata_title_templates_detail(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.get_title_template(conn, template_id=template_id)
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_CHANNEL_NOT_FOUND", "MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.patch("/v1/metadata/title-templates/{template_id}")
+def api_metadata_title_templates_patch(
+    template_id: int,
+    payload: MetadataTitleTemplatePatchRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.update_title_template(
+                conn,
+                template_id=template_id,
+                template_name=payload.template_name,
+                template_body=payload.template_body,
+            )
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_CHANNEL_NOT_FOUND", "MTB_TEMPLATE_NOT_FOUND"} else 422
+            if status_code == 422:
+                logger.info(
+                    "metadata.title_template.validation_failed",
+                    extra={
+                        "template_id": template_id,
+                        "channel_slug": None,
+                        "template_name": payload.template_name,
+                        "status": None,
+                        "is_default": None,
+                        "validation_status": "INVALID",
+                        "error_codes": [exc.code],
+                    },
+                )
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.updated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/set-default")
+def api_metadata_title_templates_set_default(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.set_default_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.default_changed",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/archive")
+def api_metadata_title_templates_archive(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.archive_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.archived",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/activate")
+def api_metadata_title_templates_activate(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.activate_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.activated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
 
 
 @app.get("/v1/playlist-builder/channels/{channel_slug}/settings")
@@ -2951,6 +3420,11 @@ def ui_planner_page(request: Request, _: bool = Depends(require_basic_auth(env))
     return templates.TemplateResponse("planner_bulk_releases.html", {"request": request})
 
 
+@app.get("/ui/metadata/title-templates", response_class=HTMLResponse)
+def ui_metadata_title_templates_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("metadata_title_templates.html", {"request": request})
+
+
 @app.get("/ui/track-catalog/analysis-report", response_class=HTMLResponse)
 def ui_track_analysis_report_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("track_analysis_report.html", {"request": request})
@@ -3970,6 +4444,7 @@ def ui_jobs_create_page(request: Request, _: bool = Depends(require_basic_auth(e
             "field_errors": {},
             "form": {},
             "job_id": None,
+            "release_id": None,
             "locked": False,
         },
     )
@@ -4031,6 +4506,7 @@ async def ui_jobs_create_submit(
                     "field_errors": errors,
                     "form": payload.model_dump(),
                     "job_id": None,
+                    "release_id": None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4047,6 +4523,7 @@ async def ui_jobs_create_submit(
                     "field_errors": {"project": ["project is invalid"]},
                     "form": payload.model_dump(),
                     "job_id": None,
+                    "release_id": None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4064,6 +4541,8 @@ async def ui_jobs_create_submit(
             background_ext=payload.background_ext.strip(),
             audio_ids_text=payload.audio_ids_text.strip(),
         )
+        created_job = dbm.get_job(conn, job_id)
+        release_id = int(created_job["release_id"]) if created_job and created_job.get("release_id") is not None else None
         preflight = run_preflight_for_job(conn, env, job_id)
     finally:
         conn.close()
@@ -4077,6 +4556,7 @@ async def ui_jobs_create_submit(
             "field_errors": preflight.field_errors,
             "form": payload.model_dump(),
             "job_id": job_id,
+            "release_id": release_id,
             "locked": False,
         },
     )
@@ -4091,6 +4571,7 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
         channels = _all_channels(conn)
         if not draft or not job:
             raise HTTPException(404)
+        release_id = int(job["release_id"]) if job.get("release_id") is not None else None
         locked = str(job.get("state") or "") != "DRAFT"
     finally:
         conn.close()
@@ -4103,6 +4584,7 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
             "field_errors": {},
             "form": draft,
             "job_id": job_id,
+            "release_id": release_id,
             "locked": locked,
         },
     )
@@ -4168,6 +4650,7 @@ async def ui_jobs_edit_submit(
                     "field_errors": errors,
                     "form": payload.model_dump(),
                     "job_id": job_id,
+                    "release_id": int(job["release_id"]) if job.get("release_id") is not None else None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4184,6 +4667,7 @@ async def ui_jobs_edit_submit(
                     "field_errors": {"project": ["project is invalid"]},
                     "form": payload.model_dump(),
                     "job_id": job_id,
+                    "release_id": int(job["release_id"]) if job.get("release_id") is not None else None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4205,6 +4689,7 @@ async def ui_jobs_edit_submit(
             audio_ids_text=payload.audio_ids_text.strip(),
         )
         preflight = run_preflight_for_job(conn, env, job_id)
+        release_id = int(job["release_id"]) if job.get("release_id") is not None else None
     finally:
         conn.close()
 
@@ -4217,6 +4702,7 @@ async def ui_jobs_edit_submit(
             "field_errors": preflight.field_errors,
             "form": payload.model_dump(),
             "job_id": job_id,
+            "release_id": release_id,
             "locked": False,
         },
     )

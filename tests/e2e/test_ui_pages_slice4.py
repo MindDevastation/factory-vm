@@ -12,6 +12,211 @@ from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
 class TestUiPagesSlice4(unittest.TestCase):
+    def test_job_edit_titlegen_single_release_operator_flow(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="Manual Existing Title",
+                    description="Original Description",
+                    tags_csv="ambient,night",
+                    cover_name="cover",
+                    cover_ext="jpg",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                before_row = conn.execute(
+                    """
+                    SELECT r.id AS release_id, r.title, r.description, r.tags_json
+                    FROM jobs j
+                    JOIN releases r ON r.id = j.release_id
+                    WHERE j.id = ?
+                    """,
+                    (job_id,),
+                ).fetchone()
+                assert before_row
+                release_id = int(before_row["release_id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            default_tpl = client.post(
+                "/v1/metadata/title-templates",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Default Release Title",
+                    "template_body": "{{channel_display_name}}",
+                    "make_default": True,
+                },
+            )
+            self.assertEqual(default_tpl.status_code, 200)
+            secondary_tpl = client.post(
+                "/v1/metadata/title-templates",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Secondary Release Title",
+                    "template_body": "{{channel_slug}} alt",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(secondary_tpl.status_code, 200)
+
+            edit_page = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(edit_page.status_code, 200)
+            self.assertIn('id="titlegen-section"', edit_page.text)
+            self.assertIn('id="titlegen-current-title"', edit_page.text)
+            self.assertIn('id="titlegen-default-template"', edit_page.text)
+            self.assertIn('id="titlegen-template-select"', edit_page.text)
+            self.assertIn('id="titlegen-generate-btn"', edit_page.text)
+            self.assertIn('id="titlegen-regenerate-btn"', edit_page.text)
+            self.assertIn('id="titlegen-apply-btn"', edit_page.text)
+            self.assertIn("Generation does not change the release title until you apply.", edit_page.text)
+            self.assertIn("Applying this generated title will overwrite the existing release title.", edit_page.text)
+            self.assertIn("window.confirm('This will overwrite the current release title. Continue?')", edit_page.text)
+            self.assertIn("overwrite_confirmed: overwriteNeedsConfirm", edit_page.text)
+            self.assertIn(f'id="titlegen-release-id">#{release_id}</span>', edit_page.text)
+            self.assertIn(f"const initialReleaseId = {release_id};", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/titlegen/context", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/titlegen/generate", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/titlegen/apply", edit_page.text)
+
+            context_resp = client.get(f"/v1/metadata/releases/{release_id}/titlegen/context", headers=h)
+            self.assertEqual(context_resp.status_code, 200)
+            context_payload = context_resp.json()
+            self.assertEqual(context_payload["release_id"], release_id)
+            self.assertEqual(context_payload["current_title"], "Manual Existing Title")
+            self.assertEqual(context_payload["default_template"]["template_name"], "Default Release Title")
+            self.assertGreaterEqual(len(context_payload["active_templates"]), 2)
+
+            generate_resp = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/generate",
+                headers=h,
+                json={},
+            )
+            self.assertEqual(generate_resp.status_code, 200)
+            generate_payload = generate_resp.json()
+            self.assertTrue(generate_payload["overwrite_required"])
+            self.assertTrue(generate_payload["proposed_title"])
+
+            conn = dbm.connect(env)
+            try:
+                after_generate_row = conn.execute(
+                    "SELECT title, description, tags_json FROM releases WHERE id = ?",
+                    (release_id,),
+                ).fetchone()
+                assert after_generate_row
+            finally:
+                conn.close()
+            self.assertEqual(after_generate_row["title"], before_row["title"])
+            self.assertEqual(after_generate_row["description"], before_row["description"])
+            self.assertEqual(after_generate_row["tags_json"], before_row["tags_json"])
+
+            apply_resp = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/apply",
+                headers=h,
+                json={
+                    "generation_fingerprint": generate_payload["generation_fingerprint"],
+                    "overwrite_confirmed": True,
+                },
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+            apply_payload = apply_resp.json()
+            self.assertTrue(apply_payload["title_updated"])
+            self.assertNotEqual(apply_payload["title_before"], apply_payload["title_after"])
+
+            conn = dbm.connect(env)
+            try:
+                after_apply_row = conn.execute(
+                    "SELECT title, description, tags_json FROM releases WHERE id = ?",
+                    (release_id,),
+                ).fetchone()
+                assert after_apply_row
+            finally:
+                conn.close()
+            self.assertEqual(after_apply_row["title"], apply_payload["title_after"])
+            self.assertEqual(after_apply_row["description"], before_row["description"])
+            self.assertEqual(after_apply_row["tags_json"], before_row["tags_json"])
+
+    def test_titlegen_no_default_requires_explicit_template_selection(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="",
+                    description="",
+                    tags_csv="",
+                    cover_name="cover",
+                    cover_ext="jpg",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                release_id = int(conn.execute("SELECT release_id FROM jobs WHERE id = ?", (job_id,)).fetchone()["release_id"])
+                client_tpl_id = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Non-default template",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            edit_page = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(edit_page.status_code, 200)
+            self.assertIn("placeholder.textContent = (context.active_templates || []).length ? 'Select a template' : 'No active templates';", edit_page.text)
+            self.assertIn("Select a template before generating preview.", edit_page.text)
+
+            context_resp = client.get(f"/v1/metadata/releases/{release_id}/titlegen/context", headers=h)
+            self.assertEqual(context_resp.status_code, 200)
+            context_payload = context_resp.json()
+            self.assertIsNone(context_payload["default_template"])
+            self.assertEqual(len(context_payload["active_templates"]), 1)
+
+            no_selection = client.post(f"/v1/metadata/releases/{release_id}/titlegen/generate", headers=h, json={})
+            self.assertEqual(no_selection.status_code, 422)
+            self.assertEqual(no_selection.json()["error"]["code"], "MTG_DEFAULT_TEMPLATE_NOT_CONFIGURED")
+
+            explicit = client.post(
+                f"/v1/metadata/releases/{release_id}/titlegen/generate",
+                headers=h,
+                json={"template_id": client_tpl_id},
+            )
+            self.assertEqual(explicit.status_code, 200)
+
     def test_playlist_builder_preview_state_guards(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
@@ -65,6 +270,113 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("lastPreviewOverrideSnapshot = override;", r.text)
             self.assertIn("body: JSON.stringify(lastPreviewOverrideSnapshot)", r.text)
             self.assertNotIn("body: JSON.stringify(buildOverride())", r.text)
+
+
+    def test_mtb_page_minimal_operator_flow(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            create_default = client.post(
+                "/v1/metadata/title-templates",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Default Title",
+                    "template_body": "{{channel_display_name}} {{release_year}}",
+                    "make_default": True,
+                },
+            )
+            self.assertEqual(create_default.status_code, 200)
+            default_template = create_default.json()
+
+            create_secondary = client.post(
+                "/v1/metadata/title-templates",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Secondary",
+                    "template_body": "{{channel_slug}} {{release_month_number}}",
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(create_secondary.status_code, 200)
+            secondary_template = create_secondary.json()
+
+            page = client.get("/ui/metadata/title-templates", headers=h)
+            self.assertEqual(page.status_code, 200)
+            self.assertIn("Metadata · Title Templates", page.text)
+            self.assertIn('href="/"', page.text)
+            self.assertIn('id="mtb-channel"', page.text)
+            self.assertIn('id="mtb-template-name"', page.text)
+            self.assertIn('id="mtb-template-body"', page.text)
+            self.assertIn('id="mtb-preview-btn"', page.text)
+            self.assertIn('id="mtb-save-btn"', page.text)
+            self.assertIn('id="mtb-set-default-btn"', page.text)
+            self.assertIn('id="mtb-archive-btn"', page.text)
+            self.assertIn('id="mtb-activate-btn"', page.text)
+            self.assertIn('id="mtb-preview-result"', page.text)
+            self.assertIn('id="mtb-substituted-values"', page.text)
+            self.assertIn('id="mtb-missing-variables"', page.text)
+            self.assertIn('id="mtb-validation-errors"', page.text)
+            self.assertIn('/v1/channels', page.text)
+            self.assertIn('/v1/metadata/title-templates/variables', page.text)
+            self.assertIn('/v1/metadata/title-templates?', page.text)
+            self.assertIn('/v1/metadata/title-templates/preview', page.text)
+            self.assertIn('/v1/metadata/title-templates/${activeTemplateId}/${action}', page.text)
+            self.assertIn('archiving current default may leave this channel with no default template', page.text)
+            self.assertIn('active', page.text)
+            self.assertIn('archived', page.text)
+            self.assertIn('valid', page.text)
+
+            preview = client.post(
+                "/v1/metadata/title-templates/preview",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_body": "{{channel_display_name}} {{release_year}}",
+                    "release_date": "2026-01-02",
+                },
+            )
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json()["render_status"], "FULL")
+            self.assertEqual(preview.json()["missing_variables"], [])
+
+            set_default = client.post(
+                f"/v1/metadata/title-templates/{secondary_template['id']}/set-default",
+                headers=h,
+            )
+            self.assertEqual(set_default.status_code, 200)
+            self.assertTrue(set_default.json()["is_default"])
+
+            archive_default = client.post(
+                f"/v1/metadata/title-templates/{default_template['id']}/archive",
+                headers=h,
+            )
+            self.assertEqual(archive_default.status_code, 200)
+            self.assertEqual(archive_default.json()["status"], "ARCHIVED")
+            self.assertFalse(archive_default.json()["is_default"])
+
+            active_list = client.get("/v1/metadata/title-templates?status=active", headers=h)
+            self.assertEqual(active_list.status_code, 200)
+            self.assertTrue(any(item["status"] == "ACTIVE" and item["is_default"] for item in active_list.json().get("items", [])))
+            self.assertTrue(any(item["validation_status"] == "VALID" for item in active_list.json().get("items", [])))
+
+            archived_list = client.get("/v1/metadata/title-templates?status=archived", headers=h)
+            self.assertEqual(archived_list.status_code, 200)
+            self.assertTrue(any(item["status"] == "ARCHIVED" for item in archived_list.json().get("items", [])))
+
+            activate = client.post(
+                f"/v1/metadata/title-templates/{default_template['id']}/activate",
+                headers=h,
+            )
+            self.assertEqual(activate.status_code, 200)
+            self.assertEqual(activate.json()["status"], "ACTIVE")
 
     def test_pages_and_validation(self) -> None:
         with temp_env() as (_, _):
@@ -128,6 +440,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="channels-table"', r.text)
             self.assertIn('href="/ui/db-viewer"', r.text)
             self.assertIn('href="/ui/planner"', r.text)
+            self.assertIn('href="/ui/metadata/title-templates"', r.text)
             self.assertIn('href="/ui/track-catalog/custom-tags"', r.text)
             self.assertIn('href="/ui/track-catalog/analysis-report"', r.text)
             self.assertIn('href="/ui/ops/recovery"', r.text)
@@ -146,13 +459,42 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="search-input"', r.text)
             self.assertIn('id="page-size-select"', r.text)
 
-            r = client.get("/ui/planner", headers=h)
+            planner_r = client.get("/ui/planner", headers=h)
+            self.assertEqual(planner_r.status_code, 200)
+            self.assertIn("Planner · Bulk Releases", planner_r.text)
+            self.assertIn('id="planner-tbody"', planner_r.text)
+            self.assertIn('id="bulk-create-modal"', planner_r.text)
+            self.assertIn('id="import-modal"', planner_r.text)
+            self.assertIn('/static/planner_bulk_releases.js', planner_r.text)
+
+            r = client.get("/ui/metadata/title-templates", headers=h)
             self.assertEqual(r.status_code, 200)
-            self.assertIn("Planner · Bulk Releases", r.text)
-            self.assertIn('id="planner-tbody"', r.text)
-            self.assertIn('id="bulk-create-modal"', r.text)
-            self.assertIn('id="import-modal"', r.text)
-            self.assertIn('/static/planner_bulk_releases.js', r.text)
+            self.assertIn("Metadata · Title Templates", r.text)
+            self.assertIn('id="mtb-table"', r.text)
+            self.assertIn('id="mtb-preview-btn"', r.text)
+            self.assertIn('id="mtb-save-btn"', r.text)
+            self.assertIn('id="mtb-set-default-btn"', r.text)
+            self.assertIn('id="mtb-archive-btn"', r.text)
+            self.assertIn('id="mtb-activate-btn"', r.text)
+            self.assertIn("/v1/metadata/title-templates/preview", r.text)
+            self.assertIn("/v1/metadata/title-templates/${activeTemplateId}/${action}", r.text)
+            self.assertIn("Preview complete (not saved).", r.text)
+            self.assertIn("archiving current default may leave this channel with no default template", r.text)
+            self.assertIn("active", r.text)
+            self.assertIn("archived", r.text)
+            self.assertIn("valid", r.text)
+
+            preview = client.post(
+                "/v1/metadata/title-templates/preview",
+                headers=h,
+                json={
+                    "channel_slug": str(ch["slug"]),
+                    "template_body": "{{channel_display_name}} {{release_year}}",
+                    "release_date": "2026-01-02",
+                },
+            )
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json()["render_status"], "FULL")
 
             r = client.get("/ui/track-catalog/analysis-report", headers=h)
             self.assertEqual(r.status_code, 200)
