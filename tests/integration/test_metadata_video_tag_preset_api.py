@@ -55,7 +55,7 @@ class TestMetadataVideoTagPresetApi(unittest.TestCase):
         payload = {
             "channel_slug": channel_slug,
             "preset_name": preset_name,
-            "preset_body": preset_body or ["{{channel_display_name}}", "{{release_title}}", "ambient"],
+            "preset_body": preset_body or ["{{channel_display_name}}", "{{release_year}}", "ambient"],
             "make_default": make_default,
         }
         resp = client.post("/v1/metadata/video-tag-presets", headers=headers, json=payload)
@@ -296,6 +296,25 @@ class TestMetadataVideoTagPresetApi(unittest.TestCase):
             )
             self.assertEqual(resp.status_code, 422)
             self.assertEqual(resp.json()["error"]["code"], "MTV_PRESET_NAME_REQUIRED")
+
+    def test_create_rejects_oversize_release_title_estimate(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.post(
+                "/v1/metadata/video-tag-presets",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "preset_name": "Too Long",
+                    "preset_body": ["{{release_title}}"],
+                    "make_default": False,
+                },
+            )
+            self.assertEqual(resp.status_code, 422)
+            self.assertEqual(resp.json()["error"]["code"], "MTV_TAG_ITEM_TOO_LONG")
 
     def test_set_default_enforces_single_default_invariant(self) -> None:
         with temp_env() as (_, env):
