@@ -430,6 +430,35 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
             self.assertEqual(ctx.exception.code, "MPA_APPLY_CONFLICT")
             self.assertEqual(row["description"], "stable-desc")
 
+    def test_no_change_only_apply_conflicts_if_dependency_changes_in_critical_window(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="same-title", tags_json='["darkwood-reverie"]')
+                self._seed_defaults(conn)
+                preview = svc.create_preview_session(conn, release_id=release_id, requested_fields=["tags"], sources={}, created_by="u", ttl_seconds=1800)
+                self.assertEqual(preview["fields"]["tags"]["status"], "NO_CHANGE")
+                original = svc._apply_selected_fields_atomic
+
+                def _mutating_guard(*args, **kwargs):
+                    conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("changed-mid-apply", release_id))
+                    return original(*args, **kwargs)
+
+                with mock.patch("services.metadata.preview_apply_service._apply_selected_fields_atomic", side_effect=_mutating_guard):
+                    with self.assertRaises(svc.MetadataPreviewApplyError) as ctx:
+                        svc.apply_preview_session(
+                            conn,
+                            session_id=preview["session_id"],
+                            selected_fields=["tags"],
+                            overwrite_confirmed_fields=[],
+                        )
+                row = conn.execute("SELECT tags_json FROM releases WHERE id = ?", (release_id,)).fetchone()
+            finally:
+                conn.close()
+            self.assertEqual(ctx.exception.code, "MPA_APPLY_CONFLICT")
+            self.assertEqual(row["tags_json"], '["darkwood-reverie"]')
+
 
 if __name__ == "__main__":
     unittest.main()

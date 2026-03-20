@@ -276,14 +276,13 @@ def apply_preview_session(
         applied_fields.append(field)
 
     try:
-        if update_map:
-            _apply_selected_fields_atomic(
-                conn,
-                release_id=int(session["release_id"]),
-                selected_fields=selected,
-                update_map=update_map,
-                expected_release=release,
-            )
+        _apply_selected_fields_atomic(
+            conn,
+            release_id=int(session["release_id"]),
+            selected_fields=selected,
+            update_map=update_map,
+            expected_release=release,
+        )
         now_iso = _now_iso()
         conn.execute(
             "UPDATE metadata_preview_sessions SET session_status = 'APPLIED', applied_at = ? WHERE id = ?",
@@ -330,8 +329,8 @@ def _apply_selected_fields_atomic(
         where_parts.append(f"(({column} IS NULL AND ? IS NULL) OR {column} = ?)")
         where_params.extend([value, value])
 
-    assignments = ", ".join([f"{column} = ?" for column in update_map.keys()])
-    set_params = [update_map[column] for column in update_map.keys()]
+    assignments = ", ".join([f"{column} = ?" for column in update_map.keys()]) if update_map else "id = id"
+    set_params = [update_map[column] for column in update_map.keys()] if update_map else []
     sql = f"UPDATE releases SET {assignments} WHERE {' AND '.join(where_parts)}"
     cur = conn.execute(sql, set_params + where_params)
     if int(cur.rowcount or 0) != 1:
