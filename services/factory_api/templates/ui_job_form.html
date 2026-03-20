@@ -88,6 +88,38 @@
     <p class="muted">Apply changes only <code>release.description</code>. This does not update channel defaults or template configuration.</p>
   </fieldset>
   {% endif %}
+  {% if mode == 'edit' and release_id %}
+  <fieldset id="videotagsgen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
+    <legend><strong>Video Tags Generator (single release)</strong></legend>
+    <p class="muted">Generation does not change the release tags until you apply.</p>
+    <p><b>Target release:</b> <span id="videotagsgen-release-id">#{{ release_id }}</span></p>
+    <p><b>Current release.tags_json:</b> <span id="videotagsgen-current-tags-json">{{ form.tags_csv|default('') }}</span></p>
+    <p><b>Default channel preset:</b> <span id="videotagsgen-default-preset">Loading...</span></p>
+    <p>
+      <label>Preset for this operation:
+        <select id="videotagsgen-preset-select">
+          <option value="">Loading presets...</option>
+        </select>
+      </label>
+      <span id="videotagsgen-selected-preset" class="muted" style="margin-left:8px;"></span>
+    </p>
+    <p><b>Proposed tags JSON:</b> <span id="videotagsgen-proposed-tags-json">—</span></p>
+    <p><b>Dropped empty items:</b> <span id="videotagsgen-dropped-empty-items">—</span></p>
+    <p><b>Removed duplicates:</b> <span id="videotagsgen-removed-duplicates">—</span></p>
+    <p id="videotagsgen-overwrite-warning" style="display:none; color:#92400e;"><b>Applying this generated tag list will overwrite the existing release tags.</b></p>
+    <label id="videotagsgen-overwrite-checkbox-row" style="display:none;">
+      <input id="videotagsgen-overwrite-checkbox" type="checkbox">
+      I confirm overwrite for this release tags list.
+    </label>
+    <p id="videotagsgen-status" style="min-height:1.4em"></p>
+    <p>
+      <button id="videotagsgen-generate-btn" type="button" {% if locked %}disabled{% endif %}>Generate Video Tags</button>
+      <button id="videotagsgen-regenerate-btn" type="button" {% if locked %}disabled{% endif %}>Regenerate</button>
+      <button id="videotagsgen-apply-btn" type="button" {% if locked %}disabled{% endif %}>Apply Generated Tags</button>
+    </p>
+    <p class="muted">Apply changes only <code>release.tags_json</code>. This does not update channel defaults or preset configuration.</p>
+  </fieldset>
+  {% endif %}
   <p><label>Tags (comma-separated, no #) <input name="tags_csv" value="{{ form.tags_csv|default('') }}" {% if locked %}disabled{% endif %}></label></p>
   {% if field_errors.tags %}<p style="color:#b91c1c">{{ field_errors.tags|join('; ') }}</p>{% endif %}
 
@@ -235,6 +267,7 @@ const titlegenGenerateBtn = document.getElementById('titlegen-generate-btn');
 const titlegenRegenerateBtn = document.getElementById('titlegen-regenerate-btn');
 const titlegenApplyBtn = document.getElementById('titlegen-apply-btn');
 const descriptionInput = document.querySelector('textarea[name="description"]');
+const tagsCsvInput = document.querySelector('input[name="tags_csv"]');
 const descriptiongenSection = document.getElementById('descriptiongen-section');
 const descriptiongenStatus = document.getElementById('descriptiongen-status');
 const descriptiongenDefaultTemplate = document.getElementById('descriptiongen-default-template');
@@ -248,6 +281,21 @@ const descriptiongenOverwriteCheckbox = document.getElementById('descriptiongen-
 const descriptiongenGenerateBtn = document.getElementById('descriptiongen-generate-btn');
 const descriptiongenRegenerateBtn = document.getElementById('descriptiongen-regenerate-btn');
 const descriptiongenApplyBtn = document.getElementById('descriptiongen-apply-btn');
+const videotagsgenSection = document.getElementById('videotagsgen-section');
+const videotagsgenStatus = document.getElementById('videotagsgen-status');
+const videotagsgenDefaultPreset = document.getElementById('videotagsgen-default-preset');
+const videotagsgenPresetSelect = document.getElementById('videotagsgen-preset-select');
+const videotagsgenSelectedPreset = document.getElementById('videotagsgen-selected-preset');
+const videotagsgenCurrentTagsJson = document.getElementById('videotagsgen-current-tags-json');
+const videotagsgenProposedTagsJson = document.getElementById('videotagsgen-proposed-tags-json');
+const videotagsgenDroppedEmptyItems = document.getElementById('videotagsgen-dropped-empty-items');
+const videotagsgenRemovedDuplicates = document.getElementById('videotagsgen-removed-duplicates');
+const videotagsgenOverwriteWarning = document.getElementById('videotagsgen-overwrite-warning');
+const videotagsgenOverwriteCheckboxRow = document.getElementById('videotagsgen-overwrite-checkbox-row');
+const videotagsgenOverwriteCheckbox = document.getElementById('videotagsgen-overwrite-checkbox');
+const videotagsgenGenerateBtn = document.getElementById('videotagsgen-generate-btn');
+const videotagsgenRegenerateBtn = document.getElementById('videotagsgen-regenerate-btn');
+const videotagsgenApplyBtn = document.getElementById('videotagsgen-apply-btn');
 
 const requiredTagsInput = document.getElementById('plb-required-tags');
 const excludedTagsInput = document.getElementById('plb-excluded-tags');
@@ -289,6 +337,23 @@ const hasDescriptionGen =
   !!descriptiongenGenerateBtn &&
   !!descriptiongenRegenerateBtn &&
   !!descriptiongenApplyBtn;
+const hasVideoTagsGen =
+  !!tagsCsvInput &&
+  !!videotagsgenSection &&
+  !!videotagsgenStatus &&
+  !!videotagsgenDefaultPreset &&
+  !!videotagsgenPresetSelect &&
+  !!videotagsgenSelectedPreset &&
+  !!videotagsgenCurrentTagsJson &&
+  !!videotagsgenProposedTagsJson &&
+  !!videotagsgenDroppedEmptyItems &&
+  !!videotagsgenRemovedDuplicates &&
+  !!videotagsgenOverwriteWarning &&
+  !!videotagsgenOverwriteCheckboxRow &&
+  !!videotagsgenOverwriteCheckbox &&
+  !!videotagsgenGenerateBtn &&
+  !!videotagsgenRegenerateBtn &&
+  !!videotagsgenApplyBtn;
 
 const hasTagsPicker =
   !!requiredTagsInput &&
@@ -537,6 +602,9 @@ const hasTagsPicker =
   let descriptiongenContext = null;
   let descriptiongenGeneration = null;
   let descriptiongenSelectedTemplateId = null;
+  let videotagsgenContext = null;
+  let videotagsgenGeneration = null;
+  let videotagsgenSelectedPresetId = null;
 
   function updateTitlegenSelectedLabel() {
     if (!titlegenTemplateSelect || !titlegenSelectedTemplate) return;
@@ -821,6 +889,162 @@ const hasTagsPicker =
     resetDescriptiongenGeneration();
   }
 
+  function normalizeTagsArray(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    value.forEach((item) => {
+      if (typeof item !== 'string') return;
+      const trimmed = item.trim();
+      if (!trimmed) return;
+      if (!out.includes(trimmed)) out.push(trimmed);
+    });
+    return out;
+  }
+
+  function updateVideotagsgenSelectedLabel() {
+    if (!videotagsgenPresetSelect || !videotagsgenSelectedPreset) return;
+    const opt = videotagsgenPresetSelect.selectedOptions && videotagsgenPresetSelect.selectedOptions.length ? videotagsgenPresetSelect.selectedOptions[0] : null;
+    videotagsgenSelectedPreset.textContent = opt ? `Selected preset: ${opt.textContent}` : '';
+  }
+
+  function resetVideotagsgenGeneration() {
+    videotagsgenGeneration = null;
+    if (videotagsgenProposedTagsJson) videotagsgenProposedTagsJson.textContent = '—';
+    if (videotagsgenDroppedEmptyItems) videotagsgenDroppedEmptyItems.textContent = '—';
+    if (videotagsgenRemovedDuplicates) videotagsgenRemovedDuplicates.textContent = '—';
+    if (videotagsgenOverwriteWarning) videotagsgenOverwriteWarning.style.display = 'none';
+    if (videotagsgenOverwriteCheckboxRow) videotagsgenOverwriteCheckboxRow.style.display = 'none';
+    if (videotagsgenOverwriteCheckbox) videotagsgenOverwriteCheckbox.checked = false;
+    if (videotagsgenApplyBtn) videotagsgenApplyBtn.disabled = true;
+  }
+
+  function refreshCurrentTagsLabel() {
+    if (!videotagsgenCurrentTagsJson || !tagsCsvInput) return;
+    const currentTags = String(tagsCsvInput.value || '').trim();
+    videotagsgenCurrentTagsJson.textContent = currentTags ? JSON.stringify(currentTags.split(',').map((tag) => tag.trim()).filter(Boolean)) : '[]';
+  }
+
+  function selectedPresetIdOrNull() {
+    if (!videotagsgenPresetSelect) return null;
+    const value = String(videotagsgenPresetSelect.value || '').trim();
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+
+  function applyVideotagsgenContext(context) {
+    if (!videotagsgenPresetSelect || !videotagsgenDefaultPreset || !videotagsgenStatus) return;
+    videotagsgenContext = context;
+    videotagsgenPresetSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = (context.active_presets || []).length ? 'Select a preset' : 'No active presets';
+    videotagsgenPresetSelect.appendChild(placeholder);
+
+    (context.active_presets || []).forEach((preset) => {
+      const opt = document.createElement('option');
+      opt.value = String(preset.id);
+      opt.textContent = preset.is_default ? `${preset.preset_name} (default)` : preset.preset_name;
+      videotagsgenPresetSelect.appendChild(opt);
+    });
+
+    const defaultPreset = context.default_preset;
+    if (defaultPreset) {
+      videotagsgenDefaultPreset.textContent = `${defaultPreset.preset_name} (#${defaultPreset.id})`;
+      videotagsgenSelectedPresetId = Number(defaultPreset.id);
+      videotagsgenPresetSelect.value = String(defaultPreset.id);
+    } else {
+      videotagsgenDefaultPreset.textContent = 'None configured';
+      videotagsgenSelectedPresetId = null;
+      videotagsgenPresetSelect.value = '';
+    }
+    updateVideotagsgenSelectedLabel();
+    refreshCurrentTagsLabel();
+    resetVideotagsgenGeneration();
+    videotagsgenStatus.textContent = 'Ready. Generate preview first (no changes are applied yet).';
+  }
+
+  async function loadVideotagsgenContext() {
+    if (!videotagsgenSection || !Number.isInteger(activeReleaseId) || !videotagsgenStatus) return;
+    videotagsgenStatus.textContent = 'Loading video tags generation context...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/video-tags/context`, { credentials: 'same-origin' });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      videotagsgenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Failed to load video tags generation context';
+      return;
+    }
+    applyVideotagsgenContext(payload);
+  }
+
+  async function generateVideoTags() {
+    if (!videotagsgenSection || !Number.isInteger(activeReleaseId) || !videotagsgenStatus) return;
+    const presetId = selectedPresetIdOrNull();
+    if (!videotagsgenContext || !videotagsgenContext.default_preset && presetId === null) {
+      videotagsgenStatus.textContent = 'Select a preset before generating preview.';
+      return;
+    }
+    videotagsgenStatus.textContent = 'Generating video tags preview...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/video-tags/generate`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preset_id: presetId }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      videotagsgenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Generate failed';
+      return;
+    }
+    videotagsgenGeneration = payload;
+    videotagsgenSelectedPresetId = presetId === null ? null : presetId;
+    if (videotagsgenProposedTagsJson) videotagsgenProposedTagsJson.textContent = JSON.stringify(payload.proposed_tags_json || []);
+    if (videotagsgenDroppedEmptyItems) videotagsgenDroppedEmptyItems.textContent = JSON.stringify(payload.dropped_empty_items || []);
+    if (videotagsgenRemovedDuplicates) videotagsgenRemovedDuplicates.textContent = JSON.stringify(payload.removed_duplicates || []);
+    const overwriteNeedsConfirm =
+      Boolean(payload.overwrite_required) &&
+      JSON.stringify(normalizeTagsArray(payload.current_tags_json || [])) !== JSON.stringify(normalizeTagsArray(payload.proposed_tags_json || []));
+    if (videotagsgenOverwriteWarning) videotagsgenOverwriteWarning.style.display = overwriteNeedsConfirm ? 'block' : 'none';
+    if (videotagsgenOverwriteCheckboxRow) videotagsgenOverwriteCheckboxRow.style.display = overwriteNeedsConfirm ? 'block' : 'none';
+    if (videotagsgenOverwriteCheckbox) videotagsgenOverwriteCheckbox.checked = false;
+    if (videotagsgenApplyBtn) videotagsgenApplyBtn.disabled = false;
+    videotagsgenStatus.textContent = 'Generated preview ready. Generation does not change the release tags until you apply.';
+    updateVideotagsgenSelectedLabel();
+  }
+
+  async function applyGeneratedVideoTags() {
+    if (!videotagsgenSection || !Number.isInteger(activeReleaseId) || !videotagsgenStatus || !videotagsgenGeneration) return;
+    const presetId = selectedPresetIdOrNull();
+    const overwriteNeedsConfirm =
+      Boolean(videotagsgenGeneration.overwrite_required) &&
+      JSON.stringify(normalizeTagsArray(videotagsgenGeneration.current_tags_json || [])) !== JSON.stringify(normalizeTagsArray(videotagsgenGeneration.proposed_tags_json || []));
+    if (overwriteNeedsConfirm && !videotagsgenOverwriteCheckbox.checked) {
+      videotagsgenStatus.textContent = 'Apply canceled. Confirm overwrite to continue.';
+      return;
+    }
+    videotagsgenStatus.textContent = 'Applying generated tags...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/video-tags/apply`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        preset_id: presetId,
+        generation_fingerprint: videotagsgenGeneration.generation_fingerprint,
+        overwrite_confirmed: overwriteNeedsConfirm,
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      videotagsgenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Apply failed';
+      return;
+    }
+    if (tagsCsvInput && Array.isArray(payload.tags_after)) {
+      tagsCsvInput.value = payload.tags_after.join(', ');
+    }
+    refreshCurrentTagsLabel();
+    videotagsgenStatus.textContent = payload.tags_updated ? 'Applied. Only release.tags_json was changed.' : (payload.message || 'Tags already up to date.');
+    resetVideotagsgenGeneration();
+  }
+
   function renderDiagnosticsBlock(diag, reasonText) {
     if (!diag && !reasonText) return '';
     const d = diag || {};
@@ -934,8 +1158,19 @@ const hasTagsPicker =
   if (descriptiongenRegenerateBtn) descriptiongenRegenerateBtn.addEventListener('click', generateDescription);
   if (descriptiongenApplyBtn) descriptiongenApplyBtn.addEventListener('click', applyGeneratedDescription);
   if (descriptionInput) descriptionInput.addEventListener('input', refreshCurrentDescriptionLabel);
+  if (videotagsgenPresetSelect) {
+    videotagsgenPresetSelect.addEventListener('change', () => {
+      updateVideotagsgenSelectedLabel();
+      resetVideotagsgenGeneration();
+    });
+  }
+  if (videotagsgenGenerateBtn) videotagsgenGenerateBtn.addEventListener('click', generateVideoTags);
+  if (videotagsgenRegenerateBtn) videotagsgenRegenerateBtn.addEventListener('click', generateVideoTags);
+  if (videotagsgenApplyBtn) videotagsgenApplyBtn.addEventListener('click', applyGeneratedVideoTags);
+  if (tagsCsvInput) tagsCsvInput.addEventListener('input', refreshCurrentTagsLabel);
   loadTitlegenContext();
   loadDescriptiongenContext();
+  loadVideotagsgenContext();
   const previewRequestTimeoutMs = 20000;
 
   async function parseJsonSafe(resp) {

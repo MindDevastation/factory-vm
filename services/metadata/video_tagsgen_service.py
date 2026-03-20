@@ -49,6 +49,18 @@ class GenerateResult:
     warnings: List[str]
 
 
+@dataclass(frozen=True)
+class ApplyResult:
+    release_id: int
+    channel_slug: str
+    used_preset_id: int
+    tags_updated: bool
+    tags_before: List[str]
+    tags_after: List[str]
+    overwrite_required: bool
+    message: str | None = None
+
+
 def load_video_tags_context(conn: sqlite3.Connection, *, release_id: int) -> ContextResult:
     release = conn.execute(
         """
@@ -191,6 +203,57 @@ def generate_video_tags_preview(
         normalized_count=preview.normalized_count,
         generation_fingerprint=fingerprint,
         warnings=warnings,
+    )
+
+
+def apply_generated_video_tags(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    preset_id: int | None,
+    generation_fingerprint: str,
+    overwrite_confirmed: bool,
+) -> ApplyResult:
+    regenerated = generate_video_tags_preview(conn, release_id=release_id, preset_id=preset_id)
+    if generation_fingerprint != regenerated.generation_fingerprint:
+        raise VideoTagsGenError(code="MTV_PREVIEW_STALE", message="Generated preview is stale; regenerate before apply")
+
+    tags_before = list(regenerated.current_tags_json)
+    proposed_tags = list(regenerated.proposed_tags_json)
+    overwrite_required = bool(tags_before) and tags_before != proposed_tags
+
+    if tags_before == proposed_tags:
+        return ApplyResult(
+            release_id=regenerated.release_id,
+            channel_slug=regenerated.channel_slug,
+            used_preset_id=int(regenerated.used_preset["id"]),
+            tags_updated=False,
+            tags_before=tags_before,
+            tags_after=tags_before,
+            overwrite_required=False,
+            message="Release tags already match generated result.",
+        )
+
+    if overwrite_required and not overwrite_confirmed:
+        raise VideoTagsGenError(
+            code="MTV_OVERWRITE_CONFIRMATION_REQUIRED",
+            message="overwrite_confirmed=true is required to replace existing release tags",
+        )
+
+    conn.execute(
+        "UPDATE releases SET tags_json = ? WHERE id = ?",
+        (dbm.json_dumps(proposed_tags), release_id),
+    )
+    conn.commit()
+
+    return ApplyResult(
+        release_id=regenerated.release_id,
+        channel_slug=regenerated.channel_slug,
+        used_preset_id=int(regenerated.used_preset["id"]),
+        tags_updated=True,
+        tags_before=tags_before,
+        tags_after=proposed_tags,
+        overwrite_required=overwrite_required,
     )
 
 

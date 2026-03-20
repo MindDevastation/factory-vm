@@ -181,6 +181,89 @@ class TestVideoTagsGenService(unittest.TestCase):
                 video_tagsgen_service.generate_video_tags_preview(conn, release_id=release_id, preset_id=None)
         self.assertEqual(ctx.exception.code, "MTV_PRESET_INVALID")
 
+    def test_apply_updates_only_release_tags_json(self) -> None:
+        conn, release_id = self._seed_release(tags_json='["ambient", "night"]')
+        self._insert_preset(conn, body=["{{channel_display_name}}", "{{release_title}}", "ambient"])
+        generated = video_tagsgen_service.generate_video_tags_preview(conn, release_id=release_id, preset_id=None)
+
+        before = conn.execute("SELECT title, description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone()
+        assert before is not None
+        applied = video_tagsgen_service.apply_generated_video_tags(
+            conn,
+            release_id=release_id,
+            preset_id=None,
+            generation_fingerprint=generated.generation_fingerprint,
+            overwrite_confirmed=True,
+        )
+        self.assertTrue(applied.tags_updated)
+
+        after = conn.execute("SELECT title, description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone()
+        assert after is not None
+        self.assertEqual(before["title"], after["title"])
+        self.assertEqual(before["description"], after["description"])
+        self.assertEqual(after["tags_json"], dbm.json_dumps(applied.tags_after))
+
+    def test_apply_requires_overwrite_confirmation(self) -> None:
+        conn, release_id = self._seed_release(tags_json='["ambient", "night"]')
+        self._insert_preset(conn, body=["new-tag"])
+        generated = video_tagsgen_service.generate_video_tags_preview(conn, release_id=release_id, preset_id=None)
+        with self.assertRaises(video_tagsgen_service.VideoTagsGenError) as ctx:
+            video_tagsgen_service.apply_generated_video_tags(
+                conn,
+                release_id=release_id,
+                preset_id=None,
+                generation_fingerprint=generated.generation_fingerprint,
+                overwrite_confirmed=False,
+            )
+        self.assertEqual(ctx.exception.code, "MTV_OVERWRITE_CONFIRMATION_REQUIRED")
+
+    def test_apply_blocks_stale_fingerprint_when_preset_changes(self) -> None:
+        conn, release_id = self._seed_release(tags_json='["ambient"]')
+        preset_id = self._insert_preset(conn, body=["{{release_title}}"], updated_at="2026-01-01T00:00:00+00:00")
+        generated = video_tagsgen_service.generate_video_tags_preview(conn, release_id=release_id, preset_id=preset_id)
+        conn.execute("UPDATE video_tag_presets SET updated_at = ? WHERE id = ?", ("2026-01-02T00:00:00+00:00", preset_id))
+        conn.commit()
+
+        with self.assertRaises(video_tagsgen_service.VideoTagsGenError) as ctx:
+            video_tagsgen_service.apply_generated_video_tags(
+                conn,
+                release_id=release_id,
+                preset_id=preset_id,
+                generation_fingerprint=generated.generation_fingerprint,
+                overwrite_confirmed=True,
+            )
+        self.assertEqual(ctx.exception.code, "MTV_PREVIEW_STALE")
+
+    def test_apply_blocks_stale_fingerprint_when_release_context_changes(self) -> None:
+        conn, release_id = self._seed_release(title="Night Ritual", tags_json='["ambient"]')
+        self._insert_preset(conn, body=["{{release_title}}"])
+        generated = video_tagsgen_service.generate_video_tags_preview(conn, release_id=release_id, preset_id=None)
+        conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("Changed title", release_id))
+        conn.commit()
+        with self.assertRaises(video_tagsgen_service.VideoTagsGenError) as ctx:
+            video_tagsgen_service.apply_generated_video_tags(
+                conn,
+                release_id=release_id,
+                preset_id=None,
+                generation_fingerprint=generated.generation_fingerprint,
+                overwrite_confirmed=True,
+            )
+        self.assertEqual(ctx.exception.code, "MTV_PREVIEW_STALE")
+
+    def test_apply_same_tags_returns_no_op_without_overwrite_confirmation(self) -> None:
+        conn, release_id = self._seed_release(tags_json='["ambient", "night"]')
+        self._insert_preset(conn, body=["ambient", "night"])
+        generated = video_tagsgen_service.generate_video_tags_preview(conn, release_id=release_id, preset_id=None)
+        applied = video_tagsgen_service.apply_generated_video_tags(
+            conn,
+            release_id=release_id,
+            preset_id=None,
+            generation_fingerprint=generated.generation_fingerprint,
+            overwrite_confirmed=False,
+        )
+        self.assertFalse(applied.tags_updated)
+        self.assertEqual(applied.message, "Release tags already match generated result.")
+
 
 if __name__ == "__main__":
     unittest.main()

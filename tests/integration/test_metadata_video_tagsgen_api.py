@@ -252,6 +252,140 @@ class TestMetadataVideoTagsGenApi(unittest.TestCase):
                 conn.close()
             self.assertEqual(before, after)
 
+    def test_apply_updates_only_release_tags_json(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, tags_json='["ambient", "night"]')
+                self._seed_preset(conn, is_default=True, body=["{{channel_display_name}}", "{{release_title}}"])
+                before = conn.execute("SELECT title, description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone()
+                assert before is not None
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=headers, json={})
+            self.assertEqual(generated.status_code, 200)
+
+            applied = client.post(
+                f"/v1/metadata/releases/{release_id}/video-tags/apply",
+                headers=headers,
+                json={
+                    "generation_fingerprint": generated.json()["generation_fingerprint"],
+                    "overwrite_confirmed": True,
+                },
+            )
+            self.assertEqual(applied.status_code, 200)
+            self.assertTrue(applied.json()["tags_updated"])
+
+            conn = dbm.connect(env)
+            try:
+                after = conn.execute("SELECT title, description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone()
+                assert after is not None
+            finally:
+                conn.close()
+            self.assertEqual(before["title"], after["title"])
+            self.assertEqual(before["description"], after["description"])
+            self.assertEqual(after["tags_json"], dbm.json_dumps(applied.json()["tags_after"]))
+
+    def test_apply_requires_overwrite_confirmation_and_supports_same_tags_noop(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, tags_json='["ambient", "night"]')
+                self._seed_preset(conn, is_default=True, body=["new", "tags"])
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=headers, json={})
+            self.assertEqual(generated.status_code, 200)
+            denied = client.post(
+                f"/v1/metadata/releases/{release_id}/video-tags/apply",
+                headers=headers,
+                json={
+                    "generation_fingerprint": generated.json()["generation_fingerprint"],
+                    "overwrite_confirmed": False,
+                },
+            )
+            self.assertEqual(denied.status_code, 422)
+            self.assertEqual(denied.json()["error"]["code"], "MTV_OVERWRITE_CONFIRMATION_REQUIRED")
+
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, tags_json='["ambient", "night"]')
+                self._seed_preset(conn, is_default=True, body=["ambient", "night"])
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=headers, json={})
+            self.assertEqual(generated.status_code, 200)
+            no_op = client.post(
+                f"/v1/metadata/releases/{release_id}/video-tags/apply",
+                headers=headers,
+                json={
+                    "generation_fingerprint": generated.json()["generation_fingerprint"],
+                    "overwrite_confirmed": False,
+                },
+            )
+            self.assertEqual(no_op.status_code, 200)
+            self.assertFalse(no_op.json()["tags_updated"])
+            self.assertEqual(no_op.json().get("message"), "Release tags already match generated result.")
+
+    def test_apply_blocks_stale_fingerprint_for_preset_or_release_changes(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="Night Ritual")
+                preset_id = self._seed_preset(conn, is_default=True, body=["{{release_title}}"])
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=headers, json={})
+            self.assertEqual(generated.status_code, 200)
+            fingerprint = generated.json()["generation_fingerprint"]
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE video_tag_presets SET updated_at = ? WHERE id = ?", ("2026-01-03T00:00:00+00:00", preset_id))
+                conn.commit()
+            finally:
+                conn.close()
+            stale_preset = client.post(
+                f"/v1/metadata/releases/{release_id}/video-tags/apply",
+                headers=headers,
+                json={"generation_fingerprint": fingerprint, "overwrite_confirmed": True},
+            )
+            self.assertEqual(stale_preset.status_code, 422)
+            self.assertEqual(stale_preset.json()["error"]["code"], "MTV_PREVIEW_STALE")
+
+            regenerated = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=headers, json={})
+            self.assertEqual(regenerated.status_code, 200)
+            fingerprint2 = regenerated.json()["generation_fingerprint"]
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("Changed", release_id))
+                conn.commit()
+            finally:
+                conn.close()
+            stale_release = client.post(
+                f"/v1/metadata/releases/{release_id}/video-tags/apply",
+                headers=headers,
+                json={"generation_fingerprint": fingerprint2, "overwrite_confirmed": True},
+            )
+            self.assertEqual(stale_release.status_code, 422)
+            self.assertEqual(stale_release.json()["error"]["code"], "MTV_PREVIEW_STALE")
+
 
 if __name__ == "__main__":
     unittest.main()
