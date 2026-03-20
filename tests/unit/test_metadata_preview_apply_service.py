@@ -402,6 +402,34 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
             self.assertEqual(ctx.exception.code, "MPA_SESSION_EXPIRED")
             self.assertEqual(row["session_status"], "EXPIRED")
 
+    def test_apply_conflicts_if_release_changes_during_critical_window(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="", description="stable-desc")
+                self._seed_defaults(conn)
+                preview = svc.create_preview_session(conn, release_id=release_id, requested_fields=["description"], sources={}, created_by="u", ttl_seconds=1800)
+                original = svc._apply_selected_fields_atomic
+
+                def _mutating_guard(*args, **kwargs):
+                    conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("changed-after-validate", release_id))
+                    return original(*args, **kwargs)
+
+                with mock.patch("services.metadata.preview_apply_service._apply_selected_fields_atomic", side_effect=_mutating_guard):
+                    with self.assertRaises(svc.MetadataPreviewApplyError) as ctx:
+                        svc.apply_preview_session(
+                            conn,
+                            session_id=preview["session_id"],
+                            selected_fields=["description"],
+                            overwrite_confirmed_fields=["description"],
+                        )
+                row = conn.execute("SELECT description FROM releases WHERE id = ?", (release_id,)).fetchone()
+            finally:
+                conn.close()
+            self.assertEqual(ctx.exception.code, "MPA_APPLY_CONFLICT")
+            self.assertEqual(row["description"], "stable-desc")
+
 
 if __name__ == "__main__":
     unittest.main()

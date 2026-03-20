@@ -16,10 +16,11 @@ APPLYABLE_FIELD_STATUSES = {"PROPOSED_READY", "OVERWRITE_READY", "NO_CHANGE"}
 
 
 class MetadataPreviewApplyError(Exception):
-    def __init__(self, *, code: str, message: str):
+    def __init__(self, *, code: str, message: str, details: Dict[str, Any] | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.details = details or {}
 
 
 @dataclass(frozen=True)
@@ -240,7 +241,11 @@ def apply_preview_session(
     fields = _recalculate_field_staleness(session=session, release=release)
     stale_selected = sorted([field for field in selected if str(fields[field]["status"]) == "STALE"])
     if stale_selected:
-        raise MetadataPreviewApplyError(code="MPA_PREVIEW_STALE", message=f"Selected fields are stale: {', '.join(stale_selected)}")
+        raise MetadataPreviewApplyError(
+            code="MPA_PREVIEW_STALE",
+            message=f"Selected fields are stale: {', '.join(stale_selected)}",
+            details={"stale_fields": stale_selected, "channel_slug": str(session.get("channel_slug") or "")},
+        )
 
     for field in selected:
         status_value = str(fields[field]["status"])
@@ -272,16 +277,22 @@ def apply_preview_session(
 
     try:
         if update_map:
-            assignments = ", ".join([f"{column} = ?" for column in update_map.keys()])
-            params = [update_map[column] for column in update_map.keys()]
-            params.append(int(session["release_id"]))
-            conn.execute(f"UPDATE releases SET {assignments} WHERE id = ?", params)
+            _apply_selected_fields_atomic(
+                conn,
+                release_id=int(session["release_id"]),
+                selected_fields=selected,
+                update_map=update_map,
+                expected_release=release,
+            )
         now_iso = _now_iso()
         conn.execute(
             "UPDATE metadata_preview_sessions SET session_status = 'APPLIED', applied_at = ? WHERE id = ?",
             (now_iso, session_id),
         )
         conn.commit()
+    except MetadataPreviewApplyError:
+        conn.rollback()
+        raise
     except sqlite3.OperationalError as exc:
         conn.rollback()
         raise MetadataPreviewApplyError(code="MPA_APPLY_CONFLICT", message=f"Failed to apply selected metadata fields: {exc}") from exc
@@ -290,6 +301,7 @@ def apply_preview_session(
     return {
         "session_id": session_id,
         "release_id": int(session["release_id"]),
+        "channel_slug": str(session.get("channel_slug") or ""),
         "applied_fields": applied_fields,
         "unchanged_fields": unchanged_fields,
         "result": "success",
@@ -300,6 +312,48 @@ def apply_preview_session(
         },
         "stale_fields": [],
     }
+
+
+def _apply_selected_fields_atomic(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    selected_fields: Set[str],
+    update_map: Dict[str, Any],
+    expected_release: Dict[str, Any],
+) -> None:
+    guarded_columns = _guarded_columns_for_selected_fields(selected_fields)
+    where_parts = ["id = ?"]
+    where_params: List[Any] = [release_id]
+    for column in guarded_columns:
+        value = expected_release.get(column)
+        where_parts.append(f"(({column} IS NULL AND ? IS NULL) OR {column} = ?)")
+        where_params.extend([value, value])
+
+    assignments = ", ".join([f"{column} = ?" for column in update_map.keys()])
+    set_params = [update_map[column] for column in update_map.keys()]
+    sql = f"UPDATE releases SET {assignments} WHERE {' AND '.join(where_parts)}"
+    cur = conn.execute(sql, set_params + where_params)
+    if int(cur.rowcount or 0) != 1:
+        raise MetadataPreviewApplyError(code="MPA_APPLY_CONFLICT", message="Release changed during apply; regenerate preview and retry")
+
+
+def _guarded_columns_for_selected_fields(selected_fields: Set[str]) -> List[str]:
+    guarded: List[str] = []
+    for field in ["title", "description", "tags"]:
+        if field not in selected_fields:
+            continue
+        if field == "title":
+            guarded.extend(["title", "planned_at"])
+        elif field == "description":
+            guarded.extend(["description", "title", "planned_at"])
+        elif field == "tags":
+            guarded.extend(["tags_json", "title", "planned_at"])
+    deduped: List[str] = []
+    for column in guarded:
+        if column not in deduped:
+            deduped.append(column)
+    return deduped
 
 
 def _prepare_title_field(conn: sqlite3.Connection, *, release_id: int, channel_slug: str, current_value: str, template_id: Any):

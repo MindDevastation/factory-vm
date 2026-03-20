@@ -568,6 +568,9 @@ def api_metadata_preview_apply_preview(
 @app.get("/v1/metadata/preview-apply/sessions/{session_id}")
 def api_metadata_preview_apply_session(session_id: str, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
+    session_row = conn.execute("SELECT release_id, channel_slug FROM metadata_preview_sessions WHERE id = ?", (session_id,)).fetchone()
+    release_id_hint = int(session_row["release_id"]) if session_row else None
+    channel_slug_hint = str(session_row["channel_slug"]) if session_row else None
     try:
         try:
             body = preview_apply_service.get_preview_session(conn, session_id=session_id)
@@ -579,11 +582,11 @@ def api_metadata_preview_apply_session(session_id: str, _: bool = Depends(requir
                 event,
                 extra={
                     "session_id": session_id,
-                    "release_id": None,
-                    "channel_slug": None,
+                    "release_id": release_id_hint,
+                    "channel_slug": channel_slug_hint,
                     "selected_apply_fields": [],
                     "overwrite_confirmed_fields": [],
-                    "stale_fields": [],
+                    "stale_fields": list(exc.details.get("stale_fields") or []),
                     "result_status": "error",
                     "error_codes": [exc.code],
                 },
@@ -631,6 +634,9 @@ def api_metadata_preview_apply_apply(
     _: bool = Depends(require_basic_auth(env)),
 ):
     conn = dbm.connect(env)
+    session_row = conn.execute("SELECT release_id, channel_slug FROM metadata_preview_sessions WHERE id = ?", (session_id,)).fetchone()
+    release_id_hint = int(session_row["release_id"]) if session_row else None
+    channel_slug_hint = str(session_row["channel_slug"]) if session_row else None
     try:
         try:
             body = preview_apply_service.apply_preview_session(
@@ -649,11 +655,11 @@ def api_metadata_preview_apply_apply(
                 event,
                 extra={
                     "session_id": session_id,
-                    "release_id": None,
-                    "channel_slug": None,
+                    "release_id": release_id_hint,
+                    "channel_slug": channel_slug_hint,
                     "selected_apply_fields": payload.selected_fields,
                     "overwrite_confirmed_fields": payload.overwrite_confirmed_fields,
-                    "stale_fields": [],
+                    "stale_fields": list(exc.details.get("stale_fields") or []),
                     "result_status": "error",
                     "error_codes": [exc.code],
                 },
@@ -667,7 +673,7 @@ def api_metadata_preview_apply_apply(
         extra={
             "session_id": body["session_id"],
             "release_id": body["release_id"],
-            "channel_slug": None,
+            "channel_slug": body["channel_slug"],
             "selected_apply_fields": payload.selected_fields,
             "overwrite_confirmed_fields": payload.overwrite_confirmed_fields,
             "stale_fields": body.get("stale_fields", []),

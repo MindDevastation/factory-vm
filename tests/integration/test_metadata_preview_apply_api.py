@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -320,6 +321,46 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(before, after)
+
+    def test_stale_apply_logging_includes_channel_and_stale_fields(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="old", description="old-desc")
+                self._seed_defaults(conn)
+            finally:
+                conn.close()
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            preview = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=headers,
+                json={"fields": ["description"], "sources": {}},
+            )
+            session_id = preview.json()["session_id"]
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("changed-title", release_id))
+                conn.commit()
+            finally:
+                conn.close()
+
+            with patch("services.factory_api.app.logger.info") as info_mock:
+                apply_resp = client.post(
+                    f"/v1/metadata/preview-apply/sessions/{session_id}/apply",
+                    headers=headers,
+                    json={"selected_fields": ["description"], "overwrite_confirmed_fields": ["description"]},
+                )
+            self.assertEqual(apply_resp.status_code, 422)
+            stale_calls = [call for call in info_mock.call_args_list if call.args and call.args[0] == "metadata.preview_apply.stale_detected"]
+            self.assertTrue(stale_calls)
+            stale_extra = stale_calls[-1].kwargs.get("extra", {})
+            self.assertEqual(stale_extra.get("channel_slug"), "darkwood-reverie")
+            self.assertEqual(stale_extra.get("stale_fields"), ["description"])
 
 
 if __name__ == "__main__":
