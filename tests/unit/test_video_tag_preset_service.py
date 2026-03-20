@@ -73,6 +73,15 @@ class TestVideoTagPresetService(unittest.TestCase):
         self.assertEqual(usable.render_status, "FULL")
         self.assertEqual(usable.final_normalized_tags, ["Real Title"])
 
+    def test_save_validation_uses_1000_char_release_title_estimate(self) -> None:
+        result = svc.validate_preset_for_save(
+            channel=self.channel,
+            preset_name="Main",
+            preset_body_json=json.dumps(["x" * 450 + "{{release_title}}"]),
+        )
+        codes = [item["code"] for item in result.validation_errors]
+        self.assertIn("MTV_TAG_ITEM_TOO_LONG", codes)
+
     def test_date_vars_missing_when_schedule_absent(self) -> None:
         result = svc.preview_video_tag_preset(
             channel=self.channel,
