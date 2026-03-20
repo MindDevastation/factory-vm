@@ -40,6 +40,7 @@ class TestWorkerTrackJobsGDriveToken(unittest.TestCase):
             max_render_attempts=3,
             max_upload_attempts=3,
             worker_sleep_sec=1,
+            metadata_preview_ttl_sec=1800,
         )
 
     def test_track_catalog_token_path_uses_channel_slug(self) -> None:

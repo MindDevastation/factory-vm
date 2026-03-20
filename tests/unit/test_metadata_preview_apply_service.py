@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
+from unittest import mock
 
 from services.common import db as dbm
 from services.metadata import preview_apply_service as svc
@@ -291,6 +292,115 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
             self.assertEqual(set(out["summary"].keys()), {"requested_fields", "prepared_fields", "applyable_fields", "failed_fields"})
             self.assertEqual(out["summary"]["requested_fields"], ["title", "description"])
             self.assertTrue(set(out["summary"]["applyable_fields"]).issubset({"title", "description"}))
+
+    def test_apply_requires_non_empty_selected_fields(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                self._seed_defaults(conn)
+                preview = svc.create_preview_session(conn, release_id=release_id, requested_fields=["title"], sources={}, created_by="u", ttl_seconds=1800)
+                with self.assertRaises(svc.MetadataPreviewApplyError) as ctx:
+                    svc.apply_preview_session(conn, session_id=preview["session_id"], selected_fields=[], overwrite_confirmed_fields=[])
+            finally:
+                conn.close()
+            self.assertEqual(ctx.exception.code, "MPA_SELECTED_FIELDS_EMPTY")
+
+    def test_apply_requires_overwrite_confirmation(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="Current")
+                self._seed_defaults(conn)
+                preview = svc.create_preview_session(conn, release_id=release_id, requested_fields=["title"], sources={}, created_by="u", ttl_seconds=1800)
+                with self.assertRaises(svc.MetadataPreviewApplyError) as ctx:
+                    svc.apply_preview_session(conn, session_id=preview["session_id"], selected_fields=["title"], overwrite_confirmed_fields=[])
+            finally:
+                conn.close()
+            self.assertEqual(ctx.exception.code, "MPA_OVERWRITE_CONFIRMATION_REQUIRED")
+
+    def test_get_session_marks_field_stale_when_dependency_changes(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="Before")
+                self._seed_defaults(conn)
+                preview = svc.create_preview_session(conn, release_id=release_id, requested_fields=["description"], sources={}, created_by="u", ttl_seconds=1800)
+                conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("After", release_id))
+                conn.commit()
+                session = svc.get_preview_session(conn, session_id=preview["session_id"])
+            finally:
+                conn.close()
+            self.assertEqual(session["fields"]["description"]["status"], "STALE")
+
+    def test_apply_no_change_field_returns_unchanged(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, tags_json='["darkwood-reverie"]')
+                self._seed_defaults(conn)
+                preview = svc.create_preview_session(conn, release_id=release_id, requested_fields=["tags"], sources={}, created_by="u", ttl_seconds=1800)
+                result = svc.apply_preview_session(conn, session_id=preview["session_id"], selected_fields=["tags"], overwrite_confirmed_fields=[])
+            finally:
+                conn.close()
+            self.assertEqual(result["applied_fields"], [])
+            self.assertEqual(result["unchanged_fields"], ["tags"])
+
+    def test_apply_uses_stored_snapshot_without_regeneration(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="")
+                self._seed_defaults(conn)
+                preview = svc.create_preview_session(conn, release_id=release_id, requested_fields=["title"], sources={}, created_by="u", ttl_seconds=1800)
+                with mock.patch("services.metadata.titlegen_service.generate_title_preview", side_effect=AssertionError("should not regenerate")):
+                    result = svc.apply_preview_session(
+                        conn,
+                        session_id=preview["session_id"],
+                        selected_fields=["title"],
+                        overwrite_confirmed_fields=[],
+                    )
+            finally:
+                conn.close()
+            self.assertEqual(result["result"], "success")
+
+    def test_apply_same_session_twice_fails(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="")
+                self._seed_defaults(conn)
+                preview = svc.create_preview_session(conn, release_id=release_id, requested_fields=["title"], sources={}, created_by="u", ttl_seconds=1800)
+                svc.apply_preview_session(conn, session_id=preview["session_id"], selected_fields=["title"], overwrite_confirmed_fields=[])
+                with self.assertRaises(svc.MetadataPreviewApplyError) as ctx:
+                    svc.apply_preview_session(conn, session_id=preview["session_id"], selected_fields=["title"], overwrite_confirmed_fields=[])
+            finally:
+                conn.close()
+            self.assertEqual(ctx.exception.code, "MPA_APPLY_CONFLICT")
+
+    def test_expired_session_blocks_apply_and_updates_status(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="")
+                self._seed_defaults(conn)
+                preview = svc.create_preview_session(conn, release_id=release_id, requested_fields=["title"], sources={}, created_by="u", ttl_seconds=1800)
+                conn.execute("UPDATE metadata_preview_sessions SET expires_at = ? WHERE id = ?", ("2000-01-01T00:00:00+00:00", preview["session_id"]))
+                conn.commit()
+                with self.assertRaises(svc.MetadataPreviewApplyError) as ctx:
+                    svc.apply_preview_session(conn, session_id=preview["session_id"], selected_fields=["title"], overwrite_confirmed_fields=[])
+                row = conn.execute("SELECT session_status FROM metadata_preview_sessions WHERE id = ?", (preview["session_id"],)).fetchone()
+            finally:
+                conn.close()
+            self.assertEqual(ctx.exception.code, "MPA_SESSION_EXPIRED")
+            self.assertEqual(row["session_status"], "EXPIRED")
 
 
 if __name__ == "__main__":

@@ -203,6 +203,124 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             self.assertEqual(before, after)
             self.assertEqual(stored["fields_snapshot_json"], dbm.json_dumps(body["fields"]))
 
+    def test_session_retrieval_recalculates_stale(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="before")
+                self._seed_defaults(conn)
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            preview = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=headers,
+                json={"fields": ["description"], "sources": {}},
+            )
+            self.assertEqual(preview.status_code, 200)
+            session_id = preview.json()["session_id"]
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("after", release_id))
+                conn.commit()
+            finally:
+                conn.close()
+
+            session = client.get(f"/v1/metadata/preview-apply/sessions/{session_id}", headers=headers)
+            self.assertEqual(session.status_code, 200)
+            self.assertEqual(session.json()["fields"]["description"]["status"], "STALE")
+
+    def test_apply_subset_atomic_and_single_use(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="old", description="old-desc", tags_json='["old"]')
+                self._seed_defaults(conn)
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            preview = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=headers,
+                json={"fields": ["title", "description", "tags"], "sources": {}},
+            )
+            self.assertEqual(preview.status_code, 200)
+            session_id = preview.json()["session_id"]
+
+            apply_resp = client.post(
+                f"/v1/metadata/preview-apply/sessions/{session_id}/apply",
+                headers=headers,
+                json={"selected_fields": ["title"], "overwrite_confirmed_fields": ["title"]},
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+            body = apply_resp.json()
+            self.assertEqual(body["applied_fields"], ["title"])
+            self.assertEqual(body["result"], "success")
+
+            conn = dbm.connect(env)
+            try:
+                row = conn.execute("SELECT title, description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone()
+            finally:
+                conn.close()
+            self.assertNotEqual(row["title"], "old")
+            self.assertEqual(row["description"], "old-desc")
+            self.assertEqual(row["tags_json"], '["old"]')
+
+            second_apply = client.post(
+                f"/v1/metadata/preview-apply/sessions/{session_id}/apply",
+                headers=headers,
+                json={"selected_fields": ["description"], "overwrite_confirmed_fields": ["description"]},
+            )
+            self.assertEqual(second_apply.status_code, 422)
+            self.assertEqual(second_apply.json()["error"]["code"], "MPA_APPLY_CONFLICT")
+
+    def test_apply_fails_atomically_when_selected_field_is_stale(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="old", description="old-desc")
+                self._seed_defaults(conn)
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            preview = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=headers,
+                json={"fields": ["description", "tags"], "sources": {}},
+            )
+            self.assertEqual(preview.status_code, 200)
+            session_id = preview.json()["session_id"]
+
+            conn = dbm.connect(env)
+            try:
+                before = dict(conn.execute("SELECT description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone())
+                conn.execute("UPDATE releases SET title = ? WHERE id = ?", ("changed-title", release_id))
+                conn.commit()
+            finally:
+                conn.close()
+
+            apply_resp = client.post(
+                f"/v1/metadata/preview-apply/sessions/{session_id}/apply",
+                headers=headers,
+                json={"selected_fields": ["description", "tags"], "overwrite_confirmed_fields": ["description", "tags"]},
+            )
+            self.assertEqual(apply_resp.status_code, 422)
+            self.assertEqual(apply_resp.json()["error"]["code"], "MPA_PREVIEW_STALE")
+
+            conn = dbm.connect(env)
+            try:
+                after = dict(conn.execute("SELECT description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone())
+            finally:
+                conn.close()
+            self.assertEqual(before, after)
+
 
 if __name__ == "__main__":
     unittest.main()
