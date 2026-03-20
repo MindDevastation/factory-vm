@@ -135,7 +135,14 @@ class TestMetadataVideoTagsGenApi(unittest.TestCase):
             body = resp.json()
             self.assertEqual(body["used_preset"]["id"], preset_id)
             self.assertEqual(body["proposed_tags_json"], ["Darkwood Reverie", "Night Ritual", "ambient"])
+            self.assertEqual(body["dropped_empty_items"], [])
             self.assertEqual(body["removed_duplicates"], ["ambient"])
+            self.assertIsInstance(body["warnings"], list)
+            self.assertTrue(all(isinstance(item, str) for item in body["warnings"]))
+            self.assertEqual(
+                body["warnings"],
+                ["Applying this result will overwrite the existing release tags."],
+            )
 
     def test_generate_with_explicit_override_preset(self) -> None:
         with temp_env() as (_, env):
@@ -243,7 +250,8 @@ class TestMetadataVideoTagsGenApi(unittest.TestCase):
             generated = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=headers, json={})
             self.assertEqual(generated.status_code, 200)
             self.assertTrue(generated.json()["overwrite_required"])
-            self.assertTrue(generated.json()["warnings"])
+            self.assertIsInstance(generated.json()["warnings"], list)
+            self.assertTrue(all(isinstance(item, str) for item in generated.json()["warnings"]))
 
             conn = dbm.connect(env)
             try:
@@ -251,6 +259,68 @@ class TestMetadataVideoTagsGenApi(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(before, after)
+
+    def test_generate_no_overwrite_returns_empty_warnings_list(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, tags_json="[]")
+                self._seed_preset(conn, is_default=True, body=["{{channel_display_name}}"])
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=headers, json={})
+            self.assertEqual(generated.status_code, 200)
+            body = generated.json()
+            self.assertFalse(body["overwrite_required"])
+            self.assertIsInstance(body["warnings"], list)
+            self.assertEqual(body["warnings"], [])
+
+    def test_generate_normalization_transparency_fields(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, tags_json="[]")
+                self._seed_preset(
+                    conn,
+                    is_default=True,
+                    body=["  ", " ambient ", "{{release_title}}", "{{release_title}}", "ambient"],
+                )
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=headers, json={})
+            self.assertEqual(generated.status_code, 200)
+            body = generated.json()
+            self.assertEqual(body["dropped_empty_items"], ["  "])
+            self.assertEqual(body["removed_duplicates"], ["Night Ritual", "ambient"])
+            self.assertEqual(body["proposed_tags_json"], ["ambient", "Night Ritual"])
+
+    def test_generate_date_variables_use_release_planned_at(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, planned_at="2028-12-03T09:10:11Z", tags_json="[]")
+                self._seed_preset(
+                    conn,
+                    is_default=True,
+                    body=["{{release_year}}", "{{release_month_number}}", "{{release_day_number}}"],
+                )
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            generated = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=headers, json={})
+            self.assertEqual(generated.status_code, 200)
+            self.assertEqual(generated.json()["proposed_tags_json"], ["2028", "12", "03"])
 
     def test_apply_updates_only_release_tags_json(self) -> None:
         with temp_env() as (_, env):
