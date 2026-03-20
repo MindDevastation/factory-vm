@@ -1147,7 +1147,8 @@ const hasTagsPicker =
     const defOpt = document.createElement('option');
     defOpt.value = '';
     if (defaultSource && Number.isInteger(defaultSource.id)) {
-      defOpt.textContent = `Use channel default: ${defaultSource.name} (#${defaultSource.id})`;
+      const defaultSourceName = defaultSource.template_name || defaultSource.preset_name || defaultSource.name || `#${defaultSource.id}`;
+      defOpt.textContent = `Use channel default: ${defaultSourceName} (#${defaultSource.id})`;
     } else {
       defOpt.textContent = 'Use channel default (not configured)';
     }

@@ -1239,6 +1239,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("No default source and no explicit source selected.", edit_page.text)
             self.assertIn("if (!overwriteEl || !overwriteEl.checked)", edit_page.text)
             self.assertIn("source.template_name || source.preset_name || source.name", edit_page.text)
+            self.assertIn("defaultSource.template_name || defaultSource.preset_name || defaultSource.name", edit_page.text)
             self.assertIn("mpaPreviewSourceModeByField = {", edit_page.text)
             self.assertIn("title: mpaSelectedSourceId(mpaTitleSourceSelect) === null ? 'default' : 'explicit'", edit_page.text)
             self.assertIn("renderMpaCurrentBundle(payload.current || {});", edit_page.text)
