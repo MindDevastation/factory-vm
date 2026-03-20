@@ -283,6 +283,12 @@ class MetadataVideoTagsGenGenerateRequest(BaseModel):
     preset_id: int | None = None
 
 
+class MetadataVideoTagsGenApplyRequest(BaseModel):
+    preset_id: int | None = None
+    generation_fingerprint: str = Field(min_length=1)
+    overwrite_confirmed: bool = False
+
+
 class MetadataTitleGenApplyRequest(BaseModel):
     template_id: int | None = None
     generation_fingerprint: str = Field(min_length=1)
@@ -510,6 +516,66 @@ def api_metadata_video_tags_generate(
             "dropped_empty_count": len(result.dropped_empty_items),
             "removed_duplicates_count": len(result.removed_duplicates),
             "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.post("/v1/metadata/releases/{release_id}/video-tags/apply")
+def api_metadata_video_tags_apply(
+    release_id: int,
+    payload: MetadataVideoTagsGenApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = video_tagsgen_service.apply_generated_video_tags(
+                conn,
+                release_id=release_id,
+                preset_id=payload.preset_id,
+                generation_fingerprint=payload.generation_fingerprint,
+                overwrite_confirmed=payload.overwrite_confirmed,
+            )
+        except video_tagsgen_service.VideoTagsGenError as exc:
+            status_code = 404 if exc.code in {"MTV_RELEASE_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.video_tags.apply_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "preset_id": payload.preset_id,
+                    "overwrite_required": None,
+                    "dropped_empty_count": None,
+                    "removed_duplicates_count": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "tags_updated": result.tags_updated,
+        "tags_before": result.tags_before,
+        "tags_after": result.tags_after,
+        "used_preset_id": result.used_preset_id,
+    }
+    if result.message is not None:
+        body["message"] = result.message
+    logger.info(
+        "metadata.video_tags.applied",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "preset_id": result.used_preset_id,
+            "overwrite_required": result.overwrite_required,
+            "dropped_empty_count": None,
+            "removed_duplicates_count": None,
+            "result_status": "no_op" if not result.tags_updated else "ok",
             "error_codes": [],
         },
     )

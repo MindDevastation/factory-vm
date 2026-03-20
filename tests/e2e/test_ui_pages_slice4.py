@@ -382,6 +382,178 @@ class TestUiPagesSlice4(unittest.TestCase):
             )
             self.assertEqual(explicit.status_code, 200)
 
+    def test_job_edit_videotagsgen_single_release_operator_flow(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="Night Ritual",
+                    description="Original Description",
+                    tags_csv="ambient,night",
+                    cover_name="cover",
+                    cover_ext="jpg",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                before_row = conn.execute(
+                    "SELECT r.id AS release_id, r.title, r.description, r.tags_json FROM jobs j JOIN releases r ON r.id = j.release_id WHERE j.id = ?",
+                    (job_id,),
+                ).fetchone()
+                assert before_row
+                release_id = int(before_row["release_id"])
+                dbm.create_video_tag_preset(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    preset_name="Default Video Tags",
+                    preset_body_json=dbm.json_dumps(["{{channel_display_name}}", "{{release_title}}", "ambient", "  ", "ambient"]),
+                    status="ACTIVE",
+                    is_default=True,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            edit_page = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(edit_page.status_code, 200)
+            self.assertIn('id="videotagsgen-section"', edit_page.text)
+            self.assertIn('id="videotagsgen-current-tags-json"', edit_page.text)
+            self.assertIn('id="videotagsgen-default-preset"', edit_page.text)
+            self.assertIn('id="videotagsgen-preset-select"', edit_page.text)
+            self.assertIn('id="videotagsgen-generate-btn"', edit_page.text)
+            self.assertIn('id="videotagsgen-regenerate-btn"', edit_page.text)
+            self.assertIn('id="videotagsgen-apply-btn"', edit_page.text)
+            self.assertIn("Generation does not change the release tags until you apply.", edit_page.text)
+            self.assertIn("Applying this generated tag list will overwrite the existing release tags.", edit_page.text)
+            self.assertIn("overwrite_confirmed: overwriteNeedsConfirm", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/video-tags/context", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/video-tags/generate", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/video-tags/apply", edit_page.text)
+
+            generated = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=h, json={})
+            self.assertEqual(generated.status_code, 200)
+            generated_payload = generated.json()
+            self.assertIn("  ", generated_payload["dropped_empty_items"])
+            self.assertIn("ambient", generated_payload["removed_duplicates"])
+
+            conn = dbm.connect(env)
+            try:
+                after_generate_row = conn.execute("SELECT title, description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone()
+                assert after_generate_row
+            finally:
+                conn.close()
+            self.assertEqual(after_generate_row["title"], before_row["title"])
+            self.assertEqual(after_generate_row["description"], before_row["description"])
+            self.assertEqual(after_generate_row["tags_json"], before_row["tags_json"])
+
+            denied = client.post(
+                f"/v1/metadata/releases/{release_id}/video-tags/apply",
+                headers=h,
+                json={
+                    "generation_fingerprint": generated_payload["generation_fingerprint"],
+                    "overwrite_confirmed": False,
+                },
+            )
+            self.assertEqual(denied.status_code, 422)
+            self.assertEqual(denied.json()["error"]["code"], "MTV_OVERWRITE_CONFIRMATION_REQUIRED")
+
+            applied = client.post(
+                f"/v1/metadata/releases/{release_id}/video-tags/apply",
+                headers=h,
+                json={
+                    "generation_fingerprint": generated_payload["generation_fingerprint"],
+                    "overwrite_confirmed": True,
+                },
+            )
+            self.assertEqual(applied.status_code, 200)
+            self.assertTrue(applied.json()["tags_updated"])
+
+            conn = dbm.connect(env)
+            try:
+                after_apply_row = conn.execute("SELECT title, description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone()
+                assert after_apply_row
+            finally:
+                conn.close()
+            self.assertEqual(after_apply_row["title"], before_row["title"])
+            self.assertEqual(after_apply_row["description"], before_row["description"])
+            self.assertEqual(after_apply_row["tags_json"], dbm.json_dumps(applied.json()["tags_after"]))
+
+    def test_videotagsgen_no_default_requires_manual_selection(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="Night Ritual",
+                    description="",
+                    tags_csv="",
+                    cover_name="cover",
+                    cover_ext="jpg",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                release_id = int(conn.execute("SELECT release_id FROM jobs WHERE id = ?", (job_id,)).fetchone()["release_id"])
+                explicit_preset = dbm.create_video_tag_preset(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    preset_name="Non-default video tags preset",
+                    preset_body_json=dbm.json_dumps(["{{channel_display_name}}"]),
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            edit_page = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(edit_page.status_code, 200)
+            self.assertIn("Select a preset before generating preview.", edit_page.text)
+            self.assertIn("videotagsgenPresetSelect.value = '';", edit_page.text)
+
+            no_selection = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=h, json={})
+            self.assertEqual(no_selection.status_code, 422)
+            self.assertEqual(no_selection.json()["error"]["code"], "MTV_DEFAULT_PRESET_NOT_CONFIGURED")
+
+            explicit = client.post(
+                f"/v1/metadata/releases/{release_id}/video-tags/generate",
+                headers=h,
+                json={"preset_id": explicit_preset},
+            )
+            self.assertEqual(explicit.status_code, 200)
+
     def test_playlist_builder_preview_state_guards(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
