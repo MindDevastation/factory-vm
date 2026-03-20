@@ -2,21 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 import sqlite3
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 from services.common import db as dbm
 from services.metadata import description_template_service, descriptiongen_service, title_template_service, titlegen_service, video_tagsgen_service
 
 ALL_FIELDS = ("title", "description", "tags")
+APPLYABLE_FIELD_STATUSES = {"PROPOSED_READY", "OVERWRITE_READY", "NO_CHANGE"}
 
 
 class MetadataPreviewApplyError(Exception):
-    def __init__(self, *, code: str, message: str):
+    def __init__(self, *, code: str, message: str, details: Dict[str, Any] | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.details = details or {}
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,7 @@ def create_preview_session(
     ttl_seconds: int,
 ) -> Dict[str, Any]:
     context = load_preview_apply_context(conn, release_id=release_id)
+    release = _load_release(conn, release_id=release_id)
     fields = _normalize_requested_fields(requested_fields)
 
     session_id = uuid.uuid4().hex
@@ -93,7 +98,12 @@ def create_preview_session(
             template_id=sources.get("title_template_id"),
         )
         resolved_sources["title"] = title_source
-        dependency_fingerprints["title"] = title_fingerprint
+        dependency_fingerprints["title"] = _build_field_dependency_fingerprint(
+            field="title",
+            release_row=release,
+            source=title_source,
+            generator_fingerprint=title_fingerprint,
+        )
     if "description" in fields:
         description_rec, description_source, description_fingerprint = _prepare_description_field(
             conn,
@@ -103,7 +113,12 @@ def create_preview_session(
             template_id=sources.get("description_template_id"),
         )
         resolved_sources["description"] = description_source
-        dependency_fingerprints["description"] = description_fingerprint
+        dependency_fingerprints["description"] = _build_field_dependency_fingerprint(
+            field="description",
+            release_row=release,
+            source=description_source,
+            generator_fingerprint=description_fingerprint,
+        )
     if "tags" in fields:
         tags_rec, tags_source, tags_fingerprint = _prepare_tags_field(
             conn,
@@ -113,7 +128,12 @@ def create_preview_session(
             preset_id=sources.get("video_tag_preset_id"),
         )
         resolved_sources["tags"] = tags_source
-        dependency_fingerprints["tags"] = tags_fingerprint
+        dependency_fingerprints["tags"] = _build_field_dependency_fingerprint(
+            field="tags",
+            release_row=release,
+            source=tags_source,
+            generator_fingerprint=tags_fingerprint,
+        )
 
     field_records["title"] = title_rec
     field_records["description"] = description_rec
@@ -181,6 +201,164 @@ def create_preview_session(
     )
     conn.commit()
     return payload
+
+
+def get_preview_session(conn: sqlite3.Connection, *, session_id: str) -> Dict[str, Any]:
+    session = _load_session(conn, session_id=session_id)
+    release = _load_release(conn, release_id=int(session["release_id"]))
+    effective_status = _effective_session_status(conn, session=session)
+    fields = _recalculate_field_staleness(session=session, release=release)
+    return _build_session_payload(session=session, fields=fields, session_status=effective_status)
+
+
+def apply_preview_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    selected_fields: List[str],
+    overwrite_confirmed_fields: List[str] | None,
+) -> Dict[str, Any]:
+    session = _load_session(conn, session_id=session_id)
+    release = _load_release(conn, release_id=int(session["release_id"]))
+    status = _effective_session_status(conn, session=session)
+    if status == "EXPIRED":
+        raise MetadataPreviewApplyError(code="MPA_SESSION_EXPIRED", message="Preview session has expired")
+    if status == "INVALIDATED":
+        raise MetadataPreviewApplyError(code="MPA_SESSION_INVALIDATED", message="Preview session is invalidated")
+    if status == "APPLIED":
+        raise MetadataPreviewApplyError(code="MPA_APPLY_CONFLICT", message="Preview session has already been applied")
+    if status != "OPEN":
+        raise MetadataPreviewApplyError(code="MPA_APPLY_CONFLICT", message="Preview session is not open for apply")
+
+    requested_fields = set(dbm.json_loads(str(session["requested_fields_json"]) or "[]"))
+    selected = _normalize_selected_fields(selected_fields)
+    if not selected:
+        raise MetadataPreviewApplyError(code="MPA_SELECTED_FIELDS_EMPTY", message="selected_fields must not be empty")
+    if not selected.issubset(requested_fields):
+        raise MetadataPreviewApplyError(code="MPA_FIELD_NOT_PREPARED", message="Selected field is not prepared in this session")
+
+    confirmed = _normalize_selected_fields(overwrite_confirmed_fields or [])
+    fields = _recalculate_field_staleness(session=session, release=release)
+    stale_selected = sorted([field for field in selected if str(fields[field]["status"]) == "STALE"])
+    if stale_selected:
+        raise MetadataPreviewApplyError(
+            code="MPA_PREVIEW_STALE",
+            message=f"Selected fields are stale: {', '.join(stale_selected)}",
+            details={"stale_fields": stale_selected, "channel_slug": str(session.get("channel_slug") or "")},
+        )
+
+    for field in selected:
+        status_value = str(fields[field]["status"])
+        if status_value not in APPLYABLE_FIELD_STATUSES:
+            raise MetadataPreviewApplyError(code="MPA_FIELD_NOT_SELECTEDABLE", message=f"Field '{field}' cannot be selected with status {status_value}")
+        if status_value == "OVERWRITE_READY" and field not in confirmed:
+            raise MetadataPreviewApplyError(
+                code="MPA_OVERWRITE_CONFIRMATION_REQUIRED",
+                message=f"overwrite confirmation is required for field '{field}'",
+            )
+
+    update_map: Dict[str, Any] = {}
+    applied_fields: List[str] = []
+    unchanged_fields: List[str] = []
+    for field in ["title", "description", "tags"]:
+        if field not in selected:
+            continue
+        if str(fields[field]["status"]) == "NO_CHANGE":
+            unchanged_fields.append(field)
+            continue
+        proposed_value = fields[field].get("proposed_value")
+        if field == "title":
+            update_map["title"] = str(proposed_value or "")
+        elif field == "description":
+            update_map["description"] = str(proposed_value or "")
+        elif field == "tags":
+            update_map["tags_json"] = dbm.json_dumps(list(proposed_value or []))
+        applied_fields.append(field)
+
+    try:
+        _apply_selected_fields_atomic(
+            conn,
+            release_id=int(session["release_id"]),
+            selected_fields=selected,
+            update_map=update_map,
+            expected_release=release,
+        )
+        now_iso = _now_iso()
+        _mark_session_applied_open_only(conn, session_id=session_id, applied_at=now_iso)
+        conn.commit()
+    except MetadataPreviewApplyError:
+        conn.rollback()
+        raise
+    except sqlite3.OperationalError as exc:
+        conn.rollback()
+        raise MetadataPreviewApplyError(code="MPA_APPLY_CONFLICT", message=f"Failed to apply selected metadata fields: {exc}") from exc
+
+    refreshed = _load_release(conn, release_id=int(session["release_id"]))
+    return {
+        "session_id": session_id,
+        "release_id": int(session["release_id"]),
+        "channel_slug": str(session.get("channel_slug") or ""),
+        "applied_fields": applied_fields,
+        "unchanged_fields": unchanged_fields,
+        "result": "success",
+        "release_metadata_after": {
+            "title": str(refreshed.get("title") or ""),
+            "description": str(refreshed.get("description") or ""),
+            "tags_json": _normalize_tags_json_value(refreshed.get("tags_json")),
+        },
+        "stale_fields": [],
+    }
+
+
+def _apply_selected_fields_atomic(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    selected_fields: Set[str],
+    update_map: Dict[str, Any],
+    expected_release: Dict[str, Any],
+) -> None:
+    guarded_columns = _guarded_columns_for_selected_fields(selected_fields)
+    where_parts = ["id = ?"]
+    where_params: List[Any] = [release_id]
+    for column in guarded_columns:
+        value = expected_release.get(column)
+        where_parts.append(f"(({column} IS NULL AND ? IS NULL) OR {column} = ?)")
+        where_params.extend([value, value])
+
+    assignments = ", ".join([f"{column} = ?" for column in update_map.keys()]) if update_map else "id = id"
+    set_params = [update_map[column] for column in update_map.keys()] if update_map else []
+    sql = f"UPDATE releases SET {assignments} WHERE {' AND '.join(where_parts)}"
+    cur = conn.execute(sql, set_params + where_params)
+    if int(cur.rowcount or 0) != 1:
+        raise MetadataPreviewApplyError(code="MPA_APPLY_CONFLICT", message="Release changed during apply; regenerate preview and retry")
+
+
+def _mark_session_applied_open_only(conn: sqlite3.Connection, *, session_id: str, applied_at: str) -> None:
+    cur = conn.execute(
+        "UPDATE metadata_preview_sessions SET session_status = 'APPLIED', applied_at = ? WHERE id = ? AND session_status = 'OPEN'",
+        (applied_at, session_id),
+    )
+    if int(cur.rowcount or 0) != 1:
+        raise MetadataPreviewApplyError(code="MPA_APPLY_CONFLICT", message="Preview session was already applied or no longer open")
+
+
+def _guarded_columns_for_selected_fields(selected_fields: Set[str]) -> List[str]:
+    guarded: List[str] = []
+    for field in ["title", "description", "tags"]:
+        if field not in selected_fields:
+            continue
+        if field == "title":
+            guarded.extend(["title", "planned_at"])
+        elif field == "description":
+            guarded.extend(["description", "title", "planned_at"])
+        elif field == "tags":
+            guarded.extend(["tags_json", "title", "planned_at"])
+    deduped: List[str] = []
+    for column in guarded:
+        if column not in deduped:
+            deduped.append(column)
+    return deduped
 
 
 def _prepare_title_field(conn: sqlite3.Connection, *, release_id: int, channel_slug: str, current_value: str, template_id: Any):
@@ -266,6 +444,7 @@ def _load_release(conn: sqlite3.Connection, *, release_id: int) -> Dict[str, Any
     row = conn.execute(
         """
         SELECT r.id, r.title, r.description, r.tags_json, c.slug AS channel_slug
+               , r.planned_at
         FROM releases r
         JOIN channels c ON c.id = r.channel_id
         WHERE r.id = ?
@@ -285,6 +464,156 @@ def _normalize_requested_fields(fields: List[str] | None) -> set[str]:
     if invalid:
         raise MetadataPreviewApplyError(code="MPA_FIELDS_INVALID", message=f"Unsupported fields requested: {', '.join(sorted(invalid))}")
     return normalized
+
+
+def _normalize_selected_fields(fields: List[str] | None) -> Set[str]:
+    normalized = {str(item).strip() for item in (fields or []) if str(item).strip()}
+    invalid = normalized - set(ALL_FIELDS)
+    if invalid:
+        raise MetadataPreviewApplyError(code="MPA_FIELD_NOT_SELECTEDABLE", message=f"Unsupported selected fields: {', '.join(sorted(invalid))}")
+    return normalized
+
+
+def _load_session(conn: sqlite3.Connection, *, session_id: str) -> Dict[str, Any]:
+    row = conn.execute("SELECT * FROM metadata_preview_sessions WHERE id = ?", (session_id,)).fetchone()
+    if not row:
+        raise MetadataPreviewApplyError(code="MPA_SESSION_NOT_FOUND", message="Preview session not found")
+    return dict(row)
+
+
+def _effective_session_status(conn: sqlite3.Connection, *, session: Dict[str, Any]) -> str:
+    current_status = str(session.get("session_status") or "")
+    if current_status != "OPEN":
+        return current_status
+    expires_at = datetime.fromisoformat(str(session["expires_at"]))
+    if datetime.now(timezone.utc) > expires_at:
+        conn.execute("UPDATE metadata_preview_sessions SET session_status = 'EXPIRED' WHERE id = ? AND session_status = 'OPEN'", (str(session["id"]),))
+        conn.commit()
+        return "EXPIRED"
+    return "OPEN"
+
+
+def _build_session_payload(*, session: Dict[str, Any], fields: Dict[str, Any], session_status: str) -> Dict[str, Any]:
+    requested_fields = [f for f in ALL_FIELDS if f in set(dbm.json_loads(str(session["requested_fields_json"]) or "[]"))]
+    statuses = {field: str(fields[field]["status"]) for field in ALL_FIELDS}
+    prepared_fields = [f for f in requested_fields if statuses[f] in {"PROPOSED_READY", "NO_CHANGE", "OVERWRITE_READY", "CURRENT_ONLY"}]
+    applyable_fields = [f for f in requested_fields if statuses[f] in APPLYABLE_FIELD_STATUSES]
+    failed_fields = [f for f in requested_fields if statuses[f] in {"GENERATION_FAILED", "CONFIGURATION_MISSING", "STALE"}]
+    return {
+        "session_id": str(session["id"]),
+        "release_id": int(session["release_id"]),
+        "channel_slug": str(session["channel_slug"]),
+        "session_status": session_status,
+        "expires_at": str(session["expires_at"]),
+        "current": dbm.json_loads(str(session["current_bundle_json"]) or "{}"),
+        "fields": fields,
+        "summary": {
+            "requested_fields": requested_fields,
+            "prepared_fields": prepared_fields,
+            "applyable_fields": applyable_fields,
+            "failed_fields": failed_fields,
+        },
+    }
+
+
+def _recalculate_field_staleness(*, session: Dict[str, Any], release: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    fields = dbm.json_loads(str(session.get("fields_snapshot_json") or "{}"))
+    dependency_fingerprints = dbm.json_loads(str(session.get("dependency_fingerprints_json") or "{}"))
+    for field in ALL_FIELDS:
+        record = fields.get(field) or _build_not_requested_record(_current_value_for_field(field=field, release=release))
+        status = str(record.get("status") or "")
+        if status in {"PROPOSED_READY", "OVERWRITE_READY", "NO_CHANGE"}:
+            stored = dependency_fingerprints.get(field)
+            current = _build_field_dependency_fingerprint(
+                field=field,
+                release_row=release,
+                source=(record.get("source") or {}),
+                generator_fingerprint=(stored or {}).get("generator_fingerprint") if isinstance(stored, dict) else stored,
+            )
+            stale = not _fingerprints_match(stored=stored, current=current)
+            if stale:
+                record["status"] = "STALE"
+        fields[field] = record
+    return fields
+
+
+def _fingerprints_match(*, stored: Any, current: Dict[str, Any]) -> bool:
+    if stored is None:
+        return False
+    if isinstance(stored, str):
+        return stored == current.get("generator_fingerprint")
+    if not isinstance(stored, dict):
+        return False
+    return (
+        str(stored.get("target_field_fingerprint") or "") == str(current.get("target_field_fingerprint") or "")
+        and str(stored.get("render_context_fingerprint") or "") == str(current.get("render_context_fingerprint") or "")
+    )
+
+
+def _build_field_dependency_fingerprint(
+    *,
+    field: str,
+    release_row: Dict[str, Any],
+    source: Dict[str, Any],
+    generator_fingerprint: str | None,
+) -> Dict[str, Any]:
+    target_payload = _target_fingerprint_payload(field=field, release_row=release_row)
+    context_payload = _context_fingerprint_payload(field=field, release_row=release_row)
+    source_id = source.get("source_id")
+    if source_id is None:
+        source_id = source.get("id")
+    return {
+        "target_field_fingerprint": _hash_payload(target_payload),
+        "render_context_fingerprint": _hash_payload(context_payload),
+        "source_id": source_id,
+        "source_updated_at": source.get("updated_at"),
+        "generator_fingerprint": generator_fingerprint,
+    }
+
+
+def _target_fingerprint_payload(*, field: str, release_row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "field": field,
+        "value": _current_value_for_field(field=field, release=release_row),
+    }
+
+
+def _context_fingerprint_payload(*, field: str, release_row: Dict[str, Any]) -> Dict[str, Any]:
+    planned_at = str(release_row.get("planned_at") or "")
+    if field == "title":
+        return {"planned_at": planned_at}
+    if field in {"description", "tags"}:
+        return {
+            "title": str(release_row.get("title") or ""),
+            "planned_at": planned_at,
+        }
+    return {}
+
+
+def _current_value_for_field(*, field: str, release: Dict[str, Any]) -> Any:
+    if field == "title":
+        return str(release.get("title") or "")
+    if field == "description":
+        return str(release.get("description") or "")
+    return _normalize_tags_json_value(release.get("tags_json"))
+
+
+def _normalize_tags_json_value(value: Any) -> List[str]:
+    if isinstance(value, list):
+        raw = value
+    else:
+        try:
+            raw = dbm.json_loads(str(value or "[]"))
+        except Exception:
+            raw = []
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if isinstance(item, str)]
+
+
+def _hash_payload(payload: Dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _build_not_requested_record(current_value: Any) -> Dict[str, Any]:
