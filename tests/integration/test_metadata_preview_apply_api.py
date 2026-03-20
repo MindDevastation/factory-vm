@@ -234,6 +234,69 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             self.assertEqual(session.status_code, 200)
             self.assertEqual(session.json()["fields"]["description"]["status"], "STALE")
 
+    def test_default_source_change_does_not_stale_prepared_field(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="before")
+                first_title_id, _, _ = self._seed_defaults(conn)
+                second_title_id = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="t2",
+                    template_body="{{channel_slug}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-02T00:00:00+00:00",
+                    created_at="2026-01-02T00:00:00+00:00",
+                    updated_at="2026-01-02T00:00:00+00:00",
+                    archived_at=None,
+                )
+                conn.execute("UPDATE title_templates SET is_default = 0 WHERE id = ?", (first_title_id,))
+                conn.execute("UPDATE title_templates SET is_default = 1 WHERE id = ?", (second_title_id,))
+                conn.commit()
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            preview = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=headers,
+                json={"fields": ["title"], "sources": {}},
+            )
+            self.assertEqual(preview.status_code, 200)
+            session_id = preview.json()["session_id"]
+            preview_status = preview.json()["fields"]["title"]["status"]
+
+            conn = dbm.connect(env)
+            try:
+                third_title_id = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="t3",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-03T00:00:00+00:00",
+                    created_at="2026-01-03T00:00:00+00:00",
+                    updated_at="2026-01-03T00:00:00+00:00",
+                    archived_at=None,
+                )
+                conn.execute("UPDATE title_templates SET is_default = 0 WHERE id = ?", (second_title_id,))
+                conn.execute("UPDATE title_templates SET is_default = 1 WHERE id = ?", (third_title_id,))
+                conn.commit()
+            finally:
+                conn.close()
+
+            session = client.get(f"/v1/metadata/preview-apply/sessions/{session_id}", headers=headers)
+            self.assertEqual(session.status_code, 200)
+            self.assertEqual(session.json()["fields"]["title"]["status"], preview_status)
+
     def test_apply_subset_atomic_and_single_use(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)

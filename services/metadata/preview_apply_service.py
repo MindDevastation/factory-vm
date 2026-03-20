@@ -145,8 +145,8 @@ def create_preview_session(
         errors.extend(rec["errors"])
 
     requested_list = [f for f in ALL_FIELDS if f in fields]
-    prepared_fields = [f for f in requested_list if field_statuses[f] in {"PROPOSED_READY", "NO_CHANGE", "OVERWRITE_READY", "CURRENT_ONLY"}]
-    applyable_fields = [f for f in requested_list if field_statuses[f] in {"PROPOSED_READY", "OVERWRITE_READY"}]
+    prepared_fields = [f for f in requested_list if field_statuses[f] in {"PROPOSED_READY", "NO_CHANGE", "OVERWRITE_READY"}]
+    applyable_fields = [f for f in requested_list if field_statuses[f] in APPLYABLE_FIELD_STATUSES]
     failed_fields = [f for f in requested_list if field_statuses[f] in {"GENERATION_FAILED", "CONFIGURATION_MISSING"}]
 
     payload = {
@@ -496,7 +496,7 @@ def _effective_session_status(conn: sqlite3.Connection, *, session: Dict[str, An
 def _build_session_payload(*, session: Dict[str, Any], fields: Dict[str, Any], session_status: str) -> Dict[str, Any]:
     requested_fields = [f for f in ALL_FIELDS if f in set(dbm.json_loads(str(session["requested_fields_json"]) or "[]"))]
     statuses = {field: str(fields[field]["status"]) for field in ALL_FIELDS}
-    prepared_fields = [f for f in requested_fields if statuses[f] in {"PROPOSED_READY", "NO_CHANGE", "OVERWRITE_READY", "CURRENT_ONLY"}]
+    prepared_fields = [f for f in requested_fields if statuses[f] in {"PROPOSED_READY", "NO_CHANGE", "OVERWRITE_READY"}]
     applyable_fields = [f for f in requested_fields if statuses[f] in APPLYABLE_FIELD_STATUSES]
     failed_fields = [f for f in requested_fields if statuses[f] in {"GENERATION_FAILED", "CONFIGURATION_MISSING", "STALE"}]
     return {

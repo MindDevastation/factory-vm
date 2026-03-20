@@ -293,6 +293,53 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
             self.assertEqual(out["summary"]["requested_fields"], ["title", "description"])
             self.assertTrue(set(out["summary"]["applyable_fields"]).issubset({"title", "description"}))
 
+    def test_no_change_field_is_applyable_in_create_summary(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, tags_json='["darkwood-reverie"]')
+                self._seed_defaults(conn)
+                out = svc.create_preview_session(
+                    conn,
+                    release_id=release_id,
+                    requested_fields=["tags"],
+                    sources={},
+                    created_by="u",
+                    ttl_seconds=1800,
+                )
+            finally:
+                conn.close()
+
+            self.assertEqual(out["fields"]["tags"]["status"], "NO_CHANGE")
+            self.assertEqual(out["summary"]["applyable_fields"], ["tags"])
+
+    def test_build_payload_excludes_current_only_from_prepared_fields(self) -> None:
+        session = {
+            "id": "s1",
+            "release_id": 1,
+            "channel_slug": "darkwood-reverie",
+            "expires_at": "2026-01-01T00:00:00+00:00",
+            "requested_fields_json": dbm.json_dumps(["title"]),
+            "current_bundle_json": dbm.json_dumps({"title": "x", "description": "", "tags_json": []}),
+        }
+        fields = {
+            "title": {
+                "status": "CURRENT_ONLY",
+                "current_value": "x",
+                "proposed_value": None,
+                "changed": False,
+                "overwrite_required": False,
+                "source": None,
+                "warnings": [],
+                "errors": [],
+            },
+            "description": svc._build_not_requested_record(""),
+            "tags": svc._build_not_requested_record([]),
+        }
+        payload = svc._build_session_payload(session=session, fields=fields, session_status="OPEN")
+        self.assertEqual(payload["summary"]["prepared_fields"], [])
+
     def test_apply_requires_non_empty_selected_fields(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
