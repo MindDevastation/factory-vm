@@ -73,6 +73,7 @@ from services.metadata import (
     title_template_service,
     titlegen_service,
     video_tag_preset_service,
+    video_tagsgen_service,
 )
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
@@ -278,6 +279,10 @@ class MetadataDescriptionGenGenerateRequest(BaseModel):
     template_id: int | None = None
 
 
+class MetadataVideoTagsGenGenerateRequest(BaseModel):
+    preset_id: int | None = None
+
+
 class MetadataTitleGenApplyRequest(BaseModel):
     template_id: int | None = None
     generation_fingerprint: str = Field(min_length=1)
@@ -398,6 +403,117 @@ def api_metadata_descriptiongen_context(release_id: int, _: bool = Depends(requi
         },
     )
     return payload
+
+
+@app.get("/v1/metadata/releases/{release_id}/video-tags/context")
+def api_metadata_video_tags_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            context = video_tagsgen_service.load_video_tags_context(conn, release_id=release_id)
+        except video_tagsgen_service.VideoTagsGenError as exc:
+            status_code = 404 if exc.code == "MTV_RELEASE_NOT_FOUND" else 422
+            logger.info(
+                "metadata.video_tags.generate_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "preset_id": None,
+                    "overwrite_required": None,
+                    "dropped_empty_count": None,
+                    "removed_duplicates_count": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    default_item = None
+    if context.default_preset is not None:
+        default_item = {
+            "id": int(context.default_preset["id"]),
+            "preset_name": str(context.default_preset["preset_name"]),
+            "status": str(context.default_preset.get("status") or ""),
+            "is_default": bool(int(context.default_preset.get("is_default") or 0)),
+        }
+    return {
+        "release_id": context.release_id,
+        "channel_slug": context.channel_slug,
+        "current_tags_json": context.current_tags_json,
+        "has_existing_tags": context.has_existing_tags,
+        "default_preset": default_item,
+        "active_presets": context.active_presets,
+        "can_generate_with_default": context.can_generate_with_default,
+    }
+
+
+@app.post("/v1/metadata/releases/{release_id}/video-tags/generate")
+def api_metadata_video_tags_generate(
+    release_id: int,
+    payload: MetadataVideoTagsGenGenerateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = video_tagsgen_service.generate_video_tags_preview(
+                conn,
+                release_id=release_id,
+                preset_id=payload.preset_id,
+            )
+        except video_tagsgen_service.VideoTagsGenError as exc:
+            status_code = 404 if exc.code in {"MTV_RELEASE_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.video_tags.generate_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "preset_id": payload.preset_id,
+                    "overwrite_required": None,
+                    "dropped_empty_count": None,
+                    "removed_duplicates_count": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "used_preset": {
+            "id": int(result.used_preset["id"]),
+            "preset_name": str(result.used_preset["preset_name"]),
+            "is_default_channel_preset": bool(result.used_preset["is_default_channel_preset"]),
+        },
+        "current_tags_json": result.current_tags_json,
+        "has_existing_tags": result.has_existing_tags,
+        "overwrite_required": result.overwrite_required,
+        "rendered_items_before_normalization": result.rendered_items_before_normalization,
+        "dropped_empty_items": result.dropped_empty_items,
+        "removed_duplicates": result.removed_duplicates,
+        "proposed_tags_json": result.proposed_tags_json,
+        "normalized_count": result.normalized_count,
+        "generation_fingerprint": result.generation_fingerprint,
+        "warnings": result.warnings,
+    }
+    logger.info(
+        "metadata.video_tags.generated",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "preset_id": int(result.used_preset["id"]),
+            "overwrite_required": result.overwrite_required,
+            "dropped_empty_count": len(result.dropped_empty_items),
+            "removed_duplicates_count": len(result.removed_duplicates),
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return body
 
 
 @app.post("/v1/metadata/releases/{release_id}/descriptiongen/generate")
