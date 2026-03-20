@@ -69,7 +69,7 @@ def load_video_tags_context(conn: sqlite3.Connection, *, release_id: int) -> Con
         """
         SELECT *
         FROM video_tag_presets
-        WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND validation_status = 'VALID' AND is_default = 1
         ORDER BY id DESC
         LIMIT 1
         """,
@@ -80,7 +80,7 @@ def load_video_tags_context(conn: sqlite3.Connection, *, release_id: int) -> Con
         """
         SELECT id, preset_name, status, is_default
         FROM video_tag_presets
-        WHERE channel_slug = ? AND status = 'ACTIVE'
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND validation_status = 'VALID'
         ORDER BY id DESC
         """,
         (channel_slug,),
@@ -149,13 +149,13 @@ def generate_video_tags_preview(
             code="MTV_REQUIRED_CONTEXT_MISSING",
             message=f"Missing required context for variables: {', '.join(preview.missing_variables)}",
         )
-    if preview.render_status != "FULL":
-        raise VideoTagsGenError(code="MTV_RENDER_FAILED", message="Failed to render proposed tags")
     if preview.validation_errors:
         first_code = str(preview.validation_errors[0].get("code") or "")
         if first_code in {"MTV_TAG_ITEM_TOO_LONG", "MTV_TAG_COUNT_EXCEEDED", "MTV_TAG_TOTAL_CHARS_EXCEEDED", "MTV_PRESET_EMPTY_AFTER_NORMALIZATION"}:
-            raise VideoTagsGenError(code="MTV_RENDER_FAILED", message="Rendered tags failed validation")
+            raise VideoTagsGenError(code="MTV_PRESET_INVALID", message="Rendered tags failed validation")
         raise VideoTagsGenError(code="MTV_REQUIRED_CONTEXT_MISSING", message="Required render context is missing")
+    if preview.render_status != "FULL":
+        raise VideoTagsGenError(code="MTV_RENDER_FAILED", message="Failed to render proposed tags")
     if not preview.final_normalized_tags:
         raise VideoTagsGenError(code="MTV_RENDER_FAILED", message="Rendered tags cannot be empty")
 
