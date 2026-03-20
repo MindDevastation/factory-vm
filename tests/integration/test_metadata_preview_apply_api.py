@@ -90,6 +90,20 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
                     updated_at="2026-01-01T00:00:00+00:00",
                     archived_at="2026-01-01T00:00:00+00:00",
                 )
+                dbm.create_description_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="invalid",
+                    template_body="x",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="INVALID",
+                    validation_errors_json='[{"code":"bad"}]',
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
             finally:
                 conn.close()
             client = self._new_client()
@@ -100,6 +114,7 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             self.assertEqual(set(body.keys()), {"release_id", "channel_slug", "current", "defaults", "active_sources"})
             self.assertEqual(body["current"]["title"], "t")
             self.assertTrue(all(item["status"] == "ACTIVE" for item in body["active_sources"]["title_templates"]))
+            self.assertTrue(all(item["template_name"] != "invalid" for item in body["active_sources"]["description_templates"]))
 
     def test_preview_prepare_one_two_and_all_fields(self) -> None:
         with temp_env() as (_, env):
@@ -177,13 +192,16 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             self.assertEqual(body["fields"]["title"]["status"], "GENERATION_FAILED")
             self.assertEqual(body["fields"]["tags"]["status"], "NOT_REQUESTED")
             self.assertNotEqual(body["fields"]["description"]["status"], "GENERATION_FAILED")
+            session_id = body["session_id"]
 
             conn = dbm.connect(env)
             try:
                 after = dict(conn.execute("SELECT title, description, tags_json FROM releases WHERE id = ?", (release_id,)).fetchone())
+                stored = conn.execute("SELECT fields_snapshot_json FROM metadata_preview_sessions WHERE id = ?", (session_id,)).fetchone()
             finally:
                 conn.close()
             self.assertEqual(before, after)
+            self.assertEqual(stored["fields_snapshot_json"], dbm.json_dumps(body["fields"]))
 
 
 if __name__ == "__main__":

@@ -30,9 +30,11 @@ class PreviewContextResult:
 
 def load_preview_apply_context(conn: sqlite3.Connection, *, release_id: int) -> PreviewContextResult:
     release = _load_release(conn, release_id=release_id)
-    title_ctx = titlegen_service.load_titlegen_context(conn, release_id=release_id)
-    description_ctx = descriptiongen_service.load_descriptiongen_context(conn, release_id=release_id)
     tags_ctx = video_tagsgen_service.load_video_tags_context(conn, release_id=release_id)
+    usable_title_templates = _list_usable_title_templates(conn, channel_slug=str(release["channel_slug"]))
+    usable_description_templates = _list_usable_description_templates(conn, channel_slug=str(release["channel_slug"]))
+    default_title_template = _find_default_source(usable_title_templates)
+    default_description_template = _find_default_source(usable_description_templates)
 
     return PreviewContextResult(
         release_id=int(release["id"]),
@@ -43,13 +45,13 @@ def load_preview_apply_context(conn: sqlite3.Connection, *, release_id: int) -> 
             "tags_json": list(tags_ctx.current_tags_json),
         },
         defaults={
-            "title_template": _template_source_item(title_ctx.default_template, name_key="template_name"),
-            "description_template": _template_source_item(description_ctx.default_template, name_key="template_name"),
+            "title_template": default_title_template,
+            "description_template": default_description_template,
             "video_tag_preset": _template_source_item(tags_ctx.default_preset, name_key="preset_name"),
         },
         active_sources={
-            "title_templates": list(title_ctx.active_templates),
-            "description_templates": list(description_ctx.active_templates),
+            "title_templates": usable_title_templates,
+            "description_templates": usable_description_templates,
             "video_tag_presets": list(tags_ctx.active_presets),
         },
     )
@@ -147,6 +149,12 @@ def create_preview_session(
         },
     }
 
+    fields_snapshot = {
+        "title": title_rec,
+        "description": description_rec,
+        "tags": tags_rec,
+    }
+
     dbm.insert_metadata_preview_session(
         conn,
         session_id=session_id,
@@ -165,6 +173,7 @@ def create_preview_session(
         dependency_fingerprints_json=dbm.json_dumps(dependency_fingerprints),
         warnings_json=dbm.json_dumps(warnings),
         errors_json=dbm.json_dumps(errors),
+        fields_snapshot_json=dbm.json_dumps(fields_snapshot),
         created_by=created_by,
         created_at=created_at,
         expires_at=expires_at,
@@ -175,12 +184,14 @@ def create_preview_session(
 
 
 def _prepare_title_field(conn: sqlite3.Connection, *, release_id: int, channel_slug: str, current_value: str, template_id: Any):
+    resolved_template_id = _as_int_or_none(template_id)
     if template_id is None:
-        ctx = titlegen_service.load_titlegen_context(conn, release_id=release_id)
-        if ctx.default_template is None:
+        default_row = _find_default_source(_list_usable_title_templates(conn, channel_slug=channel_slug))
+        if default_row is None:
             return _configuration_missing_record(current_value), {"type": "default", "id": None}, None
+        resolved_template_id = int(default_row["id"])
     try:
-        result = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=_as_int_or_none(template_id))
+        result = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=resolved_template_id)
         proposed = result.proposed_title
         normalized_current = title_template_service.normalize_whitespace(current_value)
         normalized_proposed = title_template_service.normalize_whitespace(proposed)
@@ -200,12 +211,14 @@ def _prepare_title_field(conn: sqlite3.Connection, *, release_id: int, channel_s
 
 
 def _prepare_description_field(conn: sqlite3.Connection, *, release_id: int, channel_slug: str, current_value: str, template_id: Any):
+    resolved_template_id = _as_int_or_none(template_id)
     if template_id is None:
-        ctx = descriptiongen_service.load_descriptiongen_context(conn, release_id=release_id)
-        if ctx.default_template is None:
+        default_row = _find_default_source(_list_usable_description_templates(conn, channel_slug=channel_slug))
+        if default_row is None:
             return _configuration_missing_record(current_value), {"type": "default", "id": None}, None
+        resolved_template_id = int(default_row["id"])
     try:
-        result = descriptiongen_service.generate_description_preview(conn, release_id=release_id, template_id=_as_int_or_none(template_id))
+        result = descriptiongen_service.generate_description_preview(conn, release_id=release_id, template_id=resolved_template_id)
         proposed = result.proposed_description
         normalized_current = description_template_service.normalize_multiline(current_value)
         normalized_proposed = description_template_service.normalize_multiline(proposed)
@@ -322,6 +335,55 @@ def _template_source_item(row: Dict[str, Any] | None, *, name_key: str) -> Dict[
         "status": str(row.get("status") or ""),
         "is_default": bool(int(row.get("is_default") or 0)),
     }
+
+
+def _find_default_source(rows: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+    for row in rows:
+        if bool(int(row.get("is_default") or 0)):
+            return row
+    return None
+
+
+def _list_usable_title_templates(conn: sqlite3.Connection, *, channel_slug: str) -> List[Dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT id, template_name, status, is_default
+        FROM title_templates
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND validation_status = 'VALID'
+        ORDER BY id DESC
+        """,
+        (channel_slug,),
+    ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "template_name": str(row["template_name"]),
+            "status": str(row["status"]),
+            "is_default": bool(int(row.get("is_default") or 0)),
+        }
+        for row in rows
+    ]
+
+
+def _list_usable_description_templates(conn: sqlite3.Connection, *, channel_slug: str) -> List[Dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT id, template_name, status, is_default
+        FROM description_templates
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND validation_status = 'VALID'
+        ORDER BY id DESC
+        """,
+        (channel_slug,),
+    ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "template_name": str(row["template_name"]),
+            "status": str(row["status"]),
+            "is_default": bool(int(row.get("is_default") or 0)),
+        }
+        for row in rows
+    ]
 
 
 def _diff_status(normalized_current: Any, normalized_proposed: Any) -> tuple[str, bool, bool]:

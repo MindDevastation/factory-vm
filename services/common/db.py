@@ -344,6 +344,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             dependency_fingerprints_json TEXT NOT NULL,
             warnings_json TEXT NOT NULL,
             errors_json TEXT NOT NULL,
+            fields_snapshot_json TEXT NOT NULL DEFAULT '{}',
             created_by TEXT NULL,
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
@@ -675,6 +676,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_channels_columns(conn)
     _ensure_ui_job_drafts_columns(conn)
     _ensure_tracks_columns(conn)
+    _ensure_metadata_preview_sessions_columns(conn)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -865,6 +867,15 @@ def _ensure_tracks_columns(conn: sqlite3.Connection) -> None:
     if "month_batch" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE tracks ADD COLUMN month_batch TEXT;")
+
+
+def _ensure_metadata_preview_sessions_columns(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "metadata_preview_sessions"):
+        return
+    cols = _table_columns(conn, "metadata_preview_sessions")
+    if "fields_snapshot_json" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN fields_snapshot_json TEXT NOT NULL DEFAULT '{}';")
 
 
 def now_ts() -> float:
@@ -2272,6 +2283,7 @@ def insert_metadata_preview_session(
     dependency_fingerprints_json: str,
     warnings_json: str,
     errors_json: str,
+    fields_snapshot_json: str,
     created_by: str | None,
     created_at: str,
     expires_at: str,
@@ -2282,9 +2294,9 @@ def insert_metadata_preview_session(
         INSERT INTO metadata_preview_sessions(
             id, release_id, channel_slug, session_status, requested_fields_json,
             current_bundle_json, proposed_bundle_json, sources_json, field_statuses_json,
-            dependency_fingerprints_json, warnings_json, errors_json,
+            dependency_fingerprints_json, warnings_json, errors_json, fields_snapshot_json,
             created_by, created_at, expires_at, applied_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             session_id,
@@ -2299,6 +2311,7 @@ def insert_metadata_preview_session(
             dependency_fingerprints_json,
             warnings_json,
             errors_json,
+            fields_snapshot_json,
             created_by,
             created_at,
             expires_at,

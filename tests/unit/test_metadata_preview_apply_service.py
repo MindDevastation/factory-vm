@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import json
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime
 
 from services.common import db as dbm
 from services.metadata import preview_apply_service as svc
@@ -105,6 +104,70 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
 
             self.assertEqual(out["fields"]["title"]["status"], "CONFIGURATION_MISSING")
 
+    def test_invalid_default_title_template_is_configuration_missing(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="bad-default-title",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=True,
+                    validation_status="INVALID",
+                    validation_errors_json='[{"code":"bad"}]',
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                out = svc.create_preview_session(
+                    conn,
+                    release_id=release_id,
+                    requested_fields=["title"],
+                    sources={},
+                    created_by="u",
+                    ttl_seconds=1800,
+                )
+            finally:
+                conn.close()
+            self.assertEqual(out["fields"]["title"]["status"], "CONFIGURATION_MISSING")
+
+    def test_invalid_default_description_template_is_configuration_missing(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                dbm.create_description_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="bad-default-description",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=True,
+                    validation_status="INVALID",
+                    validation_errors_json='[{"code":"bad"}]',
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                out = svc.create_preview_session(
+                    conn,
+                    release_id=release_id,
+                    requested_fields=["description"],
+                    sources={},
+                    created_by="u",
+                    ttl_seconds=1800,
+                )
+            finally:
+                conn.close()
+            self.assertEqual(out["fields"]["description"]["status"], "CONFIGURATION_MISSING")
+
     def test_overwrite_and_diff_status(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
@@ -205,6 +268,7 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
             expires_at = datetime.fromisoformat(str(row["expires_at"]))
             created_at = datetime.fromisoformat(str(row["created_at"]))
             self.assertGreaterEqual((expires_at - created_at).total_seconds(), 1799)
+            self.assertEqual(row["fields_snapshot_json"], dbm.json_dumps(out["fields"]))
 
     def test_summary_fields_derivation(self) -> None:
         with temp_env() as (_, env):
