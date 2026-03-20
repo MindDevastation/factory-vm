@@ -441,6 +441,48 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             self.assertEqual(row["description"], "keep-desc")
             self.assertEqual(row["tags_json"], '["darkwood-reverie"]')
 
+    def test_no_change_only_apply_conflicts_if_session_finalized_concurrently(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="same-title", tags_json='["darkwood-reverie"]')
+                self._seed_defaults(conn)
+            finally:
+                conn.close()
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            preview = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=headers,
+                json={"fields": ["tags"], "sources": {}},
+            )
+            session_id = preview.json()["session_id"]
+            original = mod.preview_apply_service._mark_session_applied_open_only
+
+            def _mark_after_external_apply(*args, **kwargs):
+                db = dbm.connect(env)
+                try:
+                    db.execute(
+                        "UPDATE metadata_preview_sessions SET session_status = 'APPLIED', applied_at = ? WHERE id = ?",
+                        ("2026-01-01T00:00:00+00:00", session_id),
+                    )
+                    db.commit()
+                finally:
+                    db.close()
+                return original(*args, **kwargs)
+
+            with patch("services.metadata.preview_apply_service._mark_session_applied_open_only", side_effect=_mark_after_external_apply):
+                apply_resp = client.post(
+                    f"/v1/metadata/preview-apply/sessions/{session_id}/apply",
+                    headers=headers,
+                    json={"selected_fields": ["tags"], "overwrite_confirmed_fields": []},
+                )
+            self.assertEqual(apply_resp.status_code, 422)
+            self.assertEqual(apply_resp.json()["error"]["code"], "MPA_APPLY_CONFLICT")
+
 
 if __name__ == "__main__":
     unittest.main()

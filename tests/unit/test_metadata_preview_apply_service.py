@@ -459,6 +459,35 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
             self.assertEqual(ctx.exception.code, "MPA_APPLY_CONFLICT")
             self.assertEqual(row["tags_json"], '["darkwood-reverie"]')
 
+    def test_no_change_only_apply_conflicts_if_session_finalized_concurrently(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="same-title", tags_json='["darkwood-reverie"]')
+                self._seed_defaults(conn)
+                preview = svc.create_preview_session(conn, release_id=release_id, requested_fields=["tags"], sources={}, created_by="u", ttl_seconds=1800)
+                original = svc._mark_session_applied_open_only
+
+                def _mark_after_external_apply(*args, **kwargs):
+                    conn.execute(
+                        "UPDATE metadata_preview_sessions SET session_status = 'APPLIED', applied_at = ? WHERE id = ?",
+                        ("2026-01-01T00:00:00+00:00", preview["session_id"]),
+                    )
+                    return original(*args, **kwargs)
+
+                with mock.patch("services.metadata.preview_apply_service._mark_session_applied_open_only", side_effect=_mark_after_external_apply):
+                    with self.assertRaises(svc.MetadataPreviewApplyError) as ctx:
+                        svc.apply_preview_session(
+                            conn,
+                            session_id=preview["session_id"],
+                            selected_fields=["tags"],
+                            overwrite_confirmed_fields=[],
+                        )
+            finally:
+                conn.close()
+            self.assertEqual(ctx.exception.code, "MPA_APPLY_CONFLICT")
+
 
 if __name__ == "__main__":
     unittest.main()

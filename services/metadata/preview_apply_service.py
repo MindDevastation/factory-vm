@@ -284,10 +284,7 @@ def apply_preview_session(
             expected_release=release,
         )
         now_iso = _now_iso()
-        conn.execute(
-            "UPDATE metadata_preview_sessions SET session_status = 'APPLIED', applied_at = ? WHERE id = ?",
-            (now_iso, session_id),
-        )
+        _mark_session_applied_open_only(conn, session_id=session_id, applied_at=now_iso)
         conn.commit()
     except MetadataPreviewApplyError:
         conn.rollback()
@@ -335,6 +332,15 @@ def _apply_selected_fields_atomic(
     cur = conn.execute(sql, set_params + where_params)
     if int(cur.rowcount or 0) != 1:
         raise MetadataPreviewApplyError(code="MPA_APPLY_CONFLICT", message="Release changed during apply; regenerate preview and retry")
+
+
+def _mark_session_applied_open_only(conn: sqlite3.Connection, *, session_id: str, applied_at: str) -> None:
+    cur = conn.execute(
+        "UPDATE metadata_preview_sessions SET session_status = 'APPLIED', applied_at = ? WHERE id = ? AND session_status = 'OPEN'",
+        (applied_at, session_id),
+    )
+    if int(cur.rowcount or 0) != 1:
+        raise MetadataPreviewApplyError(code="MPA_APPLY_CONFLICT", message="Preview session was already applied or no longer open")
 
 
 def _guarded_columns_for_selected_fields(selected_fields: Set[str]) -> List[str]:
