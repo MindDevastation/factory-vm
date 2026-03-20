@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from services.common import db as dbm
 from services.metadata import video_tag_preset_service, video_tagsgen_service
@@ -62,6 +63,22 @@ class TestVideoTagsGenService(unittest.TestCase):
         self._insert_preset(conn, is_default=True)
         result = video_tagsgen_service.generate_video_tags_preview(conn, release_id=release_id, preset_id=None)
         self.assertTrue(result.used_preset["is_default_channel_preset"])
+
+    def test_context_excludes_invalid_default_from_usable_default_path(self) -> None:
+        conn, release_id = self._seed_release()
+        self._insert_preset(conn, is_default=True, validation_status="INVALID", name="invalid-default")
+        self._insert_preset(conn, is_default=False, validation_status="VALID", name="valid-alt")
+        context = video_tagsgen_service.load_video_tags_context(conn, release_id=release_id)
+        self.assertIsNone(context.default_preset)
+        self.assertFalse(context.can_generate_with_default)
+
+    def test_context_active_presets_excludes_unusable_presets(self) -> None:
+        conn, release_id = self._seed_release()
+        valid_id = self._insert_preset(conn, is_default=False, validation_status="VALID", name="valid")
+        self._insert_preset(conn, is_default=False, validation_status="INVALID", name="invalid")
+        self._insert_preset(conn, is_default=False, status="ARCHIVED", validation_status="VALID", name="archived")
+        context = video_tagsgen_service.load_video_tags_context(conn, release_id=release_id)
+        self.assertEqual([item["id"] for item in context.active_presets], [valid_id])
 
     def test_explicit_override_validation(self) -> None:
         conn, release_id = self._seed_release()
@@ -141,6 +158,28 @@ class TestVideoTagsGenService(unittest.TestCase):
             release_row={"title": "Night Ritual", "planned_at": "2026-04-09T18:30:00Z"},
         )
         self.assertEqual(generated.proposed_tags_json, preview.final_normalized_tags)
+
+    def test_render_time_validation_failure_maps_to_preset_invalid(self) -> None:
+        conn, release_id = self._seed_release()
+        self._insert_preset(conn, is_default=True, body=["ok"])
+        preview = video_tag_preset_service.PreviewResult(
+            syntax_valid=True,
+            structurally_valid=False,
+            render_status="FULL",
+            used_variables=[],
+            resolved_values={},
+            missing_variables=[],
+            rendered_items_before_normalization=["x" * 501],
+            dropped_empty_items=[],
+            removed_duplicates=[],
+            final_normalized_tags=["x" * 501],
+            normalized_count=1,
+            validation_errors=[{"code": "MTV_TAG_ITEM_TOO_LONG", "message": "too long"}],
+        )
+        with mock.patch("services.metadata.video_tagsgen_service.video_tag_preset_service.preview_video_tag_preset", return_value=preview):
+            with self.assertRaises(video_tagsgen_service.VideoTagsGenError) as ctx:
+                video_tagsgen_service.generate_video_tags_preview(conn, release_id=release_id, preset_id=None)
+        self.assertEqual(ctx.exception.code, "MTV_PRESET_INVALID")
 
 
 if __name__ == "__main__":

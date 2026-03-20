@@ -97,6 +97,27 @@ class TestMetadataVideoTagsGenApi(unittest.TestCase):
             self.assertIsNone(resp.json()["default_preset"])
             self.assertFalse(resp.json()["can_generate_with_default"])
 
+    def test_context_endpoint_invalid_default_not_advertised_and_unusable_excluded(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                valid_id = self._seed_preset(conn, is_default=False, validation_status="VALID", name="valid")
+                self._seed_preset(conn, is_default=True, validation_status="INVALID", name="invalid-default")
+                self._seed_preset(conn, is_default=False, status="ARCHIVED", validation_status="VALID", name="archived")
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.get(f"/v1/metadata/releases/{release_id}/video-tags/context", headers=headers)
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertIsNone(body["default_preset"])
+            self.assertFalse(body["can_generate_with_default"])
+            self.assertEqual([item["id"] for item in body["active_presets"]], [valid_id])
+
     def test_generate_with_default_preset(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
@@ -189,6 +210,22 @@ class TestMetadataVideoTagsGenApi(unittest.TestCase):
             )
             self.assertEqual(date_resp.status_code, 422)
             self.assertEqual(date_resp.json()["error"]["code"], "MTV_RELEASE_DATE_CONTEXT_MISSING")
+
+    def test_generate_maps_render_time_validation_failure_to_preset_invalid(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn, title="ok")
+                self._seed_preset(conn, is_default=True, body=["x" * 501], validation_status="VALID")
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.post(f"/v1/metadata/releases/{release_id}/video-tags/generate", headers=headers, json={})
+            self.assertEqual(resp.status_code, 422)
+            self.assertEqual(resp.json()["error"]["code"], "MTV_PRESET_INVALID")
 
     def test_generate_does_not_mutate_release_tags_json(self) -> None:
         with temp_env() as (_, env):
