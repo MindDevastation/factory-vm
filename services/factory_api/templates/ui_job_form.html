@@ -120,6 +120,46 @@
     <p class="muted">Apply changes only <code>release.tags_json</code>. This does not update channel defaults or preset configuration.</p>
   </fieldset>
   {% endif %}
+  {% if mode == 'edit' and release_id %}
+  <fieldset id="mpa-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
+    <legend><strong>Unified Metadata Preview / Apply (single release)</strong></legend>
+    <p class="muted">Preview does not change release metadata until you apply.</p>
+    <p><b>Target release:</b> <span id="mpa-release-id">#{{ release_id }}</span></p>
+    <p><b>Current title:</b> <span id="mpa-current-title">{{ form.title|default('') or '(empty)' }}</span></p>
+    <p><b>Current description:</b></p>
+    <pre id="mpa-current-description" style="white-space:pre-wrap; background:#f8fafc; border:1px solid #e2e8f0; padding:8px;">{{ form.description|default('') or '(empty)' }}</pre>
+    <p><b>Current tags:</b> <span id="mpa-current-tags">{{ form.tags_csv|default('') or '(empty)' }}</span></p>
+    <fieldset style="margin:8px 0; border:1px solid #ddd; padding:8px;">
+      <legend>Preview request</legend>
+      <label><input id="mpa-request-title" type="checkbox" checked> Title</label>
+      <label><input id="mpa-request-description" type="checkbox" checked> Description</label>
+      <label><input id="mpa-request-tags" type="checkbox" checked> Tags</label>
+      <p>
+        <label>Title template override:
+          <select id="mpa-title-source-select"><option value="">Loading...</option></select>
+        </label>
+      </p>
+      <p>
+        <label>Description template override:
+          <select id="mpa-description-source-select"><option value="">Loading...</option></select>
+        </label>
+      </p>
+      <p>
+        <label>Video tag preset override:
+          <select id="mpa-tags-source-select"><option value="">Loading...</option></select>
+        </label>
+      </p>
+    </fieldset>
+    <p id="mpa-status" style="min-height:1.4em"></p>
+    <p>
+      <button id="mpa-preview-btn" type="button" {% if locked %}disabled{% endif %}>Preview / Regenerate</button>
+      <button id="mpa-apply-selected-btn" type="button" disabled {% if locked %}disabled{% endif %}>Apply Selected Fields</button>
+      <button id="mpa-apply-ready-btn" type="button" disabled {% if locked %}disabled{% endif %}>Apply All Ready Fields</button>
+    </p>
+    <p id="mpa-partial-warning" style="display:none; color:#92400e;"><b>Other prepared fields can still be applied.</b></p>
+    <div id="mpa-fields-grid" style="display:none;"></div>
+  </fieldset>
+  {% endif %}
   <p><label>Tags (comma-separated, no #) <input name="tags_csv" value="{{ form.tags_csv|default('') }}" {% if locked %}disabled{% endif %}></label></p>
   {% if field_errors.tags %}<p style="color:#b91c1c">{{ field_errors.tags|join('; ') }}</p>{% endif %}
 
@@ -296,6 +336,22 @@ const videotagsgenOverwriteCheckbox = document.getElementById('videotagsgen-over
 const videotagsgenGenerateBtn = document.getElementById('videotagsgen-generate-btn');
 const videotagsgenRegenerateBtn = document.getElementById('videotagsgen-regenerate-btn');
 const videotagsgenApplyBtn = document.getElementById('videotagsgen-apply-btn');
+const mpaSection = document.getElementById('mpa-section');
+const mpaStatus = document.getElementById('mpa-status');
+const mpaPreviewBtn = document.getElementById('mpa-preview-btn');
+const mpaApplySelectedBtn = document.getElementById('mpa-apply-selected-btn');
+const mpaApplyReadyBtn = document.getElementById('mpa-apply-ready-btn');
+const mpaPartialWarning = document.getElementById('mpa-partial-warning');
+const mpaFieldsGrid = document.getElementById('mpa-fields-grid');
+const mpaRequestTitle = document.getElementById('mpa-request-title');
+const mpaRequestDescription = document.getElementById('mpa-request-description');
+const mpaRequestTags = document.getElementById('mpa-request-tags');
+const mpaTitleSourceSelect = document.getElementById('mpa-title-source-select');
+const mpaDescriptionSourceSelect = document.getElementById('mpa-description-source-select');
+const mpaTagsSourceSelect = document.getElementById('mpa-tags-source-select');
+const mpaCurrentTitle = document.getElementById('mpa-current-title');
+const mpaCurrentDescription = document.getElementById('mpa-current-description');
+const mpaCurrentTags = document.getElementById('mpa-current-tags');
 
 const requiredTagsInput = document.getElementById('plb-required-tags');
 const excludedTagsInput = document.getElementById('plb-excluded-tags');
@@ -354,6 +410,26 @@ const hasVideoTagsGen =
   !!videotagsgenGenerateBtn &&
   !!videotagsgenRegenerateBtn &&
   !!videotagsgenApplyBtn;
+const hasMetadataPreviewApply =
+  !!mpaSection &&
+  !!mpaStatus &&
+  !!mpaPreviewBtn &&
+  !!mpaApplySelectedBtn &&
+  !!mpaApplyReadyBtn &&
+  !!mpaPartialWarning &&
+  !!mpaFieldsGrid &&
+  !!mpaRequestTitle &&
+  !!mpaRequestDescription &&
+  !!mpaRequestTags &&
+  !!mpaTitleSourceSelect &&
+  !!mpaDescriptionSourceSelect &&
+  !!mpaTagsSourceSelect &&
+  !!mpaCurrentTitle &&
+  !!mpaCurrentDescription &&
+  !!mpaCurrentTags &&
+  !!titleInput &&
+  !!descriptionInput &&
+  !!tagsCsvInput;
 
 const hasTagsPicker =
   !!requiredTagsInput &&
@@ -1045,6 +1121,271 @@ const hasTagsPicker =
     resetVideotagsgenGeneration();
   }
 
+  const MPA_APPLYABLE_STATUSES = new Set(['PROPOSED_READY', 'OVERWRITE_READY', 'NO_CHANGE']);
+  const MPA_FIELD_LABELS = { title: 'Title', description: 'Description', tags: 'Tags' };
+  let mpaContext = null;
+  let mpaSession = null;
+  let mpaPreviewSourceModeByField = { title: 'default', description: 'default', tags: 'default' };
+
+  function mpaRequestedFields() {
+    const out = [];
+    if (mpaRequestTitle.checked) out.push('title');
+    if (mpaRequestDescription.checked) out.push('description');
+    if (mpaRequestTags.checked) out.push('tags');
+    return out;
+  }
+
+  function mpaSelectedSourceId(selectEl) {
+    const value = String(selectEl.value || '').trim();
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+
+  function renderMpaSourceSelect(selectEl, defaultSource, options, labelField) {
+    selectEl.innerHTML = '';
+    const defOpt = document.createElement('option');
+    defOpt.value = '';
+    if (defaultSource && Number.isInteger(defaultSource.id)) {
+      const defaultSourceName = defaultSource.template_name || defaultSource.preset_name || defaultSource.name || `#${defaultSource.id}`;
+      defOpt.textContent = `Use channel default: ${defaultSourceName} (#${defaultSource.id})`;
+    } else {
+      defOpt.textContent = 'Use channel default (not configured)';
+    }
+    selectEl.appendChild(defOpt);
+    (options || []).forEach((item) => {
+      const opt = document.createElement('option');
+      opt.value = String(item.id);
+      const sourceName = item[labelField] || item.template_name || item.preset_name || item.name || `#${item.id}`;
+      opt.textContent = item.is_default ? `${sourceName} (default)` : sourceName;
+      selectEl.appendChild(opt);
+    });
+    selectEl.value = '';
+  }
+
+  function formatMpaValue(field, value) {
+    if (field === 'tags') return JSON.stringify(Array.isArray(value) ? value : []);
+    const txt = value === null || value === undefined ? '' : String(value);
+    return txt.trim() ? txt : '(empty)';
+  }
+
+  function mpaDisableReason(status) {
+    if (MPA_APPLYABLE_STATUSES.has(status)) return '';
+    if (status === 'NOT_REQUESTED') return 'Not requested in this preview.';
+    if (status === 'GENERATION_FAILED') return 'Generation failed for this field.';
+    if (status === 'CONFIGURATION_MISSING') return 'No default source and no explicit source selected.';
+    if (status === 'STALE') return 'Preview is stale; regenerate preview first.';
+    return `Field status ${status} is not applyable.`;
+  }
+
+  function renderMpaCurrentBundle(current) {
+    if (!current) return;
+    if (mpaCurrentTitle) mpaCurrentTitle.textContent = formatMpaValue('title', current.title);
+    if (mpaCurrentDescription) mpaCurrentDescription.textContent = formatMpaValue('description', current.description);
+    if (mpaCurrentTags) mpaCurrentTags.textContent = formatMpaValue('tags', current.tags_json || []);
+  }
+
+  function applyMpaResultToEditableInputs(current) {
+    if (!current) return;
+    if (typeof current.title === 'string' && titleInput) titleInput.value = current.title;
+    if (typeof current.description === 'string' && descriptionInput) descriptionInput.value = current.description;
+    if (Array.isArray(current.tags_json) && tagsCsvInput) tagsCsvInput.value = current.tags_json.join(', ');
+    refreshCurrentTitleLabel();
+    refreshCurrentDescriptionLabel();
+    refreshCurrentTagsLabel();
+  }
+
+  function mpaSourceDisplayName(source) {
+    if (!source) return '(missing source)';
+    return source.source_name || source.template_name || source.preset_name || source.name || `#${source.id ?? '?'}`;
+  }
+
+  function mpaSourceType(field, source) {
+    if (source && source.source_type) return source.source_type;
+    if (field === 'title') return 'title_template';
+    if (field === 'description') return 'description_template';
+    return 'video_tag_preset';
+  }
+
+  function mpaSourceSelectionMode(field, source) {
+    if (source && source.selection_mode) return source.selection_mode;
+    return mpaPreviewSourceModeByField[field] || 'default';
+  }
+
+  function renderMpaSession(session) {
+    mpaSession = session;
+    mpaFieldsGrid.innerHTML = '';
+    mpaFieldsGrid.style.display = 'block';
+    renderMpaCurrentBundle(session.current || {});
+    const failedFields = (session.summary && session.summary.failed_fields) || [];
+    mpaPartialWarning.style.display = failedFields.length ? 'block' : 'none';
+    const fields = session.fields || {};
+    const cards = ['title', 'description', 'tags'].map((field) => {
+      const details = fields[field] || {};
+      const status = String(details.status || 'NOT_REQUESTED');
+      const disabledReason = mpaDisableReason(status);
+      const overwriteRequired = Boolean(details.overwrite_required) && status === 'OVERWRITE_READY';
+      const warnings = (details.warnings || []).map((w) => `<li>${w}</li>`).join('');
+      const errors = (details.errors || []).map((err) => {
+        if (typeof err === 'string') return `<li>${err}</li>`;
+        return `<li>${err.code || 'ERROR'}: ${err.message || ''}</li>`;
+      }).join('');
+      const source = details.source || null;
+      const sourceLine = source
+        ? `${mpaSourceDisplayName(source)} (${mpaSourceType(field, source)}, ${mpaSourceSelectionMode(field, source)} selection)`
+        : '—';
+      return `
+        <fieldset style="margin:8px 0; border:1px solid #ddd; padding:8px;">
+          <legend><strong>${MPA_FIELD_LABELS[field]}</strong></legend>
+          <p><b>Status:</b> ${status}</p>
+          <p><b>Current:</b> ${formatMpaValue(field, details.current_value)}</p>
+          <p><b>Proposed:</b> ${formatMpaValue(field, details.proposed_value)}</p>
+          <p><b>Changed:</b> ${details.changed ? 'yes' : 'no'}</p>
+          <p><b>Source:</b> ${sourceLine}</p>
+          ${warnings ? `<p style="color:#92400e;"><b>Warnings:</b></p><ul>${warnings}</ul>` : ''}
+          ${overwriteRequired ? '<p style="color:#92400e;"><b>Applying this field will overwrite the existing value.</b></p>' : ''}
+          ${errors ? `<p style="color:#b91c1c;"><b>Errors:</b></p><ul>${errors}</ul>` : ''}
+          <label>
+            <input type="checkbox" id="mpa-apply-${field}" data-mpa-apply-field="${field}" ${disabledReason ? 'disabled' : ''}>
+            Include ${MPA_FIELD_LABELS[field]} in apply
+          </label>
+          ${disabledReason ? `<p class="muted">${disabledReason}</p>` : ''}
+          <label id="mpa-overwrite-row-${field}" style="display:${overwriteRequired ? 'none' : 'none'};">
+            <input type="checkbox" id="mpa-overwrite-${field}">
+            I confirm overwrite for this field.
+          </label>
+        </fieldset>
+      `;
+    }).join('');
+    mpaFieldsGrid.innerHTML = cards;
+    mpaApplySelectedBtn.disabled = false;
+    mpaApplyReadyBtn.disabled = false;
+    ['title', 'description', 'tags'].forEach((field) => {
+      const applyEl = document.getElementById(`mpa-apply-${field}`);
+      const overwriteRow = document.getElementById(`mpa-overwrite-row-${field}`);
+      const details = (fields || {})[field] || {};
+      const needsOverwriteConfirm = Boolean(details.overwrite_required) && String(details.status || '') === 'OVERWRITE_READY';
+      if (applyEl && overwriteRow && needsOverwriteConfirm) {
+        applyEl.addEventListener('change', () => {
+          overwriteRow.style.display = applyEl.checked ? 'block' : 'none';
+          if (!applyEl.checked) {
+            const overwriteBox = document.getElementById(`mpa-overwrite-${field}`);
+            if (overwriteBox) overwriteBox.checked = false;
+          }
+        });
+      }
+    });
+    mpaStatus.textContent = 'Preview ready. Select fields to apply.';
+  }
+
+  async function loadMpaContext() {
+    if (!hasMetadataPreviewApply || !Number.isInteger(activeReleaseId)) return;
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/preview-apply/context`, { credentials: 'same-origin' });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      mpaStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Failed to load unified metadata context';
+      return;
+    }
+    mpaContext = payload;
+    renderMpaCurrentBundle(payload.current || {});
+    renderMpaSourceSelect(mpaTitleSourceSelect, payload.defaults && payload.defaults.title_template, payload.active_sources && payload.active_sources.title_templates, 'name');
+    renderMpaSourceSelect(mpaDescriptionSourceSelect, payload.defaults && payload.defaults.description_template, payload.active_sources && payload.active_sources.description_templates, 'name');
+    renderMpaSourceSelect(mpaTagsSourceSelect, payload.defaults && payload.defaults.video_tag_preset, payload.active_sources && payload.active_sources.video_tag_presets, 'name');
+    mpaStatus.textContent = 'Ready. Preview does not change release metadata until you apply.';
+  }
+
+  async function loadMpaSession(sessionId) {
+    const sessionResp = await fetch(`/v1/metadata/preview-apply/sessions/${sessionId}`, { credentials: 'same-origin' });
+    const sessionPayload = await sessionResp.json();
+    if (!sessionResp.ok) {
+      mpaStatus.textContent = (sessionPayload.error && sessionPayload.error.message) ? sessionPayload.error.message : 'Failed to load preview session';
+      return;
+    }
+    renderMpaSession(sessionPayload);
+  }
+
+  async function previewMpa() {
+    if (!hasMetadataPreviewApply || !Number.isInteger(activeReleaseId)) return;
+    const requestedFields = mpaRequestedFields();
+    if (!requestedFields.length) {
+      mpaStatus.textContent = 'Select at least one field before preview.';
+      return;
+    }
+    mpaStatus.textContent = 'Building unified preview...';
+    mpaPreviewSourceModeByField = {
+      title: mpaSelectedSourceId(mpaTitleSourceSelect) === null ? 'default' : 'explicit',
+      description: mpaSelectedSourceId(mpaDescriptionSourceSelect) === null ? 'default' : 'explicit',
+      tags: mpaSelectedSourceId(mpaTagsSourceSelect) === null ? 'default' : 'explicit',
+    };
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/preview-apply/preview`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: requestedFields,
+        sources: {
+          title_template_id: mpaSelectedSourceId(mpaTitleSourceSelect),
+          description_template_id: mpaSelectedSourceId(mpaDescriptionSourceSelect),
+          video_tag_preset_id: mpaSelectedSourceId(mpaTagsSourceSelect),
+        },
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      mpaStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Preview failed';
+      return;
+    }
+    await loadMpaSession(payload.session_id);
+  }
+
+  async function applyMpa(includeAllReady) {
+    if (!hasMetadataPreviewApply || !mpaSession || !mpaSession.session_id) return;
+    const fields = mpaSession.fields || {};
+    const selectedFields = includeAllReady
+      ? ['title', 'description', 'tags'].filter((field) => MPA_APPLYABLE_STATUSES.has(String((fields[field] || {}).status || '')))
+      : ['title', 'description', 'tags'].filter((field) => {
+        const el = document.getElementById(`mpa-apply-${field}`);
+        return !!el && !!el.checked;
+      });
+    if (!selectedFields.length) {
+      mpaStatus.textContent = 'Select at least one applyable field before apply.';
+      return;
+    }
+    const overwriteConfirmedFields = [];
+    for (const field of selectedFields) {
+      const details = fields[field] || {};
+      const needsOverwriteConfirm = Boolean(details.overwrite_required) && String(details.status || '') === 'OVERWRITE_READY';
+      if (!needsOverwriteConfirm) continue;
+      const overwriteEl = document.getElementById(`mpa-overwrite-${field}`);
+      if (!overwriteEl || !overwriteEl.checked) {
+        mpaStatus.textContent = `Apply canceled. Explicit overwrite confirmation is required for ${MPA_FIELD_LABELS[field].toLowerCase()}.`;
+        return;
+      }
+      overwriteConfirmedFields.push(field);
+    }
+    mpaStatus.textContent = 'Applying selected metadata fields...';
+    const resp = await fetch(`/v1/metadata/preview-apply/sessions/${mpaSession.session_id}/apply`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        selected_fields: selectedFields,
+        overwrite_confirmed_fields: overwriteConfirmedFields,
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      mpaStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Apply failed';
+      return;
+    }
+    renderMpaCurrentBundle(payload.release_metadata_after || {});
+    applyMpaResultToEditableInputs(payload.release_metadata_after || {});
+    mpaStatus.textContent = `Applied fields: ${(payload.applied_fields || []).join(', ') || '(none)'}. Unchanged: ${(payload.unchanged_fields || []).join(', ') || '(none)'}.`;
+    mpaApplySelectedBtn.disabled = true;
+    mpaApplyReadyBtn.disabled = true;
+    await loadMpaContext();
+  }
+
   function renderDiagnosticsBlock(diag, reasonText) {
     if (!diag && !reasonText) return '';
     const d = diag || {};
@@ -1168,9 +1509,13 @@ const hasTagsPicker =
   if (videotagsgenRegenerateBtn) videotagsgenRegenerateBtn.addEventListener('click', generateVideoTags);
   if (videotagsgenApplyBtn) videotagsgenApplyBtn.addEventListener('click', applyGeneratedVideoTags);
   if (tagsCsvInput) tagsCsvInput.addEventListener('input', refreshCurrentTagsLabel);
+  if (mpaPreviewBtn) mpaPreviewBtn.addEventListener('click', previewMpa);
+  if (mpaApplySelectedBtn) mpaApplySelectedBtn.addEventListener('click', () => applyMpa(false));
+  if (mpaApplyReadyBtn) mpaApplyReadyBtn.addEventListener('click', () => applyMpa(true));
   loadTitlegenContext();
   loadDescriptiongenContext();
   loadVideotagsgenContext();
+  loadMpaContext();
   const previewRequestTimeoutMs = 20000;
 
   async function parseJsonSafe(resp) {

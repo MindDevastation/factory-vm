@@ -1139,6 +1139,172 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertNotEqual(updated.get("code"), stale_json_payload["code"])
             self.assertNotEqual(updated.get("label"), stale_json_payload["label"])
 
+    def test_job_edit_metadata_preview_apply_unified_flow(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                channel = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert channel
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(channel["id"]),
+                    title="",
+                    description="Manual Existing Description",
+                    tags_csv="ambient,night",
+                    cover_name="cover",
+                    cover_ext="jpg",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                release_id = int(conn.execute("SELECT release_id FROM jobs WHERE id = ?", (job_id,)).fetchone()["release_id"])
+                dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Default Unified Title",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=True,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                desc_default_id = dbm.create_description_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Default Unified Description",
+                    template_body="{{channel_display_name}} generated",
+                    status="ACTIVE",
+                    is_default=True,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                desc_explicit_id = dbm.create_description_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Explicit Unified Description",
+                    template_body="{{channel_slug}} explicit",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                dbm.create_video_tag_preset(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    preset_name="Default Unified Tags",
+                    preset_body_json=dbm.json_dumps(["{{release_title}}", "ambient"]),
+                    status="ACTIVE",
+                    is_default=True,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            edit_page = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(edit_page.status_code, 200)
+            self.assertIn('id="mpa-section"', edit_page.text)
+            self.assertIn("Preview does not change release metadata until you apply.", edit_page.text)
+            self.assertIn("Other prepared fields can still be applied.", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/preview-apply/context", edit_page.text)
+            self.assertIn("/v1/metadata/releases/${activeReleaseId}/preview-apply/preview", edit_page.text)
+            self.assertIn("/v1/metadata/preview-apply/sessions/${sessionId}", edit_page.text)
+            self.assertIn("/v1/metadata/preview-apply/sessions/${mpaSession.session_id}/apply", edit_page.text)
+            self.assertIn("Explicit overwrite confirmation is required", edit_page.text)
+            self.assertIn("No default source and no explicit source selected.", edit_page.text)
+            self.assertIn("if (!overwriteEl || !overwriteEl.checked)", edit_page.text)
+            self.assertIn("source.template_name || source.preset_name || source.name", edit_page.text)
+            self.assertIn("defaultSource.template_name || defaultSource.preset_name || defaultSource.name", edit_page.text)
+            self.assertIn("mpaPreviewSourceModeByField = {", edit_page.text)
+            self.assertIn("title: mpaSelectedSourceId(mpaTitleSourceSelect) === null ? 'default' : 'explicit'", edit_page.text)
+            self.assertIn("renderMpaCurrentBundle(payload.current || {});", edit_page.text)
+            self.assertIn("applyMpaResultToEditableInputs(payload.release_metadata_after || {});", edit_page.text)
+            self.assertIn("Generation failed for this field.", edit_page.text)
+
+            context = client.get(f"/v1/metadata/releases/{release_id}/preview-apply/context", headers=h)
+            self.assertEqual(context.status_code, 200)
+            context_payload = context.json()
+            self.assertEqual(context_payload["release_id"], release_id)
+            self.assertEqual(context_payload["current"]["title"], "")
+            self.assertEqual(context_payload["current"]["description"], "Manual Existing Description")
+            self.assertEqual(context_payload["current"]["tags_json"], ["ambient", "night"])
+
+            preview = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=h,
+                json={
+                    "fields": ["title", "description", "tags"],
+                    "sources": {
+                        "description_template_id": desc_explicit_id,
+                        "title_template_id": None,
+                        "video_tag_preset_id": None,
+                    },
+                },
+            )
+            self.assertEqual(preview.status_code, 200)
+            preview_payload = preview.json()
+            session_id = preview_payload["session_id"]
+
+            session = client.get(f"/v1/metadata/preview-apply/sessions/{session_id}", headers=h)
+            self.assertEqual(session.status_code, 200)
+            session_payload = session.json()
+            self.assertEqual(session_payload["fields"]["title"]["status"], "PROPOSED_READY")
+            self.assertEqual(session_payload["fields"]["description"]["status"], "OVERWRITE_READY")
+            self.assertEqual(session_payload["fields"]["tags"]["status"], "GENERATION_FAILED")
+            self.assertTrue(session_payload["fields"]["title"]["source"]["template_name"])
+            self.assertTrue(session_payload["fields"]["description"]["source"]["template_name"])
+            self.assertEqual(session_payload["fields"]["description"]["source"]["id"], desc_explicit_id)
+            self.assertIn("tags", session_payload["summary"]["failed_fields"])
+            self.assertIn(desc_default_id, [item["id"] for item in context_payload["active_sources"]["description_templates"]])
+            tags_default = context_payload["defaults"]["video_tag_preset"]
+            self.assertTrue(tags_default.get("name") or tags_default.get("preset_name"))
+
+            denied = client.post(
+                f"/v1/metadata/preview-apply/sessions/{session_id}/apply",
+                headers=h,
+                json={"selected_fields": ["description"], "overwrite_confirmed_fields": []},
+            )
+            self.assertEqual(denied.status_code, 422)
+            self.assertEqual(denied.json()["error"]["code"], "MPA_OVERWRITE_CONFIRMATION_REQUIRED")
+
+            applied = client.post(
+                f"/v1/metadata/preview-apply/sessions/{session_id}/apply",
+                headers=h,
+                json={"selected_fields": ["description"], "overwrite_confirmed_fields": ["description"]},
+            )
+            self.assertEqual(applied.status_code, 200)
+            apply_payload = applied.json()
+            self.assertEqual(apply_payload["applied_fields"], ["description"])
+            self.assertNotIn("tags", apply_payload["applied_fields"])
+            self.assertEqual(apply_payload["release_metadata_after"]["title"], "")
+            self.assertEqual(apply_payload["release_metadata_after"]["tags_json"], ["ambient", "night"])
+            self.assertEqual(apply_payload["release_metadata_after"]["description"], "darkwood-reverie explicit")
+
 
 if __name__ == "__main__":
     unittest.main()
