@@ -1125,6 +1125,7 @@ const hasTagsPicker =
   const MPA_FIELD_LABELS = { title: 'Title', description: 'Description', tags: 'Tags' };
   let mpaContext = null;
   let mpaSession = null;
+  let mpaPreviewSourceModeByField = { title: 'default', description: 'default', tags: 'default' };
 
   function mpaRequestedFields() {
     const out = [];
@@ -1154,7 +1155,8 @@ const hasTagsPicker =
     (options || []).forEach((item) => {
       const opt = document.createElement('option');
       opt.value = String(item.id);
-      opt.textContent = item.is_default ? `${item[labelField]} (default)` : item[labelField];
+      const sourceName = item[labelField] || item.template_name || item.preset_name || item.name || `#${item.id}`;
+      opt.textContent = item.is_default ? `${sourceName} (default)` : sourceName;
       selectEl.appendChild(opt);
     });
     selectEl.value = '';
@@ -1175,7 +1177,14 @@ const hasTagsPicker =
     return `Field status ${status} is not applyable.`;
   }
 
-  function syncMpaCurrentBundle(current) {
+  function renderMpaCurrentBundle(current) {
+    if (!current) return;
+    if (mpaCurrentTitle) mpaCurrentTitle.textContent = formatMpaValue('title', current.title);
+    if (mpaCurrentDescription) mpaCurrentDescription.textContent = formatMpaValue('description', current.description);
+    if (mpaCurrentTags) mpaCurrentTags.textContent = formatMpaValue('tags', current.tags_json || []);
+  }
+
+  function applyMpaResultToEditableInputs(current) {
     if (!current) return;
     if (typeof current.title === 'string' && titleInput) titleInput.value = current.title;
     if (typeof current.description === 'string' && descriptionInput) descriptionInput.value = current.description;
@@ -1183,16 +1192,30 @@ const hasTagsPicker =
     refreshCurrentTitleLabel();
     refreshCurrentDescriptionLabel();
     refreshCurrentTagsLabel();
-    if (mpaCurrentTitle) mpaCurrentTitle.textContent = formatMpaValue('title', current.title);
-    if (mpaCurrentDescription) mpaCurrentDescription.textContent = formatMpaValue('description', current.description);
-    if (mpaCurrentTags) mpaCurrentTags.textContent = formatMpaValue('tags', current.tags_json || []);
+  }
+
+  function mpaSourceDisplayName(source) {
+    if (!source) return '(missing source)';
+    return source.source_name || source.template_name || source.preset_name || source.name || `#${source.id ?? '?'}`;
+  }
+
+  function mpaSourceType(field, source) {
+    if (source && source.source_type) return source.source_type;
+    if (field === 'title') return 'title_template';
+    if (field === 'description') return 'description_template';
+    return 'video_tag_preset';
+  }
+
+  function mpaSourceSelectionMode(field, source) {
+    if (source && source.selection_mode) return source.selection_mode;
+    return mpaPreviewSourceModeByField[field] || 'default';
   }
 
   function renderMpaSession(session) {
     mpaSession = session;
     mpaFieldsGrid.innerHTML = '';
     mpaFieldsGrid.style.display = 'block';
-    syncMpaCurrentBundle(session.current || {});
+    renderMpaCurrentBundle(session.current || {});
     const failedFields = (session.summary && session.summary.failed_fields) || [];
     mpaPartialWarning.style.display = failedFields.length ? 'block' : 'none';
     const fields = session.fields || {};
@@ -1208,7 +1231,7 @@ const hasTagsPicker =
       }).join('');
       const source = details.source || null;
       const sourceLine = source
-        ? `${source.source_name || '(unnamed)'} (${source.source_type || 'source'}, ${source.selection_mode || 'unknown'} selection)`
+        ? `${mpaSourceDisplayName(source)} (${mpaSourceType(field, source)}, ${mpaSourceSelectionMode(field, source)} selection)`
         : '—';
       return `
         <fieldset style="margin:8px 0; border:1px solid #ddd; padding:8px;">
@@ -1263,7 +1286,7 @@ const hasTagsPicker =
       return;
     }
     mpaContext = payload;
-    syncMpaCurrentBundle(payload.current || {});
+    renderMpaCurrentBundle(payload.current || {});
     renderMpaSourceSelect(mpaTitleSourceSelect, payload.defaults && payload.defaults.title_template, payload.active_sources && payload.active_sources.title_templates, 'name');
     renderMpaSourceSelect(mpaDescriptionSourceSelect, payload.defaults && payload.defaults.description_template, payload.active_sources && payload.active_sources.description_templates, 'name');
     renderMpaSourceSelect(mpaTagsSourceSelect, payload.defaults && payload.defaults.video_tag_preset, payload.active_sources && payload.active_sources.video_tag_presets, 'name');
@@ -1288,6 +1311,11 @@ const hasTagsPicker =
       return;
     }
     mpaStatus.textContent = 'Building unified preview...';
+    mpaPreviewSourceModeByField = {
+      title: mpaSelectedSourceId(mpaTitleSourceSelect) === null ? 'default' : 'explicit',
+      description: mpaSelectedSourceId(mpaDescriptionSourceSelect) === null ? 'default' : 'explicit',
+      tags: mpaSelectedSourceId(mpaTagsSourceSelect) === null ? 'default' : 'explicit',
+    };
     const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/preview-apply/preview`, {
       method: 'POST',
       credentials: 'same-origin',
@@ -1349,7 +1377,8 @@ const hasTagsPicker =
       mpaStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Apply failed';
       return;
     }
-    syncMpaCurrentBundle(payload.release_metadata_after || {});
+    renderMpaCurrentBundle(payload.release_metadata_after || {});
+    applyMpaResultToEditableInputs(payload.release_metadata_after || {});
     mpaStatus.textContent = `Applied fields: ${(payload.applied_fields || []).join(', ') || '(none)'}. Unchanged: ${(payload.unchanged_fields || []).join(', ') || '(none)'}.`;
     mpaApplySelectedBtn.disabled = true;
     mpaApplyReadyBtn.disabled = true;

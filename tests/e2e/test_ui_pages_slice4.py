@@ -1238,6 +1238,12 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("Explicit overwrite confirmation is required", edit_page.text)
             self.assertIn("No default source and no explicit source selected.", edit_page.text)
             self.assertIn("if (!overwriteEl || !overwriteEl.checked)", edit_page.text)
+            self.assertIn("source.template_name || source.preset_name || source.name", edit_page.text)
+            self.assertIn("mpaPreviewSourceModeByField = {", edit_page.text)
+            self.assertIn("title: mpaSelectedSourceId(mpaTitleSourceSelect) === null ? 'default' : 'explicit'", edit_page.text)
+            self.assertIn("renderMpaCurrentBundle(payload.current || {});", edit_page.text)
+            self.assertIn("applyMpaResultToEditableInputs(payload.release_metadata_after || {});", edit_page.text)
+            self.assertIn("Generation failed for this field.", edit_page.text)
 
             context = client.get(f"/v1/metadata/releases/{release_id}/preview-apply/context", headers=h)
             self.assertEqual(context.status_code, 200)
@@ -1269,9 +1275,13 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertEqual(session_payload["fields"]["title"]["status"], "PROPOSED_READY")
             self.assertEqual(session_payload["fields"]["description"]["status"], "OVERWRITE_READY")
             self.assertEqual(session_payload["fields"]["tags"]["status"], "GENERATION_FAILED")
+            self.assertTrue(session_payload["fields"]["title"]["source"]["template_name"])
+            self.assertTrue(session_payload["fields"]["description"]["source"]["template_name"])
             self.assertEqual(session_payload["fields"]["description"]["source"]["id"], desc_explicit_id)
             self.assertIn("tags", session_payload["summary"]["failed_fields"])
             self.assertIn(desc_default_id, [item["id"] for item in context_payload["active_sources"]["description_templates"]])
+            tags_default = context_payload["defaults"]["video_tag_preset"]
+            self.assertTrue(tags_default.get("name") or tags_default.get("preset_name"))
 
             denied = client.post(
                 f"/v1/metadata/preview-apply/sessions/{session_id}/apply",
