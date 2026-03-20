@@ -331,6 +331,35 @@ def migrate(conn: sqlite3.Connection) -> None:
             status TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS metadata_preview_sessions (
+            id TEXT PRIMARY KEY,
+            release_id INTEGER NOT NULL,
+            channel_slug TEXT NOT NULL,
+            session_status TEXT NOT NULL,
+            requested_fields_json TEXT NOT NULL,
+            current_bundle_json TEXT NOT NULL,
+            proposed_bundle_json TEXT NOT NULL,
+            sources_json TEXT NOT NULL,
+            field_statuses_json TEXT NOT NULL,
+            dependency_fingerprints_json TEXT NOT NULL,
+            warnings_json TEXT NOT NULL,
+            errors_json TEXT NOT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            applied_at TEXT NULL,
+            CHECK(session_status IN ('OPEN','APPLIED','EXPIRED','INVALIDATED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_metadata_preview_sessions_release_id
+            ON metadata_preview_sessions(release_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_metadata_preview_sessions_expires_at
+            ON metadata_preview_sessions(expires_at);
+
+        CREATE INDEX IF NOT EXISTS idx_metadata_preview_sessions_status
+            ON metadata_preview_sessions(session_status, created_at);
+
         CREATE TABLE IF NOT EXISTS title_templates (
             id INTEGER PRIMARY KEY,
             channel_slug TEXT NOT NULL,
@@ -2226,3 +2255,53 @@ def pop_pending_reply(conn: sqlite3.Connection, user_id: int) -> Optional[Dict[s
         return None
     conn.execute("DELETE FROM tg_pending WHERE user_id = ?", (user_id,))
     return row
+
+
+def insert_metadata_preview_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    release_id: int,
+    channel_slug: str,
+    session_status: str,
+    requested_fields_json: str,
+    current_bundle_json: str,
+    proposed_bundle_json: str,
+    sources_json: str,
+    field_statuses_json: str,
+    dependency_fingerprints_json: str,
+    warnings_json: str,
+    errors_json: str,
+    created_by: str | None,
+    created_at: str,
+    expires_at: str,
+    applied_at: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO metadata_preview_sessions(
+            id, release_id, channel_slug, session_status, requested_fields_json,
+            current_bundle_json, proposed_bundle_json, sources_json, field_statuses_json,
+            dependency_fingerprints_json, warnings_json, errors_json,
+            created_by, created_at, expires_at, applied_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            release_id,
+            channel_slug,
+            session_status,
+            requested_fields_json,
+            current_bundle_json,
+            proposed_bundle_json,
+            sources_json,
+            field_statuses_json,
+            dependency_fingerprints_json,
+            warnings_json,
+            errors_json,
+            created_by,
+            created_at,
+            expires_at,
+            applied_at,
+        ),
+    )
