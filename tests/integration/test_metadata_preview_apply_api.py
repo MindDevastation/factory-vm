@@ -218,6 +218,55 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             self.assertEqual(desc_source["selection_mode"], "channel_default")
             self.assertTrue(desc_source["source_name"])
 
+    def test_preview_error_messages_are_operator_readable(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                invalid_title = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="bad-title",
+                    template_body="{{channel_slug}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="INVALID",
+                    validation_errors_json='[{"code":"bad"}]',
+                    last_validated_at="2026-01-02T00:00:00+00:00",
+                    created_at="2026-01-02T00:00:00+00:00",
+                    updated_at="2026-01-02T00:00:00+00:00",
+                    archived_at=None,
+                )
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            invalid_override = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=headers,
+                json={"fields": ["title"], "sources": {"title_template_id": invalid_title}},
+            )
+            self.assertEqual(invalid_override.status_code, 200)
+            err_msg = invalid_override.json()["fields"]["title"]["errors"][0]["message"]
+            self.assertIn("title", err_msg)
+            self.assertIn("temporary override", err_msg)
+            self.assertIn("title_template", err_msg)
+            self.assertIn(f"#{invalid_title}", err_msg)
+            self.assertIn("source must be VALID", err_msg)
+
+            missing = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=headers,
+                json={"fields": ["description"], "sources": {}},
+            )
+            self.assertEqual(missing.status_code, 200)
+            missing_msg = missing.json()["fields"]["description"]["errors"][0]["message"]
+            self.assertIn("description", missing_msg)
+            self.assertIn("no temporary override", missing_msg)
+            self.assertIn("no configured channel default", missing_msg)
+
     def test_partial_failure_and_omitted_not_requested_and_no_mutation(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)

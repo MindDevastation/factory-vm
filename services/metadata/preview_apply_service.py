@@ -694,7 +694,7 @@ def _build_not_requested_record(current_value: Any) -> Dict[str, Any]:
     }
 
 
-def _configuration_missing_record(current_value: Any) -> Dict[str, Any]:
+def _configuration_missing_record(current_value: Any, *, field_name: str, source_type: str) -> Dict[str, Any]:
     return {
         "status": "CONFIGURATION_MISSING",
         "current_value": current_value,
@@ -703,11 +703,21 @@ def _configuration_missing_record(current_value: Any) -> Dict[str, Any]:
         "overwrite_required": False,
         "source": None,
         "warnings": [],
-        "errors": [{"code": "MDO_CONFIGURATION_MISSING", "message": "No configured source for requested field"}],
+        "errors": [{"code": "MDO_CONFIGURATION_MISSING", "message": f"{field_name}: no temporary override and no configured channel default ({source_type})"}],
     }
 
 
-def _invalid_source_record(current_value: Any, *, status: str, code: str, message: str) -> Dict[str, Any]:
+def _invalid_source_record(
+    current_value: Any,
+    *,
+    status: str,
+    code: str,
+    reason: str,
+    field_name: str,
+    source_kind: str,
+    source_type: str,
+    source_id: int,
+) -> Dict[str, Any]:
     return {
         "status": status,
         "current_value": current_value,
@@ -716,7 +726,7 @@ def _invalid_source_record(current_value: Any, *, status: str, code: str, messag
         "overwrite_required": False,
         "source": None,
         "warnings": [],
-        "errors": [{"code": code, "message": message}],
+        "errors": [{"code": code, "message": f"{field_name}: {source_kind} {source_type} #{source_id} is invalid: {reason}"}],
     }
 
 
@@ -819,7 +829,16 @@ def _resolve_source(
             return _ResolvedSourceResult(
                 source=None,
                 source_payload=_error_source_payload(spec=spec, source_id=override_source_id, selection_mode="temporary_override", channel_slug=channel_slug),
-                error_record=_invalid_source_record(current_value, status="INVALID_OVERRIDE", code=err["code"], message=err["message"]),
+                error_record=_invalid_source_record(
+                    current_value,
+                    status="INVALID_OVERRIDE",
+                    code=err["code"],
+                    reason=err["reason"],
+                    field_name=field_name,
+                    source_kind="temporary override",
+                    source_type=str(spec["source_type"]),
+                    source_id=override_source_id,
+                ),
             )
         source = _resolved_source_from_row(
             field_name=field_name,
@@ -837,7 +856,7 @@ def _resolve_source(
         return _ResolvedSourceResult(
             source=None,
             source_payload={"selection_mode": "channel_default", "source_type": spec["source_type"], "source_id": None, "source_name": "", "channel_slug": channel_slug},
-            error_record=_configuration_missing_record(current_value),
+            error_record=_configuration_missing_record(current_value, field_name=field_name, source_type=str(spec["source_type"])),
         )
     row, err = _validate_source_reference(
         conn,
@@ -850,7 +869,16 @@ def _resolve_source(
         return _ResolvedSourceResult(
             source=None,
             source_payload=_error_source_payload(spec=spec, source_id=default_source_id, selection_mode="channel_default", channel_slug=channel_slug),
-            error_record=_invalid_source_record(current_value, status="INVALID_DEFAULT", code=err["code"], message=err["message"]),
+            error_record=_invalid_source_record(
+                current_value,
+                status="INVALID_DEFAULT",
+                code=err["code"],
+                reason=err["reason"],
+                field_name=field_name,
+                source_kind="channel default",
+                source_type=str(spec["source_type"]),
+                source_id=default_source_id,
+            ),
         )
     source = _resolved_source_from_row(
         field_name=field_name,
@@ -877,14 +905,14 @@ def _validate_source_reference(
     if not row:
         for other_field, other_spec in _FIELD_SOURCE_SPECS.items():
             if other_field != field_name and other_spec["get_by_id"](conn, source_id):
-                return None, {"code": f"{code_prefix}_FIELD_TYPE_MISMATCH", "message": "Wrong source type for field"}
-        return None, {"code": f"{code_prefix}_SOURCE_NOT_FOUND", "message": "Source not found"}
+                return None, {"code": f"{code_prefix}_FIELD_TYPE_MISMATCH", "reason": "wrong source type for field"}
+        return None, {"code": f"{code_prefix}_SOURCE_NOT_FOUND", "reason": "source not found"}
     if str(row.get("channel_slug") or "") != channel_slug:
-        return None, {"code": f"{code_prefix}_SOURCE_CHANNEL_MISMATCH", "message": "Source must belong to the same channel"}
+        return None, {"code": f"{code_prefix}_SOURCE_CHANNEL_MISMATCH", "reason": "source must belong to the same channel"}
     if str(row.get("status") or "") != "ACTIVE":
-        return None, {"code": f"{code_prefix}_SOURCE_NOT_ACTIVE", "message": "Source must be ACTIVE"}
+        return None, {"code": f"{code_prefix}_SOURCE_NOT_ACTIVE", "reason": "source must be ACTIVE"}
     if row.get("validation_status") is not None and str(row.get("validation_status") or "") != "VALID":
-        return None, {"code": f"{code_prefix}_SOURCE_INVALID", "message": "Source must be VALID"}
+        return None, {"code": f"{code_prefix}_SOURCE_INVALID", "reason": "source must be VALID"}
     return row, None
 
 

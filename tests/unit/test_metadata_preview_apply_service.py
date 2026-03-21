@@ -113,7 +113,10 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
                 conn.close()
 
             self.assertEqual(out["fields"]["title"]["status"], "CONFIGURATION_MISSING")
-            self.assertEqual(out["fields"]["title"]["errors"], [{"code": "MDO_CONFIGURATION_MISSING", "message": "No configured source for requested field"}])
+            self.assertEqual(out["fields"]["title"]["errors"][0]["code"], "MDO_CONFIGURATION_MISSING")
+            self.assertIn("title", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("no temporary override", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("no configured channel default", out["fields"]["title"]["errors"][0]["message"])
 
     def test_invalid_stored_default_returns_invalid_default(self) -> None:
         with temp_env() as (_, env):
@@ -149,6 +152,11 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
                 conn.close()
             self.assertEqual(out["fields"]["title"]["status"], "INVALID_DEFAULT")
             self.assertEqual(out["fields"]["title"]["errors"][0]["code"], "MDO_DEFAULT_SOURCE_INVALID")
+            self.assertIn("title", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("channel default", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("title_template", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn(f"#{invalid_title}", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("source must be VALID", out["fields"]["title"]["errors"][0]["message"])
 
     def test_invalid_override_does_not_fallback_to_default(self) -> None:
         with temp_env() as (_, env):
@@ -184,6 +192,11 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
             self.assertEqual(out["fields"]["title"]["status"], "INVALID_OVERRIDE")
             self.assertEqual(out["fields"]["title"]["errors"][0]["code"], "MDO_OVERRIDE_SOURCE_INVALID")
             self.assertEqual(out["fields"]["title"]["source"]["selection_mode"], "temporary_override")
+            self.assertIn("title", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("temporary override", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("title_template", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn(f"#{invalid_title}", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("source must be VALID", out["fields"]["title"]["errors"][0]["message"])
 
     def test_preview_persists_effective_source_selection_and_provenance(self) -> None:
         with temp_env() as (_, env):
