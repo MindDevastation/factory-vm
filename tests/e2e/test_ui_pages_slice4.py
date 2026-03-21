@@ -1276,13 +1276,19 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertEqual(session_payload["fields"]["title"]["status"], "PROPOSED_READY")
             self.assertEqual(session_payload["fields"]["description"]["status"], "OVERWRITE_READY")
             self.assertEqual(session_payload["fields"]["tags"]["status"], "GENERATION_FAILED")
-            self.assertTrue(session_payload["fields"]["title"]["source"]["template_name"])
-            self.assertTrue(session_payload["fields"]["description"]["source"]["template_name"])
+            self.assertTrue(session_payload["fields"]["title"]["source"]["name"])
+            self.assertNotIn("template_name", session_payload["fields"]["title"]["source"])
+            self.assertNotIn("preset_name", session_payload["fields"]["title"]["source"])
+            self.assertTrue(session_payload["fields"]["description"]["source"]["name"])
+            self.assertNotIn("template_name", session_payload["fields"]["description"]["source"])
+            self.assertNotIn("preset_name", session_payload["fields"]["description"]["source"])
             self.assertEqual(session_payload["fields"]["description"]["source"]["id"], desc_explicit_id)
             self.assertIn("tags", session_payload["summary"]["failed_fields"])
             self.assertIn(desc_default_id, [item["id"] for item in context_payload["active_sources"]["description_templates"]])
             tags_default = context_payload["defaults"]["video_tag_preset"]
-            self.assertTrue(tags_default.get("name") or tags_default.get("preset_name"))
+            self.assertTrue(tags_default.get("name"))
+            self.assertNotIn("template_name", tags_default)
+            self.assertNotIn("preset_name", tags_default)
 
             denied = client.post(
                 f"/v1/metadata/preview-apply/sessions/{session_id}/apply",
