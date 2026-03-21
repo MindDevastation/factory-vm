@@ -8,10 +8,21 @@ from services.common import db as dbm
 
 
 class MetadataDefaultsError(Exception):
-    def __init__(self, *, code: str, message: str):
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        field_name: str | None = None,
+        source_type: str | None = None,
+        source_id: int | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.field_name = field_name
+        self.source_type = source_type
+        self.source_id = source_id
 
 
 _SOURCE_SPECS = {
@@ -19,16 +30,19 @@ _SOURCE_SPECS = {
         "get_by_id": dbm.get_title_template_by_id,
         "name_key": "template_name",
         "field_key": "default_title_template_id",
+        "field_name": "title",
     },
     "description_template": {
         "get_by_id": dbm.get_description_template_by_id,
         "name_key": "template_name",
         "field_key": "default_description_template_id",
+        "field_name": "description",
     },
     "video_tag_preset": {
         "get_by_id": dbm.get_video_tag_preset_by_id,
         "name_key": "preset_name",
         "field_key": "default_video_tag_preset_id",
+        "field_name": "tags",
     },
 }
 
@@ -102,15 +116,45 @@ def _validate_source(conn: sqlite3.Connection, *, channel_slug: str, source_type
     if not row:
         for other_type, other_spec in _SOURCE_SPECS.items():
             if other_type != source_type and other_spec["get_by_id"](conn, source_id):
-                raise MetadataDefaultsError(code="MDO_DEFAULT_FIELD_TYPE_MISMATCH", message="Wrong source type for field")
-        raise MetadataDefaultsError(code="MDO_DEFAULT_SOURCE_NOT_FOUND", message="Default source not found")
+                raise MetadataDefaultsError(
+                    code="MDO_DEFAULT_FIELD_TYPE_MISMATCH",
+                    message="Wrong source type for field",
+                    field_name=str(spec["field_name"]),
+                    source_type=source_type,
+                    source_id=source_id,
+                )
+        raise MetadataDefaultsError(
+            code="MDO_DEFAULT_SOURCE_NOT_FOUND",
+            message="Default source not found",
+            field_name=str(spec["field_name"]),
+            source_type=source_type,
+            source_id=source_id,
+        )
 
     if str(row.get("channel_slug") or "") != channel_slug:
-        raise MetadataDefaultsError(code="MDO_DEFAULT_SOURCE_CHANNEL_MISMATCH", message="Default source must belong to the same channel")
+        raise MetadataDefaultsError(
+            code="MDO_DEFAULT_SOURCE_CHANNEL_MISMATCH",
+            message="Default source must belong to the same channel",
+            field_name=str(spec["field_name"]),
+            source_type=source_type,
+            source_id=source_id,
+        )
     if str(row.get("status") or "") != "ACTIVE":
-        raise MetadataDefaultsError(code="MDO_DEFAULT_SOURCE_NOT_ACTIVE", message="Default source must be ACTIVE")
+        raise MetadataDefaultsError(
+            code="MDO_DEFAULT_SOURCE_NOT_ACTIVE",
+            message="Default source must be ACTIVE",
+            field_name=str(spec["field_name"]),
+            source_type=source_type,
+            source_id=source_id,
+        )
     if row.get("validation_status") is not None and str(row.get("validation_status") or "") != "VALID":
-        raise MetadataDefaultsError(code="MDO_DEFAULT_SOURCE_INVALID", message="Default source must be VALID")
+        raise MetadataDefaultsError(
+            code="MDO_DEFAULT_SOURCE_INVALID",
+            message="Default source must be VALID",
+            field_name=str(spec["field_name"]),
+            source_type=source_type,
+            source_id=source_id,
+        )
     return row
 
 

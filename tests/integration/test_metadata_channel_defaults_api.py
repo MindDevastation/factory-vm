@@ -24,6 +24,12 @@ class TestMetadataChannelDefaultsApi(unittest.TestCase):
         self.assertEqual(preset.status_code, 200)
         return title.json()["id"], desc.json()["id"], preset.json()["id"]
 
+    def _event_record(self, records: list, event_name: str):
+        for rec in records:
+            if rec.msg == event_name:
+                return rec
+        return None
+
     def test_read_defaults_null_and_partial(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
@@ -120,6 +126,60 @@ class TestMetadataChannelDefaultsApi(unittest.TestCase):
             mismatch = client.put("/v1/metadata/channels/darkwood-reverie/defaults", headers=headers, json={"default_title_template_id": foreign_title_id})
             self.assertEqual(mismatch.status_code, 422)
             self.assertEqual(mismatch.json()["error"]["code"], "MDO_DEFAULT_SOURCE_CHANNEL_MISMATCH")
+
+    def test_logging_payload_successful_put_and_read(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            title_id, desc_id, preset_id = self._create_source_ids(client, headers)
+
+            with self.assertLogs("services.factory_api.app", level="INFO") as logs:
+                put_resp = client.put(
+                    "/v1/metadata/channels/darkwood-reverie/defaults",
+                    headers=headers,
+                    json={"default_title_template_id": title_id, "default_description_template_id": desc_id, "default_video_tag_preset_id": preset_id},
+                )
+                self.assertEqual(put_resp.status_code, 200)
+                read_resp = client.get("/v1/metadata/channels/darkwood-reverie/defaults", headers=headers)
+                self.assertEqual(read_resp.status_code, 200)
+
+            updated_rec = self._event_record(logs.records, "metadata.defaults.updated")
+            self.assertIsNotNone(updated_rec)
+            self.assertEqual(updated_rec.channel_slug, "darkwood-reverie")
+            self.assertEqual(updated_rec.result_status, "success")
+            self.assertEqual(updated_rec.field_name, "multiple")
+            self.assertEqual(updated_rec.source_type, "multiple")
+            self.assertEqual(len(updated_rec.source_refs), 3)
+            self.assertEqual({item["field_name"] for item in updated_rec.source_refs}, {"title", "description", "tags"})
+
+            read_rec = self._event_record(logs.records, "metadata.defaults.read")
+            self.assertIsNotNone(read_rec)
+            self.assertEqual(read_rec.channel_slug, "darkwood-reverie")
+            self.assertEqual(read_rec.result_status, "success")
+            self.assertEqual(len(read_rec.source_refs), 3)
+
+    def test_logging_payload_failed_put_includes_failing_source(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            desc = client.post("/v1/metadata/description-templates", headers=headers, json={"channel_slug": "darkwood-reverie", "template_name": "D", "template_body": "{{channel_slug}}"})
+            self.assertEqual(desc.status_code, 200)
+
+            with self.assertLogs("services.factory_api.app", level="INFO") as logs:
+                resp = client.put("/v1/metadata/channels/darkwood-reverie/defaults", headers=headers, json={"default_title_template_id": desc.json()["id"]})
+                self.assertEqual(resp.status_code, 422)
+                self.assertEqual(resp.json()["error"]["code"], "MDO_DEFAULT_FIELD_TYPE_MISMATCH")
+
+            updated_rec = self._event_record(logs.records, "metadata.defaults.updated")
+            self.assertIsNotNone(updated_rec)
+            self.assertEqual(updated_rec.result_status, "error")
+            self.assertEqual(updated_rec.error_codes, ["MDO_DEFAULT_FIELD_TYPE_MISMATCH"])
+            self.assertEqual(updated_rec.field_name, "title")
+            self.assertEqual(updated_rec.source_type, "title_template")
+            self.assertEqual(updated_rec.source_id, desc.json()["id"])
+            self.assertEqual(len(updated_rec.source_refs), 3)
 
 
 if __name__ == "__main__":

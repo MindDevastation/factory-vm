@@ -325,6 +325,25 @@ class MetadataChannelDefaultsUpdateRequest(BaseModel):
     default_video_tag_preset_id: int | None = None
 
 
+def _mdo_sources_from_defaults(defaults: Dict[str, Any]) -> List[Dict[str, Any]]:
+    field_pairs = (
+        ("title", "title_template"),
+        ("description", "description_template"),
+        ("tags", "video_tag_preset"),
+    )
+    refs: List[Dict[str, Any]] = []
+    for field_name, source_type in field_pairs:
+        source = defaults.get(source_type)
+        refs.append(
+            {
+                "field_name": field_name,
+                "source_type": source_type,
+                "source_id": int(source["id"]) if source else None,
+            }
+        )
+    return refs
+
+
 @app.get("/v1/metadata/releases/{release_id}/titlegen/context")
 def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -587,6 +606,7 @@ def api_metadata_channel_defaults_read(channel_slug: str, _: bool = Depends(requ
                     "field_name": None,
                     "source_type": None,
                     "source_id": None,
+                    "source_refs": [],
                     "result_status": "error",
                     "error_codes": [exc.code],
                 },
@@ -599,9 +619,10 @@ def api_metadata_channel_defaults_read(channel_slug: str, _: bool = Depends(requ
         "metadata.defaults.read",
         extra={
             "channel_slug": channel_slug,
-            "field_name": None,
-            "source_type": None,
+            "field_name": "multiple",
+            "source_type": "multiple",
             "source_id": None,
+            "source_refs": _mdo_sources_from_defaults(payload["defaults"]),
             "result_status": "success",
             "error_codes": [],
         },
@@ -616,6 +637,11 @@ def api_metadata_channel_defaults_update(
     _: bool = Depends(require_basic_auth(env)),
 ):
     conn = dbm.connect(env)
+    request_sources = [
+        {"field_name": "title", "source_type": "title_template", "source_id": payload.default_title_template_id},
+        {"field_name": "description", "source_type": "description_template", "source_id": payload.default_description_template_id},
+        {"field_name": "tags", "source_type": "video_tag_preset", "source_id": payload.default_video_tag_preset_id},
+    ]
     try:
         try:
             result = channel_defaults_service.update_channel_defaults(
@@ -631,9 +657,10 @@ def api_metadata_channel_defaults_update(
                 "metadata.defaults.updated",
                 extra={
                     "channel_slug": channel_slug,
-                    "field_name": None,
-                    "source_type": None,
-                    "source_id": None,
+                    "field_name": exc.field_name,
+                    "source_type": exc.source_type,
+                    "source_id": exc.source_id,
+                    "source_refs": request_sources,
                     "result_status": "error",
                     "error_codes": [exc.code],
                 },
@@ -646,9 +673,10 @@ def api_metadata_channel_defaults_update(
         "metadata.defaults.updated",
         extra={
             "channel_slug": channel_slug,
-            "field_name": None,
-            "source_type": None,
+            "field_name": "multiple",
+            "source_type": "multiple",
             "source_id": None,
+            "source_refs": _mdo_sources_from_defaults(result["defaults"]),
             "result_status": "success",
             "error_codes": [],
         },
