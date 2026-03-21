@@ -104,6 +104,7 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
                 conn.close()
 
             self.assertEqual(out["fields"]["title"]["status"], "CONFIGURATION_MISSING")
+            self.assertEqual(out["fields"]["title"]["errors"], [{"code": "MPA_CONFIGURATION_MISSING", "message": "No active default source configured for requested field"}])
 
     def test_invalid_default_title_template_is_configuration_missing(self) -> None:
         with temp_env() as (_, env):
@@ -244,6 +245,11 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
                 conn.close()
 
             self.assertEqual(out["fields"]["title"]["status"], "GENERATION_FAILED")
+            self.assertTrue(out["fields"]["title"]["errors"])
+            first_error = out["fields"]["title"]["errors"][0]
+            self.assertIsInstance(first_error, dict)
+            self.assertIn("code", first_error)
+            self.assertIn("message", first_error)
             self.assertIn(out["fields"]["description"]["status"], {"OVERWRITE_READY", "PROPOSED_READY", "NO_CHANGE"})
 
     def test_session_ttl_default_and_persistence(self) -> None:
@@ -270,6 +276,30 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
             created_at = datetime.fromisoformat(str(row["created_at"]))
             self.assertGreaterEqual((expires_at - created_at).total_seconds(), 1799)
             self.assertEqual(row["fields_snapshot_json"], dbm.json_dumps(out["fields"]))
+
+    def test_persisted_proposed_bundle_json_uses_canonical_shape(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                self._seed_defaults(conn)
+                out = svc.create_preview_session(
+                    conn,
+                    release_id=release_id,
+                    requested_fields=["title", "description", "tags"],
+                    sources={},
+                    created_by="u",
+                    ttl_seconds=1800,
+                )
+                row = conn.execute("SELECT proposed_bundle_json FROM metadata_preview_sessions WHERE id = ?", (out["session_id"],)).fetchone()
+            finally:
+                conn.close()
+            proposed = dbm.json_loads(row["proposed_bundle_json"])
+            self.assertEqual(set(proposed.keys()), {"title", "description", "tags"})
+            for field in ["title", "description", "tags"]:
+                self.assertIsInstance(proposed[field], dict)
+                self.assertEqual(set(proposed[field].keys()), {"prepared", "value"})
 
     def test_summary_fields_derivation(self) -> None:
         with temp_env() as (_, env):

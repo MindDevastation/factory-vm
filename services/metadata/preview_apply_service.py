@@ -56,7 +56,7 @@ def load_preview_apply_context(conn: sqlite3.Connection, *, release_id: int) -> 
         active_sources={
             "title_templates": usable_title_templates,
             "description_templates": usable_description_templates,
-            "video_tag_presets": list(tags_ctx.active_presets),
+            "video_tag_presets": [_normalize_public_source(dict(item)) for item in list(tags_ctx.active_presets)],
         },
     )
 
@@ -183,11 +183,22 @@ def create_preview_session(
         session_status="OPEN",
         requested_fields_json=dbm.json_dumps(requested_list),
         current_bundle_json=dbm.json_dumps(context.current),
-        proposed_bundle_json=dbm.json_dumps({
-            "title": title_rec.get("proposed_value"),
-            "description": description_rec.get("proposed_value"),
-            "tags_json": tags_rec.get("proposed_value"),
-        }),
+        proposed_bundle_json=dbm.json_dumps(
+            {
+                "title": {
+                    "prepared": bool(str(title_rec.get("status") or "") in APPLYABLE_FIELD_STATUSES),
+                    "value": title_rec.get("proposed_value") if str(title_rec.get("status") or "") in APPLYABLE_FIELD_STATUSES else None,
+                },
+                "description": {
+                    "prepared": bool(str(description_rec.get("status") or "") in APPLYABLE_FIELD_STATUSES),
+                    "value": description_rec.get("proposed_value") if str(description_rec.get("status") or "") in APPLYABLE_FIELD_STATUSES else None,
+                },
+                "tags": {
+                    "prepared": bool(str(tags_rec.get("status") or "") in APPLYABLE_FIELD_STATUSES),
+                    "value": tags_rec.get("proposed_value") if str(tags_rec.get("status") or "") in APPLYABLE_FIELD_STATUSES else None,
+                },
+            }
+        ),
         sources_json=dbm.json_dumps(resolved_sources),
         field_statuses_json=dbm.json_dumps(field_statuses),
         dependency_fingerprints_json=dbm.json_dumps(dependency_fingerprints),
@@ -374,16 +385,17 @@ def _prepare_title_field(conn: sqlite3.Connection, *, release_id: int, channel_s
         normalized_current = title_template_service.normalize_whitespace(current_value)
         normalized_proposed = title_template_service.normalize_whitespace(proposed)
         status, changed, overwrite_required = _diff_status(normalized_current, normalized_proposed)
+        public_source = _normalize_public_source(result.used_template)
         return {
             "status": status,
             "current_value": current_value,
             "proposed_value": proposed,
             "changed": changed,
             "overwrite_required": overwrite_required,
-            "source": result.used_template,
+            "source": public_source,
             "warnings": list(result.warnings),
             "errors": [],
-        }, result.used_template, result.generation_fingerprint
+        }, public_source, result.generation_fingerprint
     except titlegen_service.TitleGenError as exc:
         return _generation_failed_record(current_value, code=exc.code, message=exc.message), {"type": "explicit" if template_id is not None else "default", "id": template_id}, None
 
@@ -401,16 +413,17 @@ def _prepare_description_field(conn: sqlite3.Connection, *, release_id: int, cha
         normalized_current = description_template_service.normalize_multiline(current_value)
         normalized_proposed = description_template_service.normalize_multiline(proposed)
         status, changed, overwrite_required = _diff_status(normalized_current, normalized_proposed)
+        public_source = _normalize_public_source(result.used_template)
         return {
             "status": status,
             "current_value": current_value,
             "proposed_value": proposed,
             "changed": changed,
             "overwrite_required": overwrite_required,
-            "source": result.used_template,
+            "source": public_source,
             "warnings": list(result.warnings),
             "errors": [],
-        }, result.used_template, result.generation_fingerprint
+        }, public_source, result.generation_fingerprint
     except descriptiongen_service.DescriptionGenError as exc:
         return _generation_failed_record(current_value, code=exc.code, message=exc.message), {"type": "explicit" if template_id is not None else "default", "id": template_id}, None
 
@@ -426,16 +439,17 @@ def _prepare_tags_field(conn: sqlite3.Connection, *, release_id: int, channel_sl
         normalized_current = list(result.current_tags_json)
         normalized_proposed = list(result.proposed_tags_json)
         status, changed, overwrite_required = _diff_status(normalized_current, normalized_proposed)
+        public_source = _normalize_public_source(result.used_preset)
         return {
             "status": status,
             "current_value": list(result.current_tags_json),
             "proposed_value": proposed,
             "changed": changed,
             "overwrite_required": overwrite_required,
-            "source": result.used_preset,
+            "source": public_source,
             "warnings": list(result.warnings),
             "errors": [],
-        }, result.used_preset, result.generation_fingerprint
+        }, public_source, result.generation_fingerprint
     except video_tagsgen_service.VideoTagsGenError as exc:
         return _generation_failed_record(current_value, code=exc.code, message=exc.message), {"type": "explicit" if preset_id is not None else "default", "id": preset_id}, None
 
@@ -638,7 +652,7 @@ def _configuration_missing_record(current_value: Any) -> Dict[str, Any]:
         "overwrite_required": False,
         "source": None,
         "warnings": [],
-        "errors": ["No active default source configured for requested field"],
+        "errors": [{"code": "MPA_CONFIGURATION_MISSING", "message": "No active default source configured for requested field"}],
     }
 
 
@@ -651,19 +665,29 @@ def _generation_failed_record(current_value: Any, *, code: str, message: str) ->
         "overwrite_required": False,
         "source": None,
         "warnings": [],
-        "errors": [f"{code}: {message}"],
+        "errors": [{"code": code, "message": message}],
     }
 
 
 def _template_source_item(row: Dict[str, Any] | None, *, name_key: str) -> Dict[str, Any] | None:
     if not row:
         return None
+    name = str(row.get("name") or row.get("template_name") or row.get("preset_name") or row.get(name_key) or "")
     return {
         "id": int(row["id"]),
-        name_key: str(row[name_key]),
+        "name": name,
         "status": str(row.get("status") or ""),
         "is_default": bool(int(row.get("is_default") or 0)),
     }
+
+
+def _normalize_public_source(source: Dict[str, Any]) -> Dict[str, Any]:
+    name = str(source.get("name") or source.get("template_name") or source.get("preset_name") or "")
+    out = dict(source)
+    out["name"] = name
+    out.pop("template_name", None)
+    out.pop("preset_name", None)
+    return out
 
 
 def _find_default_source(rows: List[Dict[str, Any]]) -> Dict[str, Any] | None:
@@ -686,7 +710,7 @@ def _list_usable_title_templates(conn: sqlite3.Connection, *, channel_slug: str)
     return [
         {
             "id": int(row["id"]),
-            "template_name": str(row["template_name"]),
+            "name": str(row["template_name"]),
             "status": str(row["status"]),
             "is_default": bool(int(row.get("is_default") or 0)),
         }
@@ -707,7 +731,7 @@ def _list_usable_description_templates(conn: sqlite3.Connection, *, channel_slug
     return [
         {
             "id": int(row["id"]),
-            "template_name": str(row["template_name"]),
+            "name": str(row["template_name"]),
             "status": str(row["status"]),
             "is_default": bool(int(row.get("is_default") or 0)),
         }
