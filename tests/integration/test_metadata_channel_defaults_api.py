@@ -127,6 +127,65 @@ class TestMetadataChannelDefaultsApi(unittest.TestCase):
             self.assertEqual(mismatch.status_code, 422)
             self.assertEqual(mismatch.json()["error"]["code"], "MDO_DEFAULT_SOURCE_CHANNEL_MISMATCH")
 
+    def test_unified_put_is_atomic_when_any_field_invalid(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            title_id, desc_id, preset_id = self._create_source_ids(client, headers)
+
+            baseline = client.put(
+                "/v1/metadata/channels/darkwood-reverie/defaults",
+                headers=headers,
+                json={"default_title_template_id": title_id, "default_description_template_id": desc_id, "default_video_tag_preset_id": preset_id},
+            )
+            self.assertEqual(baseline.status_code, 200)
+
+            bad_payload = client.put(
+                "/v1/metadata/channels/darkwood-reverie/defaults",
+                headers=headers,
+                json={
+                    "default_title_template_id": title_id,
+                    "default_description_template_id": 999999,  # invalid in same unified update
+                    "default_video_tag_preset_id": None,
+                },
+            )
+            self.assertEqual(bad_payload.status_code, 404)
+            self.assertEqual(bad_payload.json()["error"]["code"], "MDO_DEFAULT_SOURCE_NOT_FOUND")
+
+            after = client.get("/v1/metadata/channels/darkwood-reverie/defaults", headers=headers)
+            self.assertEqual(after.status_code, 200)
+            defaults = after.json()["defaults"]
+            self.assertEqual(defaults["title_template"]["id"], title_id)
+            self.assertEqual(defaults["description_template"]["id"], desc_id)
+            self.assertEqual(defaults["video_tag_preset"]["id"], preset_id)
+
+    def test_update_same_values_is_safe_no_op(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            title_id, desc_id, preset_id = self._create_source_ids(client, headers)
+
+            first = client.put(
+                "/v1/metadata/channels/darkwood-reverie/defaults",
+                headers=headers,
+                json={"default_title_template_id": title_id, "default_description_template_id": desc_id, "default_video_tag_preset_id": preset_id},
+            )
+            self.assertEqual(first.status_code, 200)
+            self.assertTrue(first.json()["defaults_updated"])
+
+            second = client.put(
+                "/v1/metadata/channels/darkwood-reverie/defaults",
+                headers=headers,
+                json={"default_title_template_id": title_id, "default_description_template_id": desc_id, "default_video_tag_preset_id": preset_id},
+            )
+            self.assertEqual(second.status_code, 200)
+            self.assertFalse(second.json()["defaults_updated"])
+            self.assertEqual(second.json()["defaults"]["title_template"]["id"], title_id)
+            self.assertEqual(second.json()["defaults"]["description_template"]["id"], desc_id)
+            self.assertEqual(second.json()["defaults"]["video_tag_preset"]["id"], preset_id)
+
     def test_logging_payload_successful_put_and_read(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
