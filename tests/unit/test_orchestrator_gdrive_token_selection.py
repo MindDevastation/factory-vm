@@ -56,6 +56,7 @@ def _make_env(*, gdrive_sa_json: str, gdrive_tokens_dir: str, gdrive_oauth_token
         max_render_attempts=3,
         max_upload_attempts=3,
         worker_sleep_sec=1,
+        metadata_preview_ttl_sec=1800,
     )
 
 

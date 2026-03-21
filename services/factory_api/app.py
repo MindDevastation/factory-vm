@@ -70,6 +70,7 @@ from services.custom_tags import assignment_service, bulk_bindings_service, bulk
 from services.metadata import (
     description_template_service,
     descriptiongen_service,
+    preview_apply_service,
     title_template_service,
     titlegen_service,
     video_tag_preset_service,
@@ -301,6 +302,22 @@ class MetadataDescriptionGenApplyRequest(BaseModel):
     overwrite_confirmed: bool = False
 
 
+class MetadataPreviewApplySourcesRequest(BaseModel):
+    title_template_id: int | None = None
+    description_template_id: int | None = None
+    video_tag_preset_id: int | None = None
+
+
+class MetadataPreviewApplyPreviewRequest(BaseModel):
+    fields: list[str] | None = None
+    sources: MetadataPreviewApplySourcesRequest = Field(default_factory=MetadataPreviewApplySourcesRequest)
+
+
+class MetadataPreviewApplyApplyRequest(BaseModel):
+    selected_fields: list[str]
+    overwrite_confirmed_fields: list[str] = Field(default_factory=list)
+
+
 @app.get("/v1/metadata/releases/{release_id}/titlegen/context")
 def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -453,6 +470,218 @@ def api_metadata_video_tags_context(release_id: int, _: bool = Depends(require_b
         "active_presets": context.active_presets,
         "can_generate_with_default": context.can_generate_with_default,
     }
+
+
+@app.get("/v1/metadata/releases/{release_id}/preview-apply/context")
+def api_metadata_preview_apply_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            context = preview_apply_service.load_preview_apply_context(conn, release_id=release_id)
+        except preview_apply_service.MetadataPreviewApplyError as exc:
+            logger.info(
+                "metadata.preview_apply.context_loaded",
+                extra={
+                    "session_id": None,
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "requested_fields": [],
+                    "prepared_fields": [],
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            status_code = 404 if exc.code == "MPA_RELEASE_NOT_FOUND" else 422
+            return _mpa_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    logger.info(
+        "metadata.preview_apply.context_loaded",
+        extra={
+            "session_id": None,
+            "release_id": context.release_id,
+            "channel_slug": context.channel_slug,
+            "requested_fields": [],
+            "prepared_fields": [],
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return {
+        "release_id": context.release_id,
+        "channel_slug": context.channel_slug,
+        "current": context.current,
+        "defaults": context.defaults,
+        "active_sources": context.active_sources,
+    }
+
+
+@app.post("/v1/metadata/releases/{release_id}/preview-apply/preview")
+def api_metadata_preview_apply_preview(
+    release_id: int,
+    payload: MetadataPreviewApplyPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = preview_apply_service.create_preview_session(
+                conn,
+                release_id=release_id,
+                requested_fields=payload.fields,
+                sources=payload.sources.model_dump(),
+                created_by=env.basic_user,
+                ttl_seconds=env.metadata_preview_ttl_sec,
+            )
+        except preview_apply_service.MetadataPreviewApplyError as exc:
+            logger.info(
+                "metadata.preview_apply.preview_failed",
+                extra={
+                    "session_id": None,
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "requested_fields": payload.fields or ["title", "description", "tags"],
+                    "prepared_fields": [],
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            status_code = 404 if exc.code == "MPA_RELEASE_NOT_FOUND" else 422
+            return _mpa_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    logger.info(
+        "metadata.preview_apply.preview_created",
+        extra={
+            "session_id": body["session_id"],
+            "release_id": body["release_id"],
+            "channel_slug": body["channel_slug"],
+            "requested_fields": body["summary"]["requested_fields"],
+            "prepared_fields": body["summary"]["prepared_fields"],
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.get("/v1/metadata/preview-apply/sessions/{session_id}")
+def api_metadata_preview_apply_session(session_id: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    session_row = conn.execute("SELECT release_id, channel_slug FROM metadata_preview_sessions WHERE id = ?", (session_id,)).fetchone()
+    release_id_hint = int(session_row["release_id"]) if session_row else None
+    channel_slug_hint = str(session_row["channel_slug"]) if session_row else None
+    try:
+        try:
+            body = preview_apply_service.get_preview_session(conn, session_id=session_id)
+        except preview_apply_service.MetadataPreviewApplyError as exc:
+            event = "metadata.preview_apply.apply_failed"
+            if exc.code == "MPA_SESSION_EXPIRED":
+                event = "metadata.preview_apply.session_expired"
+            logger.info(
+                event,
+                extra={
+                    "session_id": session_id,
+                    "release_id": release_id_hint,
+                    "channel_slug": channel_slug_hint,
+                    "selected_apply_fields": [],
+                    "overwrite_confirmed_fields": [],
+                    "stale_fields": list(exc.details.get("stale_fields") or []),
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            status_code = 404 if exc.code in {"MPA_SESSION_NOT_FOUND", "MPA_RELEASE_NOT_FOUND"} else 422
+            return _mpa_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    if body["session_status"] == "EXPIRED":
+        logger.info(
+            "metadata.preview_apply.session_expired",
+            extra={
+                "session_id": body["session_id"],
+                "release_id": body["release_id"],
+                "channel_slug": body["channel_slug"],
+                "selected_apply_fields": [],
+                "overwrite_confirmed_fields": [],
+                "stale_fields": [],
+                "result_status": "ok",
+                "error_codes": [],
+            },
+        )
+    stale_fields = [field for field, rec in body["fields"].items() if rec.get("status") == "STALE"]
+    if stale_fields:
+        logger.info(
+            "metadata.preview_apply.stale_detected",
+            extra={
+                "session_id": body["session_id"],
+                "release_id": body["release_id"],
+                "channel_slug": body["channel_slug"],
+                "selected_apply_fields": [],
+                "overwrite_confirmed_fields": [],
+                "stale_fields": stale_fields,
+                "result_status": "ok",
+                "error_codes": [],
+            },
+        )
+    return body
+
+
+@app.post("/v1/metadata/preview-apply/sessions/{session_id}/apply")
+def api_metadata_preview_apply_apply(
+    session_id: str,
+    payload: MetadataPreviewApplyApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    session_row = conn.execute("SELECT release_id, channel_slug FROM metadata_preview_sessions WHERE id = ?", (session_id,)).fetchone()
+    release_id_hint = int(session_row["release_id"]) if session_row else None
+    channel_slug_hint = str(session_row["channel_slug"]) if session_row else None
+    try:
+        try:
+            body = preview_apply_service.apply_preview_session(
+                conn,
+                session_id=session_id,
+                selected_fields=payload.selected_fields,
+                overwrite_confirmed_fields=payload.overwrite_confirmed_fields,
+            )
+        except preview_apply_service.MetadataPreviewApplyError as exc:
+            event = "metadata.preview_apply.apply_failed"
+            if exc.code == "MPA_SESSION_EXPIRED":
+                event = "metadata.preview_apply.session_expired"
+            if exc.code == "MPA_PREVIEW_STALE":
+                event = "metadata.preview_apply.stale_detected"
+            logger.info(
+                event,
+                extra={
+                    "session_id": session_id,
+                    "release_id": release_id_hint,
+                    "channel_slug": channel_slug_hint,
+                    "selected_apply_fields": payload.selected_fields,
+                    "overwrite_confirmed_fields": payload.overwrite_confirmed_fields,
+                    "stale_fields": list(exc.details.get("stale_fields") or []),
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            status_code = 404 if exc.code in {"MPA_SESSION_NOT_FOUND", "MPA_RELEASE_NOT_FOUND"} else 422
+            return _mpa_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    logger.info(
+        "metadata.preview_apply.applied",
+        extra={
+            "session_id": body["session_id"],
+            "release_id": body["release_id"],
+            "channel_slug": body["channel_slug"],
+            "selected_apply_fields": payload.selected_fields,
+            "overwrite_confirmed_fields": payload.overwrite_confirmed_fields,
+            "stale_fields": body.get("stale_fields", []),
+            "result_status": body["result"],
+            "error_codes": [],
+        },
+    )
+    return body
 
 
 @app.post("/v1/metadata/releases/{release_id}/video-tags/generate")
@@ -861,6 +1090,10 @@ def _mtd_error(status_code: int, code: str, message: str) -> JSONResponse:
 
 
 def _mtv_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _mpa_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
