@@ -62,6 +62,15 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
             updated_at="2026-01-01T00:00:00+00:00",
             archived_at=None,
         )
+        dbm.upsert_channel_metadata_defaults(
+            conn,
+            channel_slug="darkwood-reverie",
+            default_title_template_id=t,
+            default_description_template_id=d,
+            default_video_tag_preset_id=p,
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
         return t, d, p
 
     def test_requested_subset_and_not_requested_status(self) -> None:
@@ -104,7 +113,167 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
                 conn.close()
 
             self.assertEqual(out["fields"]["title"]["status"], "CONFIGURATION_MISSING")
-            self.assertEqual(out["fields"]["title"]["errors"], [{"code": "MPA_CONFIGURATION_MISSING", "message": "No active default source configured for requested field"}])
+            self.assertEqual(out["fields"]["title"]["errors"][0]["code"], "MDO_CONFIGURATION_MISSING")
+            self.assertIn("title", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("no temporary override", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("no configured channel default", out["fields"]["title"]["errors"][0]["message"])
+
+    def test_invalid_stored_default_returns_invalid_default(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                invalid_title = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="t-invalid",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="INVALID",
+                    validation_errors_json='[{"code":"bad"}]',
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                dbm.upsert_channel_metadata_defaults(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    default_title_template_id=invalid_title,
+                    default_description_template_id=None,
+                    default_video_tag_preset_id=None,
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                )
+                out = svc.create_preview_session(conn, release_id=release_id, requested_fields=["title"], sources={}, created_by="u", ttl_seconds=1800)
+            finally:
+                conn.close()
+            self.assertEqual(out["fields"]["title"]["status"], "INVALID_DEFAULT")
+            self.assertEqual(out["fields"]["title"]["errors"][0]["code"], "MDO_DEFAULT_SOURCE_INVALID")
+            self.assertIn("title", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("channel default", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("title_template", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn(f"#{invalid_title}", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("source must be VALID", out["fields"]["title"]["errors"][0]["message"])
+
+    def test_invalid_override_does_not_fallback_to_default(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                self._seed_defaults(conn)
+                invalid_title = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="t-invalid",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="INVALID",
+                    validation_errors_json='[{"code":"bad"}]',
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                out = svc.create_preview_session(
+                    conn,
+                    release_id=release_id,
+                    requested_fields=["title"],
+                    sources={"title_template_id": invalid_title},
+                    created_by="u",
+                    ttl_seconds=1800,
+                )
+            finally:
+                conn.close()
+            self.assertEqual(out["fields"]["title"]["status"], "INVALID_OVERRIDE")
+            self.assertEqual(out["fields"]["title"]["errors"][0]["code"], "MDO_OVERRIDE_SOURCE_INVALID")
+            self.assertEqual(out["fields"]["title"]["source"]["selection_mode"], "temporary_override")
+            self.assertIn("title", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("temporary override", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("title_template", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn(f"#{invalid_title}", out["fields"]["title"]["errors"][0]["message"])
+            self.assertIn("source must be VALID", out["fields"]["title"]["errors"][0]["message"])
+
+    def test_preview_persists_effective_source_selection_and_provenance(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                self._seed_defaults(conn)
+                out = svc.create_preview_session(
+                    conn,
+                    release_id=release_id,
+                    requested_fields=["title", "description", "tags"],
+                    sources={},
+                    created_by="u",
+                    ttl_seconds=1800,
+                )
+                row = conn.execute(
+                    "SELECT effective_source_selection_json, effective_source_provenance_json FROM metadata_preview_sessions WHERE id = ?",
+                    (out["session_id"],),
+                ).fetchone()
+            finally:
+                conn.close()
+            selection = dbm.json_loads(row["effective_source_selection_json"])
+            provenance = dbm.json_loads(row["effective_source_provenance_json"])
+            self.assertEqual(selection["title"]["selection_mode"], "channel_default")
+            self.assertTrue(selection["title"]["source_name"])
+            self.assertEqual(provenance["title"]["source_id"], out["fields"]["title"]["source"]["source_id"])
+            self.assertEqual(provenance["title"]["source_type"], "title_template")
+            self.assertEqual(provenance["title"]["selection_mode"], "channel_default")
+
+    def test_override_observability_events_emitted(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                _, _, _ = self._seed_defaults(conn)
+                valid_override = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="t-override",
+                    template_body="{{channel_slug}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                with mock.patch("services.metadata.preview_apply_service.logger.info") as info_mock:
+                    svc.create_preview_session(
+                        conn,
+                        release_id=release_id,
+                        requested_fields=["title"],
+                        sources={"title_template_id": 999999},
+                        created_by="u",
+                        ttl_seconds=1800,
+                    )
+                    svc.create_preview_session(
+                        conn,
+                        release_id=release_id,
+                        requested_fields=["title"],
+                        sources={"title_template_id": valid_override},
+                        created_by="u",
+                        ttl_seconds=1800,
+                    )
+            finally:
+                conn.close()
+            event_names = [call.args[0] for call in info_mock.call_args_list if call.args]
+            self.assertIn("metadata.override.invalid", event_names)
+            self.assertIn("metadata.preview.source_resolution_failed", event_names)
+            self.assertIn("metadata.override.used_in_preview", event_names)
+            invalid_call = next(call for call in info_mock.call_args_list if call.args and call.args[0] == "metadata.override.invalid")
+            for key in ["channel_slug", "release_id", "field_name", "selection_mode", "source_type", "source_id", "result_status", "error_codes"]:
+                self.assertIn(key, invalid_call.kwargs.get("extra", {}))
 
     def test_invalid_default_title_template_is_configuration_missing(self) -> None:
         with temp_env() as (_, env):
