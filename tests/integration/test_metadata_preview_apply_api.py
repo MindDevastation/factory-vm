@@ -68,6 +68,15 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             updated_at="2026-01-01T00:00:00+00:00",
             archived_at=None,
         )
+        dbm.upsert_channel_metadata_defaults(
+            conn,
+            channel_slug="darkwood-reverie",
+            default_title_template_id=t,
+            default_description_template_id=d,
+            default_video_tag_preset_id=p,
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
         return t, d, p
 
     def test_context_endpoint_returns_current_defaults_and_active(self) -> None:
@@ -148,6 +157,9 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             )
             self.assertEqual(one.status_code, 200)
             self.assertEqual(one.json()["summary"]["requested_fields"], ["title"])
+            title_source = one.json()["fields"]["title"]["source"]
+            self.assertEqual(set(["source_type", "source_id", "source_name", "selection_mode"]).issubset(title_source.keys()), True)
+            self.assertTrue(title_source["source_name"])
 
             two = client.post(
                 f"/v1/metadata/releases/{release_id}/preview-apply/preview",
@@ -164,6 +176,47 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             )
             self.assertEqual(all_three.status_code, 200)
             self.assertEqual(all_three.json()["summary"]["requested_fields"], ["title", "description", "tags"])
+
+    def test_preview_with_override_returns_provenance_and_source_name(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                _, _, _ = self._seed_defaults(conn)
+                alt_title = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="alt-title",
+                    template_body="{{channel_slug}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-02T00:00:00+00:00",
+                    created_at="2026-01-02T00:00:00+00:00",
+                    updated_at="2026-01-02T00:00:00+00:00",
+                    archived_at=None,
+                )
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=headers,
+                json={"fields": ["title", "description"], "sources": {"title_template_id": alt_title}},
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            title_source = body["fields"]["title"]["source"]
+            desc_source = body["fields"]["description"]["source"]
+            self.assertEqual(title_source["selection_mode"], "temporary_override")
+            self.assertEqual(title_source["source_type"], "title_template")
+            self.assertEqual(title_source["source_id"], alt_title)
+            self.assertEqual(title_source["source_name"], "alt-title")
+            self.assertEqual(desc_source["selection_mode"], "channel_default")
+            self.assertTrue(desc_source["source_name"])
 
     def test_partial_failure_and_omitted_not_requested_and_no_mutation(self) -> None:
         with temp_env() as (_, env):
@@ -287,6 +340,16 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             self.assertEqual(preview.status_code, 200)
             session_id = preview.json()["session_id"]
             preview_status = preview.json()["fields"]["title"]["status"]
+            conn = dbm.connect(env)
+            try:
+                before_snapshot = dict(
+                    conn.execute(
+                        "SELECT effective_source_selection_json, effective_source_provenance_json FROM metadata_preview_sessions WHERE id = ?",
+                        (session_id,),
+                    ).fetchone()
+                )
+            finally:
+                conn.close()
 
             conn = dbm.connect(env)
             try:
@@ -313,6 +376,17 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             session = client.get(f"/v1/metadata/preview-apply/sessions/{session_id}", headers=headers)
             self.assertEqual(session.status_code, 200)
             self.assertEqual(session.json()["fields"]["title"]["status"], preview_status)
+            conn = dbm.connect(env)
+            try:
+                after_snapshot = dict(
+                    conn.execute(
+                        "SELECT effective_source_selection_json, effective_source_provenance_json FROM metadata_preview_sessions WHERE id = ?",
+                        (session_id,),
+                    ).fetchone()
+                )
+            finally:
+                conn.close()
+            self.assertEqual(before_snapshot, after_snapshot)
 
     def test_apply_subset_atomic_and_single_use(self) -> None:
         with temp_env() as (_, env):

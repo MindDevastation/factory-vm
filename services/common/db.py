@@ -345,6 +345,8 @@ def migrate(conn: sqlite3.Connection) -> None:
             warnings_json TEXT NOT NULL,
             errors_json TEXT NOT NULL,
             fields_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            effective_source_selection_json TEXT NOT NULL DEFAULT '{}',
+            effective_source_provenance_json TEXT NOT NULL DEFAULT '{}',
             created_by TEXT NULL,
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
@@ -886,6 +888,12 @@ def _ensure_metadata_preview_sessions_columns(conn: sqlite3.Connection) -> None:
     if "fields_snapshot_json" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN fields_snapshot_json TEXT NOT NULL DEFAULT '{}';")
+    if "effective_source_selection_json" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN effective_source_selection_json TEXT NOT NULL DEFAULT '{}';")
+    if "effective_source_provenance_json" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN effective_source_provenance_json TEXT NOT NULL DEFAULT '{}';")
 
 
 def now_ts() -> float:
@@ -2335,6 +2343,8 @@ def insert_metadata_preview_session(
     warnings_json: str,
     errors_json: str,
     fields_snapshot_json: str,
+    effective_source_selection_json: str,
+    effective_source_provenance_json: str,
     created_by: str | None,
     created_at: str,
     expires_at: str,
@@ -2346,8 +2356,9 @@ def insert_metadata_preview_session(
             id, release_id, channel_slug, session_status, requested_fields_json,
             current_bundle_json, proposed_bundle_json, sources_json, field_statuses_json,
             dependency_fingerprints_json, warnings_json, errors_json, fields_snapshot_json,
+            effective_source_selection_json, effective_source_provenance_json,
             created_by, created_at, expires_at, applied_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             session_id,
@@ -2363,6 +2374,8 @@ def insert_metadata_preview_session(
             warnings_json,
             errors_json,
             fields_snapshot_json,
+            effective_source_selection_json,
+            effective_source_provenance_json,
             created_by,
             created_at,
             expires_at,

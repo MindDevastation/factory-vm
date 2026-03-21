@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import logging
 import sqlite3
 import uuid
 from typing import Any, Dict, List, Set
@@ -13,6 +14,8 @@ from services.metadata import description_template_service, descriptiongen_servi
 
 ALL_FIELDS = ("title", "description", "tags")
 APPLYABLE_FIELD_STATUSES = {"PROPOSED_READY", "OVERWRITE_READY", "NO_CHANGE"}
+FAILED_FIELD_STATUSES = {"GENERATION_FAILED", "CONFIGURATION_MISSING", "INVALID_OVERRIDE", "INVALID_DEFAULT", "STALE"}
+logger = logging.getLogger(__name__)
 
 
 class MetadataPreviewApplyError(Exception):
@@ -32,13 +35,26 @@ class PreviewContextResult:
     active_sources: Dict[str, Any]
 
 
+@dataclass(frozen=True)
+class ResolvedSource:
+    field_name: str
+    source_type: str
+    source_id: int
+    source_name: str
+    selection_mode: str
+    channel_slug: str
+    updated_at: str | None
+
+
 def load_preview_apply_context(conn: sqlite3.Connection, *, release_id: int) -> PreviewContextResult:
     release = _load_release(conn, release_id=release_id)
+    defaults_row = dbm.get_channel_metadata_defaults(conn, channel_slug=str(release["channel_slug"])) or {}
     tags_ctx = video_tagsgen_service.load_video_tags_context(conn, release_id=release_id)
     usable_title_templates = _list_usable_title_templates(conn, channel_slug=str(release["channel_slug"]))
     usable_description_templates = _list_usable_description_templates(conn, channel_slug=str(release["channel_slug"]))
-    default_title_template = _find_default_source(usable_title_templates)
-    default_description_template = _find_default_source(usable_description_templates)
+    default_title_template = _lookup_title_template_ref(conn, template_id=_as_int_or_none(defaults_row.get("default_title_template_id")))
+    default_description_template = _lookup_description_template_ref(conn, template_id=_as_int_or_none(defaults_row.get("default_description_template_id")))
+    default_video_tag_preset = _lookup_video_tag_preset_ref(conn, preset_id=_as_int_or_none(defaults_row.get("default_video_tag_preset_id")))
 
     return PreviewContextResult(
         release_id=int(release["id"]),
@@ -51,7 +67,7 @@ def load_preview_apply_context(conn: sqlite3.Connection, *, release_id: int) -> 
         defaults={
             "title_template": default_title_template,
             "description_template": default_description_template,
-            "video_tag_preset": _template_source_item(tags_ctx.default_preset, name_key="preset_name"),
+            "video_tag_preset": default_video_tag_preset,
         },
         active_sources={
             "title_templates": usable_title_templates,
@@ -80,6 +96,8 @@ def create_preview_session(
 
     field_records: Dict[str, Dict[str, Any]] = {}
     resolved_sources: Dict[str, Any] = {}
+    effective_source_selection: Dict[str, Any] = {}
+    effective_source_provenance: Dict[str, Any] = {}
     dependency_fingerprints: Dict[str, Any] = {}
     field_statuses: Dict[str, str] = {}
     warnings: List[str] = []
@@ -98,6 +116,9 @@ def create_preview_session(
             template_id=sources.get("title_template_id"),
         )
         resolved_sources["title"] = title_source
+        if title_source:
+            effective_source_selection["title"] = _source_selection_payload(title_source)
+            effective_source_provenance["title"] = dict(title_source)
         dependency_fingerprints["title"] = _build_field_dependency_fingerprint(
             field="title",
             release_row=release,
@@ -113,6 +134,9 @@ def create_preview_session(
             template_id=sources.get("description_template_id"),
         )
         resolved_sources["description"] = description_source
+        if description_source:
+            effective_source_selection["description"] = _source_selection_payload(description_source)
+            effective_source_provenance["description"] = dict(description_source)
         dependency_fingerprints["description"] = _build_field_dependency_fingerprint(
             field="description",
             release_row=release,
@@ -128,6 +152,9 @@ def create_preview_session(
             preset_id=sources.get("video_tag_preset_id"),
         )
         resolved_sources["tags"] = tags_source
+        if tags_source:
+            effective_source_selection["tags"] = _source_selection_payload(tags_source)
+            effective_source_provenance["tags"] = dict(tags_source)
         dependency_fingerprints["tags"] = _build_field_dependency_fingerprint(
             field="tags",
             release_row=release,
@@ -147,7 +174,7 @@ def create_preview_session(
     requested_list = [f for f in ALL_FIELDS if f in fields]
     prepared_fields = [f for f in requested_list if field_statuses[f] in {"PROPOSED_READY", "NO_CHANGE", "OVERWRITE_READY"}]
     applyable_fields = [f for f in requested_list if field_statuses[f] in APPLYABLE_FIELD_STATUSES]
-    failed_fields = [f for f in requested_list if field_statuses[f] in {"GENERATION_FAILED", "CONFIGURATION_MISSING"}]
+    failed_fields = [f for f in requested_list if field_statuses[f] in FAILED_FIELD_STATUSES]
 
     payload = {
         "session_id": session_id,
@@ -205,10 +232,17 @@ def create_preview_session(
         warnings_json=dbm.json_dumps(warnings),
         errors_json=dbm.json_dumps(errors),
         fields_snapshot_json=dbm.json_dumps(fields_snapshot),
+        effective_source_selection_json=dbm.json_dumps(effective_source_selection),
+        effective_source_provenance_json=dbm.json_dumps(effective_source_provenance),
         created_by=created_by,
         created_at=created_at,
         expires_at=expires_at,
         applied_at=None,
+    )
+    _log_source_resolution_events(
+        release_id=release_id,
+        channel_slug=context.channel_slug,
+        fields=field_records,
     )
     conn.commit()
     return payload
@@ -373,19 +407,24 @@ def _guarded_columns_for_selected_fields(selected_fields: Set[str]) -> List[str]
 
 
 def _prepare_title_field(conn: sqlite3.Connection, *, release_id: int, channel_slug: str, current_value: str, template_id: Any):
-    resolved_template_id = _as_int_or_none(template_id)
-    if template_id is None:
-        default_row = _find_default_source(_list_usable_title_templates(conn, channel_slug=channel_slug))
-        if default_row is None:
-            return _configuration_missing_record(current_value), {"type": "default", "id": None}, None
-        resolved_template_id = int(default_row["id"])
+    resolved = _resolve_source(
+        conn,
+        field_name="title",
+        channel_slug=channel_slug,
+        override_source_id=_as_int_or_none(template_id),
+        current_value=current_value,
+    )
+    if resolved.error_record is not None:
+        rec = dict(resolved.error_record)
+        rec["source"] = resolved.source_payload
+        return rec, resolved.source_payload, None
     try:
-        result = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=resolved_template_id)
+        result = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=resolved.source.source_id)
         proposed = result.proposed_title
         normalized_current = title_template_service.normalize_whitespace(current_value)
         normalized_proposed = title_template_service.normalize_whitespace(proposed)
         status, changed, overwrite_required = _diff_status(normalized_current, normalized_proposed)
-        public_source = _normalize_public_source(result.used_template)
+        public_source = _source_payload_from_resolved(resolved.source, row=result.used_template)
         return {
             "status": status,
             "current_value": current_value,
@@ -397,23 +436,28 @@ def _prepare_title_field(conn: sqlite3.Connection, *, release_id: int, channel_s
             "errors": [],
         }, public_source, result.generation_fingerprint
     except titlegen_service.TitleGenError as exc:
-        return _generation_failed_record(current_value, code=exc.code, message=exc.message), {"type": "explicit" if template_id is not None else "default", "id": template_id}, None
+        return _generation_failed_record(current_value, code=exc.code, message=exc.message), resolved.source_payload, None
 
 
 def _prepare_description_field(conn: sqlite3.Connection, *, release_id: int, channel_slug: str, current_value: str, template_id: Any):
-    resolved_template_id = _as_int_or_none(template_id)
-    if template_id is None:
-        default_row = _find_default_source(_list_usable_description_templates(conn, channel_slug=channel_slug))
-        if default_row is None:
-            return _configuration_missing_record(current_value), {"type": "default", "id": None}, None
-        resolved_template_id = int(default_row["id"])
+    resolved = _resolve_source(
+        conn,
+        field_name="description",
+        channel_slug=channel_slug,
+        override_source_id=_as_int_or_none(template_id),
+        current_value=current_value,
+    )
+    if resolved.error_record is not None:
+        rec = dict(resolved.error_record)
+        rec["source"] = resolved.source_payload
+        return rec, resolved.source_payload, None
     try:
-        result = descriptiongen_service.generate_description_preview(conn, release_id=release_id, template_id=resolved_template_id)
+        result = descriptiongen_service.generate_description_preview(conn, release_id=release_id, template_id=resolved.source.source_id)
         proposed = result.proposed_description
         normalized_current = description_template_service.normalize_multiline(current_value)
         normalized_proposed = description_template_service.normalize_multiline(proposed)
         status, changed, overwrite_required = _diff_status(normalized_current, normalized_proposed)
-        public_source = _normalize_public_source(result.used_template)
+        public_source = _source_payload_from_resolved(resolved.source, row=result.used_template)
         return {
             "status": status,
             "current_value": current_value,
@@ -425,21 +469,28 @@ def _prepare_description_field(conn: sqlite3.Connection, *, release_id: int, cha
             "errors": [],
         }, public_source, result.generation_fingerprint
     except descriptiongen_service.DescriptionGenError as exc:
-        return _generation_failed_record(current_value, code=exc.code, message=exc.message), {"type": "explicit" if template_id is not None else "default", "id": template_id}, None
+        return _generation_failed_record(current_value, code=exc.code, message=exc.message), resolved.source_payload, None
 
 
 def _prepare_tags_field(conn: sqlite3.Connection, *, release_id: int, channel_slug: str, current_value: List[str], preset_id: Any):
-    if preset_id is None:
-        ctx = video_tagsgen_service.load_video_tags_context(conn, release_id=release_id)
-        if ctx.default_preset is None:
-            return _configuration_missing_record(current_value), {"type": "default", "id": None}, None
+    resolved = _resolve_source(
+        conn,
+        field_name="tags",
+        channel_slug=channel_slug,
+        override_source_id=_as_int_or_none(preset_id),
+        current_value=current_value,
+    )
+    if resolved.error_record is not None:
+        rec = dict(resolved.error_record)
+        rec["source"] = resolved.source_payload
+        return rec, resolved.source_payload, None
     try:
-        result = video_tagsgen_service.generate_video_tags_preview(conn, release_id=release_id, preset_id=_as_int_or_none(preset_id))
+        result = video_tagsgen_service.generate_video_tags_preview(conn, release_id=release_id, preset_id=resolved.source.source_id)
         proposed = list(result.proposed_tags_json)
         normalized_current = list(result.current_tags_json)
         normalized_proposed = list(result.proposed_tags_json)
         status, changed, overwrite_required = _diff_status(normalized_current, normalized_proposed)
-        public_source = _normalize_public_source(result.used_preset)
+        public_source = _source_payload_from_resolved(resolved.source, row=result.used_preset)
         return {
             "status": status,
             "current_value": list(result.current_tags_json),
@@ -451,7 +502,7 @@ def _prepare_tags_field(conn: sqlite3.Connection, *, release_id: int, channel_sl
             "errors": [],
         }, public_source, result.generation_fingerprint
     except video_tagsgen_service.VideoTagsGenError as exc:
-        return _generation_failed_record(current_value, code=exc.code, message=exc.message), {"type": "explicit" if preset_id is not None else "default", "id": preset_id}, None
+        return _generation_failed_record(current_value, code=exc.code, message=exc.message), resolved.source_payload, None
 
 
 def _load_release(conn: sqlite3.Connection, *, release_id: int) -> Dict[str, Any]:
@@ -512,7 +563,7 @@ def _build_session_payload(*, session: Dict[str, Any], fields: Dict[str, Any], s
     statuses = {field: str(fields[field]["status"]) for field in ALL_FIELDS}
     prepared_fields = [f for f in requested_fields if statuses[f] in {"PROPOSED_READY", "NO_CHANGE", "OVERWRITE_READY"}]
     applyable_fields = [f for f in requested_fields if statuses[f] in APPLYABLE_FIELD_STATUSES]
-    failed_fields = [f for f in requested_fields if statuses[f] in {"GENERATION_FAILED", "CONFIGURATION_MISSING", "STALE"}]
+    failed_fields = [f for f in requested_fields if statuses[f] in FAILED_FIELD_STATUSES]
     return {
         "session_id": str(session["id"]),
         "release_id": int(session["release_id"]),
@@ -652,7 +703,20 @@ def _configuration_missing_record(current_value: Any) -> Dict[str, Any]:
         "overwrite_required": False,
         "source": None,
         "warnings": [],
-        "errors": [{"code": "MPA_CONFIGURATION_MISSING", "message": "No active default source configured for requested field"}],
+        "errors": [{"code": "MDO_CONFIGURATION_MISSING", "message": "No configured source for requested field"}],
+    }
+
+
+def _invalid_source_record(current_value: Any, *, status: str, code: str, message: str) -> Dict[str, Any]:
+    return {
+        "status": status,
+        "current_value": current_value,
+        "proposed_value": current_value,
+        "changed": False,
+        "overwrite_required": False,
+        "source": None,
+        "warnings": [],
+        "errors": [{"code": code, "message": message}],
     }
 
 
@@ -681,6 +745,21 @@ def _template_source_item(row: Dict[str, Any] | None, *, name_key: str) -> Dict[
     }
 
 
+def _lookup_title_template_ref(conn: sqlite3.Connection, *, template_id: int | None) -> Dict[str, Any] | None:
+    row = dbm.get_title_template_by_id(conn, template_id) if template_id is not None else None
+    return _template_source_item(row, name_key="template_name") if row else None
+
+
+def _lookup_description_template_ref(conn: sqlite3.Connection, *, template_id: int | None) -> Dict[str, Any] | None:
+    row = dbm.get_description_template_by_id(conn, template_id) if template_id is not None else None
+    return _template_source_item(row, name_key="template_name") if row else None
+
+
+def _lookup_video_tag_preset_ref(conn: sqlite3.Connection, *, preset_id: int | None) -> Dict[str, Any] | None:
+    row = dbm.get_video_tag_preset_by_id(conn, preset_id) if preset_id is not None else None
+    return _template_source_item(row, name_key="preset_name") if row else None
+
+
 def _normalize_public_source(source: Dict[str, Any]) -> Dict[str, Any]:
     name = str(source.get("name") or source.get("template_name") or source.get("preset_name") or "")
     out = dict(source)
@@ -690,11 +769,231 @@ def _normalize_public_source(source: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _find_default_source(rows: List[Dict[str, Any]]) -> Dict[str, Any] | None:
-    for row in rows:
-        if bool(int(row.get("is_default") or 0)):
-            return row
-    return None
+@dataclass(frozen=True)
+class _ResolvedSourceResult:
+    source: ResolvedSource | None
+    source_payload: Dict[str, Any] | None
+    error_record: Dict[str, Any] | None
+
+
+_FIELD_SOURCE_SPECS = {
+    "title": {
+        "source_type": "title_template",
+        "default_key": "default_title_template_id",
+        "get_by_id": dbm.get_title_template_by_id,
+        "name_key": "template_name",
+    },
+    "description": {
+        "source_type": "description_template",
+        "default_key": "default_description_template_id",
+        "get_by_id": dbm.get_description_template_by_id,
+        "name_key": "template_name",
+    },
+    "tags": {
+        "source_type": "video_tag_preset",
+        "default_key": "default_video_tag_preset_id",
+        "get_by_id": dbm.get_video_tag_preset_by_id,
+        "name_key": "preset_name",
+    },
+}
+
+
+def _resolve_source(
+    conn: sqlite3.Connection,
+    *,
+    field_name: str,
+    channel_slug: str,
+    override_source_id: int | None,
+    current_value: Any,
+) -> _ResolvedSourceResult:
+    spec = _FIELD_SOURCE_SPECS[field_name]
+    if override_source_id is not None:
+        row, err = _validate_source_reference(
+            conn,
+            field_name=field_name,
+            channel_slug=channel_slug,
+            source_id=override_source_id,
+            source_kind="override",
+        )
+        if err:
+            return _ResolvedSourceResult(
+                source=None,
+                source_payload=_error_source_payload(spec=spec, source_id=override_source_id, selection_mode="temporary_override", channel_slug=channel_slug),
+                error_record=_invalid_source_record(current_value, status="INVALID_OVERRIDE", code=err["code"], message=err["message"]),
+            )
+        source = _resolved_source_from_row(
+            field_name=field_name,
+            row=row,
+            source_type=str(spec["source_type"]),
+            selection_mode="temporary_override",
+            channel_slug=channel_slug,
+            name_key=str(spec["name_key"]),
+        )
+        return _ResolvedSourceResult(source=source, source_payload=_source_payload_from_resolved(source, row=row), error_record=None)
+
+    defaults_row = dbm.get_channel_metadata_defaults(conn, channel_slug=channel_slug) or {}
+    default_source_id = _as_int_or_none(defaults_row.get(str(spec["default_key"])))
+    if default_source_id is None:
+        return _ResolvedSourceResult(
+            source=None,
+            source_payload={"selection_mode": "channel_default", "source_type": spec["source_type"], "source_id": None, "source_name": "", "channel_slug": channel_slug},
+            error_record=_configuration_missing_record(current_value),
+        )
+    row, err = _validate_source_reference(
+        conn,
+        field_name=field_name,
+        channel_slug=channel_slug,
+        source_id=default_source_id,
+        source_kind="default",
+    )
+    if err:
+        return _ResolvedSourceResult(
+            source=None,
+            source_payload=_error_source_payload(spec=spec, source_id=default_source_id, selection_mode="channel_default", channel_slug=channel_slug),
+            error_record=_invalid_source_record(current_value, status="INVALID_DEFAULT", code=err["code"], message=err["message"]),
+        )
+    source = _resolved_source_from_row(
+        field_name=field_name,
+        row=row,
+        source_type=str(spec["source_type"]),
+        selection_mode="channel_default",
+        channel_slug=channel_slug,
+        name_key=str(spec["name_key"]),
+    )
+    return _ResolvedSourceResult(source=source, source_payload=_source_payload_from_resolved(source, row=row), error_record=None)
+
+
+def _validate_source_reference(
+    conn: sqlite3.Connection,
+    *,
+    field_name: str,
+    channel_slug: str,
+    source_id: int,
+    source_kind: str,
+) -> tuple[Dict[str, Any] | None, Dict[str, str] | None]:
+    spec = _FIELD_SOURCE_SPECS[field_name]
+    row = spec["get_by_id"](conn, source_id)
+    code_prefix = "MDO_OVERRIDE" if source_kind == "override" else "MDO_DEFAULT"
+    if not row:
+        for other_field, other_spec in _FIELD_SOURCE_SPECS.items():
+            if other_field != field_name and other_spec["get_by_id"](conn, source_id):
+                return None, {"code": f"{code_prefix}_FIELD_TYPE_MISMATCH", "message": "Wrong source type for field"}
+        return None, {"code": f"{code_prefix}_SOURCE_NOT_FOUND", "message": "Source not found"}
+    if str(row.get("channel_slug") or "") != channel_slug:
+        return None, {"code": f"{code_prefix}_SOURCE_CHANNEL_MISMATCH", "message": "Source must belong to the same channel"}
+    if str(row.get("status") or "") != "ACTIVE":
+        return None, {"code": f"{code_prefix}_SOURCE_NOT_ACTIVE", "message": "Source must be ACTIVE"}
+    if row.get("validation_status") is not None and str(row.get("validation_status") or "") != "VALID":
+        return None, {"code": f"{code_prefix}_SOURCE_INVALID", "message": "Source must be VALID"}
+    return row, None
+
+
+def _resolved_source_from_row(
+    *,
+    field_name: str,
+    row: Dict[str, Any],
+    source_type: str,
+    selection_mode: str,
+    channel_slug: str,
+    name_key: str,
+) -> ResolvedSource:
+    return ResolvedSource(
+        field_name=field_name,
+        source_type=source_type,
+        source_id=int(row["id"]),
+        source_name=str(row.get(name_key) or row.get("name") or ""),
+        selection_mode=selection_mode,
+        channel_slug=channel_slug,
+        updated_at=str(row.get("updated_at") or "") or None,
+    )
+
+
+def _source_payload_from_resolved(source: ResolvedSource, *, row: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = _normalize_public_source(dict(row))
+    normalized.update(
+        {
+            "source_type": source.source_type,
+            "source_id": source.source_id,
+            "source_name": source.source_name,
+            "selection_mode": source.selection_mode,
+            "channel_slug": source.channel_slug,
+        }
+    )
+    normalized["name"] = source.source_name
+    return normalized
+
+
+def _error_source_payload(*, spec: Dict[str, Any], source_id: int, selection_mode: str, channel_slug: str) -> Dict[str, Any]:
+    return {
+        "source_type": str(spec["source_type"]),
+        "source_id": int(source_id),
+        "source_name": "",
+        "selection_mode": selection_mode,
+        "channel_slug": channel_slug,
+    }
+
+
+def _source_selection_payload(source: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "source_type": str(source.get("source_type") or ""),
+        "source_id": source.get("source_id"),
+        "source_name": str(source.get("source_name") or source.get("name") or ""),
+        "selection_mode": str(source.get("selection_mode") or ""),
+        "channel_slug": str(source.get("channel_slug") or ""),
+    }
+
+
+def _log_source_resolution_events(*, release_id: int, channel_slug: str, fields: Dict[str, Dict[str, Any]]) -> None:
+    for field_name in ALL_FIELDS:
+        record = fields.get(field_name) or {}
+        status = str(record.get("status") or "")
+        source = record.get("source") if isinstance(record.get("source"), dict) else {}
+        selection_mode = str(source.get("selection_mode") or "")
+        source_type = str(source.get("source_type") or "")
+        source_id = source.get("source_id")
+        error_codes = [str(item.get("code")) for item in record.get("errors", []) if isinstance(item, dict) and item.get("code")]
+        if selection_mode == "temporary_override" and status not in {"INVALID_OVERRIDE", "NOT_REQUESTED"}:
+            logger.info(
+                "metadata.override.used_in_preview",
+                extra={
+                    "channel_slug": channel_slug,
+                    "release_id": release_id,
+                    "field_name": field_name,
+                    "selection_mode": selection_mode,
+                    "source_type": source_type,
+                    "source_id": source_id,
+                    "result_status": status,
+                    "error_codes": error_codes,
+                },
+            )
+        if status == "INVALID_OVERRIDE":
+            logger.info(
+                "metadata.override.invalid",
+                extra={
+                    "channel_slug": channel_slug,
+                    "release_id": release_id,
+                    "field_name": field_name,
+                    "selection_mode": selection_mode or "temporary_override",
+                    "source_type": source_type,
+                    "source_id": source_id,
+                    "result_status": status,
+                    "error_codes": error_codes,
+                },
+            )
+        if status in {"INVALID_OVERRIDE", "INVALID_DEFAULT", "CONFIGURATION_MISSING"}:
+            logger.info(
+                "metadata.preview.source_resolution_failed",
+                extra={
+                    "channel_slug": channel_slug,
+                    "release_id": release_id,
+                    "field_name": field_name,
+                    "selection_mode": selection_mode,
+                    "source_type": source_type,
+                    "source_id": source_id,
+                    "result_status": status,
+                    "error_codes": error_codes,
+                },
+            )
 
 
 def _list_usable_title_templates(conn: sqlite3.Connection, *, channel_slug: str) -> List[Dict[str, Any]]:

@@ -1161,7 +1161,7 @@ class TestUiPagesSlice4(unittest.TestCase):
                     audio_ids_text="001",
                 )
                 release_id = int(conn.execute("SELECT release_id FROM jobs WHERE id = ?", (job_id,)).fetchone()["release_id"])
-                dbm.create_title_template(
+                title_default_id = dbm.create_title_template(
                     conn,
                     channel_slug="darkwood-reverie",
                     template_name="Default Unified Title",
@@ -1203,7 +1203,7 @@ class TestUiPagesSlice4(unittest.TestCase):
                     updated_at="2026-01-01T00:00:00+00:00",
                     archived_at=None,
                 )
-                dbm.create_video_tag_preset(
+                tags_default_id = dbm.create_video_tag_preset(
                     conn,
                     channel_slug="darkwood-reverie",
                     preset_name="Default Unified Tags",
@@ -1216,6 +1216,15 @@ class TestUiPagesSlice4(unittest.TestCase):
                     created_at="2026-01-01T00:00:00+00:00",
                     updated_at="2026-01-01T00:00:00+00:00",
                     archived_at=None,
+                )
+                dbm.upsert_channel_metadata_defaults(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    default_title_template_id=title_default_id,
+                    default_description_template_id=desc_default_id,
+                    default_video_tag_preset_id=tags_default_id,
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
                 )
                 conn.commit()
             finally:
