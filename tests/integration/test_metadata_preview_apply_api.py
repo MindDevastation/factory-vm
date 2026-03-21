@@ -115,7 +115,19 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             self.assertEqual(set(body.keys()), {"release_id", "channel_slug", "current", "defaults", "active_sources"})
             self.assertEqual(body["current"]["title"], "t")
             self.assertTrue(all(item["status"] == "ACTIVE" for item in body["active_sources"]["title_templates"]))
-            self.assertTrue(all(item["template_name"] != "invalid" for item in body["active_sources"]["description_templates"]))
+            self.assertTrue(all(item["name"] != "invalid" for item in body["active_sources"]["description_templates"]))
+            self.assertIn("name", body["defaults"]["title_template"])
+            self.assertNotIn("template_name", body["defaults"]["title_template"])
+            self.assertIn("name", body["defaults"]["description_template"])
+            self.assertNotIn("template_name", body["defaults"]["description_template"])
+            self.assertIn("name", body["defaults"]["video_tag_preset"])
+            self.assertNotIn("preset_name", body["defaults"]["video_tag_preset"])
+            self.assertTrue(all("name" in item for item in body["active_sources"]["title_templates"]))
+            self.assertTrue(all("template_name" not in item for item in body["active_sources"]["title_templates"]))
+            self.assertTrue(all("name" in item for item in body["active_sources"]["description_templates"]))
+            self.assertTrue(all("template_name" not in item for item in body["active_sources"]["description_templates"]))
+            self.assertTrue(all("name" in item for item in body["active_sources"]["video_tag_presets"]))
+            self.assertTrue(all("preset_name" not in item for item in body["active_sources"]["video_tag_presets"]))
 
     def test_preview_prepare_one_two_and_all_fields(self) -> None:
         with temp_env() as (_, env):
@@ -191,8 +203,13 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             body = resp.json()
             self.assertEqual(body["fields"]["title"]["status"], "GENERATION_FAILED")
+            self.assertTrue(body["fields"]["title"]["errors"])
+            first_error = body["fields"]["title"]["errors"][0]
+            self.assertEqual(set(first_error.keys()), {"code", "message"})
             self.assertEqual(body["fields"]["tags"]["status"], "NOT_REQUESTED")
             self.assertNotEqual(body["fields"]["description"]["status"], "GENERATION_FAILED")
+            self.assertIn("name", body["fields"]["description"]["source"])
+            self.assertNotIn("template_name", body["fields"]["description"]["source"])
             session_id = body["session_id"]
 
             conn = dbm.connect(env)
