@@ -459,6 +459,16 @@ def migrate(conn: sqlite3.Connection) -> None:
             ON video_tag_presets(channel_slug)
             WHERE status = 'ACTIVE' AND is_default = 1;
 
+        CREATE TABLE IF NOT EXISTS channel_metadata_defaults (
+            channel_slug TEXT PRIMARY KEY,
+            default_title_template_id INTEGER NULL,
+            default_description_template_id INTEGER NULL,
+            default_video_tag_preset_id INTEGER NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug)
+        );
+
         CREATE TABLE IF NOT EXISTS canon_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             value TEXT NOT NULL UNIQUE
@@ -1570,6 +1580,47 @@ def unset_active_default_video_tag_preset(conn: sqlite3.Connection, *, channel_s
 
 def get_video_tag_preset_by_id(conn: sqlite3.Connection, preset_id: int) -> Optional[Dict[str, Any]]:
     return conn.execute("SELECT * FROM video_tag_presets WHERE id = ?", (preset_id,)).fetchone()
+
+
+def get_channel_metadata_defaults(conn: sqlite3.Connection, *, channel_slug: str) -> Optional[Dict[str, Any]]:
+    return conn.execute("SELECT * FROM channel_metadata_defaults WHERE channel_slug = ?", (channel_slug,)).fetchone()
+
+
+def upsert_channel_metadata_defaults(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    default_title_template_id: int | None,
+    default_description_template_id: int | None,
+    default_video_tag_preset_id: int | None,
+    created_at: str,
+    updated_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO channel_metadata_defaults(
+            channel_slug,
+            default_title_template_id,
+            default_description_template_id,
+            default_video_tag_preset_id,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(channel_slug) DO UPDATE SET
+            default_title_template_id = excluded.default_title_template_id,
+            default_description_template_id = excluded.default_description_template_id,
+            default_video_tag_preset_id = excluded.default_video_tag_preset_id,
+            updated_at = excluded.updated_at
+        """,
+        (
+            channel_slug,
+            default_title_template_id,
+            default_description_template_id,
+            default_video_tag_preset_id,
+            created_at,
+            updated_at,
+        ),
+    )
 
 
 def list_video_tag_presets(
