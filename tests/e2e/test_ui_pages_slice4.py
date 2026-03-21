@@ -1374,6 +1374,20 @@ class TestUiPagesSlice4(unittest.TestCase):
                     updated_at="2026-01-01T00:00:00+00:00",
                     archived_at=None,
                 )
+                desc_archived_id = dbm.create_description_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Description Archived Default",
+                    template_body="{{channel_display_name}} old description",
+                    status="ARCHIVED",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at="2026-02-01T00:00:00+00:00",
+                )
                 tags_default_id = dbm.create_video_tag_preset(
                     conn,
                     channel_slug="darkwood-reverie",
@@ -1392,7 +1406,7 @@ class TestUiPagesSlice4(unittest.TestCase):
                     conn,
                     channel_slug="darkwood-reverie",
                     default_title_template_id=title_default_id,
-                    default_description_template_id=desc_default_id,
+                    default_description_template_id=desc_archived_id,
                     default_video_tag_preset_id=tags_default_id,
                     created_at="2026-01-01T00:00:00+00:00",
                     updated_at="2026-01-01T00:00:00+00:00",
@@ -1427,8 +1441,25 @@ class TestUiPagesSlice4(unittest.TestCase):
             before = client.get("/v1/metadata/channels/darkwood-reverie/defaults", headers=h)
             self.assertEqual(before.status_code, 200)
             self.assertEqual(before.json()["defaults"]["title_template"]["id"], title_default_id)
-            self.assertEqual(before.json()["defaults"]["description_template"]["id"], desc_default_id)
+            self.assertEqual(before.json()["defaults"]["description_template"]["id"], desc_archived_id)
             self.assertEqual(before.json()["defaults"]["video_tag_preset"]["id"], tags_default_id)
+
+            active_desc = client.get("/v1/metadata/description-templates?channel_slug=darkwood-reverie&status=active", headers=h)
+            self.assertEqual(active_desc.status_code, 200)
+            active_desc_ids = [int(item["id"]) for item in active_desc.json()["items"]]
+            self.assertIn(desc_default_id, active_desc_ids)
+            self.assertNotIn(desc_archived_id, active_desc_ids)
+
+            def _ui_status(default_ref: dict | None, active_items: list[dict]) -> str:
+                if not default_ref:
+                    return "not configured"
+                match = next((row for row in active_items if int(row["id"]) == int(default_ref["id"])), None)
+                if not match:
+                    return "configured but unavailable"
+                return "configured + active/valid" if str(match.get("validation_status") or "") == "VALID" else "configured but unavailable"
+
+            runtime_status = _ui_status(before.json()["defaults"]["description_template"], active_desc.json()["items"])
+            self.assertEqual(runtime_status, "configured but unavailable")
 
             update = client.put(
                 "/v1/metadata/channels/darkwood-reverie/defaults",
