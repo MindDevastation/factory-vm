@@ -104,9 +104,23 @@
     if (!item) return '(not configured)';
     return `${item.name || ('#' + item.id)} (#${item.id})`;
   }
+  function resolveStatus(field, item) {
+    if (!item) {
+      return '<span class="pill">not configured</span>';
+    }
+    const fieldSources = Array.isArray(activeSources[field]) ? activeSources[field] : [];
+    const activeSource = fieldSources.find((row) => Number(row.id) === Number(item.id));
+    if (!activeSource) {
+      return '<span class="pill" style="background:#fee2e2;">configured but unavailable</span>';
+    }
+    if (String(activeSource.validation_status || '') !== 'VALID') {
+      return '<span class="pill" style="background:#fee2e2;">configured but unavailable</span>';
+    }
+    return '<span class="pill">configured + active/valid</span>';
+  }
   function setCurrent(field, item) {
     currentEls[field].textContent = sourceName(item);
-    statusEls[field].innerHTML = item ? '<span class="pill">configured + active/valid</span>' : '<span class="pill">not configured</span>';
+    statusEls[field].innerHTML = resolveStatus(field, item);
   }
   function renderSelect(field, items, selectedId) {
     const el = selectEls[field];
