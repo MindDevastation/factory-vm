@@ -267,6 +267,52 @@ class TestMetadataPreviewApplyApi(unittest.TestCase):
             self.assertIn("no temporary override", missing_msg)
             self.assertIn("no configured channel default", missing_msg)
 
+    def test_preview_invalid_stored_default_is_explicit(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                invalid_title = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="invalid-default-title",
+                    template_body="{{channel_slug}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="INVALID",
+                    validation_errors_json='[{"code":"bad"}]',
+                    last_validated_at="2026-01-02T00:00:00+00:00",
+                    created_at="2026-01-02T00:00:00+00:00",
+                    updated_at="2026-01-02T00:00:00+00:00",
+                    archived_at=None,
+                )
+                dbm.upsert_channel_metadata_defaults(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    default_title_template_id=invalid_title,
+                    default_description_template_id=None,
+                    default_video_tag_preset_id=None,
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                )
+            finally:
+                conn.close()
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.post(
+                f"/v1/metadata/releases/{release_id}/preview-apply/preview",
+                headers=headers,
+                json={"fields": ["title"], "sources": {}},
+            )
+            self.assertEqual(resp.status_code, 200)
+            field = resp.json()["fields"]["title"]
+            self.assertEqual(field["status"], "INVALID_DEFAULT")
+            self.assertEqual(field["source"]["selection_mode"], "channel_default")
+            self.assertEqual(field["source"]["source_type"], "title_template")
+            self.assertEqual(field["source"]["source_id"], invalid_title)
+            self.assertIn("channel default", field["errors"][0]["message"])
+
     def test_partial_failure_and_omitted_not_requested_and_no_mutation(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
