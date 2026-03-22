@@ -93,3 +93,22 @@ class TestPlannerMaterializeApi(unittest.TestCase):
                 resp = client.post(f"/v1/planner/items/{planner_item_id}/materialize", headers=auth)
             self.assertEqual(resp.status_code, 409)
             self.assertEqual(resp.json()["error"]["code"], "PLM_BINDING_CONFLICT")
+
+    def test_internal_error_maps_to_500(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            planner_item_id = self._insert_planner_item(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            with patch(
+                "services.factory_api.planner.PlannerMaterializationService.materialize_or_get",
+                side_effect=PlannerMaterializationError(code="PLM_INTERNAL", message="materialization failed"),
+            ):
+                resp = client.post(f"/v1/planner/items/{planner_item_id}/materialize", headers=auth)
+
+            self.assertEqual(resp.status_code, 500)
+            self.assertEqual(resp.json()["error"]["code"], "PLM_INTERNAL")
