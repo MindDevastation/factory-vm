@@ -186,6 +186,38 @@ class TestMetadataChannelDefaultsApi(unittest.TestCase):
             self.assertEqual(second.json()["defaults"]["description_template"]["id"], desc_id)
             self.assertEqual(second.json()["defaults"]["video_tag_preset"]["id"], preset_id)
 
+    def test_update_all_null_defaults_is_noop_without_row_creation(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.put(
+                "/v1/metadata/channels/darkwood-reverie/defaults",
+                headers=headers,
+                json={
+                    "default_title_template_id": None,
+                    "default_description_template_id": None,
+                    "default_video_tag_preset_id": None,
+                },
+            )
+            self.assertEqual(resp.status_code, 200)
+            self.assertFalse(resp.json()["defaults_updated"])
+            self.assertEqual(
+                resp.json()["defaults"],
+                {"title_template": None, "description_template": None, "video_tag_preset": None},
+            )
+
+            conn = dbm.connect(env)
+            try:
+                row = conn.execute(
+                    "SELECT channel_slug FROM channel_metadata_defaults WHERE channel_slug = ?",
+                    ("darkwood-reverie",),
+                ).fetchone()
+            finally:
+                conn.close()
+            self.assertIsNone(row)
+
     def test_logging_payload_successful_put_and_read(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)

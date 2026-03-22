@@ -80,22 +80,23 @@ def update_channel_defaults(
     existing = dbm.get_channel_metadata_defaults(conn, channel_slug=channel_slug) or {}
     unchanged = all(_int_or_none(existing.get(_SOURCE_SPECS[source_type]["field_key"])) == source_id for source_type, source_id in ids_by_type.items())
 
-    now_iso = _now_iso()
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        dbm.upsert_channel_metadata_defaults(
-            conn,
-            channel_slug=channel_slug,
-            default_title_template_id=default_title_template_id,
-            default_description_template_id=default_description_template_id,
-            default_video_tag_preset_id=default_video_tag_preset_id,
-            updated_at=now_iso,
-            created_at=now_iso,
-        )
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+    if not unchanged:
+        now_iso = _now_iso()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            dbm.upsert_channel_metadata_defaults(
+                conn,
+                channel_slug=channel_slug,
+                default_title_template_id=default_title_template_id,
+                default_description_template_id=default_description_template_id,
+                default_video_tag_preset_id=default_video_tag_preset_id,
+                updated_at=now_iso,
+                created_at=now_iso,
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
     return {
         "channel_slug": channel_slug,

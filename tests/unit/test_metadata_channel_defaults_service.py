@@ -108,6 +108,18 @@ class TestMetadataChannelDefaultsService(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.code, "MDO_DEFAULT_FIELD_TYPE_MISMATCH")
 
+    def test_noop_with_all_null_defaults_does_not_create_row(self) -> None:
+        result = channel_defaults_service.update_channel_defaults(
+            self.conn,
+            channel_slug="darkwood-reverie",
+            default_title_template_id=None,
+            default_description_template_id=None,
+            default_video_tag_preset_id=None,
+        )
+        self.assertFalse(result["defaults_updated"])
+        row = dbm.get_channel_metadata_defaults(self.conn, channel_slug="darkwood-reverie")
+        self.assertIsNone(row)
+
 
 if __name__ == "__main__":
     unittest.main()
