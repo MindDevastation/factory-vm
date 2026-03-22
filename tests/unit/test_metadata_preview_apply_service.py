@@ -223,9 +223,11 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
             provenance = dbm.json_loads(row["effective_source_provenance_json"])
             self.assertEqual(selection["title"]["selection_mode"], "channel_default")
             self.assertTrue(selection["title"]["source_name"])
+            self.assertEqual(selection["title"]["source_status"], "ACTIVE")
             self.assertEqual(provenance["title"]["source_id"], out["fields"]["title"]["source"]["source_id"])
             self.assertEqual(provenance["title"]["source_type"], "title_template")
             self.assertEqual(provenance["title"]["selection_mode"], "channel_default")
+            self.assertEqual(provenance["title"]["source_status"], "ACTIVE")
 
     def test_override_observability_events_emitted(self) -> None:
         with temp_env() as (_, env):
