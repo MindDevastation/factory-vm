@@ -68,6 +68,7 @@ from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
 from services.metadata import (
+    channel_defaults_service,
     description_template_service,
     descriptiongen_service,
     preview_apply_service,
@@ -318,6 +319,31 @@ class MetadataPreviewApplyApplyRequest(BaseModel):
     overwrite_confirmed_fields: list[str] = Field(default_factory=list)
 
 
+class MetadataChannelDefaultsUpdateRequest(BaseModel):
+    default_title_template_id: int | None = None
+    default_description_template_id: int | None = None
+    default_video_tag_preset_id: int | None = None
+
+
+def _mdo_sources_from_defaults(defaults: Dict[str, Any]) -> List[Dict[str, Any]]:
+    field_pairs = (
+        ("title", "title_template"),
+        ("description", "description_template"),
+        ("tags", "video_tag_preset"),
+    )
+    refs: List[Dict[str, Any]] = []
+    for field_name, source_type in field_pairs:
+        source = defaults.get(source_type)
+        refs.append(
+            {
+                "field_name": field_name,
+                "source_type": source_type,
+                "source_id": int(source["id"]) if source else None,
+            }
+        )
+    return refs
+
+
 @app.get("/v1/metadata/releases/{release_id}/titlegen/context")
 def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -563,6 +589,132 @@ def api_metadata_preview_apply_preview(
         },
     )
     return body
+
+
+@app.get("/v1/metadata/channels/{channel_slug}/defaults")
+def api_metadata_channel_defaults_read(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            payload = channel_defaults_service.read_channel_defaults(conn, channel_slug=channel_slug)
+        except channel_defaults_service.MetadataDefaultsError as exc:
+            status_code = 404 if exc.code == "MDO_CHANNEL_NOT_FOUND" else 422
+            logger.info(
+                "metadata.defaults.read",
+                extra={
+                    "channel_slug": channel_slug,
+                    "field_name": None,
+                    "source_type": None,
+                    "source_id": None,
+                    "source_refs": [],
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mdo_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.defaults.read",
+        extra={
+            "channel_slug": channel_slug,
+            "field_name": "multiple",
+            "source_type": "multiple",
+            "source_id": None,
+            "source_refs": _mdo_sources_from_defaults(payload["defaults"]),
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return payload
+
+
+@app.put("/v1/metadata/channels/{channel_slug}/defaults")
+def api_metadata_channel_defaults_update(
+    channel_slug: str,
+    payload: MetadataChannelDefaultsUpdateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    previous_defaults: dict[str, Any] | None = None
+    request_sources = [
+        {"field_name": "title", "source_type": "title_template", "source_id": payload.default_title_template_id},
+        {"field_name": "description", "source_type": "description_template", "source_id": payload.default_description_template_id},
+        {"field_name": "tags", "source_type": "video_tag_preset", "source_id": payload.default_video_tag_preset_id},
+    ]
+    try:
+        try:
+            previous_defaults = channel_defaults_service.read_channel_defaults(conn, channel_slug=channel_slug)["defaults"]
+            result = channel_defaults_service.update_channel_defaults(
+                conn,
+                channel_slug=channel_slug,
+                default_title_template_id=payload.default_title_template_id,
+                default_description_template_id=payload.default_description_template_id,
+                default_video_tag_preset_id=payload.default_video_tag_preset_id,
+            )
+        except channel_defaults_service.MetadataDefaultsError as exc:
+            status_code = 404 if exc.code in {"MDO_CHANNEL_NOT_FOUND", "MDO_DEFAULT_SOURCE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.defaults.updated",
+                extra={
+                    "channel_slug": channel_slug,
+                    "field_name": exc.field_name,
+                    "source_type": exc.source_type,
+                    "source_id": exc.source_id,
+                    "source_refs": request_sources,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mdo_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    if previous_defaults is not None:
+        cleared_fields: list[dict[str, Any]] = []
+        for field_name, source_type, response_key in [
+            ("title", "title_template", "title_template"),
+            ("description", "description_template", "description_template"),
+            ("tags", "video_tag_preset", "video_tag_preset"),
+        ]:
+            previous_source = previous_defaults.get(response_key)
+            current_source = result["defaults"].get(response_key)
+            if previous_source is not None and current_source is None:
+                cleared_fields.append(
+                    {
+                        "field_name": field_name,
+                        "source_type": source_type,
+                        "source_id": previous_source.get("id"),
+                    }
+                )
+        for cleared in cleared_fields:
+            logger.info(
+                "metadata.defaults.cleared",
+                extra={
+                    "channel_slug": channel_slug,
+                    "field_name": cleared["field_name"],
+                    "source_type": cleared["source_type"],
+                    "source_id": cleared["source_id"],
+                    "source_refs": _mdo_sources_from_defaults(result["defaults"]),
+                    "result_status": "success",
+                    "error_codes": [],
+                },
+            )
+
+    logger.info(
+        "metadata.defaults.updated",
+        extra={
+            "channel_slug": channel_slug,
+            "field_name": "multiple",
+            "source_type": "multiple",
+            "source_id": None,
+            "source_refs": _mdo_sources_from_defaults(result["defaults"]),
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return result
 
 
 @app.get("/v1/metadata/preview-apply/sessions/{session_id}")
@@ -1090,6 +1242,10 @@ def _mtd_error(status_code: int, code: str, message: str) -> JSONResponse:
 
 
 def _mtv_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _mdo_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
@@ -4575,6 +4731,11 @@ def ui_planner_page(request: Request, _: bool = Depends(require_basic_auth(env))
 @app.get("/ui/metadata/title-templates", response_class=HTMLResponse)
 def ui_metadata_title_templates_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("metadata_title_templates.html", {"request": request})
+
+
+@app.get("/ui/channels/{channel_slug}/metadata-defaults", response_class=HTMLResponse)
+def ui_channel_metadata_defaults_page(channel_slug: str, request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("metadata_channel_defaults.html", {"request": request, "channel_slug": channel_slug})
 
 
 @app.get("/ui/track-catalog/analysis-report", response_class=HTMLResponse)

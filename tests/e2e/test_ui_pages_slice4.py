@@ -1161,7 +1161,7 @@ class TestUiPagesSlice4(unittest.TestCase):
                     audio_ids_text="001",
                 )
                 release_id = int(conn.execute("SELECT release_id FROM jobs WHERE id = ?", (job_id,)).fetchone()["release_id"])
-                dbm.create_title_template(
+                title_default_id = dbm.create_title_template(
                     conn,
                     channel_slug="darkwood-reverie",
                     template_name="Default Unified Title",
@@ -1203,7 +1203,7 @@ class TestUiPagesSlice4(unittest.TestCase):
                     updated_at="2026-01-01T00:00:00+00:00",
                     archived_at=None,
                 )
-                dbm.create_video_tag_preset(
+                tags_default_id = dbm.create_video_tag_preset(
                     conn,
                     channel_slug="darkwood-reverie",
                     preset_name="Default Unified Tags",
@@ -1216,6 +1216,15 @@ class TestUiPagesSlice4(unittest.TestCase):
                     created_at="2026-01-01T00:00:00+00:00",
                     updated_at="2026-01-01T00:00:00+00:00",
                     archived_at=None,
+                )
+                dbm.upsert_channel_metadata_defaults(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    default_title_template_id=title_default_id,
+                    default_description_template_id=desc_default_id,
+                    default_video_tag_preset_id=tags_default_id,
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
                 )
                 conn.commit()
             finally:
@@ -1230,6 +1239,9 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertEqual(edit_page.status_code, 200)
             self.assertIn('id="mpa-section"', edit_page.text)
             self.assertIn("Preview does not change release metadata until you apply.", edit_page.text)
+            self.assertIn("Temporary override affects only this operation.", edit_page.text)
+            self.assertIn("Applying generated metadata does not change channel defaults.", edit_page.text)
+            self.assertIn("Changing defaults is a separate action.", edit_page.text)
             self.assertIn("Other prepared fields can still be applied.", edit_page.text)
             self.assertIn("/v1/metadata/releases/${activeReleaseId}/preview-apply/context", edit_page.text)
             self.assertIn("/v1/metadata/releases/${activeReleaseId}/preview-apply/preview", edit_page.text)
@@ -1240,6 +1252,12 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("if (!overwriteEl || !overwriteEl.checked)", edit_page.text)
             self.assertIn("source.template_name || source.preset_name || source.name", edit_page.text)
             self.assertIn("defaultSource.template_name || defaultSource.preset_name || defaultSource.name", edit_page.text)
+            self.assertIn("Clear override in preview request to return to channel default.", edit_page.text)
+            self.assertIn("Using channel default. Select a source above to set temporary override for this operation.", edit_page.text)
+            self.assertIn("Temporary override active", edit_page.text)
+            self.assertIn("Use channel default", edit_page.text)
+            self.assertIn("Clear override", edit_page.text)
+            self.assertIn("clearMpaOverride(selectEl, fieldLabel)", edit_page.text)
             self.assertIn("mpaPreviewSourceModeByField = {", edit_page.text)
             self.assertIn("title: mpaSelectedSourceId(mpaTitleSourceSelect) === null ? 'default' : 'explicit'", edit_page.text)
             self.assertIn("renderMpaCurrentBundle(payload.current || {});", edit_page.text)
@@ -1310,6 +1328,168 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertEqual(apply_payload["release_metadata_after"]["title"], "")
             self.assertEqual(apply_payload["release_metadata_after"]["tags_json"], ["ambient", "night"])
             self.assertEqual(apply_payload["release_metadata_after"]["description"], "darkwood-reverie explicit")
+
+    def test_channel_metadata_defaults_page_operator_flow(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                title_default_id = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Title Default",
+                    template_body="{{channel_display_name}}",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                title_alt_id = dbm.create_title_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Title Alt",
+                    template_body="{{channel_slug}} alt",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                desc_default_id = dbm.create_description_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Description Default",
+                    template_body="{{channel_display_name}} description",
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                desc_archived_id = dbm.create_description_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Description Archived Default",
+                    template_body="{{channel_display_name}} old description",
+                    status="ARCHIVED",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at="2026-02-01T00:00:00+00:00",
+                )
+                tags_default_id = dbm.create_video_tag_preset(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    preset_name="Tags Default",
+                    preset_body_json=dbm.json_dumps(["ambient"]),
+                    status="ACTIVE",
+                    is_default=False,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
+                dbm.upsert_channel_metadata_defaults(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    default_title_template_id=title_default_id,
+                    default_description_template_id=desc_archived_id,
+                    default_video_tag_preset_id=tags_default_id,
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            page = client.get("/ui/channels/darkwood-reverie/metadata-defaults", headers=h)
+            self.assertEqual(page.status_code, 200)
+            self.assertIn("Channel Details → Metadata Defaults", page.text)
+            self.assertIn("Channel defaults are canonical source settings.", page.text)
+            self.assertIn("Changing defaults is a separate action.", page.text)
+            self.assertIn("Future preview without temporary override will result in configuration missing for this field.", page.text)
+            self.assertIn("window.confirm(warning)", page.text)
+            self.assertIn('id="mdo-select-title"', page.text)
+            self.assertIn('id="mdo-select-description"', page.text)
+            self.assertIn('id="mdo-select-tags"', page.text)
+            self.assertIn("configured + active/valid", page.text)
+            self.assertIn("configured but unavailable", page.text)
+            self.assertIn("not configured", page.text)
+            self.assertIn("const activeSource = fieldSources.find((row) => Number(row.id) === Number(item.id));", page.text)
+            self.assertIn("if (String(activeSource.validation_status || '') !== 'VALID') {", page.text)
+            self.assertIn("/v1/metadata/channels/${encodeURIComponent(slug)}/defaults", page.text)
+            self.assertIn("default_title_template_id", page.text)
+            self.assertIn("default_description_template_id", page.text)
+            self.assertIn("default_video_tag_preset_id", page.text)
+
+            before = client.get("/v1/metadata/channels/darkwood-reverie/defaults", headers=h)
+            self.assertEqual(before.status_code, 200)
+            self.assertEqual(before.json()["defaults"]["title_template"]["id"], title_default_id)
+            self.assertEqual(before.json()["defaults"]["description_template"]["id"], desc_archived_id)
+            self.assertEqual(before.json()["defaults"]["video_tag_preset"]["id"], tags_default_id)
+
+            active_desc = client.get("/v1/metadata/description-templates?channel_slug=darkwood-reverie&status=active", headers=h)
+            self.assertEqual(active_desc.status_code, 200)
+            active_desc_ids = [int(item["id"]) for item in active_desc.json()["items"]]
+            self.assertIn(desc_default_id, active_desc_ids)
+            self.assertNotIn(desc_archived_id, active_desc_ids)
+
+            def _ui_status(default_ref: dict | None, active_items: list[dict]) -> str:
+                if not default_ref:
+                    return "not configured"
+                match = next((row for row in active_items if int(row["id"]) == int(default_ref["id"])), None)
+                if not match:
+                    return "configured but unavailable"
+                return "configured + active/valid" if str(match.get("validation_status") or "") == "VALID" else "configured but unavailable"
+
+            runtime_status = _ui_status(before.json()["defaults"]["description_template"], active_desc.json()["items"])
+            self.assertEqual(runtime_status, "configured but unavailable")
+
+            update = client.put(
+                "/v1/metadata/channels/darkwood-reverie/defaults",
+                headers=h,
+                json={
+                    "default_title_template_id": title_alt_id,
+                    "default_description_template_id": desc_default_id,
+                    "default_video_tag_preset_id": tags_default_id,
+                },
+            )
+            self.assertEqual(update.status_code, 200)
+            self.assertEqual(update.json()["defaults"]["title_template"]["id"], title_alt_id)
+
+            clear = client.put(
+                "/v1/metadata/channels/darkwood-reverie/defaults",
+                headers=h,
+                json={
+                    "default_title_template_id": title_alt_id,
+                    "default_description_template_id": None,
+                    "default_video_tag_preset_id": tags_default_id,
+                },
+            )
+            self.assertEqual(clear.status_code, 200)
+            self.assertIsNone(clear.json()["defaults"]["description_template"])
 
 
 if __name__ == "__main__":

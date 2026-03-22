@@ -345,6 +345,8 @@ def migrate(conn: sqlite3.Connection) -> None:
             warnings_json TEXT NOT NULL,
             errors_json TEXT NOT NULL,
             fields_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            effective_source_selection_json TEXT NOT NULL DEFAULT '{}',
+            effective_source_provenance_json TEXT NOT NULL DEFAULT '{}',
             created_by TEXT NULL,
             created_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
@@ -458,6 +460,16 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS idx_video_tag_presets_active_default_unique
             ON video_tag_presets(channel_slug)
             WHERE status = 'ACTIVE' AND is_default = 1;
+
+        CREATE TABLE IF NOT EXISTS channel_metadata_defaults (
+            channel_slug TEXT PRIMARY KEY,
+            default_title_template_id INTEGER NULL,
+            default_description_template_id INTEGER NULL,
+            default_video_tag_preset_id INTEGER NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug)
+        );
 
         CREATE TABLE IF NOT EXISTS canon_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -876,6 +888,12 @@ def _ensure_metadata_preview_sessions_columns(conn: sqlite3.Connection) -> None:
     if "fields_snapshot_json" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN fields_snapshot_json TEXT NOT NULL DEFAULT '{}';")
+    if "effective_source_selection_json" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN effective_source_selection_json TEXT NOT NULL DEFAULT '{}';")
+    if "effective_source_provenance_json" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN effective_source_provenance_json TEXT NOT NULL DEFAULT '{}';")
 
 
 def now_ts() -> float:
@@ -1570,6 +1588,47 @@ def unset_active_default_video_tag_preset(conn: sqlite3.Connection, *, channel_s
 
 def get_video_tag_preset_by_id(conn: sqlite3.Connection, preset_id: int) -> Optional[Dict[str, Any]]:
     return conn.execute("SELECT * FROM video_tag_presets WHERE id = ?", (preset_id,)).fetchone()
+
+
+def get_channel_metadata_defaults(conn: sqlite3.Connection, *, channel_slug: str) -> Optional[Dict[str, Any]]:
+    return conn.execute("SELECT * FROM channel_metadata_defaults WHERE channel_slug = ?", (channel_slug,)).fetchone()
+
+
+def upsert_channel_metadata_defaults(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    default_title_template_id: int | None,
+    default_description_template_id: int | None,
+    default_video_tag_preset_id: int | None,
+    created_at: str,
+    updated_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO channel_metadata_defaults(
+            channel_slug,
+            default_title_template_id,
+            default_description_template_id,
+            default_video_tag_preset_id,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(channel_slug) DO UPDATE SET
+            default_title_template_id = excluded.default_title_template_id,
+            default_description_template_id = excluded.default_description_template_id,
+            default_video_tag_preset_id = excluded.default_video_tag_preset_id,
+            updated_at = excluded.updated_at
+        """,
+        (
+            channel_slug,
+            default_title_template_id,
+            default_description_template_id,
+            default_video_tag_preset_id,
+            created_at,
+            updated_at,
+        ),
+    )
 
 
 def list_video_tag_presets(
@@ -2284,6 +2343,8 @@ def insert_metadata_preview_session(
     warnings_json: str,
     errors_json: str,
     fields_snapshot_json: str,
+    effective_source_selection_json: str,
+    effective_source_provenance_json: str,
     created_by: str | None,
     created_at: str,
     expires_at: str,
@@ -2295,8 +2356,9 @@ def insert_metadata_preview_session(
             id, release_id, channel_slug, session_status, requested_fields_json,
             current_bundle_json, proposed_bundle_json, sources_json, field_statuses_json,
             dependency_fingerprints_json, warnings_json, errors_json, fields_snapshot_json,
+            effective_source_selection_json, effective_source_provenance_json,
             created_by, created_at, expires_at, applied_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             session_id,
@@ -2312,6 +2374,8 @@ def insert_metadata_preview_session(
             warnings_json,
             errors_json,
             fields_snapshot_json,
+            effective_source_selection_json,
+            effective_source_provenance_json,
             created_by,
             created_at,
             expires_at,

@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Channel Details → Metadata Defaults</h1>
+<p><a href="/">← Dashboard</a></p>
+<p class="muted">Channel defaults are canonical source settings.</p>
+<p class="muted">Changing defaults is a separate action.</p>
+<p class="muted">Future preview without temporary override will result in configuration missing for this field.</p>
+
+<p>
+  <label>Channel slug
+    <input type="text" id="mdo-channel-slug" value="{{ channel_slug }}" placeholder="darkwood-reverie">
+  </label>
+  <button type="button" id="mdo-load-btn">Load</button>
+</p>
+<p id="mdo-note" class="muted">Loading...</p>
+<div id="mdo-error" role="alert" style="display:none;padding:8px;border-radius:8px;background:#fef2f2;color:#b91c1c;margin:8px 0;"></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Current default</th>
+      <th>Status</th>
+      <th>Set default</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Title template</strong></td>
+      <td id="mdo-current-title">—</td>
+      <td id="mdo-status-title" class="muted">Loading...</td>
+      <td><select id="mdo-select-title"><option value="">Loading...</option></select></td>
+      <td>
+        <button type="button" data-mdo-save="title">Save</button>
+        <button type="button" data-mdo-clear="title">Clear</button>
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Description template</strong></td>
+      <td id="mdo-current-description">—</td>
+      <td id="mdo-status-description" class="muted">Loading...</td>
+      <td><select id="mdo-select-description"><option value="">Loading...</option></select></td>
+      <td>
+        <button type="button" data-mdo-save="description">Save</button>
+        <button type="button" data-mdo-clear="description">Clear</button>
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Video tag preset</strong></td>
+      <td id="mdo-current-tags">—</td>
+      <td id="mdo-status-tags" class="muted">Loading...</td>
+      <td><select id="mdo-select-tags"><option value="">Loading...</option></select></td>
+      <td>
+        <button type="button" data-mdo-save="tags">Save</button>
+        <button type="button" data-mdo-clear="tags">Clear</button>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<script>
+(() => {
+  const channelInput = document.getElementById('mdo-channel-slug');
+  const loadBtn = document.getElementById('mdo-load-btn');
+  const noteEl = document.getElementById('mdo-note');
+  const errorEl = document.getElementById('mdo-error');
+  const currentEls = {
+    title: document.getElementById('mdo-current-title'),
+    description: document.getElementById('mdo-current-description'),
+    tags: document.getElementById('mdo-current-tags'),
+  };
+  const statusEls = {
+    title: document.getElementById('mdo-status-title'),
+    description: document.getElementById('mdo-status-description'),
+    tags: document.getElementById('mdo-status-tags'),
+  };
+  const selectEls = {
+    title: document.getElementById('mdo-select-title'),
+    description: document.getElementById('mdo-select-description'),
+    tags: document.getElementById('mdo-select-tags'),
+  };
+  let loadedChannelSlug = '';
+  let currentDefaults = { title_template: null, description_template: null, video_tag_preset: null };
+  let activeSources = { title: [], description: [], tags: [] };
+
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function showError(msg) {
+    if (!msg) {
+      errorEl.style.display = 'none';
+      errorEl.textContent = '';
+      return;
+    }
+    errorEl.style.display = 'block';
+    errorEl.textContent = msg;
+  }
+  async function readJson(res) {
+    const text = await res.text();
+    if (!text) return {};
+    try { return JSON.parse(text); } catch (_) { return {}; }
+  }
+  function sourceName(item) {
+    if (!item) return '(not configured)';
+    return `${item.name || ('#' + item.id)} (#${item.id})`;
+  }
+  function resolveStatus(field, item) {
+    if (!item) {
+      return '<span class="pill">not configured</span>';
+    }
+    const fieldSources = Array.isArray(activeSources[field]) ? activeSources[field] : [];
+    const activeSource = fieldSources.find((row) => Number(row.id) === Number(item.id));
+    if (!activeSource) {
+      return '<span class="pill" style="background:#fee2e2;">configured but unavailable</span>';
+    }
+    if (String(activeSource.validation_status || '') !== 'VALID') {
+      return '<span class="pill" style="background:#fee2e2;">configured but unavailable</span>';
+    }
+    return '<span class="pill">configured + active/valid</span>';
+  }
+  function setCurrent(field, item) {
+    currentEls[field].textContent = sourceName(item);
+    statusEls[field].innerHTML = resolveStatus(field, item);
+  }
+  function renderSelect(field, items, selectedId) {
+    const el = selectEls[field];
+    el.innerHTML = '<option value="">Select active source...</option>' + (items || []).map((item) => {
+      const label = item.template_name || item.preset_name || item.name || (`#${item.id}`);
+      const badge = item.validation_status === 'VALID' ? 'valid' : (item.validation_status || 'invalid');
+      return `<option value="${item.id}" ${Number(selectedId) === Number(item.id) ? 'selected' : ''}>${esc(label)} (#${item.id}, ${esc(badge)})</option>`;
+    }).join('');
+  }
+  function payloadFromCurrent() {
+    return {
+      default_title_template_id: currentDefaults.title_template ? currentDefaults.title_template.id : null,
+      default_description_template_id: currentDefaults.description_template ? currentDefaults.description_template.id : null,
+      default_video_tag_preset_id: currentDefaults.video_tag_preset ? currentDefaults.video_tag_preset.id : null,
+    };
+  }
+  async function loadAll() {
+    const slug = String(channelInput.value || '').trim();
+    if (!slug) {
+      showError('Provide channel slug first.');
+      return;
+    }
+    showError('');
+    noteEl.textContent = 'Loading channel defaults and active sources...';
+    const [defaultsResp, titleResp, descResp, tagsResp] = await Promise.all([
+      fetch(`/v1/metadata/channels/${encodeURIComponent(slug)}/defaults`, { credentials: 'same-origin' }),
+      fetch(`/v1/metadata/title-templates?channel_slug=${encodeURIComponent(slug)}&status=active`, { credentials: 'same-origin' }),
+      fetch(`/v1/metadata/description-templates?channel_slug=${encodeURIComponent(slug)}&status=active`, { credentials: 'same-origin' }),
+      fetch(`/v1/metadata/video-tag-presets?channel_slug=${encodeURIComponent(slug)}&status=active`, { credentials: 'same-origin' }),
+    ]);
+    const defaultsBody = await readJson(defaultsResp);
+    const titleBody = await readJson(titleResp);
+    const descBody = await readJson(descResp);
+    const tagsBody = await readJson(tagsResp);
+    if (!defaultsResp.ok) {
+      showError((defaultsBody.error && defaultsBody.error.message) || 'Failed to load defaults');
+      noteEl.textContent = 'Defaults load failed.';
+      return;
+    }
+    loadedChannelSlug = slug;
+    currentDefaults = defaultsBody.defaults || currentDefaults;
+    activeSources = {
+      title: Array.isArray(titleBody.items) ? titleBody.items : [],
+      description: Array.isArray(descBody.items) ? descBody.items : [],
+      tags: Array.isArray(tagsBody.items) ? tagsBody.items : [],
+    };
+    setCurrent('title', currentDefaults.title_template);
+    setCurrent('description', currentDefaults.description_template);
+    setCurrent('tags', currentDefaults.video_tag_preset);
+    renderSelect('title', activeSources.title, currentDefaults.title_template && currentDefaults.title_template.id);
+    renderSelect('description', activeSources.description, currentDefaults.description_template && currentDefaults.description_template.id);
+    renderSelect('tags', activeSources.tags, currentDefaults.video_tag_preset && currentDefaults.video_tag_preset.id);
+    noteEl.textContent = `Loaded metadata defaults for ${slug}.`;
+  }
+  async function saveField(field) {
+    if (!loadedChannelSlug) {
+      showError('Load channel defaults first.');
+      return;
+    }
+    const next = payloadFromCurrent();
+    const selectedId = String(selectEls[field].value || '').trim();
+    const parsed = selectedId ? Number(selectedId) : null;
+    if (!Number.isInteger(parsed)) {
+      showError(`Select an active source before saving ${field}.`);
+      return;
+    }
+    if (field === 'title') next.default_title_template_id = parsed;
+    if (field === 'description') next.default_description_template_id = parsed;
+    if (field === 'tags') next.default_video_tag_preset_id = parsed;
+    noteEl.textContent = `Saving ${field} default...`;
+    showError('');
+    const resp = await fetch(`/v1/metadata/channels/${encodeURIComponent(loadedChannelSlug)}/defaults`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(next),
+    });
+    const body = await readJson(resp);
+    if (!resp.ok) {
+      showError((body.error && body.error.message) || `Failed to save ${field} default.`);
+      noteEl.textContent = `Save failed for ${field}.`;
+      return;
+    }
+    currentDefaults = body.defaults || currentDefaults;
+    setCurrent('title', currentDefaults.title_template);
+    setCurrent('description', currentDefaults.description_template);
+    setCurrent('tags', currentDefaults.video_tag_preset);
+    noteEl.textContent = `${field} default saved.`;
+  }
+  async function clearField(field) {
+    if (!loadedChannelSlug) {
+      showError('Load channel defaults first.');
+      return;
+    }
+    const warning = 'Future preview without temporary override will result in configuration missing for this field.';
+    if (!window.confirm(warning)) {
+      noteEl.textContent = `${field} clear canceled.`;
+      return;
+    }
+    const next = payloadFromCurrent();
+    if (field === 'title') next.default_title_template_id = null;
+    if (field === 'description') next.default_description_template_id = null;
+    if (field === 'tags') next.default_video_tag_preset_id = null;
+    noteEl.textContent = `Clearing ${field} default...`;
+    showError('');
+    const resp = await fetch(`/v1/metadata/channels/${encodeURIComponent(loadedChannelSlug)}/defaults`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(next),
+    });
+    const body = await readJson(resp);
+    if (!resp.ok) {
+      showError((body.error && body.error.message) || `Failed to clear ${field} default.`);
+      noteEl.textContent = `Clear failed for ${field}.`;
+      return;
+    }
+    currentDefaults = body.defaults || currentDefaults;
+    setCurrent('title', currentDefaults.title_template);
+    setCurrent('description', currentDefaults.description_template);
+    setCurrent('tags', currentDefaults.video_tag_preset);
+    renderSelect('title', activeSources.title, currentDefaults.title_template && currentDefaults.title_template.id);
+    renderSelect('description', activeSources.description, currentDefaults.description_template && currentDefaults.description_template.id);
+    renderSelect('tags', activeSources.tags, currentDefaults.video_tag_preset && currentDefaults.video_tag_preset.id);
+    noteEl.textContent = `${field} default cleared.`;
+  }
+
+  loadBtn.addEventListener('click', loadAll);
+  channelInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      loadAll();
+    }
+  });
+  document.querySelectorAll('button[data-mdo-save]').forEach((btn) => {
+    btn.addEventListener('click', () => saveField(btn.getAttribute('data-mdo-save')));
+  });
+  document.querySelectorAll('button[data-mdo-clear]').forEach((btn) => {
+    btn.addEventListener('click', () => clearField(btn.getAttribute('data-mdo-clear')));
+  });
+  loadAll();
+})();
+</script>
+{% endblock %}

@@ -1021,6 +1021,7 @@
         '<td>' + esc(ch.display_name) + '</td>' +
         '<td><code>' + esc(ch.slug) + '</code></td>' +
         '<td>' +
+          '<a href="/ui/channels/' + encodeURIComponent(ch.slug) + '/metadata-defaults">Metadata Defaults</a> ' +
           '<button type="button" data-action="rename" data-slug="' + esc(ch.slug) + '" data-display-name="' + esc(ch.display_name) + '">Rename</button> ' +
           '<button type="button" data-action="delete" data-slug="' + esc(ch.slug) + '">Delete</button> ' +
           trackControls +
