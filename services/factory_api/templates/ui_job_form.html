@@ -141,16 +141,22 @@
         <label>Title template override:
           <select id="mpa-title-source-select"><option value="">Loading...</option></select>
         </label>
+        <button type="button" id="mpa-title-use-default-btn">Use channel default</button>
+        <button type="button" id="mpa-title-clear-override-btn">Clear override</button>
       </p>
       <p>
         <label>Description template override:
           <select id="mpa-description-source-select"><option value="">Loading...</option></select>
         </label>
+        <button type="button" id="mpa-description-use-default-btn">Use channel default</button>
+        <button type="button" id="mpa-description-clear-override-btn">Clear override</button>
       </p>
       <p>
         <label>Video tag preset override:
           <select id="mpa-tags-source-select"><option value="">Loading...</option></select>
         </label>
+        <button type="button" id="mpa-tags-use-default-btn">Use channel default</button>
+        <button type="button" id="mpa-tags-clear-override-btn">Clear override</button>
       </p>
     </fieldset>
     <p id="mpa-status" style="min-height:1.4em"></p>
@@ -1236,6 +1242,7 @@ const hasTagsPicker =
       const source = details.source || null;
       const selectionMode = mpaSourceSelectionMode(field, source);
       const modeLabel = selectionMode === 'temporary_override' ? 'temporary override' : 'channel default';
+      const overrideActiveText = modeLabel === 'temporary override' ? '<span class="pill" style="background:#fef3c7;">Temporary override active</span>' : '<span class="pill">Using channel default</span>';
       const sourceLine = source
         ? `${mpaSourceDisplayName(source)} (${mpaSourceType(field, source)}, ${modeLabel})`
         : '—';
@@ -1250,6 +1257,7 @@ const hasTagsPicker =
           <p><b>Proposed:</b> ${formatMpaValue(field, details.proposed_value)}</p>
           <p><b>Changed:</b> ${details.changed ? 'yes' : 'no'}</p>
           <p><b>Source:</b> ${sourceLine}</p>
+          <p>${overrideActiveText}</p>
           <p class="muted"><b>Resolution:</b> ${overrideClearHint}</p>
           ${warnings ? `<p style="color:#92400e;"><b>Warnings:</b></p><ul>${warnings}</ul>` : ''}
           ${overwriteRequired ? '<p style="color:#92400e;"><b>Applying this field will overwrite the existing value.</b></p>' : ''}
@@ -1311,6 +1319,12 @@ const hasTagsPicker =
       return;
     }
     renderMpaSession(sessionPayload);
+  }
+
+  function clearMpaOverride(selectEl, fieldLabel) {
+    if (!selectEl) return;
+    selectEl.value = '';
+    mpaStatus.textContent = `${fieldLabel}: using channel default for this operation.`;
   }
 
   async function previewMpa() {
@@ -1521,6 +1535,19 @@ const hasTagsPicker =
   if (mpaPreviewBtn) mpaPreviewBtn.addEventListener('click', previewMpa);
   if (mpaApplySelectedBtn) mpaApplySelectedBtn.addEventListener('click', () => applyMpa(false));
   if (mpaApplyReadyBtn) mpaApplyReadyBtn.addEventListener('click', () => applyMpa(true));
+  const mpaUseDefaultActions = [
+    ['mpa-title-use-default-btn', mpaTitleSourceSelect, 'Title'],
+    ['mpa-description-use-default-btn', mpaDescriptionSourceSelect, 'Description'],
+    ['mpa-tags-use-default-btn', mpaTagsSourceSelect, 'Tags'],
+    ['mpa-title-clear-override-btn', mpaTitleSourceSelect, 'Title'],
+    ['mpa-description-clear-override-btn', mpaDescriptionSourceSelect, 'Description'],
+    ['mpa-tags-clear-override-btn', mpaTagsSourceSelect, 'Tags'],
+  ];
+  mpaUseDefaultActions.forEach(([btnId, selectEl, fieldLabel]) => {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.addEventListener('click', () => clearMpaOverride(selectEl, fieldLabel));
+  });
   loadTitlegenContext();
   loadDescriptiongenContext();
   loadVideotagsgenContext();
