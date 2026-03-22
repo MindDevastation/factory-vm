@@ -938,11 +938,15 @@ def _resolved_source_from_row(
 
 def _source_payload_from_resolved(source: ResolvedSource, *, row: Dict[str, Any]) -> Dict[str, Any]:
     normalized = _normalize_public_source(dict(row))
+    source_status = str(normalized.get("status") or "")
+    if not source_status:
+        source_status = "ACTIVE"
     normalized.update(
         {
             "source_type": source.source_type,
             "source_id": source.source_id,
             "source_name": source.source_name,
+            "source_status": source_status,
             "selection_mode": source.selection_mode,
             "channel_slug": source.channel_slug,
         }
@@ -956,16 +960,21 @@ def _error_source_payload(*, spec: Dict[str, Any], source_id: int, selection_mod
         "source_type": str(spec["source_type"]),
         "source_id": int(source_id),
         "source_name": "",
+        "source_status": "UNKNOWN",
         "selection_mode": selection_mode,
         "channel_slug": channel_slug,
     }
 
 
 def _source_selection_payload(source: Dict[str, Any]) -> Dict[str, Any]:
+    source_status = str(source.get("status") or source.get("source_status") or "")
+    if not source_status and source.get("source_id") is not None:
+        source_status = "ACTIVE"
     return {
         "source_type": str(source.get("source_type") or ""),
         "source_id": source.get("source_id"),
         "source_name": str(source.get("source_name") or source.get("name") or ""),
+        "source_status": source_status,
         "selection_mode": str(source.get("selection_mode") or ""),
         "channel_slug": str(source.get("channel_slug") or ""),
     }
