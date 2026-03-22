@@ -272,6 +272,52 @@ class TestMetadataChannelDefaultsApi(unittest.TestCase):
             self.assertEqual(updated_rec.source_id, desc.json()["id"])
             self.assertEqual(len(updated_rec.source_refs), 3)
 
+    def test_logging_emits_defaults_cleared_event_on_explicit_clear(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            title_id, desc_id, preset_id = self._create_source_ids(client, headers)
+
+            seeded = client.put(
+                "/v1/metadata/channels/darkwood-reverie/defaults",
+                headers=headers,
+                json={"default_title_template_id": title_id, "default_description_template_id": desc_id, "default_video_tag_preset_id": preset_id},
+            )
+            self.assertEqual(seeded.status_code, 200)
+
+            with self.assertLogs("services.factory_api.app", level="INFO") as logs:
+                cleared = client.put(
+                    "/v1/metadata/channels/darkwood-reverie/defaults",
+                    headers=headers,
+                    json={"default_title_template_id": title_id, "default_description_template_id": None, "default_video_tag_preset_id": preset_id},
+                )
+                self.assertEqual(cleared.status_code, 200)
+                self.assertIsNone(cleared.json()["defaults"]["description_template"])
+
+            clear_rec = self._event_record(logs.records, "metadata.defaults.cleared")
+            self.assertIsNotNone(clear_rec)
+            self.assertEqual(clear_rec.channel_slug, "darkwood-reverie")
+            self.assertEqual(clear_rec.field_name, "description")
+            self.assertEqual(clear_rec.source_type, "description_template")
+            self.assertEqual(clear_rec.source_id, desc_id)
+            self.assertEqual(clear_rec.result_status, "success")
+            self.assertEqual(clear_rec.error_codes, [])
+
+    def test_update_unknown_channel_is_mapped_not_internal_error(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.put(
+                "/v1/metadata/channels/missing-channel/defaults",
+                headers=headers,
+                json={"default_title_template_id": None, "default_description_template_id": None, "default_video_tag_preset_id": None},
+            )
+            self.assertEqual(resp.status_code, 404)
+            self.assertEqual(resp.json()["error"]["code"], "MDO_CHANNEL_NOT_FOUND")
+
 
 if __name__ == "__main__":
     unittest.main()
