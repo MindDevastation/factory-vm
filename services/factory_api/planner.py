@@ -36,6 +36,10 @@ from services.planner.preview_store import (
     PreviewStore,
     PreviewUsernameMismatchError,
 )
+from services.planner.materialization_service import (
+    PlannerMaterializationError,
+    PlannerMaterializationService,
+)
 from services.planner.series import BulkSeriesInput, BulkSeriesValidationError, build_bulk_publish_ats
 from services.planner.time_normalization import PublishAtValidationError, normalize_publish_at
 
@@ -625,6 +629,62 @@ def create_planner_router(env: Env) -> APIRouter:
                     "updated_fields": sorted(updates.keys()),
                     "title_len": len(str(updates.get("title") or "")) if "title" in updates else None,
                     "notes_len": len(str(updates.get("notes") or "")) if "notes" in updates else None,
+                },
+            )
+
+    @router.post("/items/{planner_item_id}/materialize")
+    async def planner_materialize_item(
+        planner_item_id: int,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+
+        if not username:
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            svc = PlannerMaterializationService(conn)
+            out = svc.materialize_or_get(planner_item_id=planner_item_id, created_by=username)
+            return {
+                "planner_item_id": out.planner_item_id,
+                "release_id": out.release_id,
+                "planner_status": out.planner_status,
+                "materialization_status": out.materialization_status,
+            }
+        except PlannerMaterializationError as exc:
+            result_status = "error"
+            status_map = {
+                "PLM_NOT_FOUND": 404,
+                "PLM_INVALID_STATUS": 409,
+                "PLM_INCONSISTENT_STATE": 409,
+                "PLM_BINDING_CONFLICT": 409,
+                "PLM_INTERNAL": 500,
+            }
+            status_code = status_map.get(exc.code, 500)
+            return planner_error(exc.code, exc.message, status_code=status_code, request_id=request_id)
+        except Exception:
+            result_status = "error"
+            logger.exception("planner_materialize_item_failed request_id=%s planner_item_id=%s", request_id, planner_item_id)
+            status_code = 500
+            return planner_error("PLM_INTERNAL", "materialization failed", status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_materialize_item",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "planner_item_id": planner_item_id,
+                    "result_status": result_status,
                 },
             )
 

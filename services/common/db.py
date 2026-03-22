@@ -110,6 +110,18 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_pr_status ON planned_releases(status);
         CREATE INDEX IF NOT EXISTS idx_pr_title ON planned_releases(title);
 
+        CREATE TABLE IF NOT EXISTS planner_release_links (
+            planned_release_id INTEGER PRIMARY KEY,
+            release_id INTEGER NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            created_by TEXT NULL,
+            FOREIGN KEY(planned_release_id) REFERENCES planned_releases(id),
+            FOREIGN KEY(release_id) REFERENCES releases(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_planner_release_links_release_id
+            ON planner_release_links(release_id);
+
         CREATE TABLE IF NOT EXISTS assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             channel_id INTEGER NOT NULL,
