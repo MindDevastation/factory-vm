@@ -644,8 +644,8 @@ def api_metadata_channel_defaults_update(
         {"field_name": "tags", "source_type": "video_tag_preset", "source_id": payload.default_video_tag_preset_id},
     ]
     try:
-        previous_defaults = channel_defaults_service.read_channel_defaults(conn, channel_slug=channel_slug)["defaults"]
         try:
+            previous_defaults = channel_defaults_service.read_channel_defaults(conn, channel_slug=channel_slug)["defaults"]
             result = channel_defaults_service.update_channel_defaults(
                 conn,
                 channel_slug=channel_slug,

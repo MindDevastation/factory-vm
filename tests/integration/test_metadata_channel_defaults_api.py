@@ -304,6 +304,20 @@ class TestMetadataChannelDefaultsApi(unittest.TestCase):
             self.assertEqual(clear_rec.result_status, "success")
             self.assertEqual(clear_rec.error_codes, [])
 
+    def test_update_unknown_channel_is_mapped_not_internal_error(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.put(
+                "/v1/metadata/channels/missing-channel/defaults",
+                headers=headers,
+                json={"default_title_template_id": None, "default_description_template_id": None, "default_video_tag_preset_id": None},
+            )
+            self.assertEqual(resp.status_code, 404)
+            self.assertEqual(resp.json()["error"]["code"], "MDO_CHANNEL_NOT_FOUND")
+
 
 if __name__ == "__main__":
     unittest.main()
