@@ -4,6 +4,7 @@
 <p><a href="/">← Dashboard</a></p>
 <p class="muted">Channel defaults are canonical source settings.</p>
 <p class="muted">Changing defaults is a separate action.</p>
+<p class="muted">Future preview without temporary override will result in configuration missing for this field.</p>
 
 <p>
   <label>Channel slug
@@ -213,6 +214,11 @@
   async function clearField(field) {
     if (!loadedChannelSlug) {
       showError('Load channel defaults first.');
+      return;
+    }
+    const warning = 'Future preview without temporary override will result in configuration missing for this field.';
+    if (!window.confirm(warning)) {
+      noteEl.textContent = `${field} clear canceled.`;
       return;
     }
     const next = payloadFromCurrent();
