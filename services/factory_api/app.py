@@ -637,12 +637,14 @@ def api_metadata_channel_defaults_update(
     _: bool = Depends(require_basic_auth(env)),
 ):
     conn = dbm.connect(env)
+    previous_defaults: dict[str, Any] | None = None
     request_sources = [
         {"field_name": "title", "source_type": "title_template", "source_id": payload.default_title_template_id},
         {"field_name": "description", "source_type": "description_template", "source_id": payload.default_description_template_id},
         {"field_name": "tags", "source_type": "video_tag_preset", "source_id": payload.default_video_tag_preset_id},
     ]
     try:
+        previous_defaults = channel_defaults_service.read_channel_defaults(conn, channel_slug=channel_slug)["defaults"]
         try:
             result = channel_defaults_service.update_channel_defaults(
                 conn,
@@ -668,6 +670,37 @@ def api_metadata_channel_defaults_update(
             return _mdo_error(status_code, exc.code, exc.message)
     finally:
         conn.close()
+
+    if previous_defaults is not None:
+        cleared_fields: list[dict[str, Any]] = []
+        for field_name, source_type, response_key in [
+            ("title", "title_template", "title_template"),
+            ("description", "description_template", "description_template"),
+            ("tags", "video_tag_preset", "video_tag_preset"),
+        ]:
+            previous_source = previous_defaults.get(response_key)
+            current_source = result["defaults"].get(response_key)
+            if previous_source is not None and current_source is None:
+                cleared_fields.append(
+                    {
+                        "field_name": field_name,
+                        "source_type": source_type,
+                        "source_id": previous_source.get("id"),
+                    }
+                )
+        for cleared in cleared_fields:
+            logger.info(
+                "metadata.defaults.cleared",
+                extra={
+                    "channel_slug": channel_slug,
+                    "field_name": cleared["field_name"],
+                    "source_type": cleared["source_type"],
+                    "source_id": cleared["source_id"],
+                    "source_refs": _mdo_sources_from_defaults(result["defaults"]),
+                    "result_status": "success",
+                    "error_codes": [],
+                },
+            )
 
     logger.info(
         "metadata.defaults.updated",
