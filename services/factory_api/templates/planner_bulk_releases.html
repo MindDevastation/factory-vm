@@ -9,6 +9,7 @@
   <a href="/">Dashboard</a>
   <span class="muted" style="margin:0 8px;">|</span>
   <button type="button" id="bulk-create-open">Bulk create series</button>
+  <button type="button" id="metadata-bulk-open">Metadata Bulk Preview</button>
   <button type="button" id="import-open">Import</button>
   <button type="button" id="bulk-delete-btn" disabled>Delete selected</button>
 </p>
@@ -94,6 +95,79 @@
       <button type="button" id="import-cancel">Close</button>
       <button type="button" id="import-confirm-strict" disabled>Confirm strict</button>
       <button type="button" id="import-confirm-replace" disabled>Replace conflicts</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="metadata-bulk-modal" style="min-width: min(1100px, 95vw);">
+  <form method="dialog" id="metadata-bulk-form">
+    <h3>Planner · Metadata Bulk Preview</h3>
+    <p class="muted">Preview does not change release metadata until you apply.</p>
+    <p class="muted">Applying changes affects only the selected fields of the selected release targets.</p>
+    <p class="muted">Overwrite confirmation is required explicitly per item and field.</p>
+
+    <fieldset>
+      <legend>Preview setup</legend>
+      <label><input type="checkbox" id="mbp-field-title" checked> title</label>
+      <label><input type="checkbox" id="mbp-field-description" checked> description</label>
+      <label><input type="checkbox" id="mbp-field-tags" checked> tags</label>
+      <div style="margin-top:8px;">
+        <label for="mbp-overrides-json">Override JSON (optional)</label><br>
+        <textarea id="mbp-overrides-json" rows="6" style="width:100%;">{}</textarea>
+      </div>
+      <button type="button" id="mbp-preview-btn">Create bulk preview</button>
+      <span id="mbp-session-label" class="muted" style="margin-left:8px;"></span>
+    </fieldset>
+
+    <div id="mbp-stale-banner" style="display:none; margin-top:10px; padding:8px; border:1px solid #fbbf24; background:#fffbeb;">
+      <strong>Prepared batch state is stale or expired. Create a new bulk preview.</strong>
+      <button type="button" id="mbp-create-new-preview-btn" style="margin-left:8px;">Create new bulk preview</button>
+    </div>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Aggregate preview</legend>
+      <pre id="mbp-summary" class="muted" style="white-space:pre-wrap;">No preview yet.</pre>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Item filters</legend>
+      <label><input type="checkbox" id="mbp-filter-applyable-only"> Applyable only</label>
+      <label><input type="checkbox" id="mbp-filter-overwrite-only"> Overwrite only</label>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Apply selection</legend>
+      <label><input type="checkbox" id="mbp-apply-field-title" checked> title</label>
+      <label><input type="checkbox" id="mbp-apply-field-description" checked> description</label>
+      <label><input type="checkbox" id="mbp-apply-field-tags" checked> tags</label>
+      <button type="button" id="mbp-apply-selected-btn" style="margin-left:8px;">Apply selected subset</button>
+      <pre id="mbp-apply-result" class="muted" style="white-space:pre-wrap; margin-top:8px;">No apply yet.</pre>
+    </fieldset>
+
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="mbp-select-all-items"></th>
+          <th>planner_item_id</th>
+          <th>mapping_status</th>
+          <th>release_id</th>
+          <th>duplicate_of_release_id</th>
+          <th>mapping diagnostics</th>
+          <th>fields</th>
+        </tr>
+      </thead>
+      <tbody id="mbp-items-body"><tr><td colspan="7" class="muted">No preview yet.</td></tr></tbody>
+    </table>
+
+    <p class="muted">
+      Mapping labels: Unresolved target · Duplicate target deduped · Invalid selection.
+    </p>
+    <p class="muted">
+      Source labels: Channel default used · Temporary override active for this channel.
+    </p>
+
+    <menu>
+      <button type="button" id="mbp-close-btn">Close</button>
     </menu>
   </form>
 </dialog>
