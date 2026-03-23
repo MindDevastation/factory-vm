@@ -336,3 +336,151 @@ class TestDbMoreCoverage(unittest.TestCase):
                     )
             finally:
                 conn.close()
+
+    def test_migrate_creates_planner_release_links_table(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                tables = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("planner_release_links", tables)
+            finally:
+                conn.close()
+
+    def test_planner_release_links_constraints(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                seed_minimal_db(env)
+                cur1 = conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+                    VALUES('darkwood-reverie', 'LONG', 'a', '2026-01-01T00:00:00Z', 'n', 'PLANNED', 'c', 'u')
+                    """
+                )
+                planner1 = int(cur1.lastrowid)
+                cur2 = conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+                    VALUES('channel-b', 'LONG', 'b', '2026-01-01T01:00:00Z', 'n', 'PLANNED', 'c', 'u')
+                    """
+                )
+                planner2 = int(cur2.lastrowid)
+                ch = conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()
+                rel = conn.execute(
+                    """
+                    INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                    VALUES(?, 'r', 'd', '[]', NULL, NULL, 'meta-1', 1.0)
+                    """,
+                    (int(ch["id"]),),
+                )
+                release_id = int(rel.lastrowid)
+                conn.execute(
+                    """
+                    INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by)
+                    VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')
+                    """,
+                    (planner1, release_id),
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        """
+                        INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by)
+                        VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')
+                        """,
+                        (planner2, release_id),
+                    )
+            finally:
+                conn.close()
+
+    def test_planner_release_links_duplicate_planned_release_id_fails(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                planner1 = int(
+                    conn.execute(
+                        """
+                        INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+                        VALUES('darkwood-reverie', 'LONG', 'a', '2026-02-01T00:00:00Z', 'n', 'PLANNED', 'c', 'u')
+                        """
+                    ).lastrowid
+                )
+                ch1 = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                ch2 = int(conn.execute("SELECT id FROM channels WHERE slug = 'channel-b'").fetchone()["id"])
+                rel1 = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                        VALUES(?, 'r1', 'd', '[]', NULL, NULL, 'meta-dup-planned-1', 1.0)
+                        """,
+                        (ch1,),
+                    ).lastrowid
+                )
+                rel2 = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                        VALUES(?, 'r2', 'd', '[]', NULL, NULL, 'meta-dup-planned-2', 2.0)
+                        """,
+                        (ch2,),
+                    ).lastrowid
+                )
+                conn.execute(
+                    "INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by) VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')",
+                    (planner1, rel1),
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by) VALUES(?, ?, '2026-01-01T00:00:01Z', 'seed')",
+                        (planner1, rel2),
+                    )
+            finally:
+                conn.close()
+
+    def test_planner_release_links_invalid_planned_release_id_fk_fails(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                ch = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                rel = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                        VALUES(?, 'r', 'd', '[]', NULL, NULL, 'meta-invalid-planned-fk', 1.0)
+                        """,
+                        (ch,),
+                    ).lastrowid
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by) VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')",
+                        (999999, rel),
+                    )
+            finally:
+                conn.close()
+
+    def test_planner_release_links_invalid_release_id_fk_fails(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                planner = int(
+                    conn.execute(
+                        """
+                        INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+                        VALUES('darkwood-reverie', 'LONG', 'a', '2026-03-01T00:00:00Z', 'n', 'PLANNED', 'c', 'u')
+                        """
+                    ).lastrowid
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by) VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')",
+                        (planner, 999999),
+                    )
+            finally:
+                conn.close()
