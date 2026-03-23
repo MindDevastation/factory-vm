@@ -76,6 +76,55 @@ class TestPlannerMetadataBulkPreviewApi(unittest.TestCase):
             self.assertEqual(sess.status_code, 200)
             self.assertEqual(sess.json()["session_id"], sid)
 
+    def test_context_invalid_query_returns_deterministic_error(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get("/v1/planner/metadata-bulk/context?planner_item_ids=abc,2", headers=auth)
+            self.assertEqual(resp.status_code, 400)
+            body = resp.json()
+            self.assertEqual(body["error"]["code"], "PLR_INVALID_INPUT")
+
+    def test_preview_non_object_and_shape_validation_errors(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            non_object = client.post("/v1/planner/metadata-bulk/preview", headers=auth, json=["not-an-object"])
+            self.assertEqual(non_object.status_code, 400)
+            self.assertEqual(non_object.json()["error"]["code"], "PLR_INVALID_INPUT")
+
+            invalid_ids = client.post(
+                "/v1/planner/metadata-bulk/preview",
+                headers=auth,
+                json={"planner_item_ids": [1, "x"], "fields": ["title"], "overrides": {}},
+            )
+            self.assertEqual(invalid_ids.status_code, 400)
+            self.assertEqual(invalid_ids.json()["error"]["code"], "PLR_INVALID_INPUT")
+
+            invalid_fields = client.post(
+                "/v1/planner/metadata-bulk/preview",
+                headers=auth,
+                json={"planner_item_ids": [1], "fields": [1, 2], "overrides": {}},
+            )
+            self.assertEqual(invalid_fields.status_code, 400)
+            self.assertEqual(invalid_fields.json()["error"]["code"], "PLR_INVALID_INPUT")
+
+            invalid_overrides = client.post(
+                "/v1/planner/metadata-bulk/preview",
+                headers=auth,
+                json={"planner_item_ids": [1], "fields": ["title"], "overrides": []},
+            )
+            self.assertEqual(invalid_overrides.status_code, 400)
+            self.assertEqual(invalid_overrides.json()["error"]["code"], "PLR_INVALID_INPUT")
+
 
 if __name__ == "__main__":
     unittest.main()
