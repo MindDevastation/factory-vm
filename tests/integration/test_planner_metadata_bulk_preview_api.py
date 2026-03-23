@@ -175,6 +175,23 @@ class TestPlannerMetadataBulkPreviewApi(unittest.TestCase):
             self.assertEqual(invalid_overrides.status_code, 400)
             self.assertEqual(invalid_overrides.json()["error"]["code"], "PLR_INVALID_INPUT")
 
+    def test_preview_rejects_batch_over_100_items(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            oversized_ids = list(range(1, 102))
+            resp = client.post(
+                "/v1/planner/metadata-bulk/preview",
+                headers=auth,
+                json={"planner_item_ids": oversized_ids, "fields": ["title"], "overrides": {}},
+            )
+            self.assertEqual(resp.status_code, 422)
+            self.assertEqual(resp.json()["error"]["code"], "MBP_SELECTED_ITEMS_LIMIT_EXCEEDED")
+
     def test_apply_selected_subset_and_partial_success(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)

@@ -52,6 +52,8 @@ class TestMetadataBulkPreviewService(unittest.TestCase):
                 )
                 self.assertEqual(out["session_status"], "OPEN")
                 self.assertEqual(len(out["items"]), 2)
+                resolved = next(item for item in out["items"] if item["planner_item_id"] == planner_id)
+                self.assertEqual((resolved["fields"]["title"].get("source") or {}).get("selection_mode"), "channel_default")
                 unresolved = next(item for item in out["items"] if item["planner_item_id"] == unresolved_id)
                 self.assertEqual(unresolved["mapping_status"], "UNRESOLVED_NO_TARGET")
 
@@ -93,6 +95,87 @@ class TestMetadataBulkPreviewService(unittest.TestCase):
                 self.assertEqual(out["summary"]["deduped_target_count"], 1)
                 dup = out["items"][1]
                 self.assertEqual(dup["mapping_status"], "DUPLICATE_TARGET")
+            finally:
+                conn.close()
+
+    def test_preview_rejects_more_than_100_selected_items(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                over_limit = list(range(1, 102))
+                with self.assertRaises(svc.MetadataBulkPreviewError) as ctx:
+                    svc.create_bulk_preview_session(
+                        conn,
+                        planner_item_ids=over_limit,
+                        fields=["title"],
+                        overrides={},
+                        created_by="tester",
+                        ttl_seconds=1800,
+                    )
+                self.assertEqual(ctx.exception.code, "MBP_SELECTED_ITEMS_LIMIT_EXCEEDED")
+            finally:
+                conn.close()
+
+    def test_required_override_mode_does_not_fallback_to_default_for_non_matching_channel(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled, youtube_channel_id)
+                    VALUES('titanwave-sonic', 'Titanwave Sonic', 'music', 1, 'default', 0, 'yt-titanwave-sonic')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO channel_metadata_defaults(channel_slug, default_title_template_id, default_description_template_id, default_video_tag_preset_id, created_at, updated_at)
+                    VALUES('titanwave-sonic', NULL, NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+                    """
+                )
+                planner_id = self._insert_planner_item(conn, channel_slug="titanwave-sonic")
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'titanwave-sonic'").fetchone()["id"])
+                release_id = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                        VALUES(?, 'seed', 'seed', '[]', '2026-01-01T00:00:00Z', NULL, 'seed-meta-override-required', 0)
+                        """,
+                        (channel_id,),
+                    ).lastrowid
+                )
+                conn.execute(
+                    "INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by) VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')",
+                    (planner_id, release_id),
+                )
+                darkwood_title_template_id = int(
+                    conn.execute(
+                        """
+                        INSERT INTO title_templates(channel_slug, template_name, template_body, status, is_default, validation_status, validation_errors_json, last_validated_at, created_at, updated_at, archived_at)
+                        VALUES('darkwood-reverie', 'darkwood-only', 'Darkwood {{release_id}}', 'ACTIVE', 0, 'VALID', NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)
+                        """
+                    ).lastrowid
+                )
+                conn.commit()
+
+                out = svc.create_bulk_preview_session(
+                    conn,
+                    planner_item_ids=[planner_id],
+                    fields=["title"],
+                    overrides={
+                        "title": {
+                            "mode": "CHANNEL_GROUP_OVERRIDE_REQUIRED",
+                            "overrides": [{"channel_slug": "darkwood-reverie", "source_id": darkwood_title_template_id}],
+                        }
+                    },
+                    created_by="tester",
+                    ttl_seconds=1800,
+                )
+                item = out["items"][0]
+                field = item["fields"]["title"]
+                self.assertEqual(field["status"], "INVALID_OVERRIDE")
+                self.assertEqual((field.get("source") or {}).get("selection_mode"), "temporary_override")
             finally:
                 conn.close()
 
