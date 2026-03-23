@@ -40,6 +40,12 @@ from services.planner.materialization_service import (
     PlannerMaterializationError,
     PlannerMaterializationService,
 )
+from services.planner.metadata_bulk_preview_service import (
+    MetadataBulkPreviewError,
+    create_bulk_preview_session,
+    get_bulk_preview_session,
+    load_bulk_context,
+)
 from services.planner.series import BulkSeriesInput, BulkSeriesValidationError, build_bulk_publish_ats
 from services.planner.time_normalization import PublishAtValidationError, normalize_publish_at
 
@@ -118,6 +124,72 @@ def _extract_multipart_file(request: Request) -> tuple[str, bytes]:
 
 def create_planner_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/planner", tags=["planner"])
+
+    @router.get("/metadata-bulk/context")
+    async def planner_metadata_bulk_context(
+        planner_item_ids: str,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        request_id = planner_request_id(request)
+        if not username:
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=401, request_id=request_id)
+        item_ids = [int(item.strip()) for item in planner_item_ids.split(",") if item.strip()]
+        conn = dbm.connect(env)
+        try:
+            return load_bulk_context(conn, planner_item_ids=item_ids)
+        except MetadataBulkPreviewError as exc:
+            return planner_error(exc.code, exc.message, status_code=422, request_id=request_id)
+        finally:
+            conn.close()
+
+    @router.post("/metadata-bulk/preview")
+    async def planner_metadata_bulk_preview(
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        request_id = planner_request_id(request)
+        if not username:
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=401, request_id=request_id)
+        try:
+            payload = await request.json()
+        except Exception:
+            return planner_error("PLR_INVALID_INPUT", "invalid JSON body", status_code=400, request_id=request_id)
+        planner_item_ids = [int(item) for item in list(payload.get("planner_item_ids") or [])]
+        fields = [str(item) for item in list(payload.get("fields") or [])]
+        overrides = payload.get("overrides") if isinstance(payload.get("overrides"), dict) else {}
+        conn = dbm.connect(env)
+        try:
+            return create_bulk_preview_session(
+                conn,
+                planner_item_ids=planner_item_ids,
+                fields=fields,
+                overrides=overrides,
+                created_by=username,
+                ttl_seconds=env.metadata_bulk_preview_ttl_sec,
+            )
+        except MetadataBulkPreviewError as exc:
+            return planner_error(exc.code, exc.message, status_code=422, request_id=request_id)
+        finally:
+            conn.close()
+
+    @router.get("/metadata-bulk/sessions/{session_id}")
+    async def planner_metadata_bulk_session(
+        session_id: str,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        request_id = planner_request_id(request)
+        if not username:
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=401, request_id=request_id)
+        conn = dbm.connect(env)
+        try:
+            return get_bulk_preview_session(conn, session_id=session_id)
+        except MetadataBulkPreviewError as exc:
+            code = 404 if exc.code == "MBP_SESSION_NOT_FOUND" else 422
+            return planner_error(exc.code, exc.message, status_code=code, request_id=request_id)
+        finally:
+            conn.close()
 
     @router.get("/releases")
     def planner_list_releases(

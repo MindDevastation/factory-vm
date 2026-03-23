@@ -375,6 +375,28 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_metadata_preview_sessions_status
             ON metadata_preview_sessions(session_status, created_at);
 
+        CREATE TABLE IF NOT EXISTS metadata_bulk_preview_sessions (
+            id TEXT PRIMARY KEY,
+            planner_context_json TEXT NOT NULL,
+            selected_item_ids_json TEXT NOT NULL,
+            requested_fields_json TEXT NOT NULL,
+            selected_channels_json TEXT NOT NULL,
+            session_status TEXT NOT NULL,
+            aggregate_summary_json TEXT NOT NULL,
+            item_states_json TEXT NOT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            applied_at TEXT NULL,
+            CHECK(session_status IN ('OPEN','APPLIED','EXPIRED','INVALIDATED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_metadata_bulk_preview_sessions_status
+            ON metadata_bulk_preview_sessions(session_status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_metadata_bulk_preview_sessions_expires_at
+            ON metadata_bulk_preview_sessions(expires_at);
+
         CREATE TABLE IF NOT EXISTS title_templates (
             id INTEGER PRIMARY KEY,
             channel_slug TEXT NOT NULL,
@@ -2388,6 +2410,46 @@ def insert_metadata_preview_session(
             fields_snapshot_json,
             effective_source_selection_json,
             effective_source_provenance_json,
+            created_by,
+            created_at,
+            expires_at,
+            applied_at,
+        ),
+    )
+
+
+def insert_metadata_bulk_preview_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    planner_context_json: str,
+    selected_item_ids_json: str,
+    requested_fields_json: str,
+    selected_channels_json: str,
+    session_status: str,
+    aggregate_summary_json: str,
+    item_states_json: str,
+    created_by: str | None,
+    created_at: str,
+    expires_at: str,
+    applied_at: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO metadata_bulk_preview_sessions(
+            id, planner_context_json, selected_item_ids_json, requested_fields_json, selected_channels_json,
+            session_status, aggregate_summary_json, item_states_json, created_by, created_at, expires_at, applied_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            planner_context_json,
+            selected_item_ids_json,
+            requested_fields_json,
+            selected_channels_json,
+            session_status,
+            aggregate_summary_json,
+            item_states_json,
             created_by,
             created_at,
             expires_at,
