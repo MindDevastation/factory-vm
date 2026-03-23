@@ -42,6 +42,7 @@ from services.planner.materialization_service import (
 )
 from services.planner.metadata_bulk_preview_service import (
     MetadataBulkPreviewError,
+    apply_bulk_preview_session,
     create_bulk_preview_session,
     get_bulk_preview_session,
     load_bulk_context,
@@ -167,6 +168,41 @@ def _parse_bulk_preview_payload(payload: Any) -> tuple[list[int], list[str] | No
     else:
         raise ValueError("overrides must be an object")
     return planner_item_ids, fields, overrides
+
+
+def _parse_bulk_apply_payload(payload: Any) -> tuple[list[int], list[str], dict[str, list[str]]]:
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    raw_items = payload.get("selected_items")
+    if not isinstance(raw_items, list):
+        raise ValueError("selected_items must be an integer array")
+    selected_items: list[int] = []
+    for item in raw_items:
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ValueError("selected_items must be an integer array")
+        selected_items.append(item)
+    raw_fields = payload.get("selected_fields")
+    if not isinstance(raw_fields, list):
+        raise ValueError("selected_fields must be a string array")
+    selected_fields: list[str] = []
+    for field in raw_fields:
+        if not isinstance(field, str):
+            raise ValueError("selected_fields must be a string array")
+        selected_fields.append(field)
+    raw_confirmed = payload.get("overwrite_confirmed")
+    if raw_confirmed is None:
+        confirmed: dict[str, list[str]] = {}
+    elif isinstance(raw_confirmed, dict):
+        confirmed = {}
+        for key, value in raw_confirmed.items():
+            if not isinstance(key, str):
+                raise ValueError("overwrite_confirmed keys must be planner_item_id strings")
+            if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
+                raise ValueError("overwrite_confirmed values must be string arrays")
+            confirmed[key] = list(value)
+    else:
+        raise ValueError("overwrite_confirmed must be an object")
+    return selected_items, selected_fields, confirmed
 
 
 def create_planner_router(env: Env) -> APIRouter:
@@ -304,6 +340,66 @@ def create_planner_router(env: Env) -> APIRouter:
                 status_code=status_code,
                 request_id=request_id,
                 extra_fields={"session_id": session_id, "result_status": result_status},
+            )
+
+    @router.post("/metadata-bulk/sessions/{session_id}/apply")
+    async def planner_metadata_bulk_apply(
+        session_id: str,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+        selected_count = 0
+        selected_fields: list[str] = []
+        if not username:
+            result_status = "error"
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+        try:
+            payload = await request.json()
+        except Exception:
+            result_status = "error"
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "invalid JSON body", status_code=status_code, request_id=request_id)
+        try:
+            selected_items, selected_fields, overwrite_confirmed = _parse_bulk_apply_payload(payload)
+            selected_count = len(selected_items)
+        except ValueError as exc:
+            result_status = "error"
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", str(exc), status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            return apply_bulk_preview_session(
+                conn,
+                session_id=session_id,
+                selected_items=selected_items,
+                selected_fields=selected_fields,
+                overwrite_confirmed=overwrite_confirmed,
+            )
+        except MetadataBulkPreviewError as exc:
+            result_status = "error"
+            status_code = 404 if exc.code == "MBP_SESSION_NOT_FOUND" else 422
+            return planner_error(exc.code, exc.message, status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_metadata_bulk_apply",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "session_id": session_id,
+                    "selected_item_count": selected_count,
+                    "selected_fields": selected_fields,
+                    "result_status": result_status,
+                },
             )
 
     @router.get("/releases")
