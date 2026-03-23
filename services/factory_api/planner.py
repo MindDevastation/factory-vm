@@ -36,6 +36,17 @@ from services.planner.preview_store import (
     PreviewStore,
     PreviewUsernameMismatchError,
 )
+from services.planner.materialization_service import (
+    PlannerMaterializationError,
+    PlannerMaterializationService,
+)
+from services.planner.metadata_bulk_preview_service import (
+    MetadataBulkPreviewError,
+    apply_bulk_preview_session,
+    create_bulk_preview_session,
+    get_bulk_preview_session,
+    load_bulk_context,
+)
 from services.planner.series import BulkSeriesInput, BulkSeriesValidationError, build_bulk_publish_ats
 from services.planner.time_normalization import PublishAtValidationError, normalize_publish_at
 
@@ -112,8 +123,284 @@ def _extract_multipart_file(request: Request) -> tuple[str, bytes]:
     raise ValueError("file part is required")
 
 
+def _parse_planner_item_ids_query(value: str) -> list[int]:
+    parts = [item.strip() for item in value.split(",") if item.strip()]
+    if not parts:
+        raise ValueError("planner_item_ids must include at least one integer id")
+    out: list[int] = []
+    for item in parts:
+        try:
+            out.append(int(item))
+        except Exception as exc:
+            raise ValueError("planner_item_ids must be a comma-separated integer list") from exc
+    return out
+
+
+def _parse_bulk_preview_payload(payload: Any) -> tuple[list[int], list[str] | None, dict[str, Any]]:
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    raw_item_ids = payload.get("planner_item_ids")
+    if not isinstance(raw_item_ids, list):
+        raise ValueError("planner_item_ids must be an integer array")
+    planner_item_ids: list[int] = []
+    for item in raw_item_ids:
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ValueError("planner_item_ids must be an integer array")
+        planner_item_ids.append(item)
+
+    raw_fields = payload.get("fields")
+    fields: list[str] | None = None
+    if raw_fields is not None:
+        if not isinstance(raw_fields, list):
+            raise ValueError("fields must be a string array")
+        fields = []
+        for item in raw_fields:
+            if not isinstance(item, str):
+                raise ValueError("fields must be a string array")
+            fields.append(item)
+
+    raw_overrides = payload.get("overrides")
+    if raw_overrides is None:
+        overrides = {}
+    elif isinstance(raw_overrides, dict):
+        overrides = raw_overrides
+    else:
+        raise ValueError("overrides must be an object")
+    return planner_item_ids, fields, overrides
+
+
+def _parse_bulk_apply_payload(payload: Any) -> tuple[list[int], list[str], dict[str, list[str]]]:
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    raw_items = payload.get("selected_items")
+    if not isinstance(raw_items, list):
+        raise ValueError("selected_items must be an integer array")
+    selected_items: list[int] = []
+    for item in raw_items:
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ValueError("selected_items must be an integer array")
+        selected_items.append(item)
+    raw_fields = payload.get("selected_fields")
+    if not isinstance(raw_fields, list):
+        raise ValueError("selected_fields must be a string array")
+    selected_fields: list[str] = []
+    for field in raw_fields:
+        if not isinstance(field, str):
+            raise ValueError("selected_fields must be a string array")
+        selected_fields.append(field)
+    raw_confirmed = payload.get("overwrite_confirmed")
+    if raw_confirmed is None:
+        confirmed: dict[str, list[str]] = {}
+    elif isinstance(raw_confirmed, dict):
+        confirmed = {}
+        for key, value in raw_confirmed.items():
+            if not isinstance(key, str):
+                raise ValueError("overwrite_confirmed keys must be planner_item_id strings")
+            if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
+                raise ValueError("overwrite_confirmed values must be string arrays")
+            confirmed[key] = list(value)
+    else:
+        raise ValueError("overwrite_confirmed must be an object")
+    return selected_items, selected_fields, confirmed
+
+
 def create_planner_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/planner", tags=["planner"])
+
+    @router.get("/metadata-bulk/context")
+    async def planner_metadata_bulk_context(
+        planner_item_ids: str,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+        selected_count = 0
+        if not username:
+            result_status = "error"
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+        try:
+            item_ids = _parse_planner_item_ids_query(planner_item_ids)
+            selected_count = len(item_ids)
+        except ValueError as exc:
+            result_status = "error"
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", str(exc), status_code=status_code, request_id=request_id)
+        conn = dbm.connect(env)
+        try:
+            return load_bulk_context(conn, planner_item_ids=item_ids)
+        except MetadataBulkPreviewError as exc:
+            result_status = "error"
+            status_code = 422
+            return planner_error(exc.code, exc.message, status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_metadata_bulk_context",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={"selected_item_count": selected_count, "result_status": result_status},
+            )
+
+    @router.post("/metadata-bulk/preview")
+    async def planner_metadata_bulk_preview(
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+        selected_count = 0
+        selected_fields: list[str] = []
+        if not username:
+            result_status = "error"
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+        try:
+            payload = await request.json()
+        except Exception:
+            result_status = "error"
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "invalid JSON body", status_code=status_code, request_id=request_id)
+        try:
+            planner_item_ids, fields, overrides = _parse_bulk_preview_payload(payload)
+            selected_count = len(planner_item_ids)
+            selected_fields = list(fields or [])
+        except ValueError as exc:
+            result_status = "error"
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", str(exc), status_code=status_code, request_id=request_id)
+        conn = dbm.connect(env)
+        try:
+            return create_bulk_preview_session(
+                conn,
+                planner_item_ids=planner_item_ids,
+                fields=fields,
+                overrides=overrides,
+                created_by=username,
+                ttl_seconds=env.metadata_bulk_preview_ttl_sec,
+            )
+        except MetadataBulkPreviewError as exc:
+            result_status = "error"
+            status_code = 422
+            return planner_error(exc.code, exc.message, status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_metadata_bulk_preview",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "selected_item_count": selected_count,
+                    "selected_fields": selected_fields,
+                    "result_status": result_status,
+                },
+            )
+
+    @router.get("/metadata-bulk/sessions/{session_id}")
+    async def planner_metadata_bulk_session(
+        session_id: str,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+        if not username:
+            result_status = "error"
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+        conn = dbm.connect(env)
+        try:
+            return get_bulk_preview_session(conn, session_id=session_id)
+        except MetadataBulkPreviewError as exc:
+            result_status = "error"
+            code = 404 if exc.code == "MBP_SESSION_NOT_FOUND" else 422
+            status_code = code
+            return planner_error(exc.code, exc.message, status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_metadata_bulk_session",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={"session_id": session_id, "result_status": result_status},
+            )
+
+    @router.post("/metadata-bulk/sessions/{session_id}/apply")
+    async def planner_metadata_bulk_apply(
+        session_id: str,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+        selected_count = 0
+        selected_fields: list[str] = []
+        if not username:
+            result_status = "error"
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+        try:
+            payload = await request.json()
+        except Exception:
+            result_status = "error"
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "invalid JSON body", status_code=status_code, request_id=request_id)
+        try:
+            selected_items, selected_fields, overwrite_confirmed = _parse_bulk_apply_payload(payload)
+            selected_count = len(selected_items)
+        except ValueError as exc:
+            result_status = "error"
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", str(exc), status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            return apply_bulk_preview_session(
+                conn,
+                session_id=session_id,
+                selected_items=selected_items,
+                selected_fields=selected_fields,
+                overwrite_confirmed=overwrite_confirmed,
+            )
+        except MetadataBulkPreviewError as exc:
+            result_status = "error"
+            status_code = 404 if exc.code == "MBP_SESSION_NOT_FOUND" else 422
+            return planner_error(exc.code, exc.message, status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_metadata_bulk_apply",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "session_id": session_id,
+                    "selected_item_count": selected_count,
+                    "selected_fields": selected_fields,
+                    "result_status": result_status,
+                },
+            )
 
     @router.get("/releases")
     def planner_list_releases(
@@ -625,6 +912,62 @@ def create_planner_router(env: Env) -> APIRouter:
                     "updated_fields": sorted(updates.keys()),
                     "title_len": len(str(updates.get("title") or "")) if "title" in updates else None,
                     "notes_len": len(str(updates.get("notes") or "")) if "notes" in updates else None,
+                },
+            )
+
+    @router.post("/items/{planner_item_id}/materialize")
+    async def planner_materialize_item(
+        planner_item_id: int,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+
+        if not username:
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            svc = PlannerMaterializationService(conn)
+            out = svc.materialize_or_get(planner_item_id=planner_item_id, created_by=username)
+            return {
+                "planner_item_id": out.planner_item_id,
+                "release_id": out.release_id,
+                "planner_status": out.planner_status,
+                "materialization_status": out.materialization_status,
+            }
+        except PlannerMaterializationError as exc:
+            result_status = "error"
+            status_map = {
+                "PLM_NOT_FOUND": 404,
+                "PLM_INVALID_STATUS": 409,
+                "PLM_INCONSISTENT_STATE": 409,
+                "PLM_BINDING_CONFLICT": 409,
+                "PLM_INTERNAL": 500,
+            }
+            status_code = status_map.get(exc.code, 500)
+            return planner_error(exc.code, exc.message, status_code=status_code, request_id=request_id)
+        except Exception:
+            result_status = "error"
+            logger.exception("planner_materialize_item_failed request_id=%s planner_item_id=%s", request_id, planner_item_id)
+            status_code = 500
+            return planner_error("PLM_INTERNAL", "materialization failed", status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_materialize_item",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "planner_item_id": planner_item_id,
+                    "result_status": result_status,
                 },
             )
 

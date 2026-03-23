@@ -87,89 +87,28 @@ def create_preview_session(
     ttl_seconds: int,
 ) -> Dict[str, Any]:
     context = load_preview_apply_context(conn, release_id=release_id)
-    release = _load_release(conn, release_id=release_id)
     fields = _normalize_requested_fields(requested_fields)
 
     session_id = uuid.uuid4().hex
     created_at = _now_iso()
     expires_at = _future_iso(ttl_seconds)
-
-    field_records: Dict[str, Dict[str, Any]] = {}
-    resolved_sources: Dict[str, Any] = {}
-    effective_source_selection: Dict[str, Any] = {}
-    effective_source_provenance: Dict[str, Any] = {}
-    dependency_fingerprints: Dict[str, Any] = {}
-    field_statuses: Dict[str, str] = {}
-    warnings: List[str] = []
-    errors: List[str] = []
-
-    title_rec = _build_not_requested_record(context.current["title"])
-    description_rec = _build_not_requested_record(context.current["description"])
-    tags_rec = _build_not_requested_record(list(context.current["tags_json"]))
-
-    if "title" in fields:
-        title_rec, title_source, title_fingerprint = _prepare_title_field(
-            conn,
-            release_id=release_id,
-            channel_slug=context.channel_slug,
-            current_value=str(context.current["title"]),
-            template_id=sources.get("title_template_id"),
-        )
-        resolved_sources["title"] = title_source
-        if title_source:
-            effective_source_selection["title"] = _source_selection_payload(title_source)
-            effective_source_provenance["title"] = dict(title_source)
-        dependency_fingerprints["title"] = _build_field_dependency_fingerprint(
-            field="title",
-            release_row=release,
-            source=title_source,
-            generator_fingerprint=title_fingerprint,
-        )
-    if "description" in fields:
-        description_rec, description_source, description_fingerprint = _prepare_description_field(
-            conn,
-            release_id=release_id,
-            channel_slug=context.channel_slug,
-            current_value=str(context.current["description"]),
-            template_id=sources.get("description_template_id"),
-        )
-        resolved_sources["description"] = description_source
-        if description_source:
-            effective_source_selection["description"] = _source_selection_payload(description_source)
-            effective_source_provenance["description"] = dict(description_source)
-        dependency_fingerprints["description"] = _build_field_dependency_fingerprint(
-            field="description",
-            release_row=release,
-            source=description_source,
-            generator_fingerprint=description_fingerprint,
-        )
-    if "tags" in fields:
-        tags_rec, tags_source, tags_fingerprint = _prepare_tags_field(
-            conn,
-            release_id=release_id,
-            channel_slug=context.channel_slug,
-            current_value=list(context.current["tags_json"]),
-            preset_id=sources.get("video_tag_preset_id"),
-        )
-        resolved_sources["tags"] = tags_source
-        if tags_source:
-            effective_source_selection["tags"] = _source_selection_payload(tags_source)
-            effective_source_provenance["tags"] = dict(tags_source)
-        dependency_fingerprints["tags"] = _build_field_dependency_fingerprint(
-            field="tags",
-            release_row=release,
-            source=tags_source,
-            generator_fingerprint=tags_fingerprint,
-        )
-
-    field_records["title"] = title_rec
-    field_records["description"] = description_rec
-    field_records["tags"] = tags_rec
-
-    for field_name, rec in field_records.items():
-        field_statuses[field_name] = str(rec["status"])
-        warnings.extend(rec["warnings"])
-        errors.extend(rec["errors"])
+    prepared = prepare_preview_fields_for_release(
+        conn,
+        release_id=release_id,
+        requested_fields=fields,
+        sources=sources,
+    )
+    field_records = prepared["field_records"]
+    resolved_sources = prepared["resolved_sources"]
+    effective_source_selection = prepared["effective_source_selection"]
+    effective_source_provenance = prepared["effective_source_provenance"]
+    dependency_fingerprints = prepared["dependency_fingerprints"]
+    field_statuses = prepared["field_statuses"]
+    warnings = prepared["warnings"]
+    errors = prepared["errors"]
+    title_rec = field_records["title"]
+    description_rec = field_records["description"]
+    tags_rec = field_records["tags"]
 
     requested_list = [f for f in ALL_FIELDS if f in fields]
     prepared_fields = [f for f in requested_list if field_statuses[f] in {"PROPOSED_READY", "NO_CHANGE", "OVERWRITE_READY"}]
@@ -246,6 +185,107 @@ def create_preview_session(
     )
     conn.commit()
     return payload
+
+
+def prepare_preview_fields_for_release(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    requested_fields: Set[str] | List[str] | None,
+    sources: Dict[str, Any],
+) -> Dict[str, Any]:
+    context = load_preview_apply_context(conn, release_id=release_id)
+    release = _load_release(conn, release_id=release_id)
+    fields = _normalize_requested_fields(list(requested_fields) if requested_fields is not None else None)
+
+    field_records: Dict[str, Dict[str, Any]] = {}
+    resolved_sources: Dict[str, Any] = {}
+    effective_source_selection: Dict[str, Any] = {}
+    effective_source_provenance: Dict[str, Any] = {}
+    dependency_fingerprints: Dict[str, Any] = {}
+    field_statuses: Dict[str, str] = {}
+    warnings: List[str] = []
+    errors: List[str] = []
+
+    title_rec = _build_not_requested_record(context.current["title"])
+    description_rec = _build_not_requested_record(context.current["description"])
+    tags_rec = _build_not_requested_record(list(context.current["tags_json"]))
+
+    if "title" in fields:
+        title_rec, title_source, title_fingerprint = _prepare_title_field(
+            conn,
+            release_id=release_id,
+            channel_slug=context.channel_slug,
+            current_value=str(context.current["title"]),
+            template_id=sources.get("title_template_id"),
+        )
+        resolved_sources["title"] = title_source
+        if title_source:
+            effective_source_selection["title"] = _source_selection_payload(title_source)
+            effective_source_provenance["title"] = dict(title_source)
+        dependency_fingerprints["title"] = _build_field_dependency_fingerprint(
+            field="title",
+            release_row=release,
+            source=title_source,
+            generator_fingerprint=title_fingerprint,
+        )
+    if "description" in fields:
+        description_rec, description_source, description_fingerprint = _prepare_description_field(
+            conn,
+            release_id=release_id,
+            channel_slug=context.channel_slug,
+            current_value=str(context.current["description"]),
+            template_id=sources.get("description_template_id"),
+        )
+        resolved_sources["description"] = description_source
+        if description_source:
+            effective_source_selection["description"] = _source_selection_payload(description_source)
+            effective_source_provenance["description"] = dict(description_source)
+        dependency_fingerprints["description"] = _build_field_dependency_fingerprint(
+            field="description",
+            release_row=release,
+            source=description_source,
+            generator_fingerprint=description_fingerprint,
+        )
+    if "tags" in fields:
+        tags_rec, tags_source, tags_fingerprint = _prepare_tags_field(
+            conn,
+            release_id=release_id,
+            channel_slug=context.channel_slug,
+            current_value=list(context.current["tags_json"]),
+            preset_id=sources.get("video_tag_preset_id"),
+        )
+        resolved_sources["tags"] = tags_source
+        if tags_source:
+            effective_source_selection["tags"] = _source_selection_payload(tags_source)
+            effective_source_provenance["tags"] = dict(tags_source)
+        dependency_fingerprints["tags"] = _build_field_dependency_fingerprint(
+            field="tags",
+            release_row=release,
+            source=tags_source,
+            generator_fingerprint=tags_fingerprint,
+        )
+
+    field_records["title"] = title_rec
+    field_records["description"] = description_rec
+    field_records["tags"] = tags_rec
+    for field_name, rec in field_records.items():
+        field_statuses[field_name] = str(rec["status"])
+        warnings.extend(rec["warnings"])
+        errors.extend(rec["errors"])
+
+    return {
+        "context": context,
+        "requested_fields": [f for f in ALL_FIELDS if f in fields],
+        "field_records": field_records,
+        "resolved_sources": resolved_sources,
+        "effective_source_selection": effective_source_selection,
+        "effective_source_provenance": effective_source_provenance,
+        "dependency_fingerprints": dependency_fingerprints,
+        "field_statuses": field_statuses,
+        "warnings": warnings,
+        "errors": errors,
+    }
 
 
 def get_preview_session(conn: sqlite3.Connection, *, session_id: str) -> Dict[str, Any]:

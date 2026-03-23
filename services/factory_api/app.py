@@ -97,6 +97,30 @@ logger = logging.getLogger(__name__)
 _render_all_channel_slug: ContextVar[Optional[str]] = ContextVar("render_all_channel_slug", default=None)
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+# FastAPI/Starlette TemplateResponse expects (request, name, context, ...).
+# Keep compatibility with existing call sites that pass (name, context, ...).
+_original_template_response = templates.TemplateResponse
+
+
+def _template_response_compat(first_arg, *args, **kwargs):
+    if isinstance(first_arg, Request):
+        return _original_template_response(first_arg, *args, **kwargs)
+
+    name = first_arg
+    context = args[0] if args else kwargs.get("context")
+    if not isinstance(context, dict):
+        raise TypeError("TemplateResponse context must be a dict")
+
+    request = context.get("request")
+    if not isinstance(request, Request):
+        raise TypeError("TemplateResponse context must include a Request at context['request']")
+
+    remaining_args = args[1:]
+    return _original_template_response(request, name, context, *remaining_args, **kwargs)
+
+
+templates.TemplateResponse = _template_response_compat
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.include_router(create_db_viewer_router(env))
 app.include_router(create_planner_router(env))

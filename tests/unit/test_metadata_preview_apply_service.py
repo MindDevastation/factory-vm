@@ -736,6 +736,25 @@ class TestMetadataPreviewApplyService(unittest.TestCase):
                 conn.close()
             self.assertEqual(ctx.exception.code, "MPA_APPLY_CONFLICT")
 
+    def test_prepare_preview_fields_for_release_does_not_persist_session(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._seed_release(conn)
+                self._seed_defaults(conn)
+                prepared = svc.prepare_preview_fields_for_release(
+                    conn,
+                    release_id=release_id,
+                    requested_fields=["title", "description", "tags"],
+                    sources={},
+                )
+                self.assertIn("field_records", prepared)
+                cnt = conn.execute("SELECT COUNT(*) AS c FROM metadata_preview_sessions").fetchone()["c"]
+                self.assertEqual(int(cnt), 0)
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()
