@@ -10,6 +10,7 @@ from services.common import db as dbm
 from services.metadata import preview_apply_service
 
 ALL_FIELDS = ("title", "description", "tags")
+MAX_PREVIEW_ITEMS = 100
 RESOLVED_STATUSES = {"PROPOSED_READY", "NO_CHANGE", "OVERWRITE_READY"}
 APPLYABLE_STATUSES = {"PROPOSED_READY", "OVERWRITE_READY", "NO_CHANGE"}
 SOURCE_LOOKUPS = {
@@ -58,6 +59,7 @@ def create_bulk_preview_session(
     created_by: str | None,
     ttl_seconds: int,
 ) -> dict[str, Any]:
+    _validate_preview_batch_size(planner_item_ids)
     normalized_fields = _normalize_fields(fields)
     mappings = _resolve_planner_items(conn, planner_item_ids=planner_item_ids)
 
@@ -525,14 +527,28 @@ def _sources_for_item(
     for field in fields:
         cfg = overrides.get(field) if isinstance(overrides.get(field), dict) else {"mode": "DEFAULT_ONLY"}
         mode = str(cfg.get("mode") or "DEFAULT_ONLY")
-        if mode not in {"DEFAULT_ONLY", "CHANNEL_GROUP_OVERRIDE_IF_MATCHES"}:
+        if mode not in {"DEFAULT_ONLY", "CHANNEL_GROUP_OVERRIDE_IF_MATCHES", "CHANNEL_GROUP_OVERRIDE_REQUIRED"}:
             raise MetadataBulkPreviewError(code="MBP_OVERRIDE_MODE_UNSUPPORTED", message=f"Unsupported override mode: {mode}")
         override_id = None
+        fallback_required_override_id = None
         if mode == "CHANNEL_GROUP_OVERRIDE_IF_MATCHES":
             for row in list(cfg.get("overrides") or []):
                 if str(row.get("channel_slug") or "") == channel_slug:
                     override_id = int(row.get("source_id"))
                     break
+        elif mode == "CHANNEL_GROUP_OVERRIDE_REQUIRED":
+            override_rows = list(cfg.get("overrides") or [])
+            for row in override_rows:
+                source_id = row.get("source_id")
+                if source_id is None:
+                    continue
+                if fallback_required_override_id is None:
+                    fallback_required_override_id = int(source_id)
+                if str(row.get("channel_slug") or "") == channel_slug:
+                    override_id = int(source_id)
+                    break
+            if override_id is None:
+                override_id = fallback_required_override_id
         if field == "title":
             result["title_template_id"] = override_id if override_id is not None else _source_id(defaults.get("title_template"))
         elif field == "description":
@@ -540,6 +556,14 @@ def _sources_for_item(
         elif field == "tags":
             result["video_tag_preset_id"] = override_id if override_id is not None else _source_id(defaults.get("video_tag_preset"))
     return result
+
+
+def _validate_preview_batch_size(planner_item_ids: list[int]) -> None:
+    if len(planner_item_ids) > MAX_PREVIEW_ITEMS:
+        raise MetadataBulkPreviewError(
+            code="MBP_SELECTED_ITEMS_LIMIT_EXCEEDED",
+            message=f"planner_item_ids must not exceed {MAX_PREVIEW_ITEMS} items",
+        )
 
 
 def _source_id(item: Any) -> int | None:
