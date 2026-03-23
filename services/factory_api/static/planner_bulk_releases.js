@@ -1,6 +1,9 @@
 (function () {
   const PREVIEW_COLS = 8;
-  const state = { page: 1, pageSize: 50, total: 0, items: [], selected: new Set(), previewId: null };
+  const state = {
+    page: 1, pageSize: 50, total: 0, items: [], selected: new Set(), previewId: null,
+    metadataBulk: { sessionId: null, previewItems: [], summary: null },
+  };
   const $ = (id) => document.getElementById(id);
   const noteEl = $('planner-note');
   function apiUrl(path) { return new URL(path, window.location.origin).toString(); }
@@ -11,6 +14,9 @@
     try { const body = JSON.parse(text); return body.error?.message || body.detail || text || ('HTTP ' + res.status); } catch (_) { return text || ('HTTP ' + res.status); }
   }
   function setNote(msg) { noteEl.textContent = msg || ''; }
+  function setMetadataBulkStaleBanner(isVisible) {
+    $('mbp-stale-banner').style.display = isVisible ? 'block' : 'none';
+  }
 
   function queryParams() {
     const p = new URLSearchParams();
@@ -179,6 +185,195 @@
     await loadList();
   }
 
+  function selectedPlannerItemIds() {
+    return Array.from(state.selected.values()).map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0);
+  }
+
+  function selectedPreviewFields(prefix) {
+    const out = [];
+    if ($(`${prefix}-title`).checked) out.push('title');
+    if ($(`${prefix}-description`).checked) out.push('description');
+    if ($(`${prefix}-tags`).checked) out.push('tags');
+    return out;
+  }
+
+  function parseOverridesJson() {
+    const raw = String($('mbp-overrides-json').value || '').trim();
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Override JSON must be an object.');
+      return parsed;
+    } catch (err) {
+      throw new Error(`Invalid override JSON: ${err.message}`);
+    }
+  }
+
+  function hasOverwrite(item) {
+    const fields = item.fields || {};
+    return ['title', 'description', 'tags'].some((k) => {
+      const f = fields[k] || {};
+      return f.status === 'OVERWRITE_READY' || f.overwrite_required === true;
+    });
+  }
+
+  function filterMetadataItems(items) {
+    const applyableOnly = $('mbp-filter-applyable-only').checked;
+    const overwriteOnly = $('mbp-filter-overwrite-only').checked;
+    return (items || []).filter((item) => {
+      const applyableOk = !applyableOnly || (item.mapping_status === 'RESOLVED_TO_RELEASE' && item.item_applyable === true);
+      const overwriteOk = !overwriteOnly || hasOverwrite(item);
+      return applyableOk && overwriteOk;
+    });
+  }
+
+  function mappingReason(item) {
+    const errors = item.item_errors || [];
+    if (errors.length && errors[0].message) return String(errors[0].message);
+    if (item.mapping_status === 'UNRESOLVED_NO_TARGET') return 'Unresolved target';
+    if (item.mapping_status === 'DUPLICATE_TARGET') return 'Duplicate target deduped';
+    if (item.mapping_status === 'INVALID_SELECTION') return 'Invalid selection';
+    return '-';
+  }
+
+  function mappingLabel(item) {
+    if (item.mapping_status === 'UNRESOLVED_NO_TARGET') return 'Unresolved target';
+    if (item.mapping_status === 'DUPLICATE_TARGET') return 'Duplicate target deduped';
+    if (item.mapping_status === 'INVALID_SELECTION') return 'Invalid selection';
+    return String(item.mapping_status || '-');
+  }
+
+  function sourceLabel(source) {
+    if (!source) return '-';
+    if (source.selection_mode === 'channel_default') return 'Channel default used';
+    if (source.selection_mode === 'temporary_override') return 'Temporary override active for this channel';
+    return String(source.selection_mode || '-');
+  }
+
+  function renderFieldSummary(item) {
+    const fields = item.fields || {};
+    return ['title', 'description', 'tags'].map((field) => {
+      const f = fields[field];
+      if (!f) return `${field}: -`;
+      const base = `${field}: ${f.status || '-'}`;
+      const overwrite = f.overwrite_required ? ' (overwrite confirmation required)' : '';
+      const source = `, ${sourceLabel(f.source)}`;
+      return base + overwrite + source;
+    }).join('\n');
+  }
+
+  function renderMetadataPreviewItems() {
+    const tbody = $('mbp-items-body');
+    const visibleItems = filterMetadataItems(state.metadataBulk.previewItems);
+    if (!visibleItems.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted">No preview items for current filters.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = visibleItems.map((item) => {
+      const plannerId = Number(item.planner_item_id);
+      const canSelect = item.mapping_status === 'RESOLVED_TO_RELEASE' && item.item_applyable === true;
+      const checked = canSelect && (item._selected !== false);
+      const statusLabel = mappingLabel(item);
+      const reason = mappingReason(item);
+      return `<tr>
+        <td><input type="checkbox" data-mbp-select-item="${esc(plannerId)}" ${checked ? 'checked' : ''} ${canSelect ? '' : 'disabled'}></td>
+        <td>${esc(plannerId)}</td>
+        <td>${esc(statusLabel)}</td>
+        <td>${esc(item.release_id ?? '-')}</td>
+        <td>${esc(item.duplicate_of_release_id ?? '-')}</td>
+        <td>${esc(reason)}</td>
+        <td><pre style="white-space:pre-wrap; margin:0;">${esc(renderFieldSummary(item))}</pre></td>
+      </tr>`;
+    }).join('');
+    tbody.querySelectorAll('input[data-mbp-select-item]').forEach((el) => {
+      el.addEventListener('change', () => {
+        const plannerId = Number(el.getAttribute('data-mbp-select-item'));
+        const target = state.metadataBulk.previewItems.find((item) => Number(item.planner_item_id) === plannerId);
+        if (target) target._selected = el.checked;
+      });
+    });
+  }
+
+  function renderMetadataSummary() {
+    const summary = state.metadataBulk.summary;
+    $('mbp-summary').textContent = summary ? JSON.stringify(summary, null, 2) : 'No preview yet.';
+    $('mbp-session-label').textContent = state.metadataBulk.sessionId ? `session_id=${state.metadataBulk.sessionId}` : '';
+  }
+
+  async function createMetadataPreview() {
+    const planner_item_ids = selectedPlannerItemIds();
+    if (!planner_item_ids.length) throw new Error('Select planner items on the main table first.');
+    const fields = selectedPreviewFields('mbp-field');
+    if (!fields.length) throw new Error('Select at least one preview field.');
+    const overrides = parseOverridesJson();
+    const res = await fetch(apiUrl('/v1/planner/metadata-bulk/preview'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planner_item_ids, fields, overrides }),
+    });
+    if (!res.ok) throw new Error(await parseError(res));
+    const out = await res.json();
+    state.metadataBulk.sessionId = String(out.session_id || '');
+    state.metadataBulk.summary = out.summary || null;
+    state.metadataBulk.previewItems = (out.items || []).map((item) => ({ ...item, _selected: item.item_applyable === true }));
+    setMetadataBulkStaleBanner(false);
+    renderMetadataSummary();
+    renderMetadataPreviewItems();
+  }
+
+  function selectedItemsForApply() {
+    return state.metadataBulk.previewItems
+      .filter((item) => item._selected === true)
+      .map((item) => Number(item.planner_item_id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+  }
+
+  function buildOverwriteConfirmations(selectedFields) {
+    const out = {};
+    state.metadataBulk.previewItems.forEach((item) => {
+      if (item._selected !== true) return;
+      const fields = item.fields || {};
+      const needed = selectedFields.filter((field) => {
+        const f = fields[field] || {};
+        return f.status === 'OVERWRITE_READY' || f.overwrite_required === true;
+      });
+      if (needed.length) out[String(item.planner_item_id)] = needed;
+    });
+    return out;
+  }
+
+  function looksStaleOrExpired(body, messageText) {
+    const text = String(messageText || '').toUpperCase();
+    const code = String(body?.error?.code || '').toUpperCase();
+    return ['MBP_SESSION_EXPIRED', 'MBP_SESSION_INVALIDATED', 'MBP_PREVIEW_STALE'].includes(code)
+      || text.includes('STALE')
+      || text.includes('EXPIRED')
+      || text.includes('INVALIDATED');
+  }
+
+  async function applyMetadataPreview() {
+    if (!state.metadataBulk.sessionId) throw new Error('Create a bulk preview first.');
+    const selected_items = selectedItemsForApply();
+    if (!selected_items.length) throw new Error('Select at least one applyable preview item.');
+    const selected_fields = selectedPreviewFields('mbp-apply-field');
+    if (!selected_fields.length) throw new Error('Select at least one apply field.');
+    const overwrite_confirmed = buildOverwriteConfirmations(selected_fields);
+    const res = await fetch(apiUrl(`/v1/planner/metadata-bulk/sessions/${state.metadataBulk.sessionId}/apply`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selected_items, selected_fields, overwrite_confirmed }),
+    });
+    const text = await res.text();
+    let body = {};
+    try { body = JSON.parse(text || '{}'); } catch (_) { body = {}; }
+    if (!res.ok || body.error) {
+      const message = body.error?.message || body.detail || text || `HTTP ${res.status}`;
+      if (looksStaleOrExpired(body, message)) setMetadataBulkStaleBanner(true);
+      throw new Error(message);
+    }
+    $('mbp-apply-result').textContent = JSON.stringify(body, null, 2);
+  }
+
   $('reload-btn').addEventListener('click', async () => { state.page = 1; try { await loadList(); } catch (e) { setNote(e.message); } });
   $('prev-page').addEventListener('click', async () => { if (state.page > 1) { state.page -= 1; try { await loadList(); } catch (e) { setNote(e.message); } } });
   $('next-page').addEventListener('click', async () => { if (state.page * state.pageSize < state.total) { state.page += 1; try { await loadList(); } catch (e) { setNote(e.message); } } });
@@ -208,6 +403,47 @@
   $('import-confirm-strict').addEventListener('click', async () => { try { await confirmImport('strict'); } catch (e) { setNote(e.message); } });
   $('import-confirm-replace').addEventListener('click', async () => { try { await confirmImport('replace'); } catch (e) { setNote(e.message); } });
 
+  $('metadata-bulk-open').addEventListener('click', () => {
+    $('metadata-bulk-modal').showModal();
+    setMetadataBulkStaleBanner(false);
+  });
+  $('mbp-close-btn').addEventListener('click', () => $('metadata-bulk-modal').close());
+  $('mbp-preview-btn').addEventListener('click', async () => {
+    try {
+      await createMetadataPreview();
+      setNote('Metadata bulk preview created.');
+    } catch (e) {
+      setNote(e.message);
+    }
+  });
+  $('mbp-create-new-preview-btn').addEventListener('click', async () => {
+    try {
+      await createMetadataPreview();
+      setNote('Created fresh metadata bulk preview session.');
+    } catch (e) {
+      setNote(e.message);
+    }
+  });
+  $('mbp-apply-selected-btn').addEventListener('click', async () => {
+    try {
+      await applyMetadataPreview();
+      setNote('Metadata bulk apply completed.');
+    } catch (e) {
+      setNote(e.message);
+    }
+  });
+  $('mbp-filter-applyable-only').addEventListener('change', renderMetadataPreviewItems);
+  $('mbp-filter-overwrite-only').addEventListener('change', renderMetadataPreviewItems);
+  $('mbp-select-all-items').addEventListener('change', (e) => {
+    const checked = e.target.checked;
+    state.metadataBulk.previewItems.forEach((item) => {
+      const canSelect = item.mapping_status === 'RESOLVED_TO_RELEASE' && item.item_applyable === true;
+      item._selected = canSelect && checked;
+    });
+    renderMetadataPreviewItems();
+  });
+
   $('import-preview-body').innerHTML = previewPlaceholder('No preview yet.');
+  setMetadataBulkStaleBanner(false);
   loadList().catch((e) => setNote(e.message));
 })();
