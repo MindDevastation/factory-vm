@@ -6,6 +6,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from services.common import db as dbm
+from services.metadata import preview_apply_service
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
@@ -28,6 +29,55 @@ class TestPlannerMetadataBulkPreviewApi(unittest.TestCase):
                 )
             conn.commit()
             return pid
+        finally:
+            conn.close()
+
+    def _force_title_prepared(self, env, *, session_id: str) -> None:
+        conn = dbm.connect(env)
+        try:
+            row = conn.execute("SELECT item_states_json FROM metadata_bulk_preview_sessions WHERE id = ?", (session_id,)).fetchone()
+            items = dbm.json_loads(str(row["item_states_json"]))
+            for item in items:
+                if item.get("mapping_status") != "RESOLVED_TO_RELEASE":
+                    continue
+                release = preview_apply_service._load_release(conn, release_id=int(item["release_id"]))
+                item["fields"]["title"] = {
+                    "status": "OVERWRITE_READY",
+                    "current_value": str(release.get("title") or ""),
+                    "proposed_value": f"Prepared {item['release_id']}",
+                    "changed": True,
+                    "overwrite_required": True,
+                    "source": None,
+                    "warnings": [],
+                    "errors": [],
+                    "dependency_fingerprint": preview_apply_service._build_field_dependency_fingerprint(
+                        field="title",
+                        release_row=release,
+                        source={},
+                        generator_fingerprint="seed",
+                    ),
+                }
+                item["fields"]["description"] = {
+                    "status": "NO_CHANGE",
+                    "current_value": str(release.get("description") or ""),
+                    "proposed_value": str(release.get("description") or ""),
+                    "changed": False,
+                    "overwrite_required": False,
+                    "source": None,
+                    "warnings": [],
+                    "errors": [],
+                    "dependency_fingerprint": preview_apply_service._build_field_dependency_fingerprint(
+                        field="description",
+                        release_row=release,
+                        source={},
+                        generator_fingerprint="seed",
+                    ),
+                }
+            conn.execute(
+                "UPDATE metadata_bulk_preview_sessions SET item_states_json = ? WHERE id = ?",
+                (dbm.json_dumps(items), session_id),
+            )
+            conn.commit()
         finally:
             conn.close()
 
@@ -124,6 +174,140 @@ class TestPlannerMetadataBulkPreviewApi(unittest.TestCase):
             )
             self.assertEqual(invalid_overrides.status_code, 400)
             self.assertEqual(invalid_overrides.json()["error"]["code"], "PLR_INVALID_INPUT")
+
+    def test_apply_selected_subset_and_partial_success(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                r1 = int(
+                    conn.execute(
+                        "INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at) VALUES(?, 'r1', 'd1', '[\"a\"]', '2026-01-01T00:00:00Z', NULL, 'seed-meta-a', 0)",
+                        (channel_id,),
+                    ).lastrowid
+                )
+                r2 = int(
+                    conn.execute(
+                        "INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at) VALUES(?, 'r2', 'd2', '[\"b\"]', '2026-01-02T00:00:00Z', NULL, 'seed-meta-b', 0)",
+                        (channel_id,),
+                    ).lastrowid
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            p1 = self._insert_planner_item(env, publish_at="2026-01-01T00:00:00Z", link_release_id=r1)
+            p2 = self._insert_planner_item(env, publish_at="2026-01-02T00:00:00Z", link_release_id=r2)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            preview = client.post(
+                "/v1/planner/metadata-bulk/preview",
+                headers=auth,
+                json={"planner_item_ids": [p1, p2], "fields": ["title", "description"], "overrides": {}},
+            )
+            self.assertEqual(preview.status_code, 200)
+            sid = str(preview.json()["session_id"])
+            self._force_title_prepared(env, session_id=sid)
+            p1_title = f"Prepared {r1}"
+
+            # Drift p2 so apply is stale while p1 remains fresh.
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE releases SET title = 'drifted p2' WHERE id = ?", (r2,))
+                conn.commit()
+            finally:
+                conn.close()
+
+            apply_resp = client.post(
+                f"/v1/planner/metadata-bulk/sessions/{sid}/apply",
+                headers=auth,
+                json={
+                    "selected_items": [p1, p2],
+                    "selected_fields": ["title"],
+                    "overwrite_confirmed": {str(p1): ["title"], str(p2): ["title"]},
+                },
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+            result = apply_resp.json()
+            self.assertEqual(result["result"], "partial_success")
+            item1 = next(item for item in result["items"] if item["planner_item_id"] == p1)
+            item2 = next(item for item in result["items"] if item["planner_item_id"] == p2)
+            self.assertEqual(item1["result"], "success")
+            self.assertEqual(item2["result"], "failure")
+
+            conn = dbm.connect(env)
+            try:
+                self.assertEqual(str(conn.execute("SELECT title FROM releases WHERE id = ?", (r1,)).fetchone()["title"]), p1_title)
+                self.assertEqual(str(conn.execute("SELECT title FROM releases WHERE id = ?", (r2,)).fetchone()["title"]), "drifted p2")
+            finally:
+                conn.close()
+
+    def test_apply_no_change_and_unselected_fields_unchanged_and_defaults_unchanged(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                rel_id = int(
+                    conn.execute(
+                        "INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at) VALUES(?, 'same-title', 'd1', '[\"a\"]', '2026-01-01T00:00:00Z', NULL, 'seed-meta-c', 0)",
+                        (channel_id,),
+                    ).lastrowid
+                )
+                defaults_before = dict(
+                    conn.execute(
+                        "SELECT default_title_template_id, default_description_template_id, default_video_tag_preset_id FROM channel_metadata_defaults WHERE channel_slug = 'darkwood-reverie'"
+                    ).fetchone() or {}
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            p1 = self._insert_planner_item(env, publish_at="2026-01-01T00:00:00Z", link_release_id=rel_id)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+            preview = client.post(
+                "/v1/planner/metadata-bulk/preview",
+                headers=auth,
+                json={"planner_item_ids": [p1], "fields": ["title", "description"], "overrides": {}},
+            )
+            self.assertEqual(preview.status_code, 200)
+            sid = str(preview.json()["session_id"])
+            self._force_title_prepared(env, session_id=sid)
+            apply_resp = client.post(
+                f"/v1/planner/metadata-bulk/sessions/{sid}/apply",
+                headers=auth,
+                json={
+                    "selected_items": [p1],
+                    "selected_fields": ["description"],
+                    "overwrite_confirmed": {},
+                },
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+            payload = apply_resp.json()
+            item = payload["items"][0]
+            self.assertEqual(item["result"], "success")
+            self.assertIn("description", item["unchanged_fields"])
+            self.assertNotIn("title", item["applied_fields"])
+            self.assertNotIn("title", item["unchanged_fields"])
+
+            conn = dbm.connect(env)
+            try:
+                row = dict(conn.execute("SELECT title, description FROM releases WHERE id = ?", (rel_id,)).fetchone())
+                defaults_after = dict(
+                    conn.execute(
+                        "SELECT default_title_template_id, default_description_template_id, default_video_tag_preset_id FROM channel_metadata_defaults WHERE channel_slug = 'darkwood-reverie'"
+                    ).fetchone() or {}
+                )
+                self.assertEqual(row["title"], "same-title")
+                self.assertEqual(defaults_after, defaults_before)
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":
