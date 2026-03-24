@@ -571,7 +571,7 @@ class TestPlannerApiListPatch(unittest.TestCase):
             self.assertEqual(body["readiness_summary"]["attention_count"], 0)
             self.assertEqual(body["readiness_summary"]["unavailable"], 0)
 
-    def test_sort_by_readiness_severity_and_combined_filter(self) -> None:
+    def test_readiness_problem_filters_and_status_precedence(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
             seed_minimal_db(env)
@@ -580,18 +580,52 @@ class TestPlannerApiListPatch(unittest.TestCase):
             importlib.reload(mod)
             client = TestClient(mod.app)
             auth = basic_auth_header(env.basic_user, env.basic_pass)
-            resp = client.get("/v1/planner/releases?sort_by=readiness_severity&page=1&page_size=5", headers=auth)
-            self.assertEqual(resp.status_code, 200)
-            self.assertEqual([item["title"] for item in resp.json()["items"]], ["Blocked", "NotReady", "Ready"])
-            combined = client.get(
-                "/v1/planner/releases?readiness_status=NOT_READY&sort_by=readiness_severity&page=1&page_size=1&include_readiness_summary=true",
+
+            blocked = client.get("/v1/planner/releases?readiness_problem=blocked_only&page=1&page_size=5", headers=auth)
+            self.assertEqual(blocked.status_code, 200)
+            self.assertEqual([item["title"] for item in blocked.json()["items"]], ["Blocked"])
+
+            attention = client.get("/v1/planner/releases?readiness_problem=attention_required&page=1&page_size=5", headers=auth)
+            self.assertEqual(attention.status_code, 200)
+            self.assertEqual(attention.json()["pagination"]["total"], 2)
+            self.assertEqual({item["title"] for item in attention.json()["items"]}, {"Blocked", "NotReady"})
+
+            ready_only = client.get("/v1/planner/releases?readiness_problem=ready_only&page=1&page_size=5", headers=auth)
+            self.assertEqual(ready_only.status_code, 200)
+            self.assertEqual([item["title"] for item in ready_only.json()["items"]], ["Ready"])
+
+            precedence = client.get(
+                "/v1/planner/releases?readiness_status=BLOCKED&readiness_problem=ready_only&page=1&page_size=5",
                 headers=auth,
             )
-            self.assertEqual(combined.status_code, 200)
-            self.assertEqual(combined.json()["pagination"]["total"], 1)
-            self.assertEqual(combined.json()["items"][0]["readiness"]["aggregate_status"], "NOT_READY")
+            self.assertEqual(precedence.status_code, 200)
+            self.assertEqual([item["title"] for item in precedence.json()["items"]], ["Blocked"])
 
-    def test_sort_by_readiness_severity_is_read_only(self) -> None:
+    def test_sort_by_readiness_priority_attention_first_and_ready_first(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_readiness_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get(
+                "/v1/planner/releases?sort_by=readiness_priority&readiness_priority=attention_first&page=1&page_size=5",
+                headers=auth,
+            )
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual([item["title"] for item in resp.json()["items"]], ["Blocked", "NotReady", "Ready"])
+
+            ready_first = client.get(
+                "/v1/planner/releases?sort_by=readiness_priority&readiness_priority=ready_first&page=1&page_size=5",
+                headers=auth,
+            )
+            self.assertEqual(ready_first.status_code, 200)
+            self.assertEqual([item["title"] for item in ready_first.json()["items"]], ["Ready", "NotReady", "Blocked"])
+
+    def test_sort_by_readiness_priority_is_read_only(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
             seed_minimal_db(env)
@@ -603,13 +637,38 @@ class TestPlannerApiListPatch(unittest.TestCase):
 
             before = self._snapshot(env)
             resp = client.get(
-                "/v1/planner/releases?sort_by=readiness_severity&include_readiness_summary=true&page=1&page_size=5",
+                "/v1/planner/releases?sort_by=readiness_priority&readiness_priority=attention_first&include_readiness_summary=true&page=1&page_size=5",
                 headers=auth,
             )
             after = self._snapshot(env)
 
             self.assertEqual(resp.status_code, 200)
             self.assertEqual(before, after)
+
+    def test_invalid_readiness_problem_and_sort_return_expected_errors(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_readiness_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            invalid_problem = client.get("/v1/planner/releases?readiness_problem=nope&page=1&page_size=5", headers=auth)
+            self.assertEqual(invalid_problem.status_code, 400)
+            self.assertEqual(invalid_problem.json()["error"]["code"], "PRS_INVALID_READINESS_FILTER")
+
+            missing_priority = client.get("/v1/planner/releases?sort_by=readiness_priority&page=1&page_size=5", headers=auth)
+            self.assertEqual(missing_priority.status_code, 400)
+            self.assertEqual(missing_priority.json()["error"]["code"], "PRS_INVALID_READINESS_SORT")
+
+            invalid_priority = client.get(
+                "/v1/planner/releases?sort_by=readiness_priority&readiness_priority=nope&page=1&page_size=5",
+                headers=auth,
+            )
+            self.assertEqual(invalid_priority.status_code, 400)
+            self.assertEqual(invalid_priority.json()["error"]["code"], "PRS_INVALID_READINESS_SORT")
 
     def test_readiness_status_not_ready_respects_non_readiness_sort(self) -> None:
         with temp_env() as (_, _):
