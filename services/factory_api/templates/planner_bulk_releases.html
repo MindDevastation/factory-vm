@@ -26,6 +26,14 @@
   <label>Channel <input id="filter-channel" placeholder="channel slug"></label>
   <label>Content type <input id="filter-content-type" placeholder="content type"></label>
   <label>Search <input id="filter-q" placeholder="title/notes"></label>
+  <label>Readiness
+    <select id="filter-readiness-status">
+      <option value="">all</option>
+      <option value="NOT_READY">NOT_READY</option>
+      <option value="BLOCKED">BLOCKED</option>
+      <option value="READY_FOR_MATERIALIZATION">READY_FOR_MATERIALIZATION</option>
+    </select>
+  </label>
   <label>Sort by
     <select id="sort-by">
       <option value="created_at">created_at</option>
@@ -51,10 +59,10 @@
   <thead>
     <tr>
       <th><input id="select-all" type="checkbox"></th>
-      <th>ID</th><th>Status</th><th>Channel</th><th>Content type</th><th>Title</th><th>Publish at</th><th>Notes</th><th>Updated</th>
+      <th>ID</th><th>Status</th><th>Readiness</th><th>Channel</th><th>Content type</th><th>Title</th><th>Publish at</th><th>Notes</th><th>Updated</th>
     </tr>
   </thead>
-  <tbody id="planner-tbody"><tr><td colspan="9" class="muted">Loading...</td></tr></tbody>
+  <tbody id="planner-tbody"><tr><td colspan="10" class="muted">Loading...</td></tr></tbody>
 </table>
 <p>
   <button type="button" id="prev-page">Prev</button>
@@ -168,6 +176,28 @@
 
     <menu>
       <button type="button" id="mbp-close-btn">Close</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="readiness-dialog" style="min-width:min(980px, 95vw);">
+  <form method="dialog">
+    <h3>Planned Release Readiness</h3>
+    <p class="muted" id="readiness-dialog-release-label"></p>
+    <p class="muted">Readiness is derived and read-only in this view; opening this dialog does not modify release data.</p>
+    <fieldset>
+      <legend>Aggregate</legend>
+      <p><strong>Status:</strong> <span id="readiness-dialog-aggregate">-</span></p>
+      <p><strong>Primary reason:</strong> <span id="readiness-dialog-primary-reason">-</span></p>
+      <p><strong>Primary remediation:</strong> <span id="readiness-dialog-primary-remediation">-</span></p>
+      <label><input type="checkbox" id="readiness-actionable-only"> actionable_only (hide PASS checks)</label>
+    </fieldset>
+    <fieldset style="margin-top:10px;">
+      <legend>Domains</legend>
+      <div id="readiness-domains-body" class="muted">No readiness loaded.</div>
+    </fieldset>
+    <menu>
+      <button type="button" id="readiness-dialog-close">Close</button>
     </menu>
   </form>
 </dialog>
