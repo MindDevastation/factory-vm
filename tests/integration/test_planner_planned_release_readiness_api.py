@@ -146,6 +146,7 @@ class TestPlannerPlannedReleaseReadinessApi(unittest.TestCase):
             body = resp.json()
             self.assertEqual(body["aggregate_status"], "READY_FOR_MATERIALIZATION")
             self.assertIn(body["aggregate_status"], {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"})
+            self.assertTrue(str(body.get("computed_at") or "").endswith("Z"))
             self.assertEqual(set(body["domains"].keys()), {"planning_identity", "scheduling", "metadata", "playlist", "visual_assets"})
             self.assertIsNone(body["primary_reason"])
             self.assertIsNone(body["primary_remediation_hint"])
@@ -171,6 +172,29 @@ class TestPlannerPlannedReleaseReadinessApi(unittest.TestCase):
             after = self._snapshot(env)
             self.assertEqual(before, after)
 
+    def test_opening_readiness_detail_endpoint_is_read_only_no_mutation(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            planned_release_id = self._insert_planned_release(env)
+            self._seed_full_ready_state(env, planned_release_id)
+            before = self._snapshot(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get(f"/v1/planner/planned-releases/{planned_release_id}/readiness", headers=headers)
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["planned_release_id"], planned_release_id)
+            self.assertIn(body["aggregate_status"], {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"})
+            self.assertTrue(str(body.get("computed_at") or "").endswith("Z"))
+
+            after = self._snapshot(env)
+            self.assertEqual(before, after)
+
     def test_get_readiness_link_absent_fallback_and_not_found(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
@@ -191,7 +215,7 @@ class TestPlannerPlannedReleaseReadinessApi(unittest.TestCase):
 
             not_found = client.get("/v1/planner/planned-releases/999999/readiness", headers=headers)
             self.assertEqual(not_found.status_code, 404)
-            self.assertEqual(not_found.json()["error"]["code"], "PRR_NOT_FOUND")
+            self.assertEqual(not_found.json()["error"]["code"], "PRS_PLANNED_RELEASE_NOT_FOUND")
 
     def test_evaluate_many_batch_matches_single_and_no_side_effects(self) -> None:
         with temp_env() as (_, _):

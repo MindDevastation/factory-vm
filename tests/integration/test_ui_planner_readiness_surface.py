@@ -41,6 +41,7 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
     def test_details_dialog_contains_all_domains_reasons_and_remediation(self) -> None:
         html, js = self._load_ui_assets()
         self.assertIn('id="readiness-dialog"', html)
+        self.assertIn('id="readiness-dialog-computed-at"', html)
         self.assertIn('id="readiness-dialog-primary-reason"', html)
         self.assertIn('id="readiness-dialog-primary-remediation"', html)
         self.assertIn("READINESS_DOMAINS = ['planning_identity', 'scheduling', 'metadata', 'playlist', 'visual_assets']", js)
@@ -52,6 +53,11 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn('id="readiness-actionable-only"', html)
         self.assertIn("function checkIsActionable(check)", js)
         self.assertIn("return String(check?.status || '') !== 'PASS';", js)
+        self.assertIn("function domainStatusRank(status)", js)
+        self.assertIn("function orderedDomains(readiness)", js)
+        self.assertIn("if (status === 'BLOCKED') return 0;", js)
+        self.assertIn("if (status === 'NOT_READY') return 1;", js)
+        self.assertIn("return 2;", js)
         self.assertIn("const visibleChecks = actionableOnly ? checks.filter(checkIsActionable) : checks;", js)
 
     def test_compact_reason_preview_affordance_exists(self) -> None:

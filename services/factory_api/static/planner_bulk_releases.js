@@ -175,11 +175,30 @@
     return String(check?.status || '') !== 'PASS';
   }
 
-  function renderReadinessDomains(readiness, actionableOnly) {
+  function domainStatusRank(status) {
+    if (status === 'BLOCKED') return 0;
+    if (status === 'NOT_READY') return 1;
+    return 2;
+  }
+
+  function orderedDomains(readiness) {
     const domains = readiness?.domains || {};
-    return READINESS_DOMAINS.map((domainName) => {
-      const domain = domains[domainName] || {};
-      const status = String(domain.status || 'NOT_READY');
+    return READINESS_DOMAINS
+      .map((domainName) => {
+        const domain = domains[domainName] || {};
+        const status = String(domain.status || 'NOT_READY');
+        return { domainName, domain, status };
+      })
+      .sort((a, b) => {
+        const rankDelta = domainStatusRank(a.status) - domainStatusRank(b.status);
+        if (rankDelta !== 0) return rankDelta;
+        return READINESS_DOMAINS.indexOf(a.domainName) - READINESS_DOMAINS.indexOf(b.domainName);
+      });
+  }
+
+  function renderReadinessDomains(readiness, actionableOnly) {
+    const domainBlocks = orderedDomains(readiness);
+    return domainBlocks.map(({ domainName, domain, status }) => {
       const checks = Array.isArray(domain.checks) ? domain.checks : [];
       const visibleChecks = actionableOnly ? checks.filter(checkIsActionable) : checks;
       const checksMarkup = visibleChecks.length
@@ -202,9 +221,11 @@
     const aggregate = String(readiness.aggregate_status || '-');
     const primaryReason = readiness.primary_reason?.message || '-';
     const primaryRemediation = readiness.primary_remediation_hint || '-';
+    const computedAt = String(readiness.computed_at || '-');
     const actionableOnly = $('readiness-actionable-only').checked;
 
     $('readiness-dialog-aggregate').textContent = aggregate;
+    $('readiness-dialog-computed-at').textContent = computedAt;
     $('readiness-dialog-primary-reason').textContent = String(primaryReason || '-');
     $('readiness-dialog-primary-remediation').textContent = String(primaryRemediation || '-');
     $('readiness-domains-body').innerHTML = renderReadinessDomains(readiness, actionableOnly);
