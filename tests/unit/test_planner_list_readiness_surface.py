@@ -61,6 +61,19 @@ class TestPlannerListReadinessSurfaceHelpers(unittest.TestCase):
         self.assertEqual(summary["attention_count"], 2)
         self.assertEqual(summary["computed_at"], "2026-03-24T12:32:00Z")
 
+
+    def test_build_readiness_summary_computed_at_none_when_all_rows_unavailable(self) -> None:
+        scope_ids = [10, 11]
+        readiness_map = {}
+        summary = planner._build_readiness_summary(scope_ids, readiness_map, unavailable_ids={10, 11})
+        self.assertEqual(summary["scope_total"], 2)
+        self.assertEqual(summary["ready_for_materialization"], 0)
+        self.assertEqual(summary["not_ready"], 0)
+        self.assertEqual(summary["blocked"], 0)
+        self.assertEqual(summary["unavailable"], 2)
+        self.assertEqual(summary["attention_count"], 0)
+        self.assertIsNone(summary["computed_at"])
+
     def test_unavailable_payload_shape(self) -> None:
         payload = planner._readiness_unavailable_payload()
         self.assertEqual(payload["aggregate_status"], None)

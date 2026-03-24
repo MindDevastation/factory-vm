@@ -47,14 +47,42 @@
     $('readiness-summary-not-ready').textContent = String(s.not_ready ?? 0);
     $('readiness-summary-blocked').textContent = String(s.blocked ?? 0);
     $('readiness-summary-attention').textContent = String(s.attention_count ?? 0);
-    $('readiness-summary-computed-at').textContent = String(s.computed_at || '-');
+    $('readiness-summary-computed-at').textContent = String(s.computed_at || 'Not available');
+  }
+
+  function selectedReadinessFilterValue() {
+    return String($('filter-readiness-status').value || '').trim();
+  }
+
+  function selectedReadinessProblemValue() {
+    return String($('filter-readiness-problem').value || '').trim();
+  }
+
+  function emptyPlannerMessage() {
+    const readinessStatus = selectedReadinessFilterValue();
+    const readinessProblem = selectedReadinessProblemValue();
+    if (readinessProblem === 'blocked_only') {
+      return 'No BLOCKED items in current planner scope.';
+    }
+    if (readinessProblem === 'ready_only') {
+      return 'No READY_FOR_MATERIALIZATION items in current planner scope.';
+    }
+    if (readinessStatus || readinessProblem) {
+      return 'No items match the selected readiness filter.';
+    }
+    return 'No planned releases in current planner scope.';
   }
 
   function readinessUiSummary(item) {
     const readiness = item.readiness || {};
-    const aggregate = String(readiness.aggregate_status || 'NOT_READY');
-    const reason = String(readiness.primary_reason || '').trim();
-    const remediation = String(readiness.primary_remediation_hint || '').trim();
+    const hasUnavailableError = readiness.aggregate_status == null && readiness.error?.code === 'PRS_READINESS_UNAVAILABLE';
+    const aggregate = hasUnavailableError ? 'UNAVAILABLE' : String(readiness.aggregate_status || 'NOT_READY');
+    const reason = hasUnavailableError
+      ? String(readiness.error?.message || 'Readiness could not be computed for this item.').trim()
+      : String(readiness.primary_reason || '').trim();
+    const remediation = hasUnavailableError
+      ? 'Use Refresh readiness to retry this view.'
+      : String(readiness.primary_remediation_hint || '').trim();
     const titleParts = [`${aggregate}`];
     if (reason) titleParts.push(`Reason: ${reason}`);
     if (remediation) titleParts.push(`Next: ${remediation}`);
@@ -72,13 +100,19 @@
       ? 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca;'
       : (summary.aggregate === 'READY_FOR_MATERIALIZATION'
         ? 'background:#dcfce7;color:#166534;border:1px solid #bbf7d0;'
-        : 'background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;');
+        : (summary.aggregate === 'UNAVAILABLE'
+          ? 'background:#f3f4f6;color:#374151;border:1px solid #d1d5db;'
+          : 'background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;'));
     const preview = summary.reason || (summary.aggregate === 'READY_FOR_MATERIALIZATION'
       ? 'All mandatory domains are ready for materialization.'
-      : 'Details available.');
+      : (summary.aggregate === 'UNAVAILABLE'
+        ? 'Readiness could not be computed for this item.'
+        : 'Details available.'));
     const previewHint = summary.remediation || (summary.aggregate === 'READY_FOR_MATERIALIZATION'
       ? 'No remediation required.'
-      : 'Open details for domain-level reasons and hints.');
+      : (summary.aggregate === 'UNAVAILABLE'
+        ? 'Use Refresh readiness to retry this view.'
+        : 'Open details for domain-level reasons and hints.'));
     const compactPreview = `${preview} · ${previewHint}`;
     return `<button type="button" data-readiness-open="${item.id}" title="${esc(summary.title)}" style="cursor:pointer; padding:2px 6px; border-radius:12px; ${cls}">
       ${esc(summary.aggregate)}
@@ -99,7 +133,7 @@
   function renderRows() {
     const tbody = $('planner-tbody');
     if (!state.items.length) {
-      tbody.innerHTML = '<tr><td colspan="10" class="muted">No releases.</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="10" class="muted">${esc(emptyPlannerMessage())}</td></tr>`;
       return;
     }
     tbody.innerHTML = state.items.map((item) => `<tr data-row-id="${item.id}">
@@ -236,7 +270,7 @@
     const aggregate = String(readiness.aggregate_status || '-');
     const primaryReason = readiness.primary_reason?.message || '-';
     const primaryRemediation = readiness.primary_remediation_hint || '-';
-    const computedAt = String(readiness.computed_at || '-');
+    const computedAt = String(readiness.computed_at || 'Not available');
     const actionableOnly = $('readiness-actionable-only').checked;
 
     $('readiness-dialog-aggregate').textContent = aggregate;

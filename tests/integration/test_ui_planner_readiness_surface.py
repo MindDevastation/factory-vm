@@ -84,6 +84,23 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn("title=\"${esc(compactPreview)}\"", js)
         self.assertIn("title=\"${esc(summary.title)}\"", js)
 
+
+    def test_unavailable_row_and_empty_state_copy_hooks_exist(self) -> None:
+        _, js = self._load_ui_assets()
+        self.assertIn("PRS_READINESS_UNAVAILABLE", js)
+        self.assertIn("const aggregate = hasUnavailableError ? 'UNAVAILABLE'", js)
+        self.assertIn("function emptyPlannerMessage()", js)
+        self.assertIn("No BLOCKED items in current planner scope.", js)
+        self.assertIn("No READY_FOR_MATERIALIZATION items in current planner scope.", js)
+        self.assertIn("No items match the selected readiness filter.", js)
+        self.assertIn("No planned releases in current planner scope.", js)
+
+    def test_freshness_copy_is_explicit_when_timestamp_missing(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn('id="readiness-summary-computed-at"', html)
+        self.assertIn('id="readiness-dialog-computed-at"', html)
+        self.assertIn("Not available", js)
+
     def test_readiness_ui_actions_use_get_endpoints_only(self) -> None:
         _, js = self._load_ui_assets()
         self.assertIn("include_readiness_summary", js)
