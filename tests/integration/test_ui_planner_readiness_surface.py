@@ -53,9 +53,11 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn('id="readiness-actionable-only"', html)
         self.assertIn("function checkIsActionable(check)", js)
         self.assertIn("return String(check?.status || '') !== 'PASS';", js)
+        self.assertIn("function domainStatusRank(status)", js)
         self.assertIn("function orderedDomains(readiness)", js)
         self.assertIn("if (status === 'BLOCKED') return 0;", js)
         self.assertIn("if (status === 'NOT_READY') return 1;", js)
+        self.assertIn("return 2;", js)
         self.assertIn("const visibleChecks = actionableOnly ? checks.filter(checkIsActionable) : checks;", js)
 
     def test_compact_reason_preview_affordance_exists(self) -> None:
