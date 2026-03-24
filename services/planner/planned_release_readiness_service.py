@@ -429,6 +429,16 @@ class PlannedReleaseReadinessService:
                 hint_fail="Fix planned_releases.publish_at to a parseable ISO8601 datetime value.",
             )
         )
+        checks.append(
+            self._make_check(
+                code="PRR_SCHEDULING_CONTRADICTION",
+                domain="scheduling",
+                passed=True,
+                severity="BLOCKED",
+                message_fail="Planned release scheduling fields are contradictory.",
+                hint_fail="Fix contradictory scheduling fields so canonical planning datetime is consistent.",
+            )
+        )
 
         return {"status": self._domain_status(checks), "checks": checks}
 

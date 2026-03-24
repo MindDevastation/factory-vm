@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
+import json
 import unittest
 
 from fastapi.testclient import TestClient
@@ -11,6 +13,20 @@ from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
 class TestPlannerApiListPatch(unittest.TestCase):
+    _SNAPSHOT_TABLES = [
+        "planned_releases",
+        "planner_release_links",
+        "releases",
+        "jobs",
+        "ui_job_drafts",
+        "playlist_history",
+        "playlist_history_items",
+        "channel_metadata_defaults",
+        "title_templates",
+        "description_templates",
+        "video_tag_presets",
+    ]
+
     def _insert_release(
         self,
         env: Env,
@@ -144,6 +160,18 @@ class TestPlannerApiListPatch(unittest.TestCase):
             row = conn.execute("SELECT channel_slug FROM planned_releases WHERE id = ?", (release_id,)).fetchone()
             assert row is not None
             return str(row["channel_slug"])
+        finally:
+            conn.close()
+
+    def _snapshot(self, env: Env) -> dict[str, str]:
+        conn = dbm.connect(env)
+        try:
+            out: dict[str, str] = {}
+            for table in self._SNAPSHOT_TABLES:
+                rows = conn.execute(f"SELECT * FROM {table} ORDER BY rowid").fetchall()
+                payload = json.dumps(rows, sort_keys=True, default=str)
+                out[table] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+            return out
         finally:
             conn.close()
 
@@ -429,6 +457,26 @@ class TestPlannerApiListPatch(unittest.TestCase):
             self.assertEqual(combined.status_code, 200)
             self.assertEqual(combined.json()["pagination"]["total"], 1)
             self.assertEqual(combined.json()["items"][0]["readiness"]["aggregate_status"], "NOT_READY")
+
+    def test_sort_by_readiness_severity_is_read_only(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_readiness_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            before = self._snapshot(env)
+            resp = client.get(
+                "/v1/planner/releases?sort_by=readiness_severity&include_readiness_summary=true&page=1&page_size=5",
+                headers=auth,
+            )
+            after = self._snapshot(env)
+
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(before, after)
 
     def test_readiness_status_not_ready_respects_non_readiness_sort(self) -> None:
         with temp_env() as (_, _):
