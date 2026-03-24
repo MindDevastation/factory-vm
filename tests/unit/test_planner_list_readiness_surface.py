@@ -17,6 +17,34 @@ class TestPlannerListReadinessSurfaceHelpers(unittest.TestCase):
         with self.assertRaises(ValueError):
             planner._parse_readiness_status_filter("NOPE")
 
+    def test_parse_readiness_problem_filter_and_invalid(self) -> None:
+        self.assertEqual(
+            planner._parse_readiness_problem_filter("attention_required"),
+            {"NOT_READY", "BLOCKED"},
+        )
+        self.assertEqual(planner._parse_readiness_problem_filter("blocked_only"), {"BLOCKED"})
+        self.assertEqual(planner._parse_readiness_problem_filter("ready_only"), {"READY_FOR_MATERIALIZATION"})
+        with self.assertRaises(ValueError):
+            planner._parse_readiness_problem_filter("nope")
+
+    def test_readiness_rank_attention_first_and_ready_first(self) -> None:
+        self.assertLess(
+            planner._readiness_rank("BLOCKED", readiness_priority="attention_first"),
+            planner._readiness_rank("NOT_READY", readiness_priority="attention_first"),
+        )
+        self.assertLess(
+            planner._readiness_rank("NOT_READY", readiness_priority="attention_first"),
+            planner._readiness_rank("READY_FOR_MATERIALIZATION", readiness_priority="attention_first"),
+        )
+        self.assertLess(
+            planner._readiness_rank("READY_FOR_MATERIALIZATION", readiness_priority="ready_first"),
+            planner._readiness_rank("NOT_READY", readiness_priority="ready_first"),
+        )
+        self.assertLess(
+            planner._readiness_rank("NOT_READY", readiness_priority="ready_first"),
+            planner._readiness_rank("BLOCKED", readiness_priority="ready_first"),
+        )
+
     def test_build_readiness_summary_excludes_unavailable_and_sets_attention_count(self) -> None:
         scope_ids = [1, 2, 3, 4]
         readiness_map = {

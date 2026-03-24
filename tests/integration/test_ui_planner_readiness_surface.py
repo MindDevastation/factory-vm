@@ -35,8 +35,26 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
     def test_readiness_filter_control_and_query_wiring_present(self) -> None:
         html, js = self._load_ui_assets()
         self.assertIn('id="filter-readiness-status"', html)
+        self.assertIn('id="filter-readiness-problem"', html)
         self.assertIn("push('readiness_status', $('filter-readiness-status').value);", js)
+        self.assertIn("push('readiness_problem', $('filter-readiness-problem').value);", js)
         self.assertIn("p.set('include_readiness_summary', 'true');", js)
+        self.assertIn('id="sort-by"', html)
+        self.assertIn('id="readiness-priority"', html)
+        self.assertIn("if ($('sort-by').value === 'readiness_priority') {", js)
+        self.assertIn("push('readiness_priority', $('readiness-priority').value);", js)
+
+    def test_readiness_summary_strip_visible(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn('id="readiness-summary-strip"', html)
+        self.assertIn('id="readiness-summary-attention"', html)
+        self.assertIn("function renderReadinessSummary(summary)", js)
+        self.assertIn("$('readiness-summary-attention').textContent", js)
+
+    def test_refresh_readiness_action_reissues_current_request(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn('id="refresh-readiness-btn"', html)
+        self.assertIn("$('refresh-readiness-btn').addEventListener('click', async () => { try { await loadList(); }", js)
 
     def test_details_dialog_contains_all_domains_reasons_and_remediation(self) -> None:
         html, js = self._load_ui_assets()
