@@ -145,6 +145,7 @@ class TestPlannerPlannedReleaseReadinessApi(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             body = resp.json()
             self.assertEqual(body["aggregate_status"], "READY_FOR_MATERIALIZATION")
+            self.assertIn(body["aggregate_status"], {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"})
             self.assertEqual(set(body["domains"].keys()), {"planning_identity", "scheduling", "metadata", "playlist", "visual_assets"})
             self.assertIsNone(body["primary_reason"])
             self.assertIsNone(body["primary_remediation_hint"])
@@ -214,6 +215,14 @@ class TestPlannerPlannedReleaseReadinessApi(unittest.TestCase):
             self.assertEqual(before, after)
             self.assertEqual(batched[first]["aggregate_status"], single_first["aggregate_status"])
             self.assertEqual(batched[second]["aggregate_status"], single_second["aggregate_status"])
+            self.assertEqual(
+                set(batched[first]["domains"].keys()),
+                {"planning_identity", "scheduling", "metadata", "playlist", "visual_assets"},
+            )
+            self.assertEqual(
+                set(batched[second]["domains"].keys()),
+                {"planning_identity", "scheduling", "metadata", "playlist", "visual_assets"},
+            )
 
 
 if __name__ == "__main__":

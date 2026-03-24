@@ -139,6 +139,8 @@ class TestPlannedReleaseReadinessService(unittest.TestCase):
                 conn.close()
             self.assertEqual(out["domains"]["scheduling"]["status"], "NOT_READY")
             self.assertIn("PRR_SCHEDULING_MISSING", [c["code"] for c in out["domains"]["scheduling"]["checks"]])
+            contradiction_check = next(c for c in out["domains"]["scheduling"]["checks"] if c["code"] == "PRR_SCHEDULING_CONTRADICTION")
+            self.assertEqual(contradiction_check["status"], "PASS")
 
     def test_scheduling_invalid_is_blocked(self) -> None:
         with temp_env() as (_, _):
@@ -151,6 +153,7 @@ class TestPlannedReleaseReadinessService(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(out["domains"]["scheduling"]["status"], "BLOCKED")
+            self.assertIn(out["aggregate_status"], {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"})
 
     def test_all_domains_ready_when_linked_assets_and_sources_exist(self) -> None:
         with temp_env() as (_, _):
@@ -167,6 +170,7 @@ class TestPlannedReleaseReadinessService(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(out["aggregate_status"], "READY_FOR_MATERIALIZATION")
+            self.assertIn(out["aggregate_status"], {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"})
 
     def test_link_absent_uses_fallbacks(self) -> None:
         with temp_env() as (_, _):
@@ -253,6 +257,20 @@ class TestPlannedReleaseReadinessService(unittest.TestCase):
             self.assertIsNotNone(out["primary_reason"])
             self.assertEqual(out["primary_reason"]["domain"], "scheduling")
             self.assertTrue(out["primary_remediation_hint"])
+            self.assertIn(out["primary_reason"], out["reasons"])
+            self.assertEqual(out["primary_reason"]["remediation_hint"], out["primary_remediation_hint"])
+
+    def test_planning_identity_domain_never_not_ready(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            pr_id = self._insert_planned_release(env=env, channel_slug="")
+            conn = dbm.connect(env)
+            try:
+                out = PlannedReleaseReadinessService(conn).evaluate(planned_release_id=pr_id)
+            finally:
+                conn.close()
+            self.assertIn(out["domains"]["planning_identity"]["status"], {"READY", "BLOCKED"})
 
     def test_determinism_for_same_state(self) -> None:
         with temp_env() as (_, _):
