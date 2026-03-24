@@ -3,7 +3,10 @@
   const state = {
     page: 1, pageSize: 50, total: 0, items: [], selected: new Set(), previewId: null,
     metadataBulk: { sessionId: null, previewItems: [], summary: null },
+    readinessDetail: null,
+    readinessDetailPlannedReleaseId: null,
   };
+  const READINESS_DOMAINS = ['planning_identity', 'scheduling', 'metadata', 'playlist', 'visual_assets'];
   const $ = (id) => document.getElementById(id);
   const noteEl = $('planner-note');
   function apiUrl(path) { return new URL(path, window.location.origin).toString(); }
@@ -24,11 +27,49 @@
     push('channel_slug', $('filter-channel').value);
     push('content_type', $('filter-content-type').value);
     push('q', $('filter-q').value);
+    push('readiness_status', $('filter-readiness-status').value);
     push('sort_by', $('sort-by').value);
     push('sort_dir', $('sort-dir').value);
+    p.set('include_readiness_summary', 'true');
     p.set('page', String(state.page));
     p.set('page_size', String(state.pageSize));
     return p;
+  }
+
+  function readinessUiSummary(item) {
+    const readiness = item.readiness || {};
+    const aggregate = String(readiness.aggregate_status || 'NOT_READY');
+    const reason = String(readiness.primary_reason || '').trim();
+    const remediation = String(readiness.primary_remediation_hint || '').trim();
+    const titleParts = [`${aggregate}`];
+    if (reason) titleParts.push(`Reason: ${reason}`);
+    if (remediation) titleParts.push(`Next: ${remediation}`);
+    return {
+      aggregate,
+      reason,
+      remediation,
+      title: titleParts.join('\n'),
+    };
+  }
+
+  function renderReadinessBadge(item) {
+    const summary = readinessUiSummary(item);
+    const cls = summary.aggregate === 'BLOCKED'
+      ? 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca;'
+      : (summary.aggregate === 'READY_FOR_MATERIALIZATION'
+        ? 'background:#dcfce7;color:#166534;border:1px solid #bbf7d0;'
+        : 'background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;');
+    const preview = summary.reason || (summary.aggregate === 'READY_FOR_MATERIALIZATION'
+      ? 'All mandatory domains are ready for materialization.'
+      : 'Details available.');
+    const previewHint = summary.remediation || (summary.aggregate === 'READY_FOR_MATERIALIZATION'
+      ? 'No remediation required.'
+      : 'Open details for domain-level reasons and hints.');
+    const compactPreview = `${preview} · ${previewHint}`;
+    return `<button type="button" data-readiness-open="${item.id}" title="${esc(summary.title)}" style="cursor:pointer; padding:2px 6px; border-radius:12px; ${cls}">
+      ${esc(summary.aggregate)}
+    </button>
+    <div class="muted" style="max-width:260px;" title="${esc(compactPreview)}">${esc(compactPreview)}</div>`;
   }
 
   function editableInput(item, field, value, type) {
@@ -44,13 +85,14 @@
   function renderRows() {
     const tbody = $('planner-tbody');
     if (!state.items.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="muted">No releases.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="muted">No releases.</td></tr>';
       return;
     }
     tbody.innerHTML = state.items.map((item) => `<tr data-row-id="${item.id}">
       <td><input type="checkbox" data-select-id="${item.id}" ${state.selected.has(item.id) ? 'checked' : ''}></td>
       <td>${item.id}</td>
       <td>${esc(item.status)}</td>
+      <td>${renderReadinessBadge(item)}</td>
       <td>${editableInput(item, 'channel_slug', item.channel_slug)}</td>
       <td>${editableInput(item, 'content_type', item.content_type)}</td>
       <td>${editableInput(item, 'title', item.title)}</td>
@@ -64,6 +106,18 @@
         const id = Number(el.getAttribute('data-select-id'));
         if (el.checked) state.selected.add(id); else state.selected.delete(id);
         $('bulk-delete-btn').disabled = !state.selected.size;
+      });
+    });
+
+    tbody.querySelectorAll('button[data-readiness-open]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const id = Number(el.getAttribute('data-readiness-open'));
+        if (!Number.isInteger(id) || id <= 0) return;
+        try {
+          await openReadinessDialog(id);
+        } catch (err) {
+          setNote(`Readiness load failed: ${err.message}`);
+        }
       });
     });
 
@@ -115,6 +169,56 @@
     const start = (state.page - 1) * state.pageSize + 1;
     const end = Math.min(state.page * state.pageSize, state.total);
     $('page-label').textContent = state.total ? `${start}-${end} / ${state.total}` : '0';
+  }
+
+  function checkIsActionable(check) {
+    return String(check?.status || '') !== 'PASS';
+  }
+
+  function renderReadinessDomains(readiness, actionableOnly) {
+    const domains = readiness?.domains || {};
+    return READINESS_DOMAINS.map((domainName) => {
+      const domain = domains[domainName] || {};
+      const status = String(domain.status || 'NOT_READY');
+      const checks = Array.isArray(domain.checks) ? domain.checks : [];
+      const visibleChecks = actionableOnly ? checks.filter(checkIsActionable) : checks;
+      const checksMarkup = visibleChecks.length
+        ? `<ul>${visibleChecks.map((check) => `<li>
+          <strong>${esc(String(check.code || '-'))}</strong>
+          <div>Status: ${esc(String(check.status || '-'))}</div>
+          <div>${esc(String(check.message || '-'))}</div>
+          <div class="muted">Remediation: ${esc(String(check.remediation_hint || '-'))}</div>
+        </li>`).join('')}</ul>`
+        : '<p class="muted">No checks to show for current filter.</p>';
+      return `<section style="border:1px solid #e5e7eb; padding:8px; margin-bottom:8px;">
+        <h4 style="margin:0 0 6px 0;">${esc(domainName)} · ${esc(status)}</h4>
+        ${checksMarkup}
+      </section>`;
+    }).join('');
+  }
+
+  function renderReadinessDetail() {
+    const readiness = state.readinessDetail || {};
+    const aggregate = String(readiness.aggregate_status || '-');
+    const primaryReason = readiness.primary_reason?.message || '-';
+    const primaryRemediation = readiness.primary_remediation_hint || '-';
+    const actionableOnly = $('readiness-actionable-only').checked;
+
+    $('readiness-dialog-aggregate').textContent = aggregate;
+    $('readiness-dialog-primary-reason').textContent = String(primaryReason || '-');
+    $('readiness-dialog-primary-remediation').textContent = String(primaryRemediation || '-');
+    $('readiness-domains-body').innerHTML = renderReadinessDomains(readiness, actionableOnly);
+  }
+
+  async function openReadinessDialog(plannedReleaseId) {
+    state.readinessDetailPlannedReleaseId = plannedReleaseId;
+    $('readiness-dialog-release-label').textContent = `planned_release_id=${plannedReleaseId}`;
+    $('readiness-domains-body').textContent = 'Loading readiness...';
+    $('readiness-dialog').showModal();
+    const res = await fetch(apiUrl(`/v1/planner/planned-releases/${plannedReleaseId}/readiness`));
+    if (!res.ok) throw new Error(await parseError(res));
+    state.readinessDetail = await res.json();
+    renderReadinessDetail();
   }
 
   async function bulkDelete() {
@@ -442,6 +546,8 @@
     });
     renderMetadataPreviewItems();
   });
+  $('readiness-actionable-only').addEventListener('change', renderReadinessDetail);
+  $('readiness-dialog-close').addEventListener('click', () => $('readiness-dialog').close());
 
   $('import-preview-body').innerHTML = previewPlaceholder('No preview yet.');
   setMetadataBulkStaleBanner(false);
