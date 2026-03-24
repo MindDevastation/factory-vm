@@ -47,6 +47,10 @@ from services.planner.metadata_bulk_preview_service import (
     get_bulk_preview_session,
     load_bulk_context,
 )
+from services.planner.planned_release_readiness_service import (
+    PlannedReleaseReadinessNotFoundError,
+    PlannedReleaseReadinessService,
+)
 from services.planner.series import BulkSeriesInput, BulkSeriesValidationError, build_bulk_publish_ats
 from services.planner.time_normalization import PublishAtValidationError, normalize_publish_at
 
@@ -967,6 +971,55 @@ def create_planner_router(env: Env) -> APIRouter:
                 request_id=request_id,
                 extra_fields={
                     "planner_item_id": planner_item_id,
+                    "result_status": result_status,
+                },
+            )
+
+    @router.get("/planned-releases/{planned_release_id}/readiness")
+    def planner_planned_release_readiness(
+        planned_release_id: int,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+
+        if not username:
+            status_code = 401
+            result_status = "error"
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            svc = PlannedReleaseReadinessService(conn)
+            return svc.evaluate(planned_release_id=planned_release_id)
+        except PlannedReleaseReadinessNotFoundError:
+            status_code = 404
+            result_status = "error"
+            return planner_error("PRR_NOT_FOUND", "planned release not found", status_code=status_code, request_id=request_id)
+        except Exception:
+            status_code = 500
+            result_status = "error"
+            logger.exception("planner_planned_release_readiness_failed request_id=%s planned_release_id=%s", request_id, planned_release_id)
+            return planner_error(
+                "PRR_INTERNAL_EVALUATION_ERROR",
+                "planned release readiness evaluation failed",
+                status_code=status_code,
+                request_id=request_id,
+            )
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_planned_release_readiness",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "planned_release_id": planned_release_id,
                     "result_status": result_status,
                 },
             )
