@@ -430,6 +430,51 @@ class TestPlannerApiListPatch(unittest.TestCase):
             self.assertEqual(combined.json()["pagination"]["total"], 1)
             self.assertEqual(combined.json()["items"][0]["readiness"]["aggregate_status"], "NOT_READY")
 
+    def test_readiness_status_not_ready_respects_non_readiness_sort(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Zulu Missing Schedule",
+                publish_at=None,
+                created_at="2025-01-03T00:00:00Z",
+            )
+            self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Alpha Missing Schedule",
+                publish_at=None,
+                created_at="2025-01-02T00:00:00Z",
+            )
+            self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Blocked Invalid Schedule",
+                publish_at="bad-date",
+                created_at="2025-01-01T00:00:00Z",
+            )
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get(
+                "/v1/planner/releases?readiness_status=NOT_READY&sort_by=title&sort_dir=asc&page=1&page_size=10",
+                headers=auth,
+            )
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json()["pagination"]["total"], 2)
+            self.assertEqual(
+                [item["title"] for item in resp.json()["items"]],
+                ["Alpha Missing Schedule", "Zulu Missing Schedule"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

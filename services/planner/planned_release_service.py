@@ -106,6 +106,8 @@ class PlannedReleaseService:
         }
 
     def list_candidate_ids(self, params: PlannedReleaseListParams) -> list[dict[str, Any]]:
+        sort_by = params.sort_by if params.sort_by in self.SORT_ALLOWLIST else "created_at"
+        sort_dir = "ASC" if params.sort_dir.lower() == "asc" else "DESC"
         where_clauses: list[str] = []
         values: list[Any] = []
         if params.channel_slug:
@@ -126,7 +128,7 @@ class PlannedReleaseService:
             SELECT id, created_at
             FROM planned_releases
             {where_sql}
-            ORDER BY created_at DESC, id ASC
+            ORDER BY {sort_by} {sort_dir}, id ASC
             """,
             tuple(values),
         ).fetchall()
