@@ -140,12 +140,13 @@ def _evaluate_readiness_tolerant(
 
 
 def _build_readiness_summary(scope_ids: list[int], readiness_map: dict[int, dict[str, Any]], unavailable_ids: set[int]) -> dict[str, Any]:
+    scoped_unavailable_ids = {release_id for release_id in scope_ids if release_id in unavailable_ids}
     summary = {
         "scope_total": len(scope_ids),
         "ready_for_materialization": 0,
         "not_ready": 0,
         "blocked": 0,
-        "unavailable": len(unavailable_ids),
+        "unavailable": len(scoped_unavailable_ids),
         "attention_count": 0,
         "computed_at": None,
     }

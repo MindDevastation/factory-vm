@@ -530,6 +530,47 @@ class TestPlannerApiListPatch(unittest.TestCase):
             self.assertEqual(blocked_row["readiness"]["aggregate_status"], None)
             self.assertEqual(blocked_row["readiness"]["error"]["code"], "PRS_READINESS_UNAVAILABLE")
 
+    def test_unavailable_outside_filtered_scope_is_not_counted_in_summary(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_readiness_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            from services.factory_api.planner import PlannedReleaseReadinessService
+
+            original_eval = PlannedReleaseReadinessService.evaluate_many
+
+            def flaky_eval(self, *, planned_release_ids):
+                if planned_release_ids:
+                    placeholders = ",".join("?" for _ in planned_release_ids)
+                    rows = self._conn.execute(
+                        f"SELECT title FROM planned_releases WHERE id IN ({placeholders})",
+                        tuple(int(item) for item in planned_release_ids),
+                    ).fetchall()
+                    if any(str(row["title"]) == "Blocked" for row in rows):
+                        raise RuntimeError("synthetic readiness failure")
+                return original_eval(self, planned_release_ids=planned_release_ids)
+
+            with patch("services.factory_api.planner.PlannedReleaseReadinessService.evaluate_many", new=flaky_eval):
+                resp = client.get(
+                    "/v1/planner/releases?include_readiness=true&readiness_status=READY_FOR_MATERIALIZATION&page=1&page_size=5",
+                    headers=auth,
+                )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["pagination"]["total"], 1)
+            self.assertEqual([item["title"] for item in body["items"]], ["Ready"])
+            self.assertEqual(body["readiness_summary"]["scope_total"], 1)
+            self.assertEqual(body["readiness_summary"]["ready_for_materialization"], 1)
+            self.assertEqual(body["readiness_summary"]["not_ready"], 0)
+            self.assertEqual(body["readiness_summary"]["blocked"], 0)
+            self.assertEqual(body["readiness_summary"]["attention_count"], 0)
+            self.assertEqual(body["readiness_summary"]["unavailable"], 0)
+
     def test_sort_by_readiness_severity_and_combined_filter(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
