@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import json
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -216,6 +217,23 @@ class TestPlannerPlannedReleaseReadinessApi(unittest.TestCase):
             not_found = client.get("/v1/planner/planned-releases/999999/readiness", headers=headers)
             self.assertEqual(not_found.status_code, 404)
             self.assertEqual(not_found.json()["error"]["code"], "PRS_PLANNED_RELEASE_NOT_FOUND")
+
+
+    def test_get_readiness_returns_prs_readiness_evaluation_failed_on_unexpected_error(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            planned_release_id = self._insert_planned_release(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            with patch("services.factory_api.planner.PlannedReleaseReadinessService.evaluate", side_effect=RuntimeError("boom")):
+                resp = client.get(f"/v1/planner/planned-releases/{planned_release_id}/readiness", headers=headers)
+            self.assertEqual(resp.status_code, 500)
+            self.assertEqual(resp.json()["error"]["code"], "PRS_READINESS_EVALUATION_FAILED")
 
     def test_evaluate_many_batch_matches_single_and_no_side_effects(self) -> None:
         with temp_env() as (_, _):
