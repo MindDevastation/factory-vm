@@ -1220,17 +1220,32 @@ def create_planner_router(env: Env) -> APIRouter:
         conn = dbm.connect(env)
         try:
             svc = PlannedReleaseReadinessService(conn)
-            return svc.evaluate(planned_release_id=planned_release_id)
+            payload = svc.evaluate(planned_release_id=planned_release_id)
+            log_planner_event(
+                logger,
+                event_name="planner.readiness_surface.detail_loaded",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "planner_scope_fingerprint": None,
+                    "planned_release_id": planned_release_id,
+                    "computed_at": payload.get("computed_at"),
+                    "aggregate_status": payload.get("aggregate_status"),
+                },
+            )
+            return payload
         except PlannedReleaseReadinessNotFoundError:
             status_code = 404
             result_status = "error"
-            return planner_error("PRR_NOT_FOUND", "planned release not found", status_code=status_code, request_id=request_id)
+            return planner_error("PRS_PLANNED_RELEASE_NOT_FOUND", "planned release not found", status_code=status_code, request_id=request_id)
         except Exception:
             status_code = 500
             result_status = "error"
             logger.exception("planner_planned_release_readiness_failed request_id=%s planned_release_id=%s", request_id, planned_release_id)
             return planner_error(
-                "PRR_INTERNAL_EVALUATION_ERROR",
+                "PRS_READINESS_EVALUATION_FAILED",
                 "planned release readiness evaluation failed",
                 status_code=status_code,
                 request_id=request_id,

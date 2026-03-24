@@ -146,6 +146,7 @@ class TestPlannerPlannedReleaseReadinessApi(unittest.TestCase):
             body = resp.json()
             self.assertEqual(body["aggregate_status"], "READY_FOR_MATERIALIZATION")
             self.assertIn(body["aggregate_status"], {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"})
+            self.assertTrue(str(body.get("computed_at") or "").endswith("Z"))
             self.assertEqual(set(body["domains"].keys()), {"planning_identity", "scheduling", "metadata", "playlist", "visual_assets"})
             self.assertIsNone(body["primary_reason"])
             self.assertIsNone(body["primary_remediation_hint"])
@@ -191,7 +192,7 @@ class TestPlannerPlannedReleaseReadinessApi(unittest.TestCase):
 
             not_found = client.get("/v1/planner/planned-releases/999999/readiness", headers=headers)
             self.assertEqual(not_found.status_code, 404)
-            self.assertEqual(not_found.json()["error"]["code"], "PRR_NOT_FOUND")
+            self.assertEqual(not_found.json()["error"]["code"], "PRS_PLANNED_RELEASE_NOT_FOUND")
 
     def test_evaluate_many_batch_matches_single_and_no_side_effects(self) -> None:
         with temp_env() as (_, _):
