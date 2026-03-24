@@ -34,6 +34,14 @@
       <option value="READY_FOR_MATERIALIZATION">READY_FOR_MATERIALIZATION</option>
     </select>
   </label>
+  <label>Readiness problem
+    <select id="filter-readiness-problem">
+      <option value="">all</option>
+      <option value="attention_required">attention_required</option>
+      <option value="blocked_only">blocked_only</option>
+      <option value="ready_only">ready_only</option>
+    </select>
+  </label>
   <label>Sort by
     <select id="sort-by">
       <option value="created_at">created_at</option>
@@ -43,6 +51,13 @@
       <option value="channel_slug">channel_slug</option>
       <option value="content_type">content_type</option>
       <option value="status">status</option>
+      <option value="readiness_priority">readiness_priority</option>
+    </select>
+  </label>
+  <label>Readiness sort
+    <select id="readiness-priority">
+      <option value="attention_first">attention_first</option>
+      <option value="ready_first">ready_first</option>
     </select>
   </label>
   <label>Sort dir
@@ -52,9 +67,18 @@
     <select id="page-size"><option>20</option><option selected>50</option><option>100</option></select>
   </label>
   <button type="button" id="reload-btn">Reload</button>
+  <button type="button" id="refresh-readiness-btn">Refresh readiness</button>
 </div>
 
 <p class="muted" id="planner-note"></p>
+<div id="readiness-summary-strip" style="display:flex; gap:10px; flex-wrap:wrap; margin: 8px 0 12px 0;">
+  <span><strong>Total:</strong> <span id="readiness-summary-total">0</span></span>
+  <span><strong>READY:</strong> <span id="readiness-summary-ready">0</span></span>
+  <span><strong>NOT_READY:</strong> <span id="readiness-summary-not-ready">0</span></span>
+  <span><strong>BLOCKED:</strong> <span id="readiness-summary-blocked">0</span></span>
+  <span><strong>Attention:</strong> <span id="readiness-summary-attention">0</span></span>
+  <span class="muted"><strong>Computed at:</strong> <span id="readiness-summary-computed-at">-</span></span>
+</div>
 <table>
   <thead>
     <tr>
@@ -188,6 +212,7 @@
     <fieldset>
       <legend>Aggregate</legend>
       <p><strong>Status:</strong> <span id="readiness-dialog-aggregate">-</span></p>
+      <p><strong>Computed at:</strong> <span id="readiness-dialog-computed-at">-</span></p>
       <p><strong>Primary reason:</strong> <span id="readiness-dialog-primary-reason">-</span></p>
       <p><strong>Primary remediation:</strong> <span id="readiness-dialog-primary-remediation">-</span></p>
       <label><input type="checkbox" id="readiness-actionable-only"> actionable_only (hide PASS checks)</label>

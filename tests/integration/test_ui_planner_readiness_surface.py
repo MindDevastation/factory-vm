@@ -35,12 +35,31 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
     def test_readiness_filter_control_and_query_wiring_present(self) -> None:
         html, js = self._load_ui_assets()
         self.assertIn('id="filter-readiness-status"', html)
+        self.assertIn('id="filter-readiness-problem"', html)
         self.assertIn("push('readiness_status', $('filter-readiness-status').value);", js)
+        self.assertIn("push('readiness_problem', $('filter-readiness-problem').value);", js)
         self.assertIn("p.set('include_readiness_summary', 'true');", js)
+        self.assertIn('id="sort-by"', html)
+        self.assertIn('id="readiness-priority"', html)
+        self.assertIn("if ($('sort-by').value === 'readiness_priority') {", js)
+        self.assertIn("push('readiness_priority', $('readiness-priority').value);", js)
+
+    def test_readiness_summary_strip_visible(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn('id="readiness-summary-strip"', html)
+        self.assertIn('id="readiness-summary-attention"', html)
+        self.assertIn("function renderReadinessSummary(summary)", js)
+        self.assertIn("$('readiness-summary-attention').textContent", js)
+
+    def test_refresh_readiness_action_reissues_current_request(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn('id="refresh-readiness-btn"', html)
+        self.assertIn("$('refresh-readiness-btn').addEventListener('click', async () => { try { await loadList(); }", js)
 
     def test_details_dialog_contains_all_domains_reasons_and_remediation(self) -> None:
         html, js = self._load_ui_assets()
         self.assertIn('id="readiness-dialog"', html)
+        self.assertIn('id="readiness-dialog-computed-at"', html)
         self.assertIn('id="readiness-dialog-primary-reason"', html)
         self.assertIn('id="readiness-dialog-primary-remediation"', html)
         self.assertIn("READINESS_DOMAINS = ['planning_identity', 'scheduling', 'metadata', 'playlist', 'visual_assets']", js)
@@ -52,6 +71,11 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn('id="readiness-actionable-only"', html)
         self.assertIn("function checkIsActionable(check)", js)
         self.assertIn("return String(check?.status || '') !== 'PASS';", js)
+        self.assertIn("function domainStatusRank(status)", js)
+        self.assertIn("function orderedDomains(readiness)", js)
+        self.assertIn("if (status === 'BLOCKED') return 0;", js)
+        self.assertIn("if (status === 'NOT_READY') return 1;", js)
+        self.assertIn("return 2;", js)
         self.assertIn("const visibleChecks = actionableOnly ? checks.filter(checkIsActionable) : checks;", js)
 
     def test_compact_reason_preview_affordance_exists(self) -> None:
@@ -59,6 +83,23 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn("const compactPreview =", js)
         self.assertIn("title=\"${esc(compactPreview)}\"", js)
         self.assertIn("title=\"${esc(summary.title)}\"", js)
+
+
+    def test_unavailable_row_and_empty_state_copy_hooks_exist(self) -> None:
+        _, js = self._load_ui_assets()
+        self.assertIn("PRS_READINESS_UNAVAILABLE", js)
+        self.assertIn("const aggregate = hasUnavailableError ? 'UNAVAILABLE'", js)
+        self.assertIn("function emptyPlannerMessage()", js)
+        self.assertIn("No BLOCKED items in current planner scope.", js)
+        self.assertIn("No READY_FOR_MATERIALIZATION items in current planner scope.", js)
+        self.assertIn("No items match the selected readiness filter.", js)
+        self.assertIn("No planned releases in current planner scope.", js)
+
+    def test_freshness_copy_is_explicit_when_timestamp_missing(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn('id="readiness-summary-computed-at"', html)
+        self.assertIn('id="readiness-dialog-computed-at"', html)
+        self.assertIn("Not available", js)
 
     def test_readiness_ui_actions_use_get_endpoints_only(self) -> None:
         _, js = self._load_ui_assets()

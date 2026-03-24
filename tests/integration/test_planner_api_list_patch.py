@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import json
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -400,7 +401,7 @@ class TestPlannerApiListPatch(unittest.TestCase):
             self.assertEqual(before, "darkwood-reverie")
             self.assertEqual(after, "darkwood-reverie")
 
-    def test_list_include_readiness_summary_compact_shape(self) -> None:
+    def test_list_include_readiness_true_returns_row_readiness_and_summary(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
             seed_minimal_db(env)
@@ -409,13 +410,45 @@ class TestPlannerApiListPatch(unittest.TestCase):
             importlib.reload(mod)
             client = TestClient(mod.app)
             auth = basic_auth_header(env.basic_user, env.basic_pass)
-            resp = client.get("/v1/planner/releases?include_readiness_summary=true&page=1&page_size=2", headers=auth)
+            resp = client.get("/v1/planner/releases?include_readiness=true&page=1&page_size=2", headers=auth)
             self.assertEqual(resp.status_code, 200)
             self.assertEqual(len(resp.json()["items"]), 2)
             readiness = resp.json()["items"][0]["readiness"]
-            self.assertEqual(set(readiness.keys()), {"aggregate_status", "blocked_domains", "not_ready_domains", "primary_reason", "primary_remediation_hint"})
+            self.assertEqual(
+                set(readiness.keys()),
+                {
+                    "aggregate_status",
+                    "blocked_domains_count",
+                    "not_ready_domains_count",
+                    "computed_at",
+                    "primary_reason",
+                    "primary_remediation_hint",
+                },
+            )
+            summary = resp.json()["readiness_summary"]
+            self.assertEqual(summary["scope_total"], 3)
+            self.assertEqual(summary["ready_for_materialization"], 1)
+            self.assertEqual(summary["not_ready"], 1)
+            self.assertEqual(summary["blocked"], 1)
+            self.assertEqual(summary["attention_count"], 2)
+            self.assertEqual(summary["unavailable"], 0)
+            self.assertTrue(summary["computed_at"])
 
-    def test_readiness_status_filter_global_and_pagination(self) -> None:
+    def test_include_readiness_omitted_preserves_existing_behavior(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_readiness_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.get("/v1/planner/releases?page=1&page_size=2", headers=auth)
+            self.assertEqual(resp.status_code, 200)
+            self.assertNotIn("readiness_summary", resp.json())
+            self.assertNotIn("readiness", resp.json()["items"][0])
+
+    def test_readiness_status_filters_not_ready_blocked_ready(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
             seed_minimal_db(env)
@@ -437,8 +470,15 @@ class TestPlannerApiListPatch(unittest.TestCase):
             self.assertEqual(ready.status_code, 200)
             self.assertEqual(ready.json()["pagination"]["total"], 1)
             self.assertEqual(ready.json()["items"][0]["title"], "Ready")
+            comma = client.get(
+                "/v1/planner/releases?readiness_status=NOT_READY,BLOCKED&include_readiness=true&page=1&page_size=10",
+                headers=auth,
+            )
+            self.assertEqual(comma.status_code, 200)
+            self.assertEqual(comma.json()["pagination"]["total"], 2)
+            self.assertEqual(comma.json()["readiness_summary"]["attention_count"], 2)
 
-    def test_sort_by_readiness_severity_and_combined_filter(self) -> None:
+    def test_invalid_readiness_status_returns_prs_invalid_readiness_filter(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
             seed_minimal_db(env)
@@ -447,18 +487,145 @@ class TestPlannerApiListPatch(unittest.TestCase):
             importlib.reload(mod)
             client = TestClient(mod.app)
             auth = basic_auth_header(env.basic_user, env.basic_pass)
-            resp = client.get("/v1/planner/releases?sort_by=readiness_severity&page=1&page_size=5", headers=auth)
+            resp = client.get("/v1/planner/releases?readiness_status=NOPE&page=1&page_size=10", headers=auth)
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(resp.json()["error"]["code"], "PRS_INVALID_READINESS_FILTER")
+
+    def test_unavailable_row_does_not_break_list_and_summary_counts_unavailable(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_readiness_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            from services.factory_api.planner import PlannedReleaseReadinessService
+
+            original_eval = PlannedReleaseReadinessService.evaluate_many
+
+            def flaky_eval(self, *, planned_release_ids):
+                if planned_release_ids:
+                    placeholders = ",".join("?" for _ in planned_release_ids)
+                    rows = self._conn.execute(
+                        f"SELECT title FROM planned_releases WHERE id IN ({placeholders})",
+                        tuple(int(item) for item in planned_release_ids),
+                    ).fetchall()
+                    if any(str(row["title"]) == "Blocked" for row in rows):
+                        raise RuntimeError("synthetic readiness failure")
+                return original_eval(self, planned_release_ids=planned_release_ids)
+
+            with patch("services.factory_api.planner.PlannedReleaseReadinessService.evaluate_many", new=flaky_eval):
+                resp = client.get("/v1/planner/releases?include_readiness=true&page=1&page_size=5", headers=auth)
             self.assertEqual(resp.status_code, 200)
-            self.assertEqual([item["title"] for item in resp.json()["items"]], ["Blocked", "NotReady", "Ready"])
-            combined = client.get(
-                "/v1/planner/releases?readiness_status=NOT_READY&sort_by=readiness_severity&page=1&page_size=1&include_readiness_summary=true",
+            body = resp.json()
+            self.assertEqual(body["pagination"]["total"], 3)
+            self.assertEqual(body["readiness_summary"]["unavailable"], 1)
+            self.assertEqual(body["readiness_summary"]["ready_for_materialization"], 1)
+            self.assertEqual(body["readiness_summary"]["not_ready"], 1)
+            self.assertEqual(body["readiness_summary"]["blocked"], 0)
+            self.assertEqual(body["readiness_summary"]["attention_count"], 1)
+            blocked_row = next(item for item in body["items"] if item["title"] == "Blocked")
+            self.assertEqual(blocked_row["readiness"]["aggregate_status"], None)
+            self.assertEqual(blocked_row["readiness"]["error"]["code"], "PRS_READINESS_UNAVAILABLE")
+
+    def test_unavailable_outside_filtered_scope_is_not_counted_in_summary(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_readiness_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            from services.factory_api.planner import PlannedReleaseReadinessService
+
+            original_eval = PlannedReleaseReadinessService.evaluate_many
+
+            def flaky_eval(self, *, planned_release_ids):
+                if planned_release_ids:
+                    placeholders = ",".join("?" for _ in planned_release_ids)
+                    rows = self._conn.execute(
+                        f"SELECT title FROM planned_releases WHERE id IN ({placeholders})",
+                        tuple(int(item) for item in planned_release_ids),
+                    ).fetchall()
+                    if any(str(row["title"]) == "Blocked" for row in rows):
+                        raise RuntimeError("synthetic readiness failure")
+                return original_eval(self, planned_release_ids=planned_release_ids)
+
+            with patch("services.factory_api.planner.PlannedReleaseReadinessService.evaluate_many", new=flaky_eval):
+                resp = client.get(
+                    "/v1/planner/releases?include_readiness=true&readiness_status=READY_FOR_MATERIALIZATION&page=1&page_size=5",
+                    headers=auth,
+                )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["pagination"]["total"], 1)
+            self.assertEqual([item["title"] for item in body["items"]], ["Ready"])
+            self.assertEqual(body["readiness_summary"]["scope_total"], 1)
+            self.assertEqual(body["readiness_summary"]["ready_for_materialization"], 1)
+            self.assertEqual(body["readiness_summary"]["not_ready"], 0)
+            self.assertEqual(body["readiness_summary"]["blocked"], 0)
+            self.assertEqual(body["readiness_summary"]["attention_count"], 0)
+            self.assertEqual(body["readiness_summary"]["unavailable"], 0)
+
+    def test_readiness_problem_filters_and_status_precedence(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_readiness_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            blocked = client.get("/v1/planner/releases?readiness_problem=blocked_only&page=1&page_size=5", headers=auth)
+            self.assertEqual(blocked.status_code, 200)
+            self.assertEqual([item["title"] for item in blocked.json()["items"]], ["Blocked"])
+
+            attention = client.get("/v1/planner/releases?readiness_problem=attention_required&page=1&page_size=5", headers=auth)
+            self.assertEqual(attention.status_code, 200)
+            self.assertEqual(attention.json()["pagination"]["total"], 2)
+            self.assertEqual({item["title"] for item in attention.json()["items"]}, {"Blocked", "NotReady"})
+
+            ready_only = client.get("/v1/planner/releases?readiness_problem=ready_only&page=1&page_size=5", headers=auth)
+            self.assertEqual(ready_only.status_code, 200)
+            self.assertEqual([item["title"] for item in ready_only.json()["items"]], ["Ready"])
+
+            precedence = client.get(
+                "/v1/planner/releases?readiness_status=BLOCKED&readiness_problem=ready_only&page=1&page_size=5",
                 headers=auth,
             )
-            self.assertEqual(combined.status_code, 200)
-            self.assertEqual(combined.json()["pagination"]["total"], 1)
-            self.assertEqual(combined.json()["items"][0]["readiness"]["aggregate_status"], "NOT_READY")
+            self.assertEqual(precedence.status_code, 200)
+            self.assertEqual([item["title"] for item in precedence.json()["items"]], ["Blocked"])
 
-    def test_sort_by_readiness_severity_is_read_only(self) -> None:
+    def test_sort_by_readiness_priority_attention_first_and_ready_first(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_readiness_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get(
+                "/v1/planner/releases?sort_by=readiness_priority&readiness_priority=attention_first&page=1&page_size=5",
+                headers=auth,
+            )
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual([item["title"] for item in resp.json()["items"]], ["Blocked", "NotReady", "Ready"])
+
+            ready_first = client.get(
+                "/v1/planner/releases?sort_by=readiness_priority&readiness_priority=ready_first&page=1&page_size=5",
+                headers=auth,
+            )
+            self.assertEqual(ready_first.status_code, 200)
+            self.assertEqual([item["title"] for item in ready_first.json()["items"]], ["Ready", "NotReady", "Blocked"])
+
+    def test_sort_by_readiness_priority_is_read_only(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
             seed_minimal_db(env)
@@ -470,13 +637,38 @@ class TestPlannerApiListPatch(unittest.TestCase):
 
             before = self._snapshot(env)
             resp = client.get(
-                "/v1/planner/releases?sort_by=readiness_severity&include_readiness_summary=true&page=1&page_size=5",
+                "/v1/planner/releases?sort_by=readiness_priority&readiness_priority=attention_first&include_readiness_summary=true&page=1&page_size=5",
                 headers=auth,
             )
             after = self._snapshot(env)
 
             self.assertEqual(resp.status_code, 200)
             self.assertEqual(before, after)
+
+    def test_invalid_readiness_problem_and_sort_return_expected_errors(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_readiness_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            invalid_problem = client.get("/v1/planner/releases?readiness_problem=nope&page=1&page_size=5", headers=auth)
+            self.assertEqual(invalid_problem.status_code, 400)
+            self.assertEqual(invalid_problem.json()["error"]["code"], "PRS_INVALID_READINESS_FILTER")
+
+            missing_priority = client.get("/v1/planner/releases?sort_by=readiness_priority&page=1&page_size=5", headers=auth)
+            self.assertEqual(missing_priority.status_code, 400)
+            self.assertEqual(missing_priority.json()["error"]["code"], "PRS_INVALID_READINESS_SORT")
+
+            invalid_priority = client.get(
+                "/v1/planner/releases?sort_by=readiness_priority&readiness_priority=nope&page=1&page_size=5",
+                headers=auth,
+            )
+            self.assertEqual(invalid_priority.status_code, 400)
+            self.assertEqual(invalid_priority.json()["error"]["code"], "PRS_INVALID_READINESS_SORT")
 
     def test_readiness_status_not_ready_respects_non_readiness_sort(self) -> None:
         with temp_env() as (_, _):

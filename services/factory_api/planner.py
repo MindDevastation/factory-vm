@@ -85,11 +85,119 @@ def _readiness_summary(readiness: dict[str, Any]) -> dict[str, Any]:
     primary_reason = readiness.get("primary_reason") or {}
     return {
         "aggregate_status": readiness.get("aggregate_status"),
-        "blocked_domains": int(summary.get("blocked_domains") or 0),
-        "not_ready_domains": int(summary.get("not_ready_domains") or 0),
+        "blocked_domains_count": int(summary.get("blocked_domains") or 0),
+        "not_ready_domains_count": int(summary.get("not_ready_domains") or 0),
+        "computed_at": readiness.get("computed_at"),
         "primary_reason": primary_reason.get("message"),
         "primary_remediation_hint": readiness.get("primary_remediation_hint"),
     }
+
+
+def _readiness_unavailable_payload() -> dict[str, Any]:
+    return {
+        "aggregate_status": None,
+        "error": {
+            "code": "PRS_READINESS_UNAVAILABLE",
+            "message": "Readiness could not be computed for this item.",
+        },
+    }
+
+
+def _parse_readiness_status_filter(readiness_status: str | None) -> set[str]:
+    text = (readiness_status or "").strip()
+    if not text:
+        return set()
+    allowed = {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"}
+    out: set[str] = set()
+    for part in text.split(","):
+        value = part.strip()
+        if not value:
+            continue
+        if value not in allowed:
+            raise ValueError("readiness_status contains invalid value")
+        out.add(value)
+    if not out:
+        raise ValueError("readiness_status contains invalid value")
+    return out
+
+
+def _parse_readiness_problem_filter(readiness_problem: str | None) -> set[str]:
+    text = (readiness_problem or "").strip()
+    if not text:
+        return set()
+    mapping = {
+        "attention_required": {"NOT_READY", "BLOCKED"},
+        "blocked_only": {"BLOCKED"},
+        "ready_only": {"READY_FOR_MATERIALIZATION"},
+    }
+    if text not in mapping:
+        raise ValueError("readiness_problem contains invalid value")
+    return mapping[text]
+
+
+def _readiness_rank(status: str, *, readiness_priority: str) -> int:
+    if readiness_priority == "attention_first":
+        return {"BLOCKED": 0, "NOT_READY": 1, "READY_FOR_MATERIALIZATION": 2}.get(status, 99)
+    return {"READY_FOR_MATERIALIZATION": 0, "NOT_READY": 1, "BLOCKED": 2}.get(status, 99)
+
+
+def _iso_sort_key_asc_nulls_last(value: str | None) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return float("inf")
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return float("inf")
+
+
+def _evaluate_readiness_tolerant(
+    readiness_svc: PlannedReleaseReadinessService,
+    planned_release_ids: list[int],
+) -> tuple[dict[int, dict[str, Any]], set[int]]:
+    if not planned_release_ids:
+        return {}, set()
+    try:
+        return readiness_svc.evaluate_many(planned_release_ids=planned_release_ids), set()
+    except Exception:
+        if len(planned_release_ids) == 1:
+            return {}, {int(planned_release_ids[0])}
+        mid = len(planned_release_ids) // 2
+        left_map, left_failed = _evaluate_readiness_tolerant(readiness_svc, planned_release_ids[:mid])
+        right_map, right_failed = _evaluate_readiness_tolerant(readiness_svc, planned_release_ids[mid:])
+        left_map.update(right_map)
+        return left_map, left_failed | right_failed
+
+
+def _build_readiness_summary(scope_ids: list[int], readiness_map: dict[int, dict[str, Any]], unavailable_ids: set[int]) -> dict[str, Any]:
+    scoped_unavailable_ids = {release_id for release_id in scope_ids if release_id in unavailable_ids}
+    summary = {
+        "scope_total": len(scope_ids),
+        "ready_for_materialization": 0,
+        "not_ready": 0,
+        "blocked": 0,
+        "unavailable": len(scoped_unavailable_ids),
+        "attention_count": 0,
+        "computed_at": None,
+    }
+    computed_at_values: list[str] = []
+    for release_id in scope_ids:
+        if release_id in unavailable_ids:
+            continue
+        aggregate_status = str((readiness_map.get(release_id) or {}).get("aggregate_status") or "")
+        if aggregate_status == "READY_FOR_MATERIALIZATION":
+            summary["ready_for_materialization"] += 1
+        elif aggregate_status == "NOT_READY":
+            summary["not_ready"] += 1
+        elif aggregate_status == "BLOCKED":
+            summary["blocked"] += 1
+        computed_at = str((readiness_map.get(release_id) or {}).get("computed_at") or "").strip()
+        if computed_at:
+            computed_at_values.append(computed_at)
+    summary["attention_count"] = summary["not_ready"] + summary["blocked"]
+    if computed_at_values:
+        summary["computed_at"] = max(computed_at_values)
+    return summary
 
 
 def _created_at_sort_key_desc(value: str) -> float:
@@ -438,8 +546,11 @@ def create_planner_router(env: Env) -> APIRouter:
         q: str = "",
         sort_by: str = "created_at",
         sort_dir: str = "desc",
+        include_readiness: bool = False,
         include_readiness_summary: bool = False,
         readiness_status: str | None = None,
+        readiness_problem: str | None = None,
+        readiness_priority: str | None = None,
         page: int = 1,
         page_size: int = 50,
         username: str = Depends(_require_planner_auth(env)),
@@ -462,22 +573,46 @@ def create_planner_router(env: Env) -> APIRouter:
                 status_code=status_code,
                 request_id=request_id,
             )
-        readiness_status_value = (readiness_status or "").strip() or None
-        if readiness_status_value and readiness_status_value not in {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"}:
+        try:
+            readiness_status_values = _parse_readiness_status_filter(readiness_status)
+        except ValueError:
             status_code = 400
             return planner_error(
-                "PLR_INVALID_INPUT",
-                "readiness_status is not allowed",
+                "PRS_INVALID_READINESS_FILTER",
+                "readiness_status contains invalid value",
+                status_code=status_code,
+                request_id=request_id,
+            )
+        try:
+            readiness_problem_values = _parse_readiness_problem_filter(readiness_problem)
+        except ValueError:
+            status_code = 400
+            return planner_error(
+                "PRS_INVALID_READINESS_FILTER",
+                "readiness_problem contains invalid value",
                 status_code=status_code,
                 request_id=request_id,
             )
 
-        readiness_sort_requested = sort_by_value == "readiness_severity"
+        effective_readiness_filter = readiness_status_values or readiness_problem_values
+        readiness_status_value = ",".join(sorted(readiness_status_values)) if readiness_status_values else None
+        readiness_problem_value = readiness_problem.strip() if readiness_problem and readiness_problem.strip() else None
+
+        readiness_sort_requested = sort_by_value == "readiness_priority"
+        readiness_priority_value = (readiness_priority or "").strip()
         if sort_by_value not in PlannedReleaseService.SORT_ALLOWLIST and not readiness_sort_requested:
             status_code = 400
             return planner_error(
                 "PLR_INVALID_INPUT",
                 "sort_by is not allowed",
+                status_code=status_code,
+                request_id=request_id,
+            )
+        if readiness_sort_requested and readiness_priority_value not in {"attention_first", "ready_first"}:
+            status_code = 400
+            return planner_error(
+                "PRS_INVALID_READINESS_SORT",
+                "readiness_priority contains invalid value",
                 status_code=status_code,
                 request_id=request_id,
             )
@@ -504,30 +639,105 @@ def create_planner_router(env: Env) -> APIRouter:
                 offset=(page - 1) * page_size,
             )
 
-            readiness_filter_or_sort = bool(readiness_status_value) or readiness_sort_requested
-            if readiness_filter_or_sort:
+            include_readiness_flag = bool(include_readiness) or bool(include_readiness_summary)
+            readiness_requested = include_readiness_flag or bool(effective_readiness_filter)
+            readiness_summary_payload: dict[str, Any] | None = None
+            unavailable_ids: set[int] = set()
+            if readiness_requested or readiness_sort_requested:
                 candidates = svc.list_candidate_ids(base_params)
                 candidate_ids = [item["id"] for item in candidates]
                 readiness_svc = PlannedReleaseReadinessService(conn)
-                readiness_map = readiness_svc.evaluate_many(planned_release_ids=candidate_ids) if candidate_ids else {}
-                if readiness_status_value:
+                readiness_map, unavailable_ids = _evaluate_readiness_tolerant(readiness_svc, candidate_ids)
+                if unavailable_ids:
+                    log_planner_event(
+                        logger,
+                        event_name="planner.readiness_surface.readiness_unavailable",
+                        username=username,
+                        started_at=started_at,
+                        status_code=status_code,
+                        request_id=request_id,
+                        extra_fields={
+                            "unavailable_count": len(unavailable_ids),
+                        },
+                    )
+                if effective_readiness_filter:
                     candidate_ids = [
                         release_id
                         for release_id in candidate_ids
-                        if (readiness_map.get(release_id) or {}).get("aggregate_status") == readiness_status_value
+                        if (readiness_map.get(release_id) or {}).get("aggregate_status") in effective_readiness_filter
                     ]
+                    log_planner_event(
+                        logger,
+                        event_name="planner.readiness_surface.filter_applied",
+                        username=username,
+                        started_at=started_at,
+                        status_code=status_code,
+                        request_id=request_id,
+                        extra_fields={
+                            "planner_scope_fingerprint": f"{channel_slug}|{content_type}|{status}|{q.strip()}",
+                            "include_readiness": int(bool(include_readiness_flag)),
+                            "readiness_status_filter": readiness_status_value,
+                            "readiness_problem_filter": readiness_problem_value,
+                            "sort_by": sort_by_value,
+                            "readiness_priority": readiness_priority_value or None,
+                            "scope_total": len(candidate_ids),
+                            "computed_at": max(
+                                [
+                                    str((readiness_map.get(release_id) or {}).get("computed_at") or "")
+                                    for release_id in candidate_ids
+                                    if str((readiness_map.get(release_id) or {}).get("computed_at") or "")
+                                ],
+                                default=None,
+                            ),
+                        },
+                    )
                 if readiness_sort_requested:
-                    severity_rank = {"BLOCKED": 0, "NOT_READY": 1, "READY_FOR_MATERIALIZATION": 2}
-                    created_at_by_id = {item["id"]: item["created_at"] for item in candidates}
+                    publish_rows = svc.list_by_ids(candidate_ids)
+                    publish_at_by_id = {int(row["id"]): str(row["publish_at"] or "") for row in publish_rows}
                     candidate_ids = sorted(
                         candidate_ids,
                         key=lambda rid: (
-                            severity_rank.get(str((readiness_map.get(rid) or {}).get("aggregate_status") or ""), 99),
-                            _created_at_sort_key_desc(str(created_at_by_id.get(rid) or "")),
+                            _readiness_rank(
+                                str((readiness_map.get(rid) or {}).get("aggregate_status") or ""),
+                                readiness_priority=readiness_priority_value,
+                            ),
+                            -int((readiness_map.get(rid) or {}).get("summary", {}).get("blocked_domains") or 0)
+                            if readiness_priority_value == "attention_first"
+                            else 0,
+                            -int((readiness_map.get(rid) or {}).get("summary", {}).get("not_ready_domains") or 0)
+                            if readiness_priority_value == "attention_first"
+                            else 0,
+                            _iso_sort_key_asc_nulls_last(publish_at_by_id.get(rid)),
                             int(rid),
                         ),
                     )
+                    log_planner_event(
+                        logger,
+                        event_name="planner.readiness_surface.sort_applied",
+                        username=username,
+                        started_at=started_at,
+                        status_code=status_code,
+                        request_id=request_id,
+                        extra_fields={
+                            "planner_scope_fingerprint": f"{channel_slug}|{content_type}|{status}|{q.strip()}",
+                            "include_readiness": int(bool(include_readiness_flag)),
+                            "readiness_status_filter": readiness_status_value,
+                            "readiness_problem_filter": readiness_problem_value,
+                            "sort_by": sort_by_value,
+                            "readiness_priority": readiness_priority_value,
+                            "computed_at": max(
+                                [
+                                    str((readiness_map.get(release_id) or {}).get("computed_at") or "")
+                                    for release_id in candidate_ids
+                                    if str((readiness_map.get(release_id) or {}).get("computed_at") or "")
+                                ],
+                                default=None,
+                            ),
+                        },
+                    )
 
+                if include_readiness_flag:
+                    readiness_summary_payload = _build_readiness_summary(candidate_ids, readiness_map, unavailable_ids)
                 total = len(candidate_ids)
                 start = (page - 1) * page_size
                 stop = start + page_size
@@ -536,21 +746,29 @@ def create_planner_router(env: Env) -> APIRouter:
                 row_by_id = {int(row["id"]): row for row in page_rows}
                 ordered_rows = [row_by_id[rid] for rid in page_ids if rid in row_by_id]
                 items = [_release_dto(row) for row in ordered_rows]
-                if include_readiness_summary:
+                if include_readiness_flag:
                     for item in items:
-                        item["readiness"] = _readiness_summary(readiness_map.get(int(item["id"])) or {})
+                        item_id = int(item["id"])
+                        if item_id in unavailable_ids:
+                            item["readiness"] = _readiness_unavailable_payload()
+                        else:
+                            item["readiness"] = _readiness_summary(readiness_map.get(item_id) or {})
                 result_limit = page_size
             else:
                 result = svc.list(base_params)
                 items = [_release_dto(row) for row in result["items"]]
                 total = int(result["total"])
                 result_limit = int(result["limit"])
-                if include_readiness_summary:
+                if include_readiness_flag:
                     page_ids = [int(item["id"]) for item in items]
-                    readiness_map = PlannedReleaseReadinessService(conn).evaluate_many(planned_release_ids=page_ids) if page_ids else {}
+                    readiness_map, unavailable_ids = _evaluate_readiness_tolerant(PlannedReleaseReadinessService(conn), page_ids)
                     for item in items:
-                        item["readiness"] = _readiness_summary(readiness_map.get(int(item["id"])) or {})
-            return {
+                        item_id = int(item["id"])
+                        if item_id in unavailable_ids:
+                            item["readiness"] = _readiness_unavailable_payload()
+                        else:
+                            item["readiness"] = _readiness_summary(readiness_map.get(item_id) or {})
+            response: dict[str, Any] = {
                 "items": items,
                 "pagination": {
                     "page": page,
@@ -558,6 +776,31 @@ def create_planner_router(env: Env) -> APIRouter:
                     "total": total,
                 },
             }
+            if readiness_summary_payload is not None:
+                response["readiness_summary"] = readiness_summary_payload
+                log_planner_event(
+                    logger,
+                    event_name="planner.readiness_surface.list_loaded",
+                    username=username,
+                    started_at=started_at,
+                    status_code=status_code,
+                    request_id=request_id,
+                    extra_fields={
+                        "planner_scope_fingerprint": f"{channel_slug}|{content_type}|{status}|{q.strip()}",
+                        "include_readiness": int(bool(include_readiness_flag)),
+                        "readiness_status_filter": readiness_status_value,
+                        "readiness_problem_filter": readiness_problem_value,
+                        "sort_by": sort_by_value,
+                        "readiness_priority": readiness_priority_value or None,
+                        "scope_total": readiness_summary_payload["scope_total"],
+                        "ready_count": readiness_summary_payload["ready_for_materialization"],
+                        "not_ready_count": readiness_summary_payload["not_ready"],
+                        "blocked_count": readiness_summary_payload["blocked"],
+                        "unavailable_count": readiness_summary_payload["unavailable"],
+                        "computed_at": readiness_summary_payload["computed_at"],
+                    },
+                )
+            return response
         except Exception as exc:
             logger.exception("planner_list_releases_failed request_id=%s", request_id)
             status_code = 500
@@ -578,8 +821,11 @@ def create_planner_router(env: Env) -> APIRouter:
                     "q_len": len(q),
                     "sort_by": sort_by_value,
                     "sort_dir": sort_dir_value,
+                    "include_readiness": int(bool(include_readiness)),
                     "include_readiness_summary": int(bool(include_readiness_summary)),
                     "readiness_status": readiness_status_value,
+                    "readiness_problem": readiness_problem_value,
+                    "readiness_priority": readiness_priority_value or None,
                     "page": page,
                     "page_size": page_size,
                 },
@@ -1079,17 +1325,32 @@ def create_planner_router(env: Env) -> APIRouter:
         conn = dbm.connect(env)
         try:
             svc = PlannedReleaseReadinessService(conn)
-            return svc.evaluate(planned_release_id=planned_release_id)
+            payload = svc.evaluate(planned_release_id=planned_release_id)
+            log_planner_event(
+                logger,
+                event_name="planner.readiness_surface.detail_loaded",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "planner_scope_fingerprint": None,
+                    "planned_release_id": planned_release_id,
+                    "computed_at": payload.get("computed_at"),
+                    "aggregate_status": payload.get("aggregate_status"),
+                },
+            )
+            return payload
         except PlannedReleaseReadinessNotFoundError:
             status_code = 404
             result_status = "error"
-            return planner_error("PRR_NOT_FOUND", "planned release not found", status_code=status_code, request_id=request_id)
+            return planner_error("PRS_PLANNED_RELEASE_NOT_FOUND", "planned release not found", status_code=status_code, request_id=request_id)
         except Exception:
             status_code = 500
             result_status = "error"
             logger.exception("planner_planned_release_readiness_failed request_id=%s planned_release_id=%s", request_id, planned_release_id)
             return planner_error(
-                "PRR_INTERNAL_EVALUATION_ERROR",
+                "PRS_READINESS_EVALUATION_FAILED",
                 "planned release readiness evaluation failed",
                 status_code=status_code,
                 request_id=request_id,
