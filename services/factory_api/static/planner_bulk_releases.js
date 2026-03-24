@@ -47,6 +47,7 @@
     $('readiness-summary-not-ready').textContent = String(s.not_ready ?? 0);
     $('readiness-summary-blocked').textContent = String(s.blocked ?? 0);
     $('readiness-summary-attention').textContent = String(s.attention_count ?? 0);
+    $('readiness-summary-computed-at').textContent = String(s.computed_at || '-');
     $('readiness-summary-computed-at').textContent = String(s.computed_at || 'Not available');
   }
 
