@@ -85,11 +85,88 @@ def _readiness_summary(readiness: dict[str, Any]) -> dict[str, Any]:
     primary_reason = readiness.get("primary_reason") or {}
     return {
         "aggregate_status": readiness.get("aggregate_status"),
-        "blocked_domains": int(summary.get("blocked_domains") or 0),
-        "not_ready_domains": int(summary.get("not_ready_domains") or 0),
+        "blocked_domains_count": int(summary.get("blocked_domains") or 0),
+        "not_ready_domains_count": int(summary.get("not_ready_domains") or 0),
+        "computed_at": readiness.get("computed_at"),
         "primary_reason": primary_reason.get("message"),
         "primary_remediation_hint": readiness.get("primary_remediation_hint"),
     }
+
+
+def _readiness_unavailable_payload() -> dict[str, Any]:
+    return {
+        "aggregate_status": None,
+        "error": {
+            "code": "PRS_READINESS_UNAVAILABLE",
+            "message": "Readiness could not be computed for this item.",
+        },
+    }
+
+
+def _parse_readiness_status_filter(readiness_status: str | None) -> set[str]:
+    text = (readiness_status or "").strip()
+    if not text:
+        return set()
+    allowed = {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"}
+    out: set[str] = set()
+    for part in text.split(","):
+        value = part.strip()
+        if not value:
+            continue
+        if value not in allowed:
+            raise ValueError("readiness_status contains invalid value")
+        out.add(value)
+    if not out:
+        raise ValueError("readiness_status contains invalid value")
+    return out
+
+
+def _evaluate_readiness_tolerant(
+    readiness_svc: PlannedReleaseReadinessService,
+    planned_release_ids: list[int],
+) -> tuple[dict[int, dict[str, Any]], set[int]]:
+    if not planned_release_ids:
+        return {}, set()
+    try:
+        return readiness_svc.evaluate_many(planned_release_ids=planned_release_ids), set()
+    except Exception:
+        if len(planned_release_ids) == 1:
+            return {}, {int(planned_release_ids[0])}
+        mid = len(planned_release_ids) // 2
+        left_map, left_failed = _evaluate_readiness_tolerant(readiness_svc, planned_release_ids[:mid])
+        right_map, right_failed = _evaluate_readiness_tolerant(readiness_svc, planned_release_ids[mid:])
+        left_map.update(right_map)
+        return left_map, left_failed | right_failed
+
+
+def _build_readiness_summary(scope_ids: list[int], readiness_map: dict[int, dict[str, Any]], unavailable_ids: set[int]) -> dict[str, Any]:
+    summary = {
+        "scope_total": len(scope_ids),
+        "ready_for_materialization": 0,
+        "not_ready": 0,
+        "blocked": 0,
+        "unavailable": len(unavailable_ids),
+        "attention_count": 0,
+        "computed_at": None,
+    }
+    computed_at_values: list[str] = []
+    for release_id in scope_ids:
+        if release_id in unavailable_ids:
+            continue
+        aggregate_status = str((readiness_map.get(release_id) or {}).get("aggregate_status") or "")
+        if aggregate_status == "READY_FOR_MATERIALIZATION":
+            summary["ready_for_materialization"] += 1
+        elif aggregate_status == "NOT_READY":
+            summary["not_ready"] += 1
+        elif aggregate_status == "BLOCKED":
+            summary["blocked"] += 1
+        computed_at = str((readiness_map.get(release_id) or {}).get("computed_at") or "").strip()
+        if computed_at:
+            computed_at_values.append(computed_at)
+    summary["attention_count"] = summary["not_ready"] + summary["blocked"]
+    if computed_at_values:
+        summary["computed_at"] = max(computed_at_values)
+    return summary
 
 
 def _created_at_sort_key_desc(value: str) -> float:
@@ -438,6 +515,7 @@ def create_planner_router(env: Env) -> APIRouter:
         q: str = "",
         sort_by: str = "created_at",
         sort_dir: str = "desc",
+        include_readiness: bool = False,
         include_readiness_summary: bool = False,
         readiness_status: str | None = None,
         page: int = 1,
@@ -462,15 +540,17 @@ def create_planner_router(env: Env) -> APIRouter:
                 status_code=status_code,
                 request_id=request_id,
             )
-        readiness_status_value = (readiness_status or "").strip() or None
-        if readiness_status_value and readiness_status_value not in {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"}:
+        try:
+            readiness_status_values = _parse_readiness_status_filter(readiness_status)
+        except ValueError:
             status_code = 400
             return planner_error(
-                "PLR_INVALID_INPUT",
-                "readiness_status is not allowed",
+                "PRS_INVALID_READINESS_FILTER",
+                "readiness_status contains invalid value",
                 status_code=status_code,
                 request_id=request_id,
             )
+        readiness_status_value = ",".join(sorted(readiness_status_values)) if readiness_status_values else None
 
         readiness_sort_requested = sort_by_value == "readiness_severity"
         if sort_by_value not in PlannedReleaseService.SORT_ALLOWLIST and not readiness_sort_requested:
@@ -504,18 +584,45 @@ def create_planner_router(env: Env) -> APIRouter:
                 offset=(page - 1) * page_size,
             )
 
-            readiness_filter_or_sort = bool(readiness_status_value) or readiness_sort_requested
-            if readiness_filter_or_sort:
+            include_readiness_flag = bool(include_readiness) or bool(include_readiness_summary)
+            readiness_requested = include_readiness_flag or bool(readiness_status_values)
+            readiness_summary_payload: dict[str, Any] | None = None
+            unavailable_ids: set[int] = set()
+            if readiness_requested or readiness_sort_requested:
                 candidates = svc.list_candidate_ids(base_params)
                 candidate_ids = [item["id"] for item in candidates]
                 readiness_svc = PlannedReleaseReadinessService(conn)
-                readiness_map = readiness_svc.evaluate_many(planned_release_ids=candidate_ids) if candidate_ids else {}
-                if readiness_status_value:
+                readiness_map, unavailable_ids = _evaluate_readiness_tolerant(readiness_svc, candidate_ids)
+                if unavailable_ids:
+                    log_planner_event(
+                        logger,
+                        event_name="planner.readiness_surface.readiness_unavailable",
+                        username=username,
+                        started_at=started_at,
+                        status_code=status_code,
+                        request_id=request_id,
+                        extra_fields={
+                            "unavailable_count": len(unavailable_ids),
+                        },
+                    )
+                if readiness_status_values:
                     candidate_ids = [
                         release_id
                         for release_id in candidate_ids
-                        if (readiness_map.get(release_id) or {}).get("aggregate_status") == readiness_status_value
+                        if (readiness_map.get(release_id) or {}).get("aggregate_status") in readiness_status_values
                     ]
+                    log_planner_event(
+                        logger,
+                        event_name="planner.readiness_surface.filter_applied",
+                        username=username,
+                        started_at=started_at,
+                        status_code=status_code,
+                        request_id=request_id,
+                        extra_fields={
+                            "readiness_status_filter": readiness_status_value,
+                            "scope_total": len(candidate_ids),
+                        },
+                    )
                 if readiness_sort_requested:
                     severity_rank = {"BLOCKED": 0, "NOT_READY": 1, "READY_FOR_MATERIALIZATION": 2}
                     created_at_by_id = {item["id"]: item["created_at"] for item in candidates}
@@ -528,6 +635,8 @@ def create_planner_router(env: Env) -> APIRouter:
                         ),
                     )
 
+                if include_readiness_flag:
+                    readiness_summary_payload = _build_readiness_summary(candidate_ids, readiness_map, unavailable_ids)
                 total = len(candidate_ids)
                 start = (page - 1) * page_size
                 stop = start + page_size
@@ -536,21 +645,29 @@ def create_planner_router(env: Env) -> APIRouter:
                 row_by_id = {int(row["id"]): row for row in page_rows}
                 ordered_rows = [row_by_id[rid] for rid in page_ids if rid in row_by_id]
                 items = [_release_dto(row) for row in ordered_rows]
-                if include_readiness_summary:
+                if include_readiness_flag:
                     for item in items:
-                        item["readiness"] = _readiness_summary(readiness_map.get(int(item["id"])) or {})
+                        item_id = int(item["id"])
+                        if item_id in unavailable_ids:
+                            item["readiness"] = _readiness_unavailable_payload()
+                        else:
+                            item["readiness"] = _readiness_summary(readiness_map.get(item_id) or {})
                 result_limit = page_size
             else:
                 result = svc.list(base_params)
                 items = [_release_dto(row) for row in result["items"]]
                 total = int(result["total"])
                 result_limit = int(result["limit"])
-                if include_readiness_summary:
+                if include_readiness_flag:
                     page_ids = [int(item["id"]) for item in items]
-                    readiness_map = PlannedReleaseReadinessService(conn).evaluate_many(planned_release_ids=page_ids) if page_ids else {}
+                    readiness_map, unavailable_ids = _evaluate_readiness_tolerant(PlannedReleaseReadinessService(conn), page_ids)
                     for item in items:
-                        item["readiness"] = _readiness_summary(readiness_map.get(int(item["id"])) or {})
-            return {
+                        item_id = int(item["id"])
+                        if item_id in unavailable_ids:
+                            item["readiness"] = _readiness_unavailable_payload()
+                        else:
+                            item["readiness"] = _readiness_summary(readiness_map.get(item_id) or {})
+            response: dict[str, Any] = {
                 "items": items,
                 "pagination": {
                     "page": page,
@@ -558,6 +675,28 @@ def create_planner_router(env: Env) -> APIRouter:
                     "total": total,
                 },
             }
+            if readiness_summary_payload is not None:
+                response["readiness_summary"] = readiness_summary_payload
+                log_planner_event(
+                    logger,
+                    event_name="planner.readiness_surface.list_loaded",
+                    username=username,
+                    started_at=started_at,
+                    status_code=status_code,
+                    request_id=request_id,
+                    extra_fields={
+                        "planner_scope_fingerprint": f"{channel_slug}|{content_type}|{status}|{q.strip()}",
+                        "include_readiness": int(bool(include_readiness_flag)),
+                        "readiness_status_filter": readiness_status_value,
+                        "scope_total": readiness_summary_payload["scope_total"],
+                        "ready_count": readiness_summary_payload["ready_for_materialization"],
+                        "not_ready_count": readiness_summary_payload["not_ready"],
+                        "blocked_count": readiness_summary_payload["blocked"],
+                        "unavailable_count": readiness_summary_payload["unavailable"],
+                        "computed_at": readiness_summary_payload["computed_at"],
+                    },
+                )
+            return response
         except Exception as exc:
             logger.exception("planner_list_releases_failed request_id=%s", request_id)
             status_code = 500
@@ -578,6 +717,7 @@ def create_planner_router(env: Env) -> APIRouter:
                     "q_len": len(q),
                     "sort_by": sort_by_value,
                     "sort_dir": sort_dir_value,
+                    "include_readiness": int(bool(include_readiness)),
                     "include_readiness_summary": int(bool(include_readiness_summary)),
                     "readiness_status": readiness_status_value,
                     "page": page,
