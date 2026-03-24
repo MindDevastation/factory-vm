@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from services.common import db as dbm
 from services.common.env import Env
+from services.planner.planned_release_readiness_service import PlannedReleaseReadinessService
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
@@ -190,6 +191,29 @@ class TestPlannerPlannedReleaseReadinessApi(unittest.TestCase):
             not_found = client.get("/v1/planner/planned-releases/999999/readiness", headers=headers)
             self.assertEqual(not_found.status_code, 404)
             self.assertEqual(not_found.json()["error"]["code"], "PRR_NOT_FOUND")
+
+    def test_evaluate_many_batch_matches_single_and_no_side_effects(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            first = self._insert_planned_release(env)
+            second = self._insert_planned_release(env, publish_at="bad-date")
+            self._seed_full_ready_state(env, first)
+
+            conn = dbm.connect(env)
+            try:
+                svc = PlannedReleaseReadinessService(conn)
+                before = self._snapshot(env)
+                batched = svc.evaluate_many(planned_release_ids=[first, second])
+                single_first = svc.evaluate(planned_release_id=first)
+                single_second = svc.evaluate(planned_release_id=second)
+                after = self._snapshot(env)
+            finally:
+                conn.close()
+
+            self.assertEqual(before, after)
+            self.assertEqual(batched[first]["aggregate_status"], single_first["aggregate_status"])
+            self.assertEqual(batched[second]["aggregate_status"], single_second["aggregate_status"])
 
 
 if __name__ == "__main__":

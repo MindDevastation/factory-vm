@@ -105,6 +105,49 @@ class PlannedReleaseService:
             "offset": offset,
         }
 
+    def list_candidate_ids(self, params: PlannedReleaseListParams) -> list[dict[str, Any]]:
+        where_clauses: list[str] = []
+        values: list[Any] = []
+        if params.channel_slug:
+            where_clauses.append("channel_slug = ?")
+            values.append(params.channel_slug)
+        if params.content_type:
+            where_clauses.append("content_type = ?")
+            values.append(params.content_type)
+        if params.status:
+            where_clauses.append("status = ?")
+            values.append(params.status)
+        if params.search:
+            where_clauses.append("LOWER(COALESCE(title, '')) LIKE ?")
+            values.append(f"%{params.search.lower()}%")
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        rows = self._conn.execute(
+            f"""
+            SELECT id, created_at
+            FROM planned_releases
+            {where_sql}
+            ORDER BY created_at DESC, id ASC
+            """,
+            tuple(values),
+        ).fetchall()
+        return [{"id": int(row["id"]), "created_at": str(row["created_at"])} for row in rows]
+
+    def list_by_ids(self, release_ids: list[int]) -> list[dict[str, Any]]:
+        if not release_ids:
+            return []
+        unique_ids = list(dict.fromkeys(int(item) for item in release_ids))
+        placeholders = ",".join("?" for _ in unique_ids)
+        rows = self._conn.execute(
+            f"""
+            SELECT id, channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at
+            FROM planned_releases
+            WHERE id IN ({placeholders})
+            """,
+            tuple(unique_ids),
+        ).fetchall()
+        by_id = {int(row["id"]): row for row in rows}
+        return [by_id[item] for item in release_ids if item in by_id]
+
     def get_by_id(self, release_id: int) -> dict[str, Any]:
         row = self._conn.execute(
             """

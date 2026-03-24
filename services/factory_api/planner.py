@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -77,6 +78,28 @@ def _release_dto(row: dict[str, Any]) -> dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+
+
+def _readiness_summary(readiness: dict[str, Any]) -> dict[str, Any]:
+    summary = readiness.get("summary") or {}
+    primary_reason = readiness.get("primary_reason") or {}
+    return {
+        "aggregate_status": readiness.get("aggregate_status"),
+        "blocked_domains": int(summary.get("blocked_domains") or 0),
+        "not_ready_domains": int(summary.get("not_ready_domains") or 0),
+        "primary_reason": primary_reason.get("message"),
+        "primary_remediation_hint": readiness.get("primary_remediation_hint"),
+    }
+
+
+def _created_at_sort_key_desc(value: str) -> float:
+    text = (value or "").strip()
+    if not text:
+        return float("inf")
+    try:
+        return -datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return float("inf")
 
 
 def _channel_exists(conn: sqlite3.Connection, channel_slug: str) -> bool:
@@ -411,9 +434,12 @@ def create_planner_router(env: Env) -> APIRouter:
         request: Request,
         channel_slug: str | None = None,
         content_type: str | None = None,
+        status: str | None = None,
         q: str = "",
         sort_by: str = "created_at",
         sort_dir: str = "desc",
+        include_readiness_summary: bool = False,
+        readiness_status: str | None = None,
         page: int = 1,
         page_size: int = 50,
         username: str = Depends(_require_planner_auth(env)),
@@ -436,7 +462,18 @@ def create_planner_router(env: Env) -> APIRouter:
                 status_code=status_code,
                 request_id=request_id,
             )
-        if sort_by_value not in PlannedReleaseService.SORT_ALLOWLIST:
+        readiness_status_value = (readiness_status or "").strip() or None
+        if readiness_status_value and readiness_status_value not in {"NOT_READY", "BLOCKED", "READY_FOR_MATERIALIZATION"}:
+            status_code = 400
+            return planner_error(
+                "PLR_INVALID_INPUT",
+                "readiness_status is not allowed",
+                status_code=status_code,
+                request_id=request_id,
+            )
+
+        readiness_sort_requested = sort_by_value == "readiness_severity"
+        if sort_by_value not in PlannedReleaseService.SORT_ALLOWLIST and not readiness_sort_requested:
             status_code = 400
             return planner_error(
                 "PLR_INVALID_INPUT",
@@ -456,24 +493,69 @@ def create_planner_router(env: Env) -> APIRouter:
         conn = dbm.connect(env)
         try:
             svc = PlannedReleaseService(conn)
-            result = svc.list(
-                PlannedReleaseListParams(
-                    channel_slug=(channel_slug.strip() or None) if channel_slug else None,
-                    content_type=(content_type.strip() or None) if content_type else None,
-                    search=(q.strip() or None),
-                    sort_by=sort_by_value,
-                    sort_dir=sort_dir_value,
-                    limit=page_size,
-                    offset=(page - 1) * page_size,
-                )
+            base_params = PlannedReleaseListParams(
+                channel_slug=(channel_slug.strip() or None) if channel_slug else None,
+                content_type=(content_type.strip() or None) if content_type else None,
+                status=(status.strip() or None) if status else None,
+                search=(q.strip() or None),
+                sort_by=sort_by_value if not readiness_sort_requested else "created_at",
+                sort_dir=sort_dir_value,
+                limit=page_size,
+                offset=(page - 1) * page_size,
             )
-            items = [_release_dto(row) for row in result["items"]]
+
+            readiness_filter_or_sort = bool(readiness_status_value) or readiness_sort_requested
+            if readiness_filter_or_sort:
+                candidates = svc.list_candidate_ids(base_params)
+                candidate_ids = [item["id"] for item in candidates]
+                readiness_svc = PlannedReleaseReadinessService(conn)
+                readiness_map = readiness_svc.evaluate_many(planned_release_ids=candidate_ids) if candidate_ids else {}
+                if readiness_status_value:
+                    candidate_ids = [
+                        release_id
+                        for release_id in candidate_ids
+                        if (readiness_map.get(release_id) or {}).get("aggregate_status") == readiness_status_value
+                    ]
+                if readiness_sort_requested:
+                    severity_rank = {"BLOCKED": 0, "NOT_READY": 1, "READY_FOR_MATERIALIZATION": 2}
+                    created_at_by_id = {item["id"]: item["created_at"] for item in candidates}
+                    candidate_ids = sorted(
+                        candidate_ids,
+                        key=lambda rid: (
+                            severity_rank.get(str((readiness_map.get(rid) or {}).get("aggregate_status") or ""), 99),
+                            _created_at_sort_key_desc(str(created_at_by_id.get(rid) or "")),
+                            int(rid),
+                        ),
+                    )
+
+                total = len(candidate_ids)
+                start = (page - 1) * page_size
+                stop = start + page_size
+                page_ids = candidate_ids[start:stop]
+                page_rows = svc.list_by_ids(page_ids)
+                row_by_id = {int(row["id"]): row for row in page_rows}
+                ordered_rows = [row_by_id[rid] for rid in page_ids if rid in row_by_id]
+                items = [_release_dto(row) for row in ordered_rows]
+                if include_readiness_summary:
+                    for item in items:
+                        item["readiness"] = _readiness_summary(readiness_map.get(int(item["id"])) or {})
+                result_limit = page_size
+            else:
+                result = svc.list(base_params)
+                items = [_release_dto(row) for row in result["items"]]
+                total = int(result["total"])
+                result_limit = int(result["limit"])
+                if include_readiness_summary:
+                    page_ids = [int(item["id"]) for item in items]
+                    readiness_map = PlannedReleaseReadinessService(conn).evaluate_many(planned_release_ids=page_ids) if page_ids else {}
+                    for item in items:
+                        item["readiness"] = _readiness_summary(readiness_map.get(int(item["id"])) or {})
             return {
                 "items": items,
                 "pagination": {
                     "page": page,
-                    "page_size": result["limit"],
-                    "total": result["total"],
+                    "page_size": result_limit,
+                    "total": total,
                 },
             }
         except Exception as exc:
@@ -492,9 +574,12 @@ def create_planner_router(env: Env) -> APIRouter:
                 extra_fields={
                     "channel_slug": channel_slug,
                     "content_type": content_type,
+                    "status": status,
                     "q_len": len(q),
                     "sort_by": sort_by_value,
                     "sort_dir": sort_dir_value,
+                    "include_readiness_summary": int(bool(include_readiness_summary)),
+                    "readiness_status": readiness_status_value,
                     "page": page,
                     "page_size": page_size,
                 },
