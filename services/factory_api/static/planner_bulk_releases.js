@@ -28,12 +28,26 @@
     push('content_type', $('filter-content-type').value);
     push('q', $('filter-q').value);
     push('readiness_status', $('filter-readiness-status').value);
+    push('readiness_problem', $('filter-readiness-problem').value);
     push('sort_by', $('sort-by').value);
+    if ($('sort-by').value === 'readiness_priority') {
+      push('readiness_priority', $('readiness-priority').value);
+    }
     push('sort_dir', $('sort-dir').value);
     p.set('include_readiness_summary', 'true');
     p.set('page', String(state.page));
     p.set('page_size', String(state.pageSize));
     return p;
+  }
+
+  function renderReadinessSummary(summary) {
+    const s = summary || {};
+    $('readiness-summary-total').textContent = String(s.scope_total ?? 0);
+    $('readiness-summary-ready').textContent = String(s.ready_for_materialization ?? 0);
+    $('readiness-summary-not-ready').textContent = String(s.not_ready ?? 0);
+    $('readiness-summary-blocked').textContent = String(s.blocked ?? 0);
+    $('readiness-summary-attention').textContent = String(s.attention_count ?? 0);
+    $('readiness-summary-computed-at').textContent = String(s.computed_at || '-');
   }
 
   function readinessUiSummary(item) {
@@ -166,6 +180,7 @@
     state.selected.clear();
     $('bulk-delete-btn').disabled = true;
     renderRows();
+    renderReadinessSummary(data.readiness_summary || {});
     const start = (state.page - 1) * state.pageSize + 1;
     const end = Math.min(state.page * state.pageSize, state.total);
     $('page-label').textContent = state.total ? `${start}-${end} / ${state.total}` : '0';
@@ -500,8 +515,13 @@
   }
 
   $('reload-btn').addEventListener('click', async () => { state.page = 1; try { await loadList(); } catch (e) { setNote(e.message); } });
+  $('refresh-readiness-btn').addEventListener('click', async () => { try { await loadList(); } catch (e) { setNote(e.message); } });
   $('prev-page').addEventListener('click', async () => { if (state.page > 1) { state.page -= 1; try { await loadList(); } catch (e) { setNote(e.message); } } });
   $('next-page').addEventListener('click', async () => { if (state.page * state.pageSize < state.total) { state.page += 1; try { await loadList(); } catch (e) { setNote(e.message); } } });
+  $('sort-by').addEventListener('change', () => {
+    $('readiness-priority').disabled = $('sort-by').value !== 'readiness_priority';
+  });
+  $('readiness-priority').disabled = $('sort-by').value !== 'readiness_priority';
   $('select-all').addEventListener('change', (e) => {
     state.selected.clear();
     if (e.target.checked) state.items.forEach((it) => state.selected.add(it.id));
