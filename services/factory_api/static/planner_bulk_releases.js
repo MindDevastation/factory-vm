@@ -29,6 +29,7 @@
     push('q', $('filter-q').value);
     push('readiness_status', $('filter-readiness-status').value);
     push('readiness_problem', $('filter-readiness-problem').value);
+    push('materialized_state', $('filter-materialized-state').value);
     push('sort_by', $('sort-by').value);
     if ($('sort-by').value === 'readiness_priority') {
       push('readiness_priority', $('readiness-priority').value);
@@ -61,6 +62,7 @@
   function emptyPlannerMessage() {
     const readinessStatus = selectedReadinessFilterValue();
     const readinessProblem = selectedReadinessProblemValue();
+    const materializedState = String($('filter-materialized-state').value || '').trim();
     if (readinessProblem === 'blocked_only') {
       return 'No BLOCKED items in current planner scope.';
     }
@@ -70,7 +72,36 @@
     if (readinessStatus || readinessProblem) {
       return 'No items match the selected readiness filter.';
     }
+    if (materializedState) {
+      return 'No items match the selected materialized_state filter.';
+    }
     return 'No planned releases in current planner scope.';
+  }
+
+  function renderMaterializationSummary(item) {
+    const summary = item.materialization_state_summary || {};
+    const stateLabel = String(summary.materialization_state || 'NOT_MATERIALIZED');
+    const releaseId = summary.release_id ?? summary.materialized_release_id ?? null;
+    const reason = String(summary.action_reason || '').trim();
+    const stateText = `State: ${stateLabel}`;
+    const linkText = releaseId ? `<a href="/ui/releases/${esc(releaseId)}" target="_blank" rel="noopener">release #${esc(releaseId)}</a>` : 'release: -';
+    const reasonText = reason ? `<div class="muted">${esc(reason)}</div>` : '';
+    return `<div>${esc(stateText)}</div><div class="muted">${linkText}</div>${reasonText}`;
+  }
+
+  function materializeActionState(item) {
+    const summary = item.materialization_state_summary || {};
+    const stateValue = String(summary.materialization_state || '');
+    const reason = String(summary.action_reason || '').trim();
+    const disabled = stateValue === 'BINDING_INCONSISTENT'
+      || stateValue === 'ALREADY_MATERIALIZED'
+      || stateValue === 'ACTION_DISABLED';
+    return { disabled, reason: reason || (disabled ? 'Materialization unavailable' : ''), stateValue };
+  }
+
+  function openReleaseCta(releaseId) {
+    if (!releaseId) return '';
+    return `Open release: <a href="/ui/releases/${esc(releaseId)}" target="_blank" rel="noopener">#${esc(releaseId)}</a>`;
   }
 
   function readinessUiSummary(item) {
@@ -133,7 +164,7 @@
   function renderRows() {
     const tbody = $('planner-tbody');
     if (!state.items.length) {
-      tbody.innerHTML = `<tr><td colspan="10" class="muted">${esc(emptyPlannerMessage())}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="11" class="muted">${esc(emptyPlannerMessage())}</td></tr>`;
       return;
     }
     tbody.innerHTML = state.items.map((item) => `<tr data-row-id="${item.id}">
@@ -141,6 +172,12 @@
       <td>${item.id}</td>
       <td>${esc(item.status)}</td>
       <td>${renderReadinessBadge(item)}</td>
+      <td>${renderMaterializationSummary(item)}</td>
+      <td>
+        <button type="button" data-materialize-item="${item.id}" ${materializeActionState(item).disabled ? 'disabled' : ''}>Materialize</button>
+        <button type="button" data-materialization-detail="${item.id}">Details</button>
+        ${materializeActionState(item).disabled ? `<div class="muted">${esc(materializeActionState(item).reason)}</div>` : ''}
+      </td>
       <td>${editableInput(item, 'channel_slug', item.channel_slug)}</td>
       <td>${editableInput(item, 'content_type', item.content_type)}</td>
       <td>${editableInput(item, 'title', item.title)}</td>
@@ -166,6 +203,45 @@
         } catch (err) {
           setNote(`Readiness load failed: ${err.message}`);
         }
+      });
+    });
+
+    tbody.querySelectorAll('button[data-materialization-detail]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = Number(el.getAttribute('data-materialization-detail'));
+        if (!Number.isInteger(id) || id <= 0) return;
+        const item = state.items.find((it) => Number(it.id) === id);
+        if (!item) return;
+        $('materialization-dialog-release-label').textContent = `planned_release_id=${id}`;
+        $('materialization-summary-body').textContent = JSON.stringify(item.materialization_state_summary || {}, null, 2);
+        $('materialization-diagnostics-body').textContent = JSON.stringify(item.binding_diagnostics || {}, null, 2);
+        const releaseId = item.materialization_state_summary?.release_id ?? item.materialized_release_id;
+        $('materialization-open-release-cta').innerHTML = openReleaseCta(releaseId);
+        $('materialization-dialog').showModal();
+      });
+    });
+
+    tbody.querySelectorAll('button[data-materialize-item]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const id = Number(el.getAttribute('data-materialize-item'));
+        if (!Number.isInteger(id) || id <= 0) return;
+        const res = await fetch(apiUrl(`/v1/planner/planned-releases/${id}/materialize`), { method: 'POST' });
+        const body = await res.json();
+        if (!res.ok || body.result === 'FAILED' || body.error) {
+          const reason = body?.error?.message || body?.error?.code || `HTTP ${res.status}`;
+          setNote(`Materialization failed for ${id}: ${reason}`);
+          await loadList();
+          return;
+        }
+        const releaseId = body?.release?.id;
+        if (body.result === 'CREATED_NEW') {
+          setNote(`Created new canonical release #${releaseId}. ${releaseId ? `Open release: /ui/releases/${releaseId}` : ''}`);
+        } else if (body.result === 'RETURNED_EXISTING') {
+          setNote(`Returned existing linked release #${releaseId}. ${releaseId ? `Open release: /ui/releases/${releaseId}` : ''}`);
+        } else {
+          setNote(`Materialization completed for ${id}.`);
+        }
+        await loadList();
       });
     });
 
@@ -623,6 +699,7 @@
   });
   $('readiness-actionable-only').addEventListener('change', renderReadinessDetail);
   $('readiness-dialog-close').addEventListener('click', () => $('readiness-dialog').close());
+  $('materialization-dialog-close').addEventListener('click', () => $('materialization-dialog').close());
 
   $('import-preview-body').innerHTML = previewPlaceholder('No preview yet.');
   setMetadataBulkStaleBanner(false);

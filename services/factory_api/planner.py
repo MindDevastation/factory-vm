@@ -42,6 +42,11 @@ from services.planner.materialization_service import (
     PlannerMaterializationError,
     PlannerMaterializationService,
 )
+from services.planner.materialization_foundation import (
+    derive_binding_diagnostics_inputs,
+    derive_materialization_state_summary_inputs,
+    validate_binding_invariants,
+)
 from services.planner.metadata_bulk_preview_service import (
     MetadataBulkPreviewError,
     apply_bulk_preview_session,
@@ -76,6 +81,7 @@ def _release_dto(row: dict[str, Any]) -> dict[str, Any]:
         "publish_at": row["publish_at"],
         "notes": row["notes"],
         "status": row["status"],
+        "materialized_release_id": row.get("materialized_release_id"),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -134,6 +140,62 @@ def _parse_readiness_problem_filter(readiness_problem: str | None) -> set[str]:
     if text not in mapping:
         raise ValueError("readiness_problem contains invalid value")
     return mapping[text]
+
+
+def _parse_materialized_state_filter(materialized_state: str | None) -> set[str]:
+    text = (materialized_state or "").strip()
+    if not text:
+        return set()
+    allowed = {"materialized", "not_materialized", "binding_inconsistent"}
+    out: set[str] = set()
+    for part in text.split(","):
+        value = part.strip()
+        if not value:
+            continue
+        if value not in allowed:
+            raise ValueError("materialized_state contains invalid value")
+        out.add(value)
+    if not out:
+        raise ValueError("materialized_state contains invalid value")
+    return out
+
+
+def _materialization_action_reason(*, state_value: str, readiness_status: str | None) -> str | None:
+    if state_value == "BINDING_INCONSISTENT":
+        return "Binding inconsistent"
+    if state_value == "ALREADY_MATERIALIZED":
+        return "Already materialized"
+    if readiness_status == "BLOCKED":
+        return "Blocked"
+    if readiness_status == "NOT_READY":
+        return "Not ready for materialization"
+    if state_value == "ACTION_DISABLED":
+        return "Materialization action is currently unavailable"
+    return None
+
+
+def _normalize_materialization_state_for_surface(summary: dict[str, Any]) -> dict[str, Any]:
+    out = dict(summary)
+    if out.get("materialized_release_id") is not None and out.get("invariant_status") == "OK":
+        out["materialization_state"] = "ALREADY_MATERIALIZED"
+    return out
+
+
+def _matches_materialized_state_filter(summary: dict[str, Any], filters: set[str]) -> bool:
+    if not filters:
+        return True
+    state_value = str(summary.get("materialization_state") or "")
+    materialized_release_id = summary.get("materialized_release_id")
+    options: set[str] = set()
+    if state_value == "ALREADY_MATERIALIZED" or (
+        materialized_release_id is not None and str(summary.get("invariant_status") or "") == "OK"
+    ):
+        options.add("materialized")
+    if state_value == "BINDING_INCONSISTENT":
+        options.add("binding_inconsistent")
+    if state_value in {"NOT_MATERIALIZED", "ACTION_DISABLED"} and materialized_release_id is None:
+        options.add("not_materialized")
+    return bool(options & filters)
 
 
 def _readiness_rank(status: str, *, readiness_priority: str) -> int:
@@ -551,6 +613,7 @@ def create_planner_router(env: Env) -> APIRouter:
         include_readiness_summary: bool = False,
         readiness_status: str | None = None,
         readiness_problem: str | None = None,
+        materialized_state: str | None = None,
         readiness_priority: str | None = None,
         page: int = 1,
         page_size: int = 50,
@@ -591,6 +654,16 @@ def create_planner_router(env: Env) -> APIRouter:
             return planner_error(
                 "PRS_INVALID_READINESS_FILTER",
                 "readiness_problem contains invalid value",
+                status_code=status_code,
+                request_id=request_id,
+            )
+        try:
+            materialized_state_values = _parse_materialized_state_filter(materialized_state)
+        except ValueError:
+            status_code = 400
+            return planner_error(
+                "PRS_INVALID_MATERIALIZED_STATE_FILTER",
+                "materialized_state contains invalid value",
                 status_code=status_code,
                 request_id=request_id,
             )
@@ -649,6 +722,27 @@ def create_planner_router(env: Env) -> APIRouter:
                 candidate_ids = [item["id"] for item in candidates]
                 readiness_svc = PlannedReleaseReadinessService(conn)
                 readiness_map, unavailable_ids = _evaluate_readiness_tolerant(readiness_svc, candidate_ids)
+                if materialized_state_values:
+                    candidate_rows = svc.list_by_ids(candidate_ids)
+                    row_by_id = {int(row["id"]): row for row in candidate_rows}
+                    filtered_ids: list[int] = []
+                    for release_id in candidate_ids:
+                        row = row_by_id.get(int(release_id))
+                        if row is None:
+                            continue
+                        row_dict = dict(row)
+                        invariant_result = validate_binding_invariants(conn, planned_release=row_dict)
+                        readiness_status_value = str((readiness_map.get(int(release_id)) or {}).get("aggregate_status") or "")
+                        action_enabled = readiness_status_value == "READY_FOR_MATERIALIZATION"
+                        summary = derive_materialization_state_summary_inputs(
+                            planned_release=row_dict,
+                            invariant_result=invariant_result,
+                            action_enabled=action_enabled,
+                        )
+                        normalized_summary = _normalize_materialization_state_for_surface(summary)
+                        if _matches_materialized_state_filter(normalized_summary, materialized_state_values):
+                            filtered_ids.append(int(release_id))
+                    candidate_ids = filtered_ids
                 if unavailable_ids:
                     log_planner_event(
                         logger,
@@ -746,29 +840,80 @@ def create_planner_router(env: Env) -> APIRouter:
                 page_rows = svc.list_by_ids(page_ids)
                 row_by_id = {int(row["id"]): row for row in page_rows}
                 ordered_rows = [row_by_id[rid] for rid in page_ids if rid in row_by_id]
-                items = [_release_dto(row) for row in ordered_rows]
-                if include_readiness_flag:
-                    for item in items:
-                        item_id = int(item["id"])
+                items = []
+                for row in ordered_rows:
+                    item = _release_dto(row)
+                    item_id = int(item["id"])
+                    readiness_payload = readiness_map.get(item_id) or {}
+                    if include_readiness_flag:
                         if item_id in unavailable_ids:
                             item["readiness"] = _readiness_unavailable_payload()
                         else:
-                            item["readiness"] = _readiness_summary(readiness_map.get(item_id) or {})
+                            item["readiness"] = _readiness_summary(readiness_payload)
+                    row_dict = dict(row)
+                    invariant_result = validate_binding_invariants(conn, planned_release=row_dict)
+                    readiness_status_value = str(readiness_payload.get("aggregate_status") or "")
+                    action_enabled = readiness_status_value == "READY_FOR_MATERIALIZATION"
+                    materialization_state_summary = derive_materialization_state_summary_inputs(
+                        planned_release=row_dict,
+                        invariant_result=invariant_result,
+                        action_enabled=action_enabled,
+                    )
+                    materialization_state_summary = _normalize_materialization_state_for_surface(materialization_state_summary)
+                    materialization_state_summary["release_id"] = row_dict.get("materialized_release_id")
+                    materialization_state_summary["action_reason"] = _materialization_action_reason(
+                        state_value=str(materialization_state_summary.get("materialization_state") or ""),
+                        readiness_status=readiness_status_value or None,
+                    )
+                    item["materialization_state_summary"] = materialization_state_summary
+                    item["binding_diagnostics"] = derive_binding_diagnostics_inputs(
+                        planned_release=row_dict,
+                        invariant_result=invariant_result,
+                    )
+                    items.append(item)
                 result_limit = page_size
             else:
-                result = svc.list(base_params)
-                items = [_release_dto(row) for row in result["items"]]
-                total = int(result["total"])
-                result_limit = int(result["limit"])
-                if include_readiness_flag:
-                    page_ids = [int(item["id"]) for item in items]
-                    readiness_map, unavailable_ids = _evaluate_readiness_tolerant(PlannedReleaseReadinessService(conn), page_ids)
-                    for item in items:
-                        item_id = int(item["id"])
-                        if item_id in unavailable_ids:
-                            item["readiness"] = _readiness_unavailable_payload()
-                        else:
-                            item["readiness"] = _readiness_summary(readiness_map.get(item_id) or {})
+                source_rows = []
+                if materialized_state_values:
+                    candidate_ids = [item["id"] for item in svc.list_candidate_ids(base_params)]
+                    page_candidate_rows = svc.list_by_ids(candidate_ids)
+                    row_by_id = {int(row["id"]): row for row in page_candidate_rows}
+                    source_rows = [row_by_id[rid] for rid in candidate_ids if rid in row_by_id]
+                else:
+                    result = svc.list(base_params)
+                    source_rows = list(result["items"])
+                    total = int(result["total"])
+                    result_limit = int(result["limit"])
+                items = []
+                for row in source_rows:
+                    item = _release_dto(row)
+                    row_dict = dict(row)
+                    invariant_result = validate_binding_invariants(conn, planned_release=row_dict)
+                    materialization_state_summary = derive_materialization_state_summary_inputs(
+                        planned_release=row_dict,
+                        invariant_result=invariant_result,
+                        action_enabled=False,
+                    )
+                    materialization_state_summary = _normalize_materialization_state_for_surface(materialization_state_summary)
+                    materialization_state_summary["release_id"] = row_dict.get("materialized_release_id")
+                    materialization_state_summary["action_reason"] = _materialization_action_reason(
+                        state_value=str(materialization_state_summary.get("materialization_state") or ""),
+                        readiness_status=None,
+                    )
+                    if not _matches_materialized_state_filter(materialization_state_summary, materialized_state_values):
+                        continue
+                    item["materialization_state_summary"] = materialization_state_summary
+                    item["binding_diagnostics"] = derive_binding_diagnostics_inputs(
+                        planned_release=row_dict,
+                        invariant_result=invariant_result,
+                    )
+                    items.append(item)
+                if materialized_state_values:
+                    total = len(items)
+                    start = (page - 1) * page_size
+                    stop = start + page_size
+                    items = items[start:stop]
+                    result_limit = page_size
             response: dict[str, Any] = {
                 "items": items,
                 "pagination": {
@@ -826,6 +971,7 @@ def create_planner_router(env: Env) -> APIRouter:
                     "include_readiness_summary": int(bool(include_readiness_summary)),
                     "readiness_status": readiness_status_value,
                     "readiness_problem": readiness_problem_value,
+                    "materialized_state": ",".join(sorted(materialized_state_values)) if materialized_state_values else None,
                     "readiness_priority": readiness_priority_value or None,
                     "page": page,
                     "page_size": page_size,
