@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 
 from services.common import db as dbm
 from services.common.env import Env
@@ -1302,6 +1303,94 @@ def create_planner_router(env: Env) -> APIRouter:
                 request_id=request_id,
                 extra_fields={
                     "planner_item_id": planner_item_id,
+                    "result_status": result_status,
+                },
+            )
+
+    @router.post("/planned-releases/{planned_release_id}/materialize")
+    async def planner_materialize_planned_release(
+        planned_release_id: int,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+
+        if not username:
+            status_code = 401
+            result_status = "error"
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            svc = PlannerMaterializationService(conn)
+            out = svc.materialize_planned_release(planned_release_id=planned_release_id, created_by=username)
+            return {
+                "planned_release_id": out.planned_release_id,
+                "result": out.result,
+                "release": {
+                    "id": out.release_id,
+                    "channel_slug": out.release_channel_slug,
+                },
+                "materialized_binding": out.materialized_binding,
+                "materialization_state_summary": out.materialization_state_summary,
+                "binding_diagnostics": out.binding_diagnostics,
+            }
+        except PlannerMaterializationError as exc:
+            result_status = "error"
+            status_map = {
+                "PRM_NOT_FOUND": 404,
+                "PRM_NOT_READY": 409,
+                "PRM_BLOCKED": 409,
+                "PRM_BINDING_INCONSISTENT": 409,
+                "PRM_INVALID_PLANNED_RELEASE_STATE": 409,
+                "PRM_RELEASE_CREATE_FAILED": 500,
+                "PRM_CONCURRENCY_CONFLICT": 409,
+            }
+            status_code = status_map.get(exc.code, 500)
+            return JSONResponse(status_code=status_code, content={
+                "planned_release_id": exc.planned_release_id or planned_release_id,
+                "result": "FAILED",
+                "error": {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "details": exc.details,
+                },
+                "materialization_state_summary": exc.materialization_state_summary,
+                "binding_diagnostics": exc.binding_diagnostics,
+            })
+        except Exception:
+            result_status = "error"
+            logger.exception(
+                "planner_materialize_planned_release_failed request_id=%s planned_release_id=%s",
+                request_id,
+                planned_release_id,
+            )
+            status_code = 500
+            return JSONResponse(status_code=status_code, content={
+                "planned_release_id": planned_release_id,
+                "result": "FAILED",
+                "error": {
+                    "code": "PRM_RELEASE_CREATE_FAILED",
+                    "message": "Materialization failed.",
+                    "details": {},
+                },
+                "materialization_state_summary": None,
+                "binding_diagnostics": None,
+            })
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_materialize_planned_release",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "planned_release_id": planned_release_id,
                     "result_status": result_status,
                 },
             )
