@@ -177,9 +177,26 @@ def validate_binding_invariants(
     )
 
 
-def build_release_payload_from_planned_release(*, planned_release: dict[str, Any]) -> dict[str, Any]:
+def build_release_payload_from_planned_release(
+    conn: sqlite3.Connection,
+    *,
+    planned_release: dict[str, Any],
+) -> dict[str, Any]:
+    channel_slug = planned_release.get("channel_slug")
+    if not isinstance(channel_slug, str) or not channel_slug.strip():
+        raise MaterializationBindingError(
+            code="PRM_INVALID_PLANNED_RELEASE_STATE",
+            message="planned_release.channel_slug missing or invalid",
+        )
+    channel = conn.execute("SELECT id FROM channels WHERE slug = ?", (channel_slug.strip(),)).fetchone()
+    if channel is None:
+        raise MaterializationBindingError(
+            code="PRM_RELEASE_CREATE_FAILED",
+            message="channel_id could not be resolved from planned_release.channel_slug",
+        )
+
     payload: dict[str, Any] = {
-        "channel_slug": planned_release.get("channel_slug"),
+        "channel_id": int(channel["id"]),
         "planned_at": planned_release.get("publish_at"),
     }
     title = planned_release.get("title")

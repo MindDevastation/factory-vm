@@ -5,6 +5,7 @@ import unittest
 from services.common import db as dbm
 from services.planner.materialization_foundation import (
     BindingInvariantResult,
+    MaterializationBindingError,
     build_release_payload_from_planned_release,
     derive_binding_diagnostics_inputs,
     derive_materialization_state_summary_inputs,
@@ -113,37 +114,73 @@ class TestPlannerMaterializationFoundation(unittest.TestCase):
                 conn.close()
 
     def test_mapping_builder_uses_only_canonical_existing_fields(self) -> None:
-        payload = build_release_payload_from_planned_release(
-            planned_release={
-                "id": 1,
-                "channel_slug": "darkwood-reverie",
-                "publish_at": "2026-01-01T00:00:00Z",
-                "title": "  Planned title  ",
-                "notes": "should not become description",
-            }
-        )
-        self.assertEqual(
-            payload,
-            {
-                "channel_slug": "darkwood-reverie",
-                "planned_at": "2026-01-01T00:00:00Z",
-                "title": "Planned title",
-            },
-        )
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                payload = build_release_payload_from_planned_release(
+                    conn,
+                    planned_release={
+                        "id": 1,
+                        "channel_slug": "darkwood-reverie",
+                        "publish_at": "2026-01-01T00:00:00Z",
+                        "title": "  Planned title  ",
+                        "notes": "should not become description",
+                    },
+                )
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                self.assertEqual(
+                    payload,
+                    {
+                        "channel_id": channel_id,
+                        "planned_at": "2026-01-01T00:00:00Z",
+                        "title": "Planned title",
+                    },
+                )
+                self.assertNotIn("channel_slug", payload)
+            finally:
+                conn.close()
 
     def test_mapping_builder_does_not_invent_or_generate_missing_data(self) -> None:
-        payload = build_release_payload_from_planned_release(
-            planned_release={
-                "id": 1,
-                "channel_slug": "darkwood-reverie",
-                "publish_at": None,
-                "title": "   ",
-                "notes": "free-form notes",
-            }
-        )
-        self.assertEqual(payload, {"channel_slug": "darkwood-reverie", "planned_at": None})
-        self.assertNotIn("description", payload)
-        self.assertNotIn("tags_json", payload)
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                payload = build_release_payload_from_planned_release(
+                    conn,
+                    planned_release={
+                        "id": 1,
+                        "channel_slug": "darkwood-reverie",
+                        "publish_at": None,
+                        "title": "   ",
+                        "notes": "free-form notes",
+                    },
+                )
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                self.assertEqual(payload, {"channel_id": channel_id, "planned_at": None})
+                self.assertNotIn("description", payload)
+                self.assertNotIn("tags_json", payload)
+            finally:
+                conn.close()
+
+    def test_mapping_builder_fails_when_channel_slug_cannot_resolve_channel_id(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                with self.assertRaises(MaterializationBindingError) as ctx:
+                    build_release_payload_from_planned_release(
+                        conn,
+                        planned_release={
+                            "id": 1,
+                            "channel_slug": "missing-channel",
+                            "publish_at": "2026-01-01T00:00:00Z",
+                            "title": "Planned title",
+                        },
+                    )
+                self.assertEqual(ctx.exception.code, "PRM_RELEASE_CREATE_FAILED")
+            finally:
+                conn.close()
 
     def test_materialization_state_summary_helper_input_derivation(self) -> None:
         planned = {"id": 10, "materialized_release_id": None}
