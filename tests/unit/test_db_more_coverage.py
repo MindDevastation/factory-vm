@@ -261,8 +261,14 @@ class TestDbMoreCoverage(unittest.TestCase):
                         "idx_pr_publish_at",
                         "idx_pr_status",
                         "idx_pr_title",
+                        "idx_pr_materialized_release_unique",
                     }.issubset(indexes)
                 )
+                columns = {
+                    str(r["name"])
+                    for r in conn.execute("PRAGMA table_info(planned_releases)").fetchall()
+                }
+                self.assertIn("materialized_release_id", columns)
             finally:
                 conn.close()
 
