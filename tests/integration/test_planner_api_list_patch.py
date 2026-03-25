@@ -829,6 +829,58 @@ class TestPlannerApiListPatch(unittest.TestCase):
             self.assertEqual(resp.status_code, 400)
             self.assertEqual(resp.json()["error"]["code"], "PRS_INVALID_MATERIALIZED_STATE_FILTER")
 
+    def test_materialized_state_filter_applies_before_pagination(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            for idx in range(5):
+                self._insert_release(
+                    env,
+                    channel_slug="darkwood-reverie",
+                    content_type="LONG",
+                    title=f"Unbound {idx}",
+                    publish_at=f"2025-06-{10 + idx:02d}T10:00:00+02:00",
+                    created_at=f"2025-01-{10 + idx:02d}T00:00:00Z",
+                )
+            target_id = self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Late Materialized Match",
+                publish_at="2025-06-30T10:00:00+02:00",
+                created_at="2025-01-01T00:00:00Z",
+            )
+            conn = dbm.connect(env)
+            try:
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                release_id = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                        VALUES(?, 'target', '', '[]', NULL, NULL, 'page-scope-target', 1.0)
+                        """,
+                        (channel_id,),
+                    ).lastrowid
+                )
+                conn.execute("UPDATE planned_releases SET materialized_release_id = ? WHERE id = ?", (release_id, target_id))
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            unfiltered = client.get("/v1/planner/releases?page=1&page_size=2", headers=auth)
+            self.assertEqual(unfiltered.status_code, 200)
+            self.assertGreater(unfiltered.json()["pagination"]["total"], 2)
+            self.assertNotIn("Late Materialized Match", [item["title"] for item in unfiltered.json()["items"]])
+
+            filtered = client.get("/v1/planner/releases?materialized_state=materialized&page=1&page_size=2", headers=auth)
+            self.assertEqual(filtered.status_code, 200)
+            self.assertEqual(filtered.json()["pagination"]["total"], 1)
+            self.assertEqual([item["title"] for item in filtered.json()["items"]], ["Late Materialized Match"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -873,37 +873,32 @@ def create_planner_router(env: Env) -> APIRouter:
                     items.append(item)
                 result_limit = page_size
             else:
-                result = svc.list(base_params)
+                source_rows = []
+                if materialized_state_values:
+                    candidate_ids = [item["id"] for item in svc.list_candidate_ids(base_params)]
+                    page_candidate_rows = svc.list_by_ids(candidate_ids)
+                    row_by_id = {int(row["id"]): row for row in page_candidate_rows}
+                    source_rows = [row_by_id[rid] for rid in candidate_ids if rid in row_by_id]
+                else:
+                    result = svc.list(base_params)
+                    source_rows = list(result["items"])
+                    total = int(result["total"])
+                    result_limit = int(result["limit"])
                 items = []
-                total = int(result["total"])
-                result_limit = int(result["limit"])
-                readiness_map: dict[int, dict[str, Any]] = {}
-                if include_readiness_flag:
-                    page_ids = [int(row["id"]) for row in result["items"]]
-                    readiness_map, unavailable_ids = _evaluate_readiness_tolerant(PlannedReleaseReadinessService(conn), page_ids)
-                for row in result["items"]:
+                for row in source_rows:
                     item = _release_dto(row)
-                    item_id = int(item["id"])
-                    readiness_payload = readiness_map.get(item_id) or {}
-                    if include_readiness_flag:
-                        if item_id in unavailable_ids:
-                            item["readiness"] = _readiness_unavailable_payload()
-                        else:
-                            item["readiness"] = _readiness_summary(readiness_payload)
                     row_dict = dict(row)
                     invariant_result = validate_binding_invariants(conn, planned_release=row_dict)
-                    readiness_status_value = str(readiness_payload.get("aggregate_status") or "")
-                    action_enabled = readiness_status_value == "READY_FOR_MATERIALIZATION"
                     materialization_state_summary = derive_materialization_state_summary_inputs(
                         planned_release=row_dict,
                         invariant_result=invariant_result,
-                        action_enabled=action_enabled,
+                        action_enabled=False,
                     )
                     materialization_state_summary = _normalize_materialization_state_for_surface(materialization_state_summary)
                     materialization_state_summary["release_id"] = row_dict.get("materialized_release_id")
                     materialization_state_summary["action_reason"] = _materialization_action_reason(
                         state_value=str(materialization_state_summary.get("materialization_state") or ""),
-                        readiness_status=readiness_status_value or None,
+                        readiness_status=None,
                     )
                     if not _matches_materialized_state_filter(materialization_state_summary, materialized_state_values):
                         continue
@@ -918,6 +913,7 @@ def create_planner_router(env: Env) -> APIRouter:
                     start = (page - 1) * page_size
                     stop = start + page_size
                     items = items[start:stop]
+                    result_limit = page_size
             response: dict[str, Any] = {
                 "items": items,
                 "pagination": {
