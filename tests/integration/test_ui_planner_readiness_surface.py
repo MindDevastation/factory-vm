@@ -110,6 +110,28 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertNotIn("materialize", js[js.find("openReadinessDialog"): js.find("openReadinessDialog") + 700])
         self.assertNotIn("/apply", js[js.find("openReadinessDialog"): js.find("openReadinessDialog") + 700])
 
+    def test_materialization_row_surface_and_filter_hooks_exist(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn('id="filter-materialized-state"', html)
+        self.assertIn("push('materialized_state', $('filter-materialized-state').value);", js)
+        self.assertIn(">Materialization<", html)
+        self.assertIn("data-materialize-item", js)
+        self.assertIn("data-materialization-detail", js)
+        self.assertIn("materialization_state_summary", js)
+        self.assertIn("binding_diagnostics", js)
+
+    def test_materialization_dialog_and_side_effect_copy_exist(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn('id="materialization-dialog"', html)
+        self.assertIn('id="materialization-summary-body"', html)
+        self.assertIn('id="materialization-diagnostics-body"', html)
+        self.assertIn('id="materialization-open-release-cta"', html)
+        self.assertIn("does not create jobs and does not start render/upload/publish", html)
+        self.assertIn("Created new canonical release", js)
+        self.assertIn("Returned existing linked release", js)
+        self.assertIn("Materialization failed", js)
+        self.assertIn("Open release:", js)
+
 
 if __name__ == "__main__":
     unittest.main()

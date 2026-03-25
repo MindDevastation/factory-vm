@@ -89,7 +89,7 @@ class PlannedReleaseService:
 
         rows = self._conn.execute(
             f"""
-            SELECT id, channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at
+            SELECT id, channel_slug, content_type, title, publish_at, notes, status, materialized_release_id, created_at, updated_at
             FROM planned_releases
             {where_sql}
             ORDER BY {sort_by} {sort_dir}, id ASC
@@ -141,7 +141,7 @@ class PlannedReleaseService:
         placeholders = ",".join("?" for _ in unique_ids)
         rows = self._conn.execute(
             f"""
-            SELECT id, channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at
+            SELECT id, channel_slug, content_type, title, publish_at, notes, status, materialized_release_id, created_at, updated_at
             FROM planned_releases
             WHERE id IN ({placeholders})
             """,
@@ -153,7 +153,7 @@ class PlannedReleaseService:
     def get_by_id(self, release_id: int) -> dict[str, Any]:
         row = self._conn.execute(
             """
-            SELECT id, channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at
+            SELECT id, channel_slug, content_type, title, publish_at, notes, status, materialized_release_id, created_at, updated_at
             FROM planned_releases
             WHERE id = ?
             """,
