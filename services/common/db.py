@@ -723,6 +723,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_ui_job_drafts_columns(conn)
     _ensure_tracks_columns(conn)
     _ensure_metadata_preview_sessions_columns(conn)
+    _ensure_planned_release_materialization_binding(conn)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -815,6 +816,26 @@ def _ensure_jobs_columns(conn: sqlite3.Connection) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_retry_of_job_id ON jobs(retry_of_job_id);")
     with suppress(Exception):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_root_job_id_attempt_no ON jobs(root_job_id, attempt_no);")
+
+
+def _ensure_planned_release_materialization_binding(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "planned_releases")
+    if "materialized_release_id" not in cols:
+        with suppress(Exception):
+            conn.execute(
+                """
+                ALTER TABLE planned_releases
+                ADD COLUMN materialized_release_id INTEGER NULL REFERENCES releases(id);
+                """
+            )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_materialized_release_unique
+            ON planned_releases(materialized_release_id)
+            WHERE materialized_release_id IS NOT NULL;
+            """
+        )
 
 
 def _migrate_jobs_retry_lineage(conn: sqlite3.Connection) -> None:
