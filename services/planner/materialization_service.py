@@ -298,10 +298,10 @@ class PlannerMaterializationService:
             invariant_reason="CONCURRENCY_CONFLICT_UNRESOLVED",
             linked_release_exists=False,
         )
-        for _ in range(5):
+        for _ in range(20):
             planned_release = get_planned_release_by_id(self._conn, planned_release_id=planned_release_id)
             if planned_release is None:
-                time.sleep(0.02)
+                time.sleep(0.05)
                 continue
 
             invariant_result = validate_binding_invariants(self._conn, planned_release=planned_release)
@@ -332,7 +332,7 @@ class PlannerMaterializationService:
                         summary=summary,
                         diagnostics=diagnostics,
                     )
-            time.sleep(0.02)
+            time.sleep(0.05)
 
         self._log_event(
             "planner.materialization.failed",

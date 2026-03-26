@@ -147,3 +147,26 @@ class TestPlannerMaterializationService(unittest.TestCase):
                 self.assertEqual(ctx.exception.code, "PRM_CONCURRENCY_CONFLICT")
             finally:
                 conn.close()
+
+    def test_no_heuristic_release_lookup_queries_are_used(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            traced_sql: list[str] = []
+            conn.set_trace_callback(lambda sql: traced_sql.append(str(sql)))
+            try:
+                planned_release_id = self._insert_planner_item(conn)
+                svc = PlannerMaterializationService(conn)
+                with patch(
+                    "services.planner.materialization_service.PlannedReleaseReadinessService.evaluate",
+                    return_value={"aggregate_status": "READY_FOR_MATERIALIZATION"},
+                ):
+                    svc.materialize_planned_release(planned_release_id=planned_release_id, created_by="tester")
+
+                normalized = " ".join(" ".join(traced_sql).split()).upper()
+                self.assertNotIn("SELECT ID FROM RELEASES WHERE CHANNEL_ID =", normalized)
+                self.assertNotIn("SELECT ID FROM RELEASES WHERE TITLE =", normalized)
+                self.assertNotIn("SELECT ID FROM RELEASES WHERE PLANNED_AT =", normalized)
+            finally:
+                conn.set_trace_callback(None)
+                conn.close()
