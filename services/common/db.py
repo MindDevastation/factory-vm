@@ -169,9 +169,6 @@ def migrate(conn: sqlite3.Connection) -> None:
         );
 
         CREATE INDEX IF NOT EXISTS idx_jobs_state_priority ON jobs(state, priority, created_at);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_current_open_job_unique
-            ON releases(current_open_job_id)
-            WHERE current_open_job_id IS NOT NULL;
 
         CREATE TABLE IF NOT EXISTS job_inputs (
             job_id INTEGER NOT NULL,
