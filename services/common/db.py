@@ -86,8 +86,10 @@ def migrate(conn: sqlite3.Connection) -> None:
             planned_at TEXT,
             origin_release_folder_id TEXT,
             origin_meta_file_id TEXT UNIQUE,
+            current_open_job_id INTEGER NULL,
             created_at REAL NOT NULL,
-            FOREIGN KEY(channel_id) REFERENCES channels(id)
+            FOREIGN KEY(channel_id) REFERENCES channels(id),
+            FOREIGN KEY(current_open_job_id) REFERENCES jobs(id)
         );
 
         CREATE TABLE IF NOT EXISTS planned_releases (
@@ -724,6 +726,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_tracks_columns(conn)
     _ensure_metadata_preview_sessions_columns(conn)
     _ensure_planned_release_materialization_binding(conn)
+    _ensure_releases_current_open_job_relation(conn)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -834,6 +837,26 @@ def _ensure_planned_release_materialization_binding(conn: sqlite3.Connection) ->
             CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_materialized_release_unique
             ON planned_releases(materialized_release_id)
             WHERE materialized_release_id IS NOT NULL;
+            """
+        )
+
+
+def _ensure_releases_current_open_job_relation(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "releases")
+    if "current_open_job_id" not in cols:
+        with suppress(Exception):
+            conn.execute(
+                """
+                ALTER TABLE releases
+                ADD COLUMN current_open_job_id INTEGER NULL REFERENCES jobs(id);
+                """
+            )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_current_open_job_unique
+            ON releases(current_open_job_id)
+            WHERE current_open_job_id IS NOT NULL;
             """
         )
 
