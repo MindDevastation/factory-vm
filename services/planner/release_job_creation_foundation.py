@@ -5,6 +5,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from services.common.db import UI_JOB_STATES
+
 logger = logging.getLogger(__name__)
 
 TERMINAL_JOB_STATUSES: frozenset[str] = frozenset(
@@ -19,6 +21,8 @@ TERMINAL_JOB_STATUSES: frozenset[str] = frozenset(
         "CLEANED",
     }
 )
+KNOWN_JOB_STATUSES: frozenset[str] = frozenset(UI_JOB_STATES)
+OPEN_JOB_STATUSES: frozenset[str] = frozenset(status for status in UI_JOB_STATES if status not in TERMINAL_JOB_STATUSES)
 
 
 class ReleaseJobCreationFoundationError(Exception):
@@ -41,9 +45,21 @@ class OpenJobDiagnostics:
 
 def map_job_status_to_category(status: Any) -> str:
     value = str(status or "").strip().upper()
+    if not value or value not in KNOWN_JOB_STATUSES:
+        raise ReleaseJobCreationFoundationError(
+            code="PRJ_RELEASE_STATE_INVALID",
+            message="Job state is invalid for release-job invariant evaluation.",
+            details={"job_state": value or None},
+        )
     if value in TERMINAL_JOB_STATUSES:
         return "TERMINAL"
-    return "OPEN"
+    if value in OPEN_JOB_STATUSES:
+        return "OPEN"
+    raise ReleaseJobCreationFoundationError(
+        code="PRJ_RELEASE_STATE_INVALID",
+        message="Job state is invalid for release-job invariant evaluation.",
+        details={"job_state": value},
+    )
 
 
 def get_release_by_id(conn: sqlite3.Connection, *, release_id: int) -> dict[str, Any] | None:
@@ -71,7 +87,22 @@ def find_open_jobs_for_release(conn: sqlite3.Connection, *, release_id: int) -> 
         "SELECT * FROM jobs WHERE release_id = ? ORDER BY id ASC",
         (release_id,),
     ).fetchall()
-    return [row for row in rows if map_job_status_to_category(row.get("state")) == "OPEN"]
+    open_rows: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            category = map_job_status_to_category(row.get("state"))
+        except ReleaseJobCreationFoundationError as exc:
+            _log_invariant_violation(
+                release_id=release_id,
+                current_open_job_id=None,
+                job_id=int(row["id"]),
+                error_code=exc.code,
+                invariant_status="CURRENT_POINTER_INCONSISTENT",
+            )
+            raise
+        if category == "OPEN":
+            open_rows.append(row)
+    return open_rows
 
 
 def validate_current_open_pointer(
@@ -119,7 +150,19 @@ def validate_current_open_pointer(
             },
         )
 
-    if map_job_status_to_category(current_open_job.get("state")) != "OPEN":
+    try:
+        current_category = map_job_status_to_category(current_open_job.get("state"))
+    except ReleaseJobCreationFoundationError as exc:
+        _log_invariant_violation(
+            release_id=release_id,
+            current_open_job_id=current_open_job_id,
+            job_id=job_id,
+            error_code=exc.code,
+            invariant_status="CURRENT_POINTER_INCONSISTENT",
+        )
+        raise
+
+    if current_category != "OPEN":
         _log_invariant_violation(
             release_id=release_id,
             current_open_job_id=current_open_job_id,
