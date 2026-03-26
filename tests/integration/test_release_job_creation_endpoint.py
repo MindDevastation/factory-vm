@@ -74,6 +74,8 @@ class TestReleaseJobCreationEndpoint(unittest.TestCase):
             try:
                 open_ptr = conn.execute("SELECT current_open_job_id FROM releases WHERE id = ?", (release_id,)).fetchone()
                 self.assertEqual(int(open_ptr["current_open_job_id"]), int(first_body["job"]["id"]))
+                created_job = conn.execute("SELECT job_type, state FROM jobs WHERE id = ?", (int(first_body["job"]["id"]),)).fetchone()
+                self.assertEqual(str(created_job["job_type"]), "RELEASE")
 
                 # Explicitly verify no ui_job_drafts/downstream side effects were created.
                 draft = conn.execute("SELECT job_id FROM ui_job_drafts WHERE job_id = ?", (int(first_body["job"]["id"]),)).fetchone()
@@ -82,6 +84,16 @@ class TestReleaseJobCreationEndpoint(unittest.TestCase):
                 output_rows = conn.execute("SELECT COUNT(*) AS c FROM job_outputs WHERE job_id = ?", (int(first_body["job"]["id"]),)).fetchone()
                 self.assertEqual(int(input_rows["c"]), 0)
                 self.assertEqual(int(output_rows["c"]), 0)
+
+                ui_render_all_selector_row = conn.execute(
+                    """
+                    SELECT id
+                    FROM jobs
+                    WHERE job_type='UI' AND state='DRAFT' AND id = ?
+                    """,
+                    (int(first_body["job"]["id"]),),
+                ).fetchone()
+                self.assertIsNone(ui_render_all_selector_row)
             finally:
                 conn.close()
 

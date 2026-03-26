@@ -106,7 +106,7 @@ class ReleaseJobCreationService:
         new_job_id = dbm.insert_job_with_lineage_defaults(
             self._conn,
             release_id=int(release["id"]),
-            job_type="UI",
+            job_type="RELEASE",
             state="DRAFT",
             stage="DRAFT",
             priority=0,

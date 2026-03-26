@@ -97,6 +97,8 @@ class TestReleaseJobCreationService(unittest.TestCase):
                 self.assertEqual(out.job["status"], "DRAFT")
                 self.assertEqual(out.job_creation_state_summary["job_creation_state"], "HAS_OPEN_JOB")
                 self.assertEqual(out.open_job_diagnostics["invariant_status"], "HAS_OPEN_JOB")
+                created_job = conn.execute("SELECT job_type FROM jobs WHERE id = ?", (int(out.job["id"]),)).fetchone()
+                self.assertEqual(str(created_job["job_type"]), "RELEASE")
 
                 release_row = conn.execute("SELECT current_open_job_id FROM releases WHERE id = ?", (release_id,)).fetchone()
                 self.assertEqual(int(release_row["current_open_job_id"]), int(out.job["id"]))
