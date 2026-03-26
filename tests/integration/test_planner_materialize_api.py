@@ -141,20 +141,20 @@ class TestPlannerMaterializeApi(unittest.TestCase):
 
             def _call_once() -> None:
                 client = TestClient(mod.app)
-                with patch(
-                    "services.planner.materialization_service.PlannedReleaseReadinessService.evaluate",
-                    return_value={"aggregate_status": "READY_FOR_MATERIALIZATION"},
-                ):
-                    resp = client.post(f"/v1/planner/planned-releases/{planned_release_id}/materialize", headers=auth)
+                resp = client.post(f"/v1/planner/planned-releases/{planned_release_id}/materialize", headers=auth)
                 with lock:
                     results.append({"status": resp.status_code, "result": resp.json().get("result")})
 
-            t1 = threading.Thread(target=_call_once)
-            t2 = threading.Thread(target=_call_once)
-            t1.start()
-            t2.start()
-            t1.join()
-            t2.join()
+            with patch(
+                "services.planner.materialization_service.PlannedReleaseReadinessService.evaluate",
+                return_value={"aggregate_status": "READY_FOR_MATERIALIZATION"},
+            ):
+                t1 = threading.Thread(target=_call_once)
+                t2 = threading.Thread(target=_call_once)
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
 
             self.assertEqual(len(results), 2)
             self.assertEqual(sorted(item["status"] for item in results), [200, 200])
