@@ -45,8 +45,17 @@ from services.planner.materialization_service import (
 from services.planner.materialization_foundation import (
     derive_binding_diagnostics_inputs,
     derive_materialization_state_summary_inputs,
+    get_planned_release_by_id,
     validate_binding_invariants,
 )
+from services.planner.release_job_creation_foundation import (
+    ReleaseJobCreationFoundationError,
+    derive_job_creation_state_summary_inputs,
+    derive_open_job_diagnostics_inputs,
+    get_release_by_id,
+    validate_open_job_invariants,
+)
+from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner.metadata_bulk_preview_service import (
     MetadataBulkPreviewError,
     apply_bulk_preview_session,
@@ -158,6 +167,120 @@ def _parse_materialized_state_filter(materialized_state: str | None) -> set[str]
     if not out:
         raise ValueError("materialized_state contains invalid value")
     return out
+
+
+def _parse_job_creation_state_filter(job_creation_state: str | None) -> set[str]:
+    text = (job_creation_state or "").strip()
+    if not text:
+        return set()
+    allowed = {"has_open_job", "no_open_job", "inconsistent_open_job_state"}
+    out: set[str] = set()
+    for part in text.split(","):
+        value = part.strip()
+        if not value:
+            continue
+        if value not in allowed:
+            raise ValueError("job_creation_state contains invalid value")
+        out.add(value)
+    if not out:
+        raise ValueError("job_creation_state contains invalid value")
+    return out
+
+
+def _build_job_creation_surface_payload(
+    conn: sqlite3.Connection,
+    *,
+    planned_release: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    binding_result = validate_binding_invariants(conn, planned_release=planned_release)
+    release_id_raw = planned_release.get("materialized_release_id")
+    if binding_result.invariant_status != "OK" or release_id_raw is None:
+        action_reason = "Materialized release is required"
+        if binding_result.invariant_status != "OK":
+            action_reason = "Binding inconsistent"
+        summary = {
+            "job_creation_state": "ACTION_DISABLED",
+            "job_id": None,
+            "action_reason": action_reason,
+        }
+        diagnostics = {
+            "release_id": release_id_raw,
+            "current_open_job_id": None,
+            "linked_job_exists": False,
+            "open_jobs_count": 0,
+            "invariant_status": "ACTION_DISABLED",
+            "invariant_reason": action_reason,
+        }
+        return summary, diagnostics
+
+    release = get_release_by_id(conn, release_id=int(release_id_raw))
+    if release is None:
+        return (
+            {
+                "job_creation_state": "ACTION_DISABLED",
+                "job_id": None,
+                "action_reason": "Materialized release missing",
+            },
+            {
+                "release_id": int(release_id_raw),
+                "current_open_job_id": None,
+                "linked_job_exists": False,
+                "open_jobs_count": 0,
+                "invariant_status": "ACTION_DISABLED",
+                "invariant_reason": "Materialized release missing",
+            },
+        )
+
+    try:
+        diagnostics_obj = validate_open_job_invariants(conn, release=release)
+    except ReleaseJobCreationFoundationError as exc:
+        state = "CURRENT_POINTER_INCONSISTENT"
+        if exc.code == "PRJ_MULTIPLE_OPEN_JOBS":
+            state = "MULTIPLE_OPEN_INCONSISTENT"
+        return (
+            {
+                "job_creation_state": state,
+                "job_id": exc.details.get("open_job_id") or exc.details.get("current_open_job_id"),
+                "action_reason": exc.message,
+            },
+            {
+                "release_id": int(release_id_raw),
+                "current_open_job_id": exc.details.get("current_open_job_id"),
+                "linked_job_exists": bool(exc.details.get("open_job_id") or exc.details.get("current_open_job_id")),
+                "open_jobs_count": int(exc.details.get("open_jobs_count") or 0),
+                "invariant_status": state,
+                "invariant_reason": exc.message,
+            },
+        )
+    action_enabled = bool(str(release.get("origin_meta_file_id") or "").strip())
+    summary_raw = derive_job_creation_state_summary_inputs(
+        release=release,
+        diagnostics=diagnostics_obj,
+        action_enabled=action_enabled,
+    )
+    summary = {
+        "job_creation_state": summary_raw.get("job_creation_state"),
+        "job_id": diagnostics_obj.current_open_job_id if diagnostics_obj.invariant_status == "HAS_OPEN_JOB" else None,
+        "action_reason": None if bool(summary_raw.get("action_enabled")) else "Release is not currently eligible for job creation.",
+    }
+    if summary["job_creation_state"] == "ACTION_DISABLED" and not summary["action_reason"]:
+        summary["action_reason"] = "Job creation action is currently unavailable"
+    diagnostics = derive_open_job_diagnostics_inputs(diagnostics=diagnostics_obj)
+    return summary, diagnostics
+
+
+def _matches_job_creation_state_filter(summary: dict[str, Any], filters: set[str]) -> bool:
+    if not filters:
+        return True
+    state = str(summary.get("job_creation_state") or "")
+    options: set[str] = set()
+    if state == "HAS_OPEN_JOB":
+        options.add("has_open_job")
+    if state == "NO_OPEN_JOB":
+        options.add("no_open_job")
+    if state in {"MULTIPLE_OPEN_INCONSISTENT", "CURRENT_POINTER_INCONSISTENT"}:
+        options.add("inconsistent_open_job_state")
+    return bool(options & filters)
 
 
 def _materialization_action_reason(*, state_value: str, readiness_status: str | None) -> str | None:
@@ -614,6 +737,7 @@ def create_planner_router(env: Env) -> APIRouter:
         readiness_status: str | None = None,
         readiness_problem: str | None = None,
         materialized_state: str | None = None,
+        job_creation_state: str | None = None,
         readiness_priority: str | None = None,
         page: int = 1,
         page_size: int = 50,
@@ -664,6 +788,16 @@ def create_planner_router(env: Env) -> APIRouter:
             return planner_error(
                 "PRS_INVALID_MATERIALIZED_STATE_FILTER",
                 "materialized_state contains invalid value",
+                status_code=status_code,
+                request_id=request_id,
+            )
+        try:
+            job_creation_state_values = _parse_job_creation_state_filter(job_creation_state)
+        except ValueError:
+            status_code = 400
+            return planner_error(
+                "PRS_INVALID_JOB_CREATION_STATE_FILTER",
+                "job_creation_state contains invalid value",
                 status_code=status_code,
                 request_id=request_id,
             )
@@ -786,6 +920,22 @@ def create_planner_router(env: Env) -> APIRouter:
                             ),
                         },
                     )
+                if job_creation_state_values:
+                    candidate_rows = svc.list_by_ids(candidate_ids)
+                    row_by_id = {int(row["id"]): row for row in candidate_rows}
+                    filtered_ids: list[int] = []
+                    for release_id in candidate_ids:
+                        row = row_by_id.get(int(release_id))
+                        if row is None:
+                            continue
+                        row_dict = dict(row)
+                        job_creation_state_summary, _ = _build_job_creation_surface_payload(
+                            conn,
+                            planned_release=row_dict,
+                        )
+                        if _matches_job_creation_state_filter(job_creation_state_summary, job_creation_state_values):
+                            filtered_ids.append(int(release_id))
+                    candidate_ids = filtered_ids
                 if readiness_sort_requested:
                     publish_rows = svc.list_by_ids(candidate_ids)
                     publish_at_by_id = {int(row["id"]): str(row["publish_at"] or "") for row in publish_rows}
@@ -870,11 +1020,17 @@ def create_planner_router(env: Env) -> APIRouter:
                         planned_release=row_dict,
                         invariant_result=invariant_result,
                     )
+                    job_creation_state_summary, open_job_diagnostics = _build_job_creation_surface_payload(
+                        conn,
+                        planned_release=row_dict,
+                    )
+                    item["job_creation_state_summary"] = job_creation_state_summary
+                    item["open_job_diagnostics"] = open_job_diagnostics
                     items.append(item)
                 result_limit = page_size
             else:
                 source_rows = []
-                if materialized_state_values:
+                if materialized_state_values or job_creation_state_values:
                     candidate_ids = [item["id"] for item in svc.list_candidate_ids(base_params)]
                     page_candidate_rows = svc.list_by_ids(candidate_ids)
                     row_by_id = {int(row["id"]): row for row in page_candidate_rows}
@@ -907,8 +1063,16 @@ def create_planner_router(env: Env) -> APIRouter:
                         planned_release=row_dict,
                         invariant_result=invariant_result,
                     )
+                    job_creation_state_summary, open_job_diagnostics = _build_job_creation_surface_payload(
+                        conn,
+                        planned_release=row_dict,
+                    )
+                    if not _matches_job_creation_state_filter(job_creation_state_summary, job_creation_state_values):
+                        continue
+                    item["job_creation_state_summary"] = job_creation_state_summary
+                    item["open_job_diagnostics"] = open_job_diagnostics
                     items.append(item)
-                if materialized_state_values:
+                if materialized_state_values or job_creation_state_values:
                     total = len(items)
                     start = (page - 1) * page_size
                     stop = start + page_size
@@ -972,6 +1136,7 @@ def create_planner_router(env: Env) -> APIRouter:
                     "readiness_status": readiness_status_value,
                     "readiness_problem": readiness_problem_value,
                     "materialized_state": ",".join(sorted(materialized_state_values)) if materialized_state_values else None,
+                    "job_creation_state": ",".join(sorted(job_creation_state_values)) if job_creation_state_values else None,
                     "readiness_priority": readiness_priority_value or None,
                     "page": page,
                     "page_size": page_size,
@@ -1531,6 +1696,119 @@ def create_planner_router(env: Env) -> APIRouter:
             log_planner_event(
                 logger,
                 event_name="planner_materialize_planned_release",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "planned_release_id": planned_release_id,
+                    "result_status": result_status,
+                },
+            )
+
+    @router.post("/planned-releases/{planned_release_id}/create-job")
+    async def planner_create_job_for_planned_release(
+        planned_release_id: int,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+
+        if not username:
+            status_code = 401
+            result_status = "error"
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            planned_release = get_planned_release_by_id(conn, planned_release_id=planned_release_id)
+            if planned_release is None:
+                status_code = 404
+                result_status = "error"
+                return JSONResponse(status_code=status_code, content={
+                    "planned_release_id": planned_release_id,
+                    "result": "FAILED",
+                    "error": {
+                        "code": "PRM_NOT_FOUND",
+                        "message": "Planned release was not found.",
+                    },
+                })
+            binding_result = validate_binding_invariants(conn, planned_release=planned_release)
+            if binding_result.invariant_status != "OK":
+                status_code = 409
+                result_status = "error"
+                return JSONResponse(status_code=status_code, content={
+                    "planned_release_id": planned_release_id,
+                    "result": "FAILED",
+                    "error": {
+                        "code": "PRM_BINDING_INCONSISTENT",
+                        "message": "Materialization binding is inconsistent.",
+                    },
+                    "binding_diagnostics": derive_binding_diagnostics_inputs(
+                        planned_release=planned_release,
+                        invariant_result=binding_result,
+                    ),
+                })
+            release_id = planned_release.get("materialized_release_id")
+            if release_id is None:
+                status_code = 409
+                result_status = "error"
+                return JSONResponse(status_code=status_code, content={
+                    "planned_release_id": planned_release_id,
+                    "result": "FAILED",
+                    "error": {
+                        "code": "PRJ_PLANNED_RELEASE_NOT_MATERIALIZED",
+                        "message": "Planned release is not materialized.",
+                    },
+                })
+            svc = ReleaseJobCreationService(conn)
+            out = svc.create_or_select(release_id=int(release_id))
+            return {
+                "planned_release_id": planned_release_id,
+                "release_id": out.release_id,
+                "result": out.result,
+                "job": out.job,
+                "current_open_relation": out.current_open_relation,
+                "job_creation_state_summary": out.job_creation_state_summary,
+                "open_job_diagnostics": out.open_job_diagnostics,
+            }
+        except ReleaseJobCreationError as exc:
+            result_status = "error"
+            status_map = {
+                "PRJ_RELEASE_NOT_FOUND": 404,
+                "PRJ_CONCURRENCY_CONFLICT": 409,
+                "PRJ_JOB_CREATE_FAILED": 500,
+            }
+            status_code = status_map.get(exc.code, 422)
+            return JSONResponse(status_code=status_code, content={
+                "planned_release_id": planned_release_id,
+                "result": "FAILED",
+                "error": {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "details": exc.details,
+                },
+            })
+        except Exception:
+            status_code = 500
+            result_status = "error"
+            logger.exception("planner_create_job_for_planned_release_failed request_id=%s planned_release_id=%s", request_id, planned_release_id)
+            return JSONResponse(status_code=status_code, content={
+                "planned_release_id": planned_release_id,
+                "result": "FAILED",
+                "error": {
+                    "code": "PRJ_JOB_CREATE_FAILED",
+                    "message": "Job creation failed.",
+                },
+            })
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_create_job_for_planned_release",
                 username=username,
                 started_at=started_at,
                 status_code=status_code,

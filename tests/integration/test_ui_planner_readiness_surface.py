@@ -114,11 +114,16 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         html, js = self._load_ui_assets()
         self.assertIn('id="filter-materialized-state"', html)
         self.assertIn("push('materialized_state', $('filter-materialized-state').value);", js)
+        self.assertIn('id="filter-job-creation-state"', html)
+        self.assertIn("push('job_creation_state', $('filter-job-creation-state').value);", js)
         self.assertIn(">Materialization<", html)
+        self.assertIn(">Job creation<", html)
         self.assertIn("data-materialize-item", js)
         self.assertIn("data-materialization-detail", js)
         self.assertIn("materialization_state_summary", js)
         self.assertIn("binding_diagnostics", js)
+        self.assertIn("job_creation_state_summary", js)
+        self.assertIn("open_job_diagnostics", js)
 
     def test_materialization_dialog_and_side_effect_copy_exist(self) -> None:
         html, js = self._load_ui_assets()
@@ -131,6 +136,19 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn("Returned existing linked release", js)
         self.assertIn("Materialization failed", js)
         self.assertIn("Open release:", js)
+        self.assertIn('id="job-creation-dialog"', html)
+        self.assertIn('id="job-creation-summary-body"', html)
+        self.assertIn('id="job-creation-diagnostics-body"', html)
+        self.assertIn("data-create-job-item", js)
+        self.assertIn("data-job-creation-detail", js)
+        self.assertIn("New job created in DRAFT.", js)
+        self.assertIn("Existing open job returned. No new job was created.", js)
+        self.assertIn("Job creation failed", js)
+        self.assertIn("Open job:", js)
+        self.assertIn('href="/jobs/${esc(jobId)}"', js)
+        self.assertIn("Job creation does not start render.", html)
+        self.assertIn("Job creation does not retry failed jobs.", html)
+        self.assertIn("Job creation does not start publish/upload flows.", html)
 
 
 if __name__ == "__main__":

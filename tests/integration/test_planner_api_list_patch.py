@@ -881,6 +881,212 @@ class TestPlannerApiListPatch(unittest.TestCase):
             self.assertEqual(filtered.json()["pagination"]["total"], 1)
             self.assertEqual([item["title"] for item in filtered.json()["items"]], ["Late Materialized Match"])
 
+    def test_planner_create_job_endpoint_delegates_to_canonical_service(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            planned_id, _, _ = self._seed_materialized_state_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+            with patch("services.factory_api.planner.ReleaseJobCreationService.create_or_select") as mocked_create_or_select:
+                mocked_create_or_select.return_value = type("Out", (), {
+                    "release_id": 999,
+                    "result": "RETURNED_EXISTING_OPEN_JOB",
+                    "job": {"id": 777, "release_id": 999, "channel_slug": "darkwood-reverie", "status": "DRAFT"},
+                    "current_open_relation": {"release_id": 999, "job_id": 777},
+                    "job_creation_state_summary": {"job_creation_state": "HAS_OPEN_JOB", "job_id": 777, "action_reason": None},
+                    "open_job_diagnostics": {
+                        "release_id": 999,
+                        "current_open_job_id": 777,
+                        "linked_job_exists": True,
+                        "open_jobs_count": 1,
+                        "invariant_status": "HAS_OPEN_JOB",
+                        "invariant_reason": None,
+                    },
+                })()
+                resp = client.post(f"/v1/planner/planned-releases/{planned_id}/create-job", headers=auth)
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json()["result"], "RETURNED_EXISTING_OPEN_JOB")
+            self.assertIn("job_creation_state_summary", resp.json())
+            self.assertIn("open_job_diagnostics", resp.json())
+            mocked_create_or_select.assert_called_once()
+
+    def test_planner_create_job_endpoint_fails_when_not_materialized(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            not_materialized_id = self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Not Materialized",
+                publish_at="2025-06-01T10:00:00+02:00",
+            )
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.post(f"/v1/planner/planned-releases/{not_materialized_id}/create-job", headers=auth)
+            self.assertEqual(resp.status_code, 409)
+            self.assertEqual(resp.json()["error"]["code"], "PRJ_PLANNED_RELEASE_NOT_MATERIALIZED")
+
+    def test_list_includes_job_creation_payload_and_filter_works(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            planned_id, not_materialized_id, binding_inconsistent_id = self._seed_materialized_state_mix(env)
+            inconsistent_open_id = self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Open Inconsistent",
+                publish_at="2025-06-15T10:00:00+02:00",
+            )
+            conn = dbm.connect(env)
+            try:
+                row = conn.execute("SELECT materialized_release_id FROM planned_releases WHERE id = ?", (planned_id,)).fetchone()
+                release_id = int(row["materialized_release_id"])
+                job_id = int(conn.execute(
+                    "INSERT INTO jobs(release_id, job_type, state, stage, root_job_id, created_at, updated_at) VALUES (?, 'RENDER', 'DRAFT', 'DRAFT', 1, 1.0, 1.0)",
+                    (release_id,),
+                ).lastrowid)
+                if job_id != 1:
+                    conn.execute("UPDATE jobs SET root_job_id = ? WHERE id = ?", (job_id, job_id))
+                conn.execute("UPDATE releases SET current_open_job_id = ? WHERE id = ?", (job_id, release_id))
+
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                bad_release_id = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                        VALUES(?, 'bad-open', '', '[]', NULL, NULL, 'bad-open-seed', 1.0)
+                        """,
+                        (channel_id,),
+                    ).lastrowid
+                )
+                conn.execute("UPDATE planned_releases SET materialized_release_id = ? WHERE id = ?", (bad_release_id, inconsistent_open_id))
+                j1 = int(
+                    conn.execute(
+                        "INSERT INTO jobs(release_id, job_type, state, stage, root_job_id, created_at, updated_at) VALUES (?, 'RENDER', 'DRAFT', 'DRAFT', 1, 1.0, 1.0)",
+                        (bad_release_id,),
+                    ).lastrowid
+                )
+                j2 = int(
+                    conn.execute(
+                        "INSERT INTO jobs(release_id, job_type, state, stage, root_job_id, created_at, updated_at) VALUES (?, 'RENDER', 'RENDERING', 'RENDERING', 1, 1.0, 1.0)",
+                        (bad_release_id,),
+                    ).lastrowid
+                )
+                if j1 != 1:
+                    conn.execute("UPDATE jobs SET root_job_id = ? WHERE id = ?", (j1, j1))
+                if j2 != 1:
+                    conn.execute("UPDATE jobs SET root_job_id = ? WHERE id = ?", (j2, j2))
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.get("/v1/planner/releases?page=1&page_size=20", headers=auth)
+            self.assertEqual(resp.status_code, 200)
+            rows = {int(item["id"]): item for item in resp.json()["items"]}
+            self.assertIn("job_creation_state_summary", rows[planned_id])
+            self.assertIn("open_job_diagnostics", rows[planned_id])
+            self.assertEqual(rows[planned_id]["job_creation_state_summary"]["job_creation_state"], "HAS_OPEN_JOB")
+            self.assertEqual(rows[not_materialized_id]["job_creation_state_summary"]["job_creation_state"], "ACTION_DISABLED")
+            self.assertEqual(rows[binding_inconsistent_id]["job_creation_state_summary"]["job_creation_state"], "ACTION_DISABLED")
+            self.assertEqual(rows[inconsistent_open_id]["job_creation_state_summary"]["job_creation_state"], "MULTIPLE_OPEN_INCONSISTENT")
+
+            has_open = client.get("/v1/planner/releases?job_creation_state=has_open_job&page=1&page_size=20", headers=auth)
+            self.assertEqual(has_open.status_code, 200)
+            self.assertEqual([item["id"] for item in has_open.json()["items"]], [planned_id])
+
+            no_open = client.get("/v1/planner/releases?job_creation_state=no_open_job&page=1&page_size=20", headers=auth)
+            self.assertEqual(no_open.status_code, 200)
+            self.assertEqual(no_open.json()["items"], [])
+
+            inconsistent = client.get(
+                "/v1/planner/releases?job_creation_state=inconsistent_open_job_state&page=1&page_size=20",
+                headers=auth,
+            )
+            self.assertEqual(inconsistent.status_code, 200)
+            self.assertEqual([item["id"] for item in inconsistent.json()["items"]], [inconsistent_open_id])
+
+    def test_job_creation_state_filter_is_applied_before_pagination(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            has_open_ids: list[int] = []
+            no_open_ids: list[int] = []
+            conn = dbm.connect(env)
+            try:
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                for idx in range(4):
+                    planned_id = self._insert_release(
+                        env,
+                        channel_slug="darkwood-reverie",
+                        content_type="LONG",
+                        title=f"Filter Item {idx}",
+                        publish_at=f"2025-06-{10 + idx:02d}T10:00:00+02:00",
+                        created_at=f"2025-01-{10 + idx:02d}T00:00:00Z",
+                    )
+                    release_id = int(
+                        conn.execute(
+                            """
+                            INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                            VALUES(?, ?, '', '[]', NULL, NULL, ?, 1.0)
+                            """,
+                            (channel_id, f"rel-{idx}", f"meta-{idx}"),
+                        ).lastrowid
+                    )
+                    conn.execute("UPDATE planned_releases SET materialized_release_id = ? WHERE id = ?", (release_id, planned_id))
+                    if idx % 2 == 0:
+                        job_id = int(
+                            conn.execute(
+                                "INSERT INTO jobs(release_id, job_type, state, stage, root_job_id, created_at, updated_at) VALUES (?, 'RENDER', 'DRAFT', 'DRAFT', 1, 1.0, 1.0)",
+                                (release_id,),
+                            ).lastrowid
+                        )
+                        if job_id != 1:
+                            conn.execute("UPDATE jobs SET root_job_id = ? WHERE id = ?", (job_id, job_id))
+                        conn.execute("UPDATE releases SET current_open_job_id = ? WHERE id = ?", (job_id, release_id))
+                        has_open_ids.append(planned_id)
+                    else:
+                        no_open_ids.append(planned_id)
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            page1 = client.get(
+                "/v1/planner/releases?job_creation_state=has_open_job&page=1&page_size=1&sort_by=id&sort_dir=asc",
+                headers=auth,
+            )
+            self.assertEqual(page1.status_code, 200)
+            self.assertEqual(page1.json()["pagination"]["total"], len(has_open_ids))
+            self.assertEqual([item["id"] for item in page1.json()["items"]], [min(has_open_ids)])
+
+            page2 = client.get(
+                "/v1/planner/releases?job_creation_state=has_open_job&page=2&page_size=1&sort_by=id&sort_dir=asc",
+                headers=auth,
+            )
+            self.assertEqual(page2.status_code, 200)
+            self.assertEqual(page2.json()["pagination"]["total"], len(has_open_ids))
+            self.assertEqual([item["id"] for item in page2.json()["items"]], [max(has_open_ids)])
+
+            no_open = client.get(
+                "/v1/planner/releases?job_creation_state=no_open_job&page=1&page_size=10&sort_by=id&sort_dir=asc",
+                headers=auth,
+            )
+            self.assertEqual(no_open.status_code, 200)
+            self.assertEqual(no_open.json()["pagination"]["total"], len(no_open_ids))
+
 
 if __name__ == "__main__":
     unittest.main()
