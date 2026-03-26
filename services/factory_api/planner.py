@@ -63,6 +63,11 @@ from services.planner.metadata_bulk_preview_service import (
     get_bulk_preview_session,
     load_bulk_context,
 )
+from services.planner.mass_actions_preview_service import (
+    PlannerMassActionPreviewError,
+    create_mass_action_preview_session,
+    get_mass_action_preview_session,
+)
 from services.planner.planned_release_readiness_service import (
     PlannedReleaseReadinessNotFoundError,
     PlannedReleaseReadinessService,
@@ -526,6 +531,21 @@ def _parse_bulk_apply_payload(payload: Any) -> tuple[list[int], list[str], dict[
     return selected_items, selected_fields, confirmed
 
 
+def _parse_mass_action_preview_payload(payload: Any) -> tuple[str, list[int]]:
+    if not isinstance(payload, dict):
+        raise ValueError("body must be object")
+    action_type = str(payload.get("action_type") or "").strip()
+    selected_item_ids = payload.get("selected_item_ids")
+    if not isinstance(selected_item_ids, list):
+        raise ValueError("selected_item_ids must be an integer array")
+    normalized_ids: list[int] = []
+    for item in selected_item_ids:
+        if not isinstance(item, int):
+            raise ValueError("selected_item_ids must be an integer array")
+        normalized_ids.append(item)
+    return action_type, normalized_ids
+
+
 def create_planner_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/planner", tags=["planner"])
 
@@ -721,6 +741,116 @@ def create_planner_router(env: Env) -> APIRouter:
                     "selected_fields": selected_fields,
                     "result_status": result_status,
                 },
+            )
+
+    @router.post("/mass-actions/preview")
+    async def planner_mass_actions_preview(
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+        selected_count = 0
+        action_type = ""
+        if not username:
+            result_status = "error"
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+        try:
+            payload = await request.json()
+        except Exception:
+            result_status = "error"
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", "invalid JSON body", status_code=status_code, request_id=request_id)
+        try:
+            action_type, selected_item_ids = _parse_mass_action_preview_payload(payload)
+            selected_count = len(selected_item_ids)
+        except ValueError as exc:
+            result_status = "error"
+            status_code = 400
+            return planner_error("PLR_INVALID_INPUT", str(exc), status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            return create_mass_action_preview_session(
+                conn,
+                action_type=action_type,
+                selected_item_ids=selected_item_ids,
+                created_by=username,
+                ttl_seconds=env.planner_mass_action_preview_ttl_sec,
+            )
+        except PlannerMassActionPreviewError as exc:
+            result_status = "error"
+            status_code = 404 if exc.code == "PMA_SESSION_NOT_FOUND" else 422
+            log_planner_event(
+                logger,
+                event_name="planner.mass_action.preview_failed",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "session_id": None,
+                    "action_type": action_type or None,
+                    "selected_count": selected_count,
+                    "created_new_count": 0,
+                    "returned_existing_count": 0,
+                    "skipped_count": 0,
+                    "failed_count": 0,
+                    "stale_session_flag": False,
+                    "error_codes": [exc.code],
+                },
+            )
+            return planner_error(exc.code, exc.message, status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner.mass_action.preview_created" if result_status == "ok" else "planner_mass_actions_preview",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "action_type": action_type or None,
+                    "selected_count": selected_count,
+                    "result_status": result_status,
+                },
+            )
+
+    @router.get("/mass-actions/{session_id}")
+    async def planner_mass_actions_preview_session(
+        session_id: str,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        result_status = "ok"
+        if not username:
+            status_code = 401
+            result_status = "error"
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+        conn = dbm.connect(env)
+        try:
+            return get_mass_action_preview_session(conn, session_id=session_id)
+        except PlannerMassActionPreviewError as exc:
+            status_code = 404 if exc.code == "PMA_SESSION_NOT_FOUND" else 422
+            result_status = "error"
+            return planner_error(exc.code, exc.message, status_code=status_code, request_id=request_id)
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="planner_mass_actions_session_get",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={"session_id": session_id, "result_status": result_status},
             )
 
     @router.get("/releases")
