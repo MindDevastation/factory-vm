@@ -920,6 +920,22 @@ def create_planner_router(env: Env) -> APIRouter:
                             ),
                         },
                     )
+                if job_creation_state_values:
+                    candidate_rows = svc.list_by_ids(candidate_ids)
+                    row_by_id = {int(row["id"]): row for row in candidate_rows}
+                    filtered_ids: list[int] = []
+                    for release_id in candidate_ids:
+                        row = row_by_id.get(int(release_id))
+                        if row is None:
+                            continue
+                        row_dict = dict(row)
+                        job_creation_state_summary, _ = _build_job_creation_surface_payload(
+                            conn,
+                            planned_release=row_dict,
+                        )
+                        if _matches_job_creation_state_filter(job_creation_state_summary, job_creation_state_values):
+                            filtered_ids.append(int(release_id))
+                    candidate_ids = filtered_ids
                 if readiness_sort_requested:
                     publish_rows = svc.list_by_ids(candidate_ids)
                     publish_at_by_id = {int(row["id"]): str(row["publish_at"] or "") for row in publish_rows}
@@ -1008,15 +1024,13 @@ def create_planner_router(env: Env) -> APIRouter:
                         conn,
                         planned_release=row_dict,
                     )
-                    if not _matches_job_creation_state_filter(job_creation_state_summary, job_creation_state_values):
-                        continue
                     item["job_creation_state_summary"] = job_creation_state_summary
                     item["open_job_diagnostics"] = open_job_diagnostics
                     items.append(item)
                 result_limit = page_size
             else:
                 source_rows = []
-                if materialized_state_values:
+                if materialized_state_values or job_creation_state_values:
                     candidate_ids = [item["id"] for item in svc.list_candidate_ids(base_params)]
                     page_candidate_rows = svc.list_by_ids(candidate_ids)
                     row_by_id = {int(row["id"]): row for row in page_candidate_rows}
@@ -1058,7 +1072,7 @@ def create_planner_router(env: Env) -> APIRouter:
                     item["job_creation_state_summary"] = job_creation_state_summary
                     item["open_job_diagnostics"] = open_job_diagnostics
                     items.append(item)
-                if materialized_state_values:
+                if materialized_state_values or job_creation_state_values:
                     total = len(items)
                     start = (page - 1) * page_size
                     stop = start + page_size

@@ -145,6 +145,7 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn("Existing open job returned. No new job was created.", js)
         self.assertIn("Job creation failed", js)
         self.assertIn("Open job:", js)
+        self.assertIn('href="/jobs/${esc(jobId)}"', js)
         self.assertIn("Job creation does not start render.", html)
         self.assertIn("Job creation does not retry failed jobs.", html)
         self.assertIn("Job creation does not start publish/upload flows.", html)

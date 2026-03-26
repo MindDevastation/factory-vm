@@ -111,7 +111,7 @@
 
   function openJobCta(jobId) {
     if (!jobId) return '';
-    return `Open job: <a href="/ui/jobs/${esc(jobId)}" target="_blank" rel="noopener">#${esc(jobId)}</a>`;
+    return `Open job: <a href="/jobs/${esc(jobId)}" target="_blank" rel="noopener">#${esc(jobId)}</a>`;
   }
 
   function renderJobCreationSummary(item) {
@@ -120,7 +120,7 @@
     const jobId = summary.job_id ?? null;
     const reason = String(summary.action_reason || '').trim();
     const stateText = `State: ${stateLabel}`;
-    const linkText = jobId ? `<a href="/ui/jobs/${esc(jobId)}" target="_blank" rel="noopener">job #${esc(jobId)}</a>` : 'job: -';
+    const linkText = jobId ? `<a href="/jobs/${esc(jobId)}" target="_blank" rel="noopener">job #${esc(jobId)}</a>` : 'job: -';
     const reasonText = reason ? `<div class="muted">${esc(reason)}</div>` : '';
     return `<div>${esc(stateText)}</div><div class="muted">${linkText}</div>${reasonText}`;
   }

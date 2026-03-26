@@ -1015,6 +1015,78 @@ class TestPlannerApiListPatch(unittest.TestCase):
             self.assertEqual(inconsistent.status_code, 200)
             self.assertEqual([item["id"] for item in inconsistent.json()["items"]], [inconsistent_open_id])
 
+    def test_job_creation_state_filter_is_applied_before_pagination(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            has_open_ids: list[int] = []
+            no_open_ids: list[int] = []
+            conn = dbm.connect(env)
+            try:
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                for idx in range(4):
+                    planned_id = self._insert_release(
+                        env,
+                        channel_slug="darkwood-reverie",
+                        content_type="LONG",
+                        title=f"Filter Item {idx}",
+                        publish_at=f"2025-06-{10 + idx:02d}T10:00:00+02:00",
+                        created_at=f"2025-01-{10 + idx:02d}T00:00:00Z",
+                    )
+                    release_id = int(
+                        conn.execute(
+                            """
+                            INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                            VALUES(?, ?, '', '[]', NULL, NULL, ?, 1.0)
+                            """,
+                            (channel_id, f"rel-{idx}", f"meta-{idx}"),
+                        ).lastrowid
+                    )
+                    conn.execute("UPDATE planned_releases SET materialized_release_id = ? WHERE id = ?", (release_id, planned_id))
+                    if idx % 2 == 0:
+                        job_id = int(
+                            conn.execute(
+                                "INSERT INTO jobs(release_id, job_type, state, stage, root_job_id, created_at, updated_at) VALUES (?, 'RENDER', 'DRAFT', 'DRAFT', 1, 1.0, 1.0)",
+                                (release_id,),
+                            ).lastrowid
+                        )
+                        if job_id != 1:
+                            conn.execute("UPDATE jobs SET root_job_id = ? WHERE id = ?", (job_id, job_id))
+                        conn.execute("UPDATE releases SET current_open_job_id = ? WHERE id = ?", (job_id, release_id))
+                        has_open_ids.append(planned_id)
+                    else:
+                        no_open_ids.append(planned_id)
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            page1 = client.get(
+                "/v1/planner/releases?job_creation_state=has_open_job&page=1&page_size=1&sort_by=id&sort_dir=asc",
+                headers=auth,
+            )
+            self.assertEqual(page1.status_code, 200)
+            self.assertEqual(page1.json()["pagination"]["total"], len(has_open_ids))
+            self.assertEqual([item["id"] for item in page1.json()["items"]], [min(has_open_ids)])
+
+            page2 = client.get(
+                "/v1/planner/releases?job_creation_state=has_open_job&page=2&page_size=1&sort_by=id&sort_dir=asc",
+                headers=auth,
+            )
+            self.assertEqual(page2.status_code, 200)
+            self.assertEqual(page2.json()["pagination"]["total"], len(has_open_ids))
+            self.assertEqual([item["id"] for item in page2.json()["items"]], [max(has_open_ids)])
+
+            no_open = client.get(
+                "/v1/planner/releases?job_creation_state=no_open_job&page=1&page_size=10&sort_by=id&sort_dir=asc",
+                headers=auth,
+            )
+            self.assertEqual(no_open.status_code, 200)
+            self.assertEqual(no_open.json()["pagination"]["total"], len(no_open_ids))
+
 
 if __name__ == "__main__":
     unittest.main()
