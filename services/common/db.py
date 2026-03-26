@@ -399,6 +399,28 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_metadata_bulk_preview_sessions_expires_at
             ON metadata_bulk_preview_sessions(expires_at);
 
+        CREATE TABLE IF NOT EXISTS planner_mass_action_sessions (
+            id TEXT PRIMARY KEY,
+            action_type TEXT NOT NULL,
+            planner_scope_fingerprint TEXT NOT NULL,
+            selected_item_ids_json TEXT NOT NULL,
+            preview_status TEXT NOT NULL,
+            aggregate_preview_json TEXT NOT NULL,
+            item_preview_json TEXT NOT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            executed_at TEXT NULL,
+            CHECK(action_type IN ('BATCH_MATERIALIZE_SELECTED','BATCH_CREATE_JOBS_FOR_SELECTED')),
+            CHECK(preview_status IN ('OPEN','EXECUTED','EXPIRED','INVALIDATED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_planner_mass_action_sessions_status
+            ON planner_mass_action_sessions(preview_status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_planner_mass_action_sessions_expires_at
+            ON planner_mass_action_sessions(expires_at);
+
         CREATE TABLE IF NOT EXISTS title_templates (
             id INTEGER PRIMARY KEY,
             channel_slug TEXT NOT NULL,
@@ -2498,5 +2520,43 @@ def insert_metadata_bulk_preview_session(
             created_at,
             expires_at,
             applied_at,
+        ),
+    )
+
+
+def insert_planner_mass_action_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    action_type: str,
+    planner_scope_fingerprint: str,
+    selected_item_ids_json: str,
+    preview_status: str,
+    aggregate_preview_json: str,
+    item_preview_json: str,
+    created_by: str | None,
+    created_at: str,
+    expires_at: str,
+    executed_at: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO planner_mass_action_sessions(
+            id, action_type, planner_scope_fingerprint, selected_item_ids_json, preview_status,
+            aggregate_preview_json, item_preview_json, created_by, created_at, expires_at, executed_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            action_type,
+            planner_scope_fingerprint,
+            selected_item_ids_json,
+            preview_status,
+            aggregate_preview_json,
+            item_preview_json,
+            created_by,
+            created_at,
+            expires_at,
+            executed_at,
         ),
     )
