@@ -50,6 +50,14 @@
       <option value="binding_inconsistent">binding_inconsistent</option>
     </select>
   </label>
+  <label>Job creation state
+    <select id="filter-job-creation-state">
+      <option value="">all</option>
+      <option value="has_open_job">has_open_job</option>
+      <option value="no_open_job">no_open_job</option>
+      <option value="inconsistent_open_job_state">inconsistent_open_job_state</option>
+    </select>
+  </label>
   <label>Sort by
     <select id="sort-by">
       <option value="created_at">created_at</option>
@@ -91,12 +99,16 @@
   <thead>
     <tr>
       <th><input id="select-all" type="checkbox"></th>
-      <th>ID</th><th>Status</th><th>Readiness</th><th>Materialization</th><th>Action</th><th>Channel</th><th>Content type</th><th>Title</th><th>Publish at</th><th>Notes</th><th>Updated</th>
+      <th>ID</th><th>Status</th><th>Readiness</th><th>Materialization</th><th>Job creation</th><th>Action</th><th>Channel</th><th>Content type</th><th>Title</th><th>Publish at</th><th>Notes</th><th>Updated</th>
     </tr>
   </thead>
-  <tbody id="planner-tbody"><tr><td colspan="11" class="muted">Loading...</td></tr></tbody>
+  <tbody id="planner-tbody"><tr><td colspan="13" class="muted">Loading...</td></tr></tbody>
 </table>
 <p class="muted">Materialization only creates or returns canonical release binding. It does not create jobs and does not start render/upload/publish.</p>
+<p class="muted">Job creation does not start render.</p>
+<p class="muted">Job creation does not retry failed jobs.</p>
+<p class="muted">Job creation does not start publish/upload flows.</p>
+<p class="muted" id="job-create-open-job-cta"></p>
 <p>
   <button type="button" id="prev-page">Prev</button>
   <span id="page-label" class="muted"></span>
@@ -118,6 +130,25 @@
       <button value="cancel" type="button" id="bulk-create-cancel">Cancel</button>
       <button value="default" type="button" id="bulk-create-strict">Create (strict)</button>
       <button value="replace" type="button" id="bulk-create-replace">Replace conflicts</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="job-creation-dialog" style="min-width:min(820px, 95vw);">
+  <form method="dialog">
+    <h3>Planned Release Job Creation</h3>
+    <p class="muted" id="job-creation-dialog-release-label"></p>
+    <fieldset>
+      <legend>Job creation state summary</legend>
+      <pre id="job-creation-summary-body" class="muted" style="white-space:pre-wrap;">No job creation details loaded.</pre>
+    </fieldset>
+    <fieldset style="margin-top:10px;">
+      <legend>Open-job diagnostics (read-only)</legend>
+      <pre id="job-creation-diagnostics-body" class="muted" style="white-space:pre-wrap;">No open-job diagnostics loaded.</pre>
+    </fieldset>
+    <p class="muted" id="job-creation-open-job-cta"></p>
+    <menu>
+      <button type="button" id="job-creation-dialog-close">Close</button>
     </menu>
   </form>
 </dialog>
