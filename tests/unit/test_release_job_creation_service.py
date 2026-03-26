@@ -174,6 +174,28 @@ class TestReleaseJobCreationService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_concurrency_recovery_raises_conflict_when_unresolved(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._insert_release(conn, title="race-unresolved", origin_meta_file_id="planned-release-7")
+                svc = ReleaseJobCreationService(conn)
+
+                original = svc._create_or_select_in_tx
+
+                def _raise_integrity(*, release_id: int):
+                    raise sqlite3.IntegrityError("forced")
+
+                svc._create_or_select_in_tx = _raise_integrity  # type: ignore[method-assign]
+                self.addCleanup(setattr, svc, "_create_or_select_in_tx", original)
+
+                with self.assertRaises(ReleaseJobCreationError) as ctx:
+                    svc.create_or_select(release_id=release_id)
+                self.assertEqual(ctx.exception.code, "PRJ_CONCURRENCY_CONFLICT")
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

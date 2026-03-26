@@ -932,6 +932,38 @@ class TestPlannerApiListPatch(unittest.TestCase):
             self.assertEqual(resp.status_code, 409)
             self.assertEqual(resp.json()["error"]["code"], "PRJ_PLANNED_RELEASE_NOT_MATERIALIZED")
 
+    def test_planner_create_job_endpoint_preserves_canonical_invariant_failure(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            planned_id, _, _ = self._seed_materialized_state_mix(env)
+
+            conn = dbm.connect(env)
+            try:
+                row = conn.execute(
+                    "SELECT materialized_release_id FROM planned_releases WHERE id = ?",
+                    (planned_id,),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                release_id = int(row["materialized_release_id"])
+                conn.execute("PRAGMA foreign_keys=OFF")
+                conn.execute("UPDATE releases SET current_open_job_id = 999999 WHERE id = ?", (release_id,))
+                conn.execute("PRAGMA foreign_keys=ON")
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.post(f"/v1/planner/planned-releases/{planned_id}/create-job", headers=auth)
+            self.assertEqual(resp.status_code, 422)
+            body = resp.json()
+            self.assertEqual(body["result"], "FAILED")
+            self.assertEqual(body["error"]["code"], "PRJ_OPEN_JOB_NOT_FOUND")
+            self.assertIn("details", body["error"])
+
     def test_list_includes_job_creation_payload_and_filter_works(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
@@ -1086,6 +1118,46 @@ class TestPlannerApiListPatch(unittest.TestCase):
             )
             self.assertEqual(no_open.status_code, 200)
             self.assertEqual(no_open.json()["pagination"]["total"], len(no_open_ids))
+
+    def test_job_creation_surface_and_filter_are_read_only(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            planned_id, _, _ = self._seed_materialized_state_mix(env)
+
+            conn = dbm.connect(env)
+            try:
+                release_row = conn.execute(
+                    "SELECT materialized_release_id FROM planned_releases WHERE id = ?",
+                    (planned_id,),
+                ).fetchone()
+                self.assertIsNotNone(release_row)
+                release_id = int(release_row["materialized_release_id"])
+                before_job_count = int(conn.execute("SELECT COUNT(*) AS c FROM jobs WHERE release_id = ?", (release_id,)).fetchone()["c"])
+                before_ptr = conn.execute("SELECT current_open_job_id FROM releases WHERE id = ?", (release_id,)).fetchone()["current_open_job_id"]
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get("/v1/planner/releases?job_creation_state=no_open_job&page=1&page_size=20", headers=auth)
+            self.assertEqual(resp.status_code, 200)
+            row = next(item for item in resp.json()["items"] if int(item["id"]) == planned_id)
+            self.assertEqual(row["job_creation_state_summary"]["job_creation_state"], "NO_OPEN_JOB")
+            self.assertEqual(row["open_job_diagnostics"]["invariant_status"], "NO_OPEN_JOB")
+
+            conn = dbm.connect(env)
+            try:
+                after_job_count = int(conn.execute("SELECT COUNT(*) AS c FROM jobs WHERE release_id = ?", (release_id,)).fetchone()["c"])
+                after_ptr = conn.execute("SELECT current_open_job_id FROM releases WHERE id = ?", (release_id,)).fetchone()["current_open_job_id"]
+            finally:
+                conn.close()
+
+            self.assertEqual(after_job_count, before_job_count)
+            self.assertEqual(after_ptr, before_ptr)
 
 
 if __name__ == "__main__":
