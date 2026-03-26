@@ -540,7 +540,7 @@ def _parse_mass_action_preview_payload(payload: Any) -> tuple[str, list[int]]:
         raise ValueError("selected_item_ids must be an integer array")
     normalized_ids: list[int] = []
     for item in selected_item_ids:
-        if not isinstance(item, int):
+        if isinstance(item, bool) or not isinstance(item, int):
             raise ValueError("selected_item_ids must be an integer array")
         normalized_ids.append(item)
     return action_type, normalized_ids

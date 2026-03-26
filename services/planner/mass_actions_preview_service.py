@@ -100,7 +100,7 @@ def create_mass_action_preview_session(
     )
 
     return {
-        "preview_session_id": session_id,
+        "session_id": session_id,
         "action_type": normalized_action,
         "selected_count": len(normalized_ids),
         "aggregate": aggregate,
@@ -116,7 +116,7 @@ def get_mass_action_preview_session(conn: sqlite3.Connection, *, session_id: str
         raise PlannerMassActionPreviewError(code="PMA_SESSION_NOT_FOUND", message="Planner mass-action preview session not found")
     body = dict(row)
     return {
-        "preview_session_id": str(body["id"]),
+        "session_id": str(body["id"]),
         "action_type": str(body["action_type"]),
         "selected_item_ids": dbm.json_loads(str(body["selected_item_ids_json"])),
         "preview_status": str(body["preview_status"]),
@@ -136,7 +136,7 @@ def _normalize_action_type(action_type: str) -> str:
 
 
 def _normalize_selected_ids(selected_item_ids: list[int]) -> list[int]:
-    if not isinstance(selected_item_ids, list) or any(not isinstance(item, int) for item in selected_item_ids):
+    if not isinstance(selected_item_ids, list) or any(isinstance(item, bool) or not isinstance(item, int) for item in selected_item_ids):
         raise PlannerMassActionPreviewError(code="PMA_SELECTION_EMPTY", message="selected_item_ids must be an integer array")
     if not selected_item_ids:
         raise PlannerMassActionPreviewError(code="PMA_SELECTION_EMPTY", message="selected_item_ids must not be empty")

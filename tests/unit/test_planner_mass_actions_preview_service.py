@@ -55,6 +55,16 @@ class TestPlannerMassActionsPreviewService(unittest.TestCase):
                     )
                 self.assertEqual(ctx2.exception.code, "PMA_SELECTION_EMPTY")
 
+                with self.assertRaises(svc.PlannerMassActionPreviewError) as ctx_bool:
+                    svc.create_mass_action_preview_session(
+                        conn,
+                        action_type=svc.ACTION_MATERIALIZE,
+                        selected_item_ids=[True],
+                        created_by="u",
+                        ttl_seconds=1800,
+                    )
+                self.assertEqual(ctx_bool.exception.code, "PMA_SELECTION_EMPTY")
+
                 with self.assertRaises(svc.PlannerMassActionPreviewError) as ctx3:
                     svc.create_mass_action_preview_session(
                         conn,
@@ -121,7 +131,7 @@ class TestPlannerMassActionsPreviewService(unittest.TestCase):
 
                 row = conn.execute(
                     "SELECT action_type, preview_status, selected_item_ids_json, expires_at FROM planner_mass_action_sessions WHERE id = ?",
-                    (out["preview_session_id"],),
+                    (out["session_id"],),
                 ).fetchone()
                 self.assertEqual(str(row["action_type"]), svc.ACTION_MATERIALIZE)
                 self.assertEqual(str(row["preview_status"]), "OPEN")

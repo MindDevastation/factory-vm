@@ -57,14 +57,14 @@ class TestPlannerMassActionsPreviewApi(unittest.TestCase):
             body = preview.json()
             self.assertEqual(body["action_type"], "BATCH_MATERIALIZE_SELECTED")
             self.assertEqual(body["selected_count"], 1)
-            self.assertIn("preview_session_id", body)
+            self.assertIn("session_id", body)
             self.assertIn("expires_at", body)
 
-            session_id = str(body["preview_session_id"])
+            session_id = str(body["session_id"])
             get_resp = client.get(f"/v1/planner/mass-actions/{session_id}", headers=auth)
             self.assertEqual(get_resp.status_code, 200)
             get_body = get_resp.json()
-            self.assertEqual(get_body["preview_session_id"], session_id)
+            self.assertEqual(get_body["session_id"], session_id)
             self.assertEqual(get_body["action_type"], "BATCH_MATERIALIZE_SELECTED")
             self.assertEqual(get_body["selected_item_ids"], [planned_id])
 
@@ -99,6 +99,14 @@ class TestPlannerMassActionsPreviewApi(unittest.TestCase):
             )
             self.assertEqual(oversized.status_code, 422)
             self.assertEqual(oversized.json()["error"]["code"], "PMA_SELECTION_TOO_LARGE")
+
+            bool_item = client.post(
+                "/v1/planner/mass-actions/preview",
+                headers=auth,
+                json={"action_type": "BATCH_MATERIALIZE_SELECTED", "selected_item_ids": [True]},
+            )
+            self.assertEqual(bool_item.status_code, 400)
+            self.assertEqual(bool_item.json()["error"]["code"], "PLR_INVALID_INPUT")
 
             not_found = client.get("/v1/planner/mass-actions/missing", headers=auth)
             self.assertEqual(not_found.status_code, 404)
