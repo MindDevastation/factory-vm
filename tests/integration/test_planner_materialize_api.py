@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sqlite3
 import threading
 import unittest
 from unittest.mock import patch
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from services.common import db as dbm
 from services.common.env import Env
+from services.planner.materialization_service import PlannerMaterializationError
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
@@ -166,3 +168,38 @@ class TestPlannerMaterializeApi(unittest.TestCase):
                 self.assertEqual(jobs_count, 0)
             finally:
                 conn.close()
+
+    def test_unresolved_concurrency_conflict_returns_explainable_failure(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            planned_release_id = self._insert_planner_item(env)
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            with patch(
+                "services.planner.materialization_service.PlannedReleaseReadinessService.evaluate",
+                return_value={"aggregate_status": "READY_FOR_MATERIALIZATION"},
+            ), patch(
+                "services.planner.materialization_service.set_materialized_release_id",
+                side_effect=sqlite3.IntegrityError("simulated race"),
+            ), patch(
+                "services.planner.materialization_service.PlannerMaterializationService._recover_after_concurrency_conflict",
+                side_effect=PlannerMaterializationError(
+                    code="PRM_CONCURRENCY_CONFLICT",
+                    message="Concurrency conflict could not be resolved.",
+                    planned_release_id=planned_release_id,
+                    materialization_state_summary={"planned_release_id": planned_release_id},
+                    binding_diagnostics={"planned_release_id": planned_release_id},
+                ),
+            ):
+                resp = client.post(f"/v1/planner/planned-releases/{planned_release_id}/materialize", headers=auth)
+
+            self.assertEqual(resp.status_code, 409)
+            body = resp.json()
+            self.assertEqual(body["result"], "FAILED")
+            self.assertEqual(body["error"]["code"], "PRM_CONCURRENCY_CONFLICT")
+            self.assertEqual(body["materialization_state_summary"]["planned_release_id"], planned_release_id)
+            self.assertEqual(body["binding_diagnostics"]["planned_release_id"], planned_release_id)
