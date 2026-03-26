@@ -34,6 +34,7 @@ from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
+from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
     build_channel_settings_payload,
@@ -176,6 +177,35 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
     return rows
 
 
+@app.post("/v1/releases/{release_id}/jobs/create-or-select")
+def api_release_jobs_create_or_select(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        svc = ReleaseJobCreationService(conn)
+        try:
+            result = svc.create_or_select(release_id=release_id)
+        except ReleaseJobCreationError as exc:
+            status_code = 422
+            if exc.code == "PRJ_RELEASE_NOT_FOUND":
+                status_code = 404
+            elif exc.code == "PRJ_CONCURRENCY_CONFLICT":
+                status_code = 409
+            elif exc.code == "PRJ_JOB_CREATE_FAILED":
+                status_code = 500
+            return _prj_error(status_code, exc.code, exc.message, release_id)
+    finally:
+        conn.close()
+
+    return {
+        "release_id": result.release_id,
+        "result": result.result,
+        "job": result.job,
+        "current_open_relation": result.current_open_relation,
+        "job_creation_state_summary": result.job_creation_state_summary,
+        "open_job_diagnostics": result.open_job_diagnostics,
+    }
+
+
 def _plb_error(status_code: int, code: str, message: str, diagnostics: dict[str, Any] | None = None) -> JSONResponse:
     payload: dict[str, Any] = {"error": {"code": code, "message": message}}
     if diagnostics:
@@ -241,6 +271,17 @@ def _mtb_error(status_code: int, code: str, message: str) -> JSONResponse:
 
 def _mtg_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _prj_error(status_code: int, code: str, message: str, release_id: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "release_id": release_id,
+            "result": "FAILED",
+            "error": {"code": code, "message": message},
+        },
+    )
 
 
 class MetadataTitleTemplatePreviewRequest(BaseModel):
