@@ -155,6 +155,61 @@ class TestPlannerApiListPatch(unittest.TestCase):
         self._seed_ready_context(env, ready_id)
         return ready_id, not_ready_id, blocked_id
 
+    def _seed_materialized_state_mix(self, env: Env) -> tuple[int, int, int]:
+        materialized_id = self._insert_release(
+            env,
+            channel_slug="darkwood-reverie",
+            content_type="LONG",
+            title="Materialized Item",
+            publish_at="2025-06-10T10:00:00+02:00",
+            created_at="2025-01-04T00:00:00Z",
+        )
+        not_materialized_id = self._insert_release(
+            env,
+            channel_slug="darkwood-reverie",
+            content_type="LONG",
+            title="Not Materialized Item",
+            publish_at="2025-06-11T10:00:00+02:00",
+            created_at="2025-01-03T00:00:00Z",
+        )
+        binding_inconsistent_id = self._insert_release(
+            env,
+            channel_slug="darkwood-reverie",
+            content_type="LONG",
+            title="Binding Inconsistent Item",
+            publish_at="2025-06-12T10:00:00+02:00",
+            created_at="2025-01-02T00:00:00Z",
+        )
+        conn = dbm.connect(env)
+        try:
+            channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+            release_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                    VALUES(?, 'mat', '', '[]', NULL, NULL, 'mat-seed', 1.0)
+                    """,
+                    (channel_id,),
+                ).lastrowid
+            )
+            inconsistent_release_id = int(
+                conn.execute(
+                    """
+                    INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                    VALUES(?, 'inconsistent', '', '[]', NULL, NULL, 'mat-seed-inc', 1.0)
+                    """,
+                    (channel_id,),
+                ).lastrowid
+            )
+            conn.execute("UPDATE planned_releases SET materialized_release_id = ? WHERE id = ?", (release_id, materialized_id))
+            conn.execute("UPDATE planned_releases SET materialized_release_id = ? WHERE id = ?", (inconsistent_release_id, binding_inconsistent_id))
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("DELETE FROM releases WHERE id = ?", (inconsistent_release_id,))
+            conn.execute("PRAGMA foreign_keys=ON")
+        finally:
+            conn.close()
+        return materialized_id, not_materialized_id, binding_inconsistent_id
+
     def _get_release_channel_slug(self, env: Env, release_id: int) -> str:
         conn = dbm.connect(env)
         try:
@@ -714,6 +769,117 @@ class TestPlannerApiListPatch(unittest.TestCase):
                 [item["title"] for item in resp.json()["items"]],
                 ["Alpha Missing Schedule", "Zulu Missing Schedule"],
             )
+
+    def test_list_includes_materialization_summary_and_diagnostics(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_materialized_state_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.get("/v1/planner/releases?include_readiness=true&page=1&page_size=10", headers=auth)
+            self.assertEqual(resp.status_code, 200)
+            first = resp.json()["items"][0]
+            self.assertIn("materialization_state_summary", first)
+            self.assertIn("binding_diagnostics", first)
+            self.assertIn("materialization_state", first["materialization_state_summary"])
+            self.assertIn("release_id", first["materialization_state_summary"])
+            self.assertIn("action_reason", first["materialization_state_summary"])
+
+    def test_materialized_state_filter_materialized_not_materialized_binding_inconsistent(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_materialized_state_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            materialized = client.get("/v1/planner/releases?materialized_state=materialized&page=1&page_size=10", headers=auth)
+            self.assertEqual(materialized.status_code, 200)
+            self.assertEqual([item["title"] for item in materialized.json()["items"]], ["Materialized Item"])
+
+            not_materialized = client.get(
+                "/v1/planner/releases?materialized_state=not_materialized&page=1&page_size=10",
+                headers=auth,
+            )
+            self.assertEqual(not_materialized.status_code, 200)
+            self.assertIn("Not Materialized Item", [item["title"] for item in not_materialized.json()["items"]])
+
+            inconsistent = client.get(
+                "/v1/planner/releases?materialized_state=binding_inconsistent&page=1&page_size=10",
+                headers=auth,
+            )
+            self.assertEqual(inconsistent.status_code, 200)
+            self.assertEqual([item["title"] for item in inconsistent.json()["items"]], ["Binding Inconsistent Item"])
+
+    def test_invalid_materialized_state_filter_returns_400(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_materialized_state_mix(env)
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.get("/v1/planner/releases?materialized_state=unknown&page=1&page_size=10", headers=auth)
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(resp.json()["error"]["code"], "PRS_INVALID_MATERIALIZED_STATE_FILTER")
+
+    def test_materialized_state_filter_applies_before_pagination(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            for idx in range(5):
+                self._insert_release(
+                    env,
+                    channel_slug="darkwood-reverie",
+                    content_type="LONG",
+                    title=f"Unbound {idx}",
+                    publish_at=f"2025-06-{10 + idx:02d}T10:00:00+02:00",
+                    created_at=f"2025-01-{10 + idx:02d}T00:00:00Z",
+                )
+            target_id = self._insert_release(
+                env,
+                channel_slug="darkwood-reverie",
+                content_type="LONG",
+                title="Late Materialized Match",
+                publish_at="2025-06-30T10:00:00+02:00",
+                created_at="2025-01-01T00:00:00Z",
+            )
+            conn = dbm.connect(env)
+            try:
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                release_id = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                        VALUES(?, 'target', '', '[]', NULL, NULL, 'page-scope-target', 1.0)
+                        """,
+                        (channel_id,),
+                    ).lastrowid
+                )
+                conn.execute("UPDATE planned_releases SET materialized_release_id = ? WHERE id = ?", (release_id, target_id))
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            unfiltered = client.get("/v1/planner/releases?page=1&page_size=2", headers=auth)
+            self.assertEqual(unfiltered.status_code, 200)
+            self.assertGreater(unfiltered.json()["pagination"]["total"], 2)
+            self.assertNotIn("Late Materialized Match", [item["title"] for item in unfiltered.json()["items"]])
+
+            filtered = client.get("/v1/planner/releases?materialized_state=materialized&page=1&page_size=2", headers=auth)
+            self.assertEqual(filtered.status_code, 200)
+            self.assertEqual(filtered.json()["pagination"]["total"], 1)
+            self.assertEqual([item["title"] for item in filtered.json()["items"]], ["Late Materialized Match"])
 
 
 if __name__ == "__main__":
