@@ -155,6 +155,49 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_mpti_template_position
             ON monthly_planning_template_items(template_id, position);
 
+        CREATE TABLE IF NOT EXISTS monthly_planning_template_apply_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_id INTEGER NOT NULL,
+            channel_id INTEGER NOT NULL,
+            target_month TEXT NOT NULL,
+            preview_fingerprint TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            completed_at TEXT NULL,
+            status TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            created_count INTEGER NOT NULL DEFAULT 0,
+            blocked_duplicate_count INTEGER NOT NULL DEFAULT 0,
+            blocked_invalid_date_count INTEGER NOT NULL DEFAULT 0,
+            failed_count INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(template_id) REFERENCES monthly_planning_templates(id),
+            FOREIGN KEY(channel_id) REFERENCES channels(id),
+            CHECK(status IN ('STARTED','COMPLETED','FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mptar_template_month
+            ON monthly_planning_template_apply_runs(template_id, target_month);
+
+        CREATE INDEX IF NOT EXISTS idx_mptar_channel_month
+            ON monthly_planning_template_apply_runs(channel_id, target_month);
+
+        CREATE TABLE IF NOT EXISTS monthly_planning_template_apply_run_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apply_run_id INTEGER NOT NULL,
+            template_item_key TEXT NOT NULL,
+            slot_code TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            outcome TEXT NOT NULL,
+            planned_release_id INTEGER NULL,
+            reason_code TEXT NULL,
+            reason_message TEXT NULL,
+            FOREIGN KEY(apply_run_id) REFERENCES monthly_planning_template_apply_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY(planned_release_id) REFERENCES planned_releases(id),
+            CHECK(outcome IN ('CREATED','BLOCKED_DUPLICATE','BLOCKED_INVALID_DATE','FAILED_INTERNAL'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mptari_apply_run_position
+            ON monthly_planning_template_apply_run_items(apply_run_id, position);
+
         CREATE TABLE IF NOT EXISTS planner_release_links (
             planned_release_id INTEGER PRIMARY KEY,
             release_id INTEGER NOT NULL UNIQUE,
@@ -792,6 +835,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_metadata_preview_sessions_columns(conn)
     _ensure_planned_release_materialization_binding(conn)
     _ensure_planned_releases_template_preview_foundation(conn)
+    _ensure_monthly_planning_template_apply_schema(conn)
     _ensure_releases_current_open_job_relation(conn)
 
 
@@ -921,6 +965,9 @@ def _ensure_planned_releases_template_preview_foundation(conn: sqlite3.Connectio
     if "source_template_target_month" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE planned_releases ADD COLUMN source_template_target_month TEXT NULL;")
+    if "source_template_apply_run_id" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE planned_releases ADD COLUMN source_template_apply_run_id INTEGER NULL;")
 
     with suppress(Exception):
         conn.execute(
@@ -934,6 +981,91 @@ def _ensure_planned_releases_template_preview_foundation(conn: sqlite3.Connectio
             """
             CREATE INDEX IF NOT EXISTS idx_pr_preview_provenance_month
             ON planned_releases(source_template_id, source_template_item_key, source_template_target_month);
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_slot_month_unique
+            ON planned_releases(channel_slug, planning_slot_code, substr(publish_at, 1, 7))
+            WHERE planning_slot_code IS NOT NULL AND publish_at IS NOT NULL;
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_provenance_month_unique
+            ON planned_releases(source_template_id, source_template_item_key, source_template_target_month)
+            WHERE source_template_id IS NOT NULL
+              AND source_template_item_key IS NOT NULL
+              AND source_template_target_month IS NOT NULL;
+            """
+        )
+
+
+def _ensure_monthly_planning_template_apply_schema(conn: sqlite3.Connection) -> None:
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS monthly_planning_template_apply_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                target_month TEXT NOT NULL,
+                preview_fingerprint TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT NULL,
+                status TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                created_count INTEGER NOT NULL DEFAULT 0,
+                blocked_duplicate_count INTEGER NOT NULL DEFAULT 0,
+                blocked_invalid_date_count INTEGER NOT NULL DEFAULT 0,
+                failed_count INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(template_id) REFERENCES monthly_planning_templates(id),
+                FOREIGN KEY(channel_id) REFERENCES channels(id),
+                CHECK(status IN ('STARTED','COMPLETED','FAILED'))
+            );
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_mptar_template_month
+            ON monthly_planning_template_apply_runs(template_id, target_month);
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_mptar_channel_month
+            ON monthly_planning_template_apply_runs(channel_id, target_month);
+            """
+        )
+
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS monthly_planning_template_apply_run_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                apply_run_id INTEGER NOT NULL,
+                template_item_key TEXT NOT NULL,
+                slot_code TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                outcome TEXT NOT NULL,
+                planned_release_id INTEGER NULL,
+                reason_code TEXT NULL,
+                reason_message TEXT NULL,
+                FOREIGN KEY(apply_run_id) REFERENCES monthly_planning_template_apply_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY(planned_release_id) REFERENCES planned_releases(id),
+                CHECK(outcome IN ('CREATED','BLOCKED_DUPLICATE','BLOCKED_INVALID_DATE','FAILED_INTERNAL'))
+            );
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_mptari_apply_run_position
+            ON monthly_planning_template_apply_run_items(apply_run_id, position);
             """
         )
 

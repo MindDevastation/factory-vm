@@ -1282,6 +1282,116 @@ def create_planner_router(env: Env) -> APIRouter:
                 },
             )
 
+    @router.post("/monthly-planning-templates/{template_id}/apply")
+    async def apply_monthly_planning_template(
+        template_id: int,
+        request: Request,
+        username: str = Depends(_require_planner_auth(env)),
+    ):
+        started_at = time.perf_counter()
+        request_id = planner_request_id(request)
+        status_code = 200
+        channel_id_value: int | None = None
+        target_month_value: str | None = None
+        apply_run_id: int | None = None
+        summary = {
+            "total_items": 0,
+            "created": 0,
+            "blocked_duplicates": 0,
+            "blocked_invalid_dates": 0,
+            "failed": 0,
+            "overlap_warnings": 0,
+        }
+        if not username:
+            status_code = 401
+            return planner_error("PLR_INVALID_INPUT", "Unauthorized", status_code=status_code, request_id=request_id)
+
+        log_planner_event(
+            logger,
+            event_name="monthly_planning_template_apply_started",
+            username=username,
+            started_at=started_at,
+            status_code=200,
+            request_id=request_id,
+            extra_fields={"template_id": template_id},
+        )
+
+        try:
+            payload = await request.json()
+        except Exception:
+            status_code = 400
+            return planner_error("MPT_INVALID_REQUEST", "request body must be a JSON object", status_code=status_code, request_id=request_id)
+        if not isinstance(payload, dict):
+            status_code = 400
+            return planner_error("MPT_INVALID_REQUEST", "request body must be a JSON object", status_code=status_code, request_id=request_id)
+
+        conn = dbm.connect(env)
+        try:
+            svc = MonthlyPlanningTemplateService(conn)
+            try:
+                out = svc.execute_apply(
+                    template_id,
+                    channel_id=payload.get("channel_id"),
+                    target_month=payload.get("target_month"),
+                    preview_fingerprint=payload.get("preview_fingerprint"),
+                    request_id=request_id,
+                )
+            except MonthlyPlanningTemplateError as exc:
+                status_code = 404 if exc.code == "MPT_TEMPLATE_NOT_FOUND" else 400
+                if exc.code in {"MPT_TEMPLATE_ARCHIVED", "MPT_SCOPE_MISMATCH", "MPT_PREVIEW_STALE"}:
+                    status_code = 409
+                return planner_error(exc.code, exc.message, details=exc.details, status_code=status_code, request_id=request_id)
+
+            channel_id_value = int(out["channel_id"])
+            target_month_value = str(out["target_month"])
+            apply_run_id = int(out["apply_run_id"])
+            summary = dict(out.get("summary") or summary)
+            for item in out.get("items") or []:
+                reasons = item.get("reasons") or []
+                reason_code = reasons[0].get("code") if reasons else None
+                log_planner_event(
+                    logger,
+                    event_name="monthly_planning_template_apply_item_result",
+                    username=username,
+                    started_at=started_at,
+                    status_code=200,
+                    request_id=request_id,
+                    extra_fields={
+                        "template_id": template_id,
+                        "channel_id": channel_id_value,
+                        "target_month": target_month_value,
+                        "apply_run_id": apply_run_id,
+                        "item_key": item.get("item_key"),
+                        "slot_code": item.get("slot_code"),
+                        "outcome": item.get("outcome"),
+                        "reason_code": reason_code,
+                        "planned_release_id": item.get("planned_release_id"),
+                    },
+                )
+            return out
+        finally:
+            conn.close()
+            log_planner_event(
+                logger,
+                event_name="monthly_planning_template_apply_completed",
+                username=username,
+                started_at=started_at,
+                status_code=status_code,
+                request_id=request_id,
+                extra_fields={
+                    "template_id": template_id,
+                    "channel_id": channel_id_value,
+                    "target_month": target_month_value,
+                    "apply_run_id": apply_run_id,
+                    "total_items": int(summary.get("total_items") or 0),
+                    "created": int(summary.get("created") or 0),
+                    "blocked_duplicates": int(summary.get("blocked_duplicates") or 0),
+                    "blocked_invalid_dates": int(summary.get("blocked_invalid_dates") or 0),
+                    "failed": int(summary.get("failed") or 0),
+                    "overlap_warnings": int(summary.get("overlap_warnings") or 0),
+                },
+            )
+
     @router.get("/releases")
     def planner_list_releases(
         request: Request,

@@ -18,6 +18,8 @@ class TestMonthlyPlanningTemplatesApi(unittest.TestCase):
                 "planned_releases": int(conn.execute("SELECT COUNT(*) AS c FROM planned_releases").fetchone()["c"]),
                 "jobs": int(conn.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"]),
                 "releases": int(conn.execute("SELECT COUNT(*) AS c FROM releases").fetchone()["c"]),
+                "apply_runs": int(conn.execute("SELECT COUNT(*) AS c FROM monthly_planning_template_apply_runs").fetchone()["c"]),
+                "apply_run_items": int(conn.execute("SELECT COUNT(*) AS c FROM monthly_planning_template_apply_run_items").fetchone()["c"]),
             }
         finally:
             conn.close()
@@ -448,6 +450,205 @@ class TestMonthlyPlanningTemplatesApi(unittest.TestCase):
             self.assertEqual(preview.status_code, 200)
             after = self._snapshot_counts(env)
             self.assertEqual(before, after)
+
+    def test_apply_success_persists_audit_and_provenance_without_downstream_side_effects(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+            tid = self._create_template(client, auth)
+            before = self._snapshot_counts(env)
+
+            preview = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(preview.status_code, 200)
+            fp = preview.json()["preview_fingerprint"]
+            apply_resp = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04", "preview_fingerprint": fp},
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+            body = apply_resp.json()
+            self.assertEqual(body["summary"]["created"], 1)
+            self.assertEqual(body["summary"]["failed"], 0)
+            self.assertEqual(body["items"][0]["outcome"], "CREATED")
+
+            conn = dbm.connect(env)
+            try:
+                run = conn.execute(
+                    "SELECT created_count, blocked_duplicate_count, blocked_invalid_date_count, failed_count FROM monthly_planning_template_apply_runs WHERE id = ?",
+                    (int(body["apply_run_id"]),),
+                ).fetchone()
+                self.assertEqual(int(run["created_count"]), 1)
+                release = conn.execute(
+                    """
+                    SELECT planning_slot_code, source_template_id, source_template_item_key, source_template_target_month, source_template_apply_run_id
+                    FROM planned_releases
+                    WHERE id = ?
+                    """,
+                    (int(body["items"][0]["planned_release_id"]),),
+                ).fetchone()
+                self.assertEqual(str(release["planning_slot_code"]), "day_01_main")
+                self.assertEqual(int(release["source_template_id"]), tid)
+                self.assertEqual(str(release["source_template_item_key"]), "day-01-main")
+                self.assertEqual(str(release["source_template_target_month"]), "2026-04")
+                self.assertEqual(int(release["source_template_apply_run_id"]), int(body["apply_run_id"]))
+            finally:
+                conn.close()
+
+            after = self._snapshot_counts(env)
+            self.assertEqual(after["planned_releases"], before["planned_releases"] + 1)
+            self.assertEqual(after["apply_runs"], before["apply_runs"] + 1)
+            self.assertEqual(after["apply_run_items"], before["apply_run_items"] + 1)
+            self.assertEqual(after["jobs"], before["jobs"])
+            self.assertEqual(after["releases"], before["releases"])
+
+    def test_apply_blocks_invalid_day_and_duplicate_and_requires_fingerprint(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+
+            create_resp = client.post(
+                "/v1/planner/monthly-planning-templates",
+                headers=auth,
+                json={
+                    "channel_id": 1,
+                    "template_name": "April mixed",
+                    "content_type": "LONG",
+                    "items": [
+                        {
+                            "item_key": "day-01-main",
+                            "slot_code": "day_01_main",
+                            "position": 1,
+                            "title": "Release 01",
+                            "day_of_month": 1,
+                            "notes": None,
+                        },
+                        {
+                            "item_key": "day-31-main",
+                            "slot_code": "day_31_main",
+                            "position": 2,
+                            "title": "Release 31",
+                            "day_of_month": 31,
+                            "notes": None,
+                        },
+                    ],
+                },
+            )
+            tid = int(create_resp.json()["id"])
+            missing_fp = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(missing_fp.status_code, 400)
+            self.assertEqual(missing_fp.json()["error"]["code"], "MPT_PREVIEW_FINGERPRINT_REQUIRED")
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at, planning_slot_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("darkwood-reverie", "LONG", "existing", "2026-04-01", None, "PLANNED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "day_01_main"),
+                )
+            finally:
+                conn.close()
+
+            preview = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            fp = preview.json()["preview_fingerprint"]
+            apply_resp = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04", "preview_fingerprint": fp},
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+            body = apply_resp.json()
+            self.assertEqual(body["summary"]["created"], 0)
+            self.assertEqual(body["summary"]["blocked_duplicates"], 1)
+            self.assertEqual(body["summary"]["blocked_invalid_dates"], 1)
+            self.assertEqual({row["outcome"] for row in body["items"]}, {"BLOCKED_DUPLICATE", "BLOCKED_INVALID_DATE"})
+
+    def test_apply_scope_archived_and_stale_preview(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+            tid = self._create_template(client, auth)
+
+            preview = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            fp = preview.json()["preview_fingerprint"]
+
+            scope_mismatch = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/apply",
+                headers=auth,
+                json={"channel_id": 2, "target_month": "2026-04", "preview_fingerprint": fp},
+            )
+            self.assertEqual(scope_mismatch.status_code, 409)
+            self.assertEqual(scope_mismatch.json()["error"]["code"], "MPT_SCOPE_MISMATCH")
+
+            client.post(f"/v1/planner/monthly-planning-templates/{tid}/archive", headers=auth)
+            archived_apply = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04", "preview_fingerprint": fp},
+            )
+            self.assertEqual(archived_apply.status_code, 409)
+            self.assertEqual(archived_apply.json()["error"]["code"], "MPT_TEMPLATE_ARCHIVED")
+
+            tid2 = self._create_template(client, auth)
+            p1 = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid2}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            ).json()["preview_fingerprint"]
+            client.patch(
+                f"/v1/planner/monthly-planning-templates/{tid2}",
+                headers=auth,
+                json={
+                    "template_name": "April core batch v2",
+                    "items": [
+                        {
+                            "item_key": "day-02-main",
+                            "slot_code": "day_02_main",
+                            "position": 1,
+                            "title": "Release 02",
+                            "day_of_month": 2,
+                            "notes": None,
+                        }
+                    ],
+                },
+            )
+            stale = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid2}/apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04", "preview_fingerprint": p1},
+            )
+            self.assertEqual(stale.status_code, 409)
+            self.assertEqual(stale.json()["error"]["code"], "MPT_PREVIEW_STALE")
 
 
 if __name__ == "__main__":
