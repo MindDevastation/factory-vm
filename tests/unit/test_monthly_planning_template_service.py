@@ -29,6 +29,9 @@ class TestMonthlyPlanningTemplateService(unittest.TestCase):
             ],
         }
 
+    def _create_template(self, svc: MonthlyPlanningTemplateService) -> dict:
+        return svc.create_template(**self._base_payload())
+
     def test_content_type_validation(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)
@@ -180,6 +183,155 @@ class TestMonthlyPlanningTemplateService(unittest.TestCase):
                 listed = svc.list_templates(MonthlyPlanningTemplateListParams(status="ARCHIVED", limit=10, offset=0))
                 self.assertEqual(listed["total"], 1)
                 self.assertEqual(listed["items"][0]["status"], "ARCHIVED")
+            finally:
+                conn.close()
+
+    def test_preview_target_month_validation(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                created = self._create_template(svc)
+                with self.assertRaises(MonthlyPlanningTemplateError) as ctx:
+                    svc.preview_apply(created["id"], channel_id=1, target_month="2026-13")
+                self.assertEqual(ctx.exception.code, "MPT_INVALID_TARGET_MONTH")
+            finally:
+                conn.close()
+
+    def test_preview_resolves_planned_date_and_blocks_invalid_day_for_month(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                payload = self._base_payload()
+                payload["items"] = [
+                    {**payload["items"][0], "item_key": "day-30", "slot_code": "day_30", "position": 1, "day_of_month": 30},
+                    {**payload["items"][0], "item_key": "day-31", "slot_code": "day_31", "position": 2, "day_of_month": 31},
+                ]
+                created = svc.create_template(**payload)
+                preview = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                self.assertEqual(preview["items"][0]["planned_date"], "2026-04-30")
+                self.assertEqual(preview["items"][0]["outcome"], "WOULD_CREATE")
+                self.assertIsNone(preview["items"][1]["planned_date"])
+                self.assertEqual(preview["items"][1]["outcome"], "BLOCKED_INVALID_DATE")
+                self.assertEqual(preview["items"][1]["reasons"][0]["code"], "MPT_INVALID_ITEM_DAY_FOR_MONTH")
+            finally:
+                conn.close()
+
+    def test_preview_hard_duplicate_by_planning_slot_code(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                created = self._create_template(svc)
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at, planning_slot_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("darkwood-reverie", "LONG", "existing", "2026-04-01", None, "PLANNED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "day_01_main"),
+                )
+                preview = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                self.assertEqual(preview["summary"]["blocked_duplicates"], 1)
+                self.assertEqual(preview["items"][0]["outcome"], "BLOCKED_DUPLICATE")
+            finally:
+                conn.close()
+
+    def test_preview_hard_duplicate_by_provenance_keys_even_when_publish_at_month_differs(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                created = self._create_template(svc)
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(
+                        channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at,
+                        source_template_id, source_template_item_key, source_template_target_month
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "darkwood-reverie",
+                        "LONG",
+                        "existing",
+                        "2026-03-02",
+                        None,
+                        "PLANNED",
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                        int(created["id"]),
+                        "day-01-main",
+                        "2026-04",
+                    ),
+                )
+                preview = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                self.assertEqual(preview["items"][0]["outcome"], "BLOCKED_DUPLICATE")
+            finally:
+                conn.close()
+
+    def test_preview_soft_overlap_detection_is_informational(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                created = self._create_template(svc)
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at, planning_slot_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("darkwood-reverie", "LONG", "existing", "2026-04-01", None, "PLANNED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "another_slot"),
+                )
+                preview = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                self.assertEqual(preview["items"][0]["outcome"], "WOULD_CREATE")
+                self.assertEqual(len(preview["items"][0]["overlap_warnings"]), 1)
+                self.assertEqual(preview["summary"]["overlap_warnings"], 1)
+            finally:
+                conn.close()
+
+    def test_preview_fingerprint_is_deterministic(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                created = self._create_template(svc)
+                one = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                two = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                self.assertEqual(one["preview_fingerprint"], two["preview_fingerprint"])
+
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at, planning_slot_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("darkwood-reverie", "LONG", "existing", "2026-04-01", None, "PLANNED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "day_01_main"),
+                )
+                three = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                self.assertNotEqual(one["preview_fingerprint"], three["preview_fingerprint"])
+            finally:
+                conn.close()
+
+    def test_preview_summary_copy_friendly_counters_shape(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                payload = self._base_payload()
+                payload["items"] = [
+                    {**payload["items"][0], "item_key": "a1", "slot_code": "s1", "position": 1, "day_of_month": 1},
+                    {**payload["items"][0], "item_key": "a2", "slot_code": "s2", "position": 2, "day_of_month": 31},
+                ]
+                created = svc.create_template(**payload)
+                preview = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                self.assertEqual(sorted(preview["summary"].keys()), ["blocked_duplicates", "blocked_invalid_dates", "overlap_warnings", "total_items", "would_create"])
+                self.assertEqual(preview["summary"]["total_items"], 2)
             finally:
                 conn.close()
 

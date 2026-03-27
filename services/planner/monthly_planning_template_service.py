@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import calendar
+import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from services.common import db as dbm
 
 _ITEM_KEY_RE = re.compile(r"^[a-z0-9_-]+$")
 _SLOT_CODE_RE = re.compile(r"^[a-z0-9_-]+$")
+_TARGET_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
 class MonthlyPlanningTemplateError(Exception):
@@ -249,6 +252,168 @@ class MonthlyPlanningTemplateService:
         )
         return self.get_template(template_id)
 
+    def preview_apply(self, template_id: Any, *, channel_id: Any, target_month: Any) -> dict[str, Any]:
+        template_row = self._get_template_row_or_raise(template_id)
+        if str(template_row["status"]) != self.STATUS_ACTIVE:
+            raise MonthlyPlanningTemplateError("MPT_TEMPLATE_ARCHIVED", "Archived template cannot be previewed or applied.")
+
+        normalized_channel_id = self._normalize_channel_id(channel_id)
+        self._require_channel_exists(normalized_channel_id)
+        template_channel_id = int(template_row["channel_id"])
+        if normalized_channel_id != template_channel_id:
+            raise MonthlyPlanningTemplateError(
+                "MPT_SCOPE_MISMATCH",
+                "Template channel scope does not match target planning context.",
+            )
+
+        normalized_target_month = self._normalize_target_month(target_month)
+        channel = dbm.get_channel_by_id(self._conn, normalized_channel_id)
+        channel_slug = str(channel["slug"])
+        template_content_type = template_row.get("content_type")
+
+        items = self._conn.execute(
+            """
+            SELECT id, item_key, slot_code, position, title, day_of_month, notes
+            FROM monthly_planning_template_items
+            WHERE template_id = ?
+            ORDER BY position ASC, id ASC
+            """,
+            (int(template_row["id"]),),
+        ).fetchall()
+
+        existing_rows = self._conn.execute(
+            """
+            SELECT id, content_type, publish_at, planning_slot_code, source_template_id, source_template_item_key, source_template_target_month
+            FROM planned_releases
+            WHERE channel_slug = ? AND publish_at IS NOT NULL AND substr(publish_at, 1, 7) = ?
+            """,
+            (channel_slug, normalized_target_month),
+        ).fetchall()
+
+        provenance_rows = self._conn.execute(
+            """
+            SELECT source_template_item_key
+            FROM planned_releases
+            WHERE source_template_id = ? AND source_template_target_month = ? AND source_template_item_key IS NOT NULL
+            """,
+            (int(template_row["id"]), normalized_target_month),
+        ).fetchall()
+
+        existing_by_slot: dict[str, list[dict[str, Any]]] = {}
+        existing_by_provenance_item_key = {str(row["source_template_item_key"]) for row in provenance_rows}
+        existing_for_overlap: list[dict[str, Any]] = []
+        for row in existing_rows:
+            rec = dict(row)
+            slot = rec.get("planning_slot_code")
+            if isinstance(slot, str) and slot.strip():
+                existing_by_slot.setdefault(slot.strip(), []).append(rec)
+
+            existing_for_overlap.append(rec)
+
+        out_items: list[dict[str, Any]] = []
+        summary = {
+            "total_items": len(items),
+            "would_create": 0,
+            "blocked_duplicates": 0,
+            "blocked_invalid_dates": 0,
+            "overlap_warnings": 0,
+        }
+
+        for row in items:
+            item_key = str(row["item_key"])
+            slot_code = str(row["slot_code"])
+            position = int(row["position"])
+            day_of_month = row.get("day_of_month")
+            reasons: list[dict[str, str]] = []
+            overlap_warnings: list[dict[str, Any]] = []
+            planned_date: str | None = None
+            outcome = "WOULD_CREATE"
+
+            if day_of_month is None:
+                outcome = "BLOCKED_INVALID_DATE"
+                reasons.append(
+                    {
+                        "code": "MPT_INVALID_ITEM_DAY_FOR_MONTH",
+                        "message": "Item day_of_month exceeds target month length.",
+                    }
+                )
+            else:
+                resolved = self._resolve_planned_date(target_month=normalized_target_month, day_of_month=int(day_of_month))
+                if resolved is None:
+                    outcome = "BLOCKED_INVALID_DATE"
+                    reasons.append(
+                        {
+                            "code": "MPT_INVALID_ITEM_DAY_FOR_MONTH",
+                            "message": "Item day_of_month exceeds target month length.",
+                        }
+                    )
+                else:
+                    planned_date = resolved
+                    has_duplicate = False
+                    if slot_code in existing_by_slot:
+                        has_duplicate = True
+                        reasons.append(
+                            {
+                                "code": "MPT_DUPLICATE_PLANNING_SLOT",
+                                "message": "Planned release with same slot identity already exists in target context.",
+                            }
+                        )
+                    if item_key in existing_by_provenance_item_key:
+                        has_duplicate = True
+                        reasons.append(
+                            {
+                                "code": "MPT_DUPLICATE_PLANNING_SLOT",
+                                "message": "Planned release with same template provenance already exists in target context.",
+                            }
+                        )
+                    if has_duplicate:
+                        outcome = "BLOCKED_DUPLICATE"
+                    else:
+                        overlap_warnings = self._build_overlap_warnings(
+                            existing_rows=existing_for_overlap,
+                            planned_date=planned_date,
+                            item_content_type=template_content_type,
+                        )
+
+            if outcome == "WOULD_CREATE":
+                summary["would_create"] += 1
+            elif outcome == "BLOCKED_DUPLICATE":
+                summary["blocked_duplicates"] += 1
+            elif outcome == "BLOCKED_INVALID_DATE":
+                summary["blocked_invalid_dates"] += 1
+            summary["overlap_warnings"] += len(overlap_warnings)
+
+            out_items.append(
+                {
+                    "item_key": item_key,
+                    "slot_code": slot_code,
+                    "position": position,
+                    "title": str(row["title"]),
+                    "day_of_month": day_of_month,
+                    "planned_date": planned_date,
+                    "outcome": outcome,
+                    "reasons": reasons,
+                    "overlap_warnings": overlap_warnings,
+                }
+            )
+
+        result = {
+            "template_id": int(template_row["id"]),
+            "channel_id": normalized_channel_id,
+            "target_month": normalized_target_month,
+            "summary": summary,
+            "items": out_items,
+        }
+        result["preview_fingerprint"] = self._build_preview_fingerprint(
+            template_id=int(template_row["id"]),
+            template_updated_at=str(template_row["updated_at"]),
+            channel_id=normalized_channel_id,
+            target_month=normalized_target_month,
+            items=out_items,
+            summary=summary,
+        )
+        return result
+
     def _normalize_channel_id(self, channel_id: Any) -> int:
         if isinstance(channel_id, bool) or channel_id is None:
             raise MonthlyPlanningTemplateError("MPT_INVALID_CHANNEL_ID", "channel_id is required.")
@@ -367,6 +532,67 @@ class MonthlyPlanningTemplateService:
         if row is None:
             raise MonthlyPlanningTemplateError("MPT_TEMPLATE_NOT_FOUND", "Monthly planning template was not found.")
         return row
+
+    def _normalize_target_month(self, target_month: Any) -> str:
+        value = str(target_month or "").strip()
+        if _TARGET_MONTH_RE.fullmatch(value) is None:
+            raise MonthlyPlanningTemplateError("MPT_INVALID_TARGET_MONTH", "target_month must be a valid YYYY-MM month.")
+        try:
+            datetime.strptime(value, "%Y-%m")
+        except ValueError as exc:
+            raise MonthlyPlanningTemplateError("MPT_INVALID_TARGET_MONTH", "target_month must be a valid YYYY-MM month.") from exc
+        return value
+
+    def _resolve_planned_date(self, *, target_month: str, day_of_month: int) -> str | None:
+        year = int(target_month[0:4])
+        month = int(target_month[5:7])
+        last_day = calendar.monthrange(year, month)[1]
+        if day_of_month < 1 or day_of_month > last_day:
+            return None
+        return date(year, month, day_of_month).isoformat()
+
+    def _build_overlap_warnings(self, *, existing_rows: list[dict[str, Any]], planned_date: str, item_content_type: Any) -> list[dict[str, Any]]:
+        warnings: list[dict[str, Any]] = []
+        day = planned_date[8:10]
+        for row in existing_rows:
+            publish_at = row.get("publish_at")
+            if not isinstance(publish_at, str) or len(publish_at) < 10:
+                continue
+            if publish_at[8:10] != day:
+                continue
+            existing_content_type = row.get("content_type")
+            if isinstance(item_content_type, str) and item_content_type.strip() and isinstance(existing_content_type, str):
+                if item_content_type.strip() != existing_content_type.strip():
+                    continue
+            warnings.append(
+                {
+                    "code": "MPT_SOFT_OVERLAP",
+                    "message": "Existing planned release matches the same planning day/content surface.",
+                    "planned_release_id": int(row["id"]),
+                }
+            )
+        return warnings
+
+    def _build_preview_fingerprint(
+        self,
+        *,
+        template_id: int,
+        template_updated_at: str,
+        channel_id: int,
+        target_month: str,
+        items: list[dict[str, Any]],
+        summary: dict[str, int],
+    ) -> str:
+        canonical = {
+            "template_id": template_id,
+            "template_updated_at": template_updated_at,
+            "channel_id": channel_id,
+            "target_month": target_month,
+            "summary": summary,
+            "items": items,
+        }
+        encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _insert_items(self, *, template_id: int, items: list[dict[str, Any]], now_iso: str) -> None:
         for item in items:
