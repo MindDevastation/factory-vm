@@ -3,6 +3,15 @@
   const state = {
     page: 1, pageSize: 50, total: 0, items: [], selected: new Set(), previewId: null,
     metadataBulk: { sessionId: null, previewItems: [], summary: null },
+    massAction: {
+      sessionId: null,
+      actionType: 'BATCH_MATERIALIZE_SELECTED',
+      expiresAt: null,
+      items: [],
+      summary: null,
+      executeResult: null,
+      selectedKinds: new Set(['ALL']),
+    },
     readinessDetail: null,
     readinessDetailPlannedReleaseId: null,
   };
@@ -19,6 +28,9 @@
   function setNote(msg) { noteEl.textContent = msg || ''; }
   function setMetadataBulkStaleBanner(isVisible) {
     $('mbp-stale-banner').style.display = isVisible ? 'block' : 'none';
+  }
+  function setMassActionStaleBanner(isVisible) {
+    $('pma-stale-banner').style.display = isVisible ? 'block' : 'none';
   }
 
   function queryParams() {
@@ -226,6 +238,7 @@
         const id = Number(el.getAttribute('data-select-id'));
         if (el.checked) state.selected.add(id); else state.selected.delete(id);
         $('bulk-delete-btn').disabled = !state.selected.size;
+        updateMassActionSelectionState();
       });
     });
 
@@ -365,6 +378,7 @@
     state.total = Number(data.pagination?.total || 0);
     state.selected.clear();
     $('bulk-delete-btn').disabled = true;
+    updateMassActionSelectionState();
     renderRows();
     renderReadinessSummary(data.readiness_summary || {});
     const start = (state.page - 1) * state.pageSize + 1;
@@ -513,6 +527,197 @@
 
   function selectedPlannerItemIds() {
     return Array.from(state.selected.values()).map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0);
+  }
+
+  function updateMassActionSelectionState() {
+    const count = selectedPlannerItemIds().length;
+    $('mass-actions-open').disabled = count === 0;
+    $('mass-actions-selected-count').textContent = `Selected: ${count}`;
+    $('pma-selected-count').textContent = String(count);
+  }
+
+  function isMassActionExecutableKind(kind) {
+    return kind === 'SUCCESS_CREATED_NEW' || kind === 'SUCCESS_RETURNED_EXISTING';
+  }
+
+  function massActionVisibleItems() {
+    const executableOnly = $('pma-filter-executable-only').checked;
+    const selectedKinds = state.massAction.selectedKinds;
+    return state.massAction.items.filter((item) => {
+      const kind = String(item.result_kind || '');
+      if (executableOnly && !isMassActionExecutableKind(kind)) return false;
+      if (!selectedKinds.has('ALL') && !selectedKinds.has(kind)) return false;
+      return true;
+    });
+  }
+
+  function formatMassActionMessage(item) {
+    return String(item.expected_outcome || item.message || '-');
+  }
+
+  function formatMassActionDetails(item) {
+    if (item.reason) return `${item.reason.code || '-'}: ${item.reason.message || '-'}`;
+    if (item.details) return JSON.stringify(item.details);
+    return '-';
+  }
+
+  function renderMassActionItems() {
+    const tbody = $('pma-items-body');
+    const visibleItems = massActionVisibleItems();
+    if (!visibleItems.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="muted">No items for current filters.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = visibleItems.map((item) => {
+      const plannedId = Number(item.planned_release_id);
+      const checked = item._selected !== false;
+      return `<tr>
+        <td><input type="checkbox" data-pma-select-item="${esc(plannedId)}" ${checked ? 'checked' : ''}></td>
+        <td>${esc(plannedId)}</td>
+        <td>${esc(item.result_kind || '-')}</td>
+        <td>${esc(formatMassActionMessage(item))}</td>
+        <td>${esc(formatMassActionDetails(item))}</td>
+      </tr>`;
+    }).join('');
+    tbody.querySelectorAll('input[data-pma-select-item]').forEach((el) => {
+      el.addEventListener('change', () => {
+        const plannedId = Number(el.getAttribute('data-pma-select-item'));
+        const target = state.massAction.items.find((item) => Number(item.planned_release_id) === plannedId);
+        if (target) target._selected = el.checked;
+      });
+    });
+  }
+
+  function selectedMassActionItemIds() {
+    return state.massAction.items
+      .filter((item) => item._selected !== false)
+      .map((item) => Number(item.planned_release_id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+  }
+
+  function renderMassActionSummary() {
+    $('pma-session-label').textContent = state.massAction.sessionId ? `session_id=${state.massAction.sessionId}` : '';
+    $('pma-summary-json').textContent = state.massAction.summary ? JSON.stringify(state.massAction.summary, null, 2) : 'No preview yet.';
+    $('pma-result-json').textContent = state.massAction.executeResult ? JSON.stringify(state.massAction.executeResult, null, 2) : 'No execute yet.';
+    const summary = state.massAction.executeResult?.summary || {};
+    $('pma-result-total').textContent = String(summary.total_selected || 0);
+    $('pma-result-succeeded').textContent = String(summary.succeeded || 0);
+    $('pma-result-failed').textContent = String(summary.failed || 0);
+    $('pma-result-skipped').textContent = String(summary.skipped || 0);
+    $('pma-result-created-new').textContent = String(summary.created_new_entities || 0);
+    $('pma-result-returned-existing').textContent = String(summary.returned_existing_entities || 0);
+    refreshMassActionExecuteAvailability();
+  }
+
+  function refreshMassActionExecuteAvailability() {
+    const hasSession = Boolean(state.massAction.sessionId);
+    const confirmed = $('pma-execute-confirm').checked;
+    $('pma-execute-btn').disabled = !(hasSession && confirmed);
+  }
+
+  function parseIsoDate(value) {
+    const ts = Date.parse(String(value || ''));
+    return Number.isNaN(ts) ? null : new Date(ts);
+  }
+
+  function updateMassActionCountdown() {
+    const expiresAt = parseIsoDate(state.massAction.expiresAt);
+    $('pma-expires-at').textContent = expiresAt ? expiresAt.toISOString() : '-';
+    if (!expiresAt) {
+      $('pma-ttl-remaining').textContent = '-';
+      return;
+    }
+    const diffMs = expiresAt.getTime() - Date.now();
+    if (diffMs <= 0) {
+      $('pma-ttl-remaining').textContent = 'expired';
+      setMassActionStaleBanner(true);
+      return;
+    }
+    const totalSec = Math.floor(diffMs / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    $('pma-ttl-remaining').textContent = `${min}m ${String(sec).padStart(2, '0')}s`;
+  }
+
+  function massActionErrorCodeFromBody(body) {
+    return String(body?.error?.code || '').toUpperCase();
+  }
+
+  function isMassActionStaleCode(code) {
+    return ['PMA_SESSION_EXPIRED', 'PMA_SESSION_INVALIDATED', 'PMA_SELECTION_SCOPE_MISMATCH'].includes(code);
+  }
+
+  function readJsonFromResponseText(text) {
+    try { return JSON.parse(text || '{}'); } catch (_) { return {}; }
+  }
+
+  async function createMassActionPreview() {
+    const selected_item_ids = selectedPlannerItemIds();
+    if (!selected_item_ids.length) throw new Error('Select planner items first.');
+    const action_type = String($('pma-action-type').value || '').trim();
+    if (!action_type) throw new Error('Choose batch action.');
+    const res = await fetch(apiUrl('/v1/planner/mass-actions/preview'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action_type, selected_item_ids }),
+    });
+    const text = await res.text();
+    const body = readJsonFromResponseText(text);
+    if (!res.ok || body.error) throw new Error(body.error?.message || body.detail || text || `HTTP ${res.status}`);
+    state.massAction.sessionId = String(body.session_id || '');
+    state.massAction.actionType = String(body.action_type || action_type);
+    state.massAction.expiresAt = String(body.expires_at || '');
+    state.massAction.items = (body.items || []).map((item) => ({ ...item, _selected: true }));
+    state.massAction.summary = {
+      session_id: body.session_id,
+      action_type: body.action_type,
+      selected_count: body.selected_count,
+      aggregate: body.aggregate || {},
+      created_at: body.created_at,
+      expires_at: body.expires_at,
+    };
+    state.massAction.executeResult = null;
+    setMassActionStaleBanner(false);
+    updateMassActionCountdown();
+    renderMassActionSummary();
+    renderMassActionItems();
+  }
+
+  async function executeMassAction() {
+    if (!state.massAction.sessionId) throw new Error('Create preview first.');
+    if (!$('pma-execute-confirm').checked) throw new Error('Explicit confirmation is required.');
+    const selected_item_ids = selectedMassActionItemIds();
+    if (!selected_item_ids.length) throw new Error('Select at least one preview item.');
+    const res = await fetch(apiUrl(`/v1/planner/mass-actions/${state.massAction.sessionId}/execute`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selected_item_ids }),
+    });
+    const text = await res.text();
+    const body = readJsonFromResponseText(text);
+    if (!res.ok || body.error) {
+      const code = massActionErrorCodeFromBody(body);
+      if (isMassActionStaleCode(code)) setMassActionStaleBanner(true);
+      throw new Error(body.error?.message || body.detail || text || `HTTP ${res.status}`);
+    }
+    state.massAction.executeResult = body;
+    state.massAction.items = (body.items || []).map((item) => ({ ...item, _selected: true }));
+    setMassActionStaleBanner(false);
+    renderMassActionSummary();
+    renderMassActionItems();
+  }
+
+  async function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
   }
 
   function selectedPreviewFields(prefix) {
@@ -713,6 +918,7 @@
     if (e.target.checked) state.items.forEach((it) => state.selected.add(it.id));
     renderRows();
     $('bulk-delete-btn').disabled = !state.selected.size;
+    updateMassActionSelectionState();
   });
   $('bulk-delete-btn').addEventListener('click', async () => { try { await bulkDelete(); } catch (e) { setNote(e.message); } });
 
@@ -737,6 +943,60 @@
   $('metadata-bulk-open').addEventListener('click', () => {
     $('metadata-bulk-modal').showModal();
     setMetadataBulkStaleBanner(false);
+  });
+  $('mass-actions-open').addEventListener('click', () => {
+    updateMassActionSelectionState();
+    $('mass-actions-dialog').showModal();
+  });
+  $('pma-close-btn').addEventListener('click', () => $('mass-actions-dialog').close());
+  $('pma-preview-btn').addEventListener('click', async () => {
+    try {
+      await createMassActionPreview();
+      $('pma-execute-confirm').checked = false;
+      refreshMassActionExecuteAvailability();
+      setNote('Planner mass-action preview created.');
+    } catch (e) {
+      setNote(e.message);
+    }
+  });
+  $('pma-execute-btn').addEventListener('click', async () => {
+    try {
+      await executeMassAction();
+      setNote('Planner mass-action execute completed.');
+      await loadList();
+    } catch (e) {
+      setNote(e.message);
+    }
+  });
+  $('pma-filter-executable-only').addEventListener('change', renderMassActionItems);
+  document.querySelectorAll('button[data-pma-kind-filter]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const targetKind = String(btn.getAttribute('data-pma-kind-filter') || 'ALL');
+      state.massAction.selectedKinds = new Set([targetKind]);
+      renderMassActionItems();
+    });
+  });
+  $('pma-select-all-items').addEventListener('change', (e) => {
+    const checked = e.target.checked;
+    state.massAction.items.forEach((item) => { item._selected = checked; });
+    renderMassActionItems();
+  });
+  $('pma-execute-confirm').addEventListener('change', refreshMassActionExecuteAvailability);
+  $('pma-copy-summary-json-btn').addEventListener('click', async () => {
+    try {
+      await copyText($('pma-summary-json').textContent || '');
+      setNote('Summary JSON copied.');
+    } catch (e) {
+      setNote(`Copy failed: ${e.message}`);
+    }
+  });
+  $('pma-copy-result-json-btn').addEventListener('click', async () => {
+    try {
+      await copyText($('pma-result-json').textContent || '');
+      setNote('Result JSON copied.');
+    } catch (e) {
+      setNote(`Copy failed: ${e.message}`);
+    }
   });
   $('mbp-close-btn').addEventListener('click', () => $('metadata-bulk-modal').close());
   $('mbp-preview-btn').addEventListener('click', async () => {
@@ -780,5 +1040,9 @@
 
   $('import-preview-body').innerHTML = previewPlaceholder('No preview yet.');
   setMetadataBulkStaleBanner(false);
+  setMassActionStaleBanner(false);
+  updateMassActionSelectionState();
+  refreshMassActionExecuteAvailability();
+  setInterval(updateMassActionCountdown, 1000);
   loadList().catch((e) => setNote(e.message));
 })();
