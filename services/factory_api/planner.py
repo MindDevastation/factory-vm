@@ -547,6 +547,8 @@ def _parse_mass_action_preview_payload(payload: Any) -> tuple[str, list[int]]:
         if isinstance(item, bool) or not isinstance(item, int):
             raise ValueError("selected_item_ids must be an integer array")
         normalized_ids.append(item)
+    if len(set(normalized_ids)) != len(normalized_ids):
+        raise ValueError("selected_item_ids must not contain duplicates")
     return action_type, normalized_ids
 
 
@@ -565,6 +567,8 @@ def _parse_mass_action_execute_payload(payload: Any) -> list[int] | None:
         if isinstance(item, bool) or not isinstance(item, int):
             raise ValueError("selected_item_ids must be an integer array")
         normalized_ids.append(item)
+    if len(set(normalized_ids)) != len(normalized_ids):
+        raise ValueError("selected_item_ids must not contain duplicates")
     return normalized_ids
 
 

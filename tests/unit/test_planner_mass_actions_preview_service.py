@@ -77,6 +77,24 @@ class TestPlannerMassActionsPreviewService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_validation_rejects_duplicate_selected_item_ids(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                planned_id = self._insert_planned_release(conn, publish_at="2026-01-01T00:00:00Z")
+                with self.assertRaises(svc.PlannerMassActionPreviewError) as ctx:
+                    svc.create_mass_action_preview_session(
+                        conn,
+                        action_type=svc.ACTION_MATERIALIZE,
+                        selected_item_ids=[planned_id, planned_id],
+                        created_by="u",
+                        ttl_seconds=1800,
+                    )
+                self.assertEqual(ctx.exception.code, "PMA_SELECTION_SCOPE_MISMATCH")
+            finally:
+                conn.close()
+
     def test_materialization_preview_mixed_and_persistence(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)

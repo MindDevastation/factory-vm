@@ -236,6 +236,64 @@ class TestPlannerMassActionsExecuteApi(unittest.TestCase):
             self.assertEqual(subset_invalid.status_code, 422)
             self.assertEqual(subset_invalid.json()["error"]["code"], "PMA_EXECUTE_SUBSET_INVALID")
 
+            subset_duplicate = client.post(
+                f"/v1/planner/mass-actions/{session2_id}/execute",
+                headers=auth,
+                json={"selected_item_ids": [p2, p2]},
+            )
+            self.assertEqual(subset_duplicate.status_code, 400)
+            self.assertEqual(subset_duplicate.json()["error"]["code"], "PLR_INVALID_INPUT")
+
+    def test_expired_invalidated_session_returns_error_before_item_processing(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                planned_id = self._insert_planned_release(conn, publish_at="2026-01-11T00:00:00Z", title="stale")
+                expired = preview_svc.create_mass_action_preview_session(
+                    conn,
+                    action_type="BATCH_MATERIALIZE_SELECTED",
+                    selected_item_ids=[planned_id],
+                    created_by="u",
+                    ttl_seconds=1800,
+                )
+                expired_id = str(expired["session_id"])
+                conn.execute(
+                    "UPDATE planner_mass_action_sessions SET expires_at = ? WHERE id = ?",
+                    ((datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(), expired_id),
+                )
+
+                invalidated = preview_svc.create_mass_action_preview_session(
+                    conn,
+                    action_type="BATCH_MATERIALIZE_SELECTED",
+                    selected_item_ids=[planned_id],
+                    created_by="u",
+                    ttl_seconds=1800,
+                )
+                invalidated_id = str(invalidated["session_id"])
+                conn.execute(
+                    "UPDATE planner_mass_action_sessions SET preview_status = 'INVALIDATED' WHERE id = ?",
+                    (invalidated_id,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            auth = basic_auth_header(env.basic_user, env.basic_pass)
+
+            with mock.patch(
+                "services.planner.mass_actions_execute_service._execute_materialize_item",
+                side_effect=AssertionError("must not execute items for stale sessions"),
+            ):
+                expired_resp = client.post(f"/v1/planner/mass-actions/{expired_id}/execute", headers=auth, json={})
+                self.assertEqual(expired_resp.status_code, 409)
+                self.assertEqual(expired_resp.json()["error"]["code"], "PMA_SESSION_EXPIRED")
+
+                invalid_resp = client.post(f"/v1/planner/mass-actions/{invalidated_id}/execute", headers=auth, json={})
+                self.assertEqual(invalid_resp.status_code, 409)
+                self.assertEqual(invalid_resp.json()["error"]["code"], "PMA_SESSION_INVALIDATED")
+
 
 if __name__ == "__main__":
     unittest.main()

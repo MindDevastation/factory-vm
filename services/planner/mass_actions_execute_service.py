@@ -141,6 +141,11 @@ def _resolve_execute_selected_ids(*, selected_item_ids: list[int] | None, previe
         return [int(item_id) for item_id in preview_selected_ids]
     preview_set = {int(item_id) for item_id in preview_selected_ids}
     normalized = [int(item_id) for item_id in selected_item_ids]
+    if len(set(normalized)) != len(normalized):
+        raise PlannerMassActionExecuteError(
+            code="PMA_EXECUTE_SUBSET_INVALID",
+            message="Execute selected_item_ids must not contain duplicates.",
+        )
     if any(item_id not in preview_set for item_id in normalized):
         raise PlannerMassActionExecuteError(
             code="PMA_EXECUTE_SUBSET_INVALID",
