@@ -108,6 +108,14 @@ class TestPlannerMassActionsPreviewApi(unittest.TestCase):
             self.assertEqual(bool_item.status_code, 400)
             self.assertEqual(bool_item.json()["error"]["code"], "PLR_INVALID_INPUT")
 
+            duplicate = client.post(
+                "/v1/planner/mass-actions/preview",
+                headers=auth,
+                json={"action_type": "BATCH_MATERIALIZE_SELECTED", "selected_item_ids": [1, 1]},
+            )
+            self.assertEqual(duplicate.status_code, 400)
+            self.assertEqual(duplicate.json()["error"]["code"], "PLR_INVALID_INPUT")
+
             not_found = client.get("/v1/planner/mass-actions/missing", headers=auth)
             self.assertEqual(not_found.status_code, 404)
             self.assertEqual(not_found.json()["error"]["code"], "PMA_SESSION_NOT_FOUND")

@@ -63,6 +63,25 @@ class TestPlannerMassActionsExecuteService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_execute_rejects_duplicate_subset_ids(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                p1 = self._insert_planned_release(conn, publish_at="2026-01-01T00:00:00Z")
+                session_id = self._create_preview_session(conn, action_type=preview_svc.ACTION_MATERIALIZE, selected_ids=[p1])
+
+                with self.assertRaises(svc.PlannerMassActionExecuteError) as ctx:
+                    svc.execute_mass_action_session(
+                        conn,
+                        session_id=session_id,
+                        selected_item_ids=[p1, p1],
+                        executed_by="u",
+                    )
+                self.assertEqual(ctx.exception.code, "PMA_EXECUTE_SUBSET_INVALID")
+            finally:
+                conn.close()
+
     def test_execute_marks_expired_session_and_returns_context(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)
@@ -96,6 +115,62 @@ class TestPlannerMassActionsExecuteService(unittest.TestCase):
                 with self.assertRaises(svc.PlannerMassActionExecuteError) as ctx:
                     svc.execute_mass_action_session(conn, session_id=session_id, selected_item_ids=None, executed_by="u")
                 self.assertEqual(ctx.exception.code, "PMA_SESSION_INVALIDATED")
+            finally:
+                conn.close()
+
+    def test_expired_or_invalidated_session_fails_before_item_execution(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                p1 = self._insert_planned_release(conn, publish_at="2026-01-01T00:00:00Z")
+                expired_session_id = self._create_preview_session(
+                    conn,
+                    action_type=preview_svc.ACTION_MATERIALIZE,
+                    selected_ids=[p1],
+                )
+                conn.execute(
+                    "UPDATE planner_mass_action_sessions SET expires_at = ? WHERE id = ?",
+                    ((datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(), expired_session_id),
+                )
+                conn.commit()
+
+                with mock.patch(
+                    "services.planner.mass_actions_execute_service._execute_materialize_item",
+                ) as materialize_item_mock:
+                    with self.assertRaises(svc.PlannerMassActionExecuteError) as ctx_expired:
+                        svc.execute_mass_action_session(
+                            conn,
+                            session_id=expired_session_id,
+                            selected_item_ids=None,
+                            executed_by="u",
+                        )
+                self.assertEqual(ctx_expired.exception.code, "PMA_SESSION_EXPIRED")
+                materialize_item_mock.assert_not_called()
+
+                invalidated_session_id = self._create_preview_session(
+                    conn,
+                    action_type=preview_svc.ACTION_MATERIALIZE,
+                    selected_ids=[p1],
+                )
+                conn.execute(
+                    "UPDATE planner_mass_action_sessions SET preview_status = 'INVALIDATED' WHERE id = ?",
+                    (invalidated_session_id,),
+                )
+                conn.commit()
+
+                with mock.patch(
+                    "services.planner.mass_actions_execute_service._execute_materialize_item",
+                ) as materialize_item_mock:
+                    with self.assertRaises(svc.PlannerMassActionExecuteError) as ctx_invalid:
+                        svc.execute_mass_action_session(
+                            conn,
+                            session_id=invalidated_session_id,
+                            selected_item_ids=None,
+                            executed_by="u",
+                        )
+                self.assertEqual(ctx_invalid.exception.code, "PMA_SESSION_INVALIDATED")
+                materialize_item_mock.assert_not_called()
             finally:
                 conn.close()
 
@@ -166,6 +241,9 @@ class TestPlannerMassActionsExecuteService(unittest.TestCase):
                 self.assertEqual(out["summary"]["created_new_entities"], 1)
                 self.assertEqual(out["summary"]["returned_existing_entities"], 1)
                 self.assertEqual(out["preview_status"], "EXECUTED")
+                by_id = {int(item["planned_release_id"]): item for item in out["items"]}
+                self.assertEqual(by_id[p3]["result_kind"], "SKIPPED_NON_EXECUTABLE")
+                self.assertEqual(by_id[p4]["result_kind"], "FAILED_INVALID_OR_INCONSISTENT")
 
                 row = conn.execute(
                     "SELECT preview_status, executed_at FROM planner_mass_action_sessions WHERE id = ?",

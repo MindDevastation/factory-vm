@@ -142,7 +142,13 @@ def _normalize_selected_ids(selected_item_ids: list[int]) -> list[int]:
         raise PlannerMassActionPreviewError(code="PMA_SELECTION_EMPTY", message="selected_item_ids must not be empty")
     if len(selected_item_ids) > MAX_SELECTED_ITEMS:
         raise PlannerMassActionPreviewError(code="PMA_SELECTION_TOO_LARGE", message="selected_item_ids exceeds max size of 200")
-    return [int(item) for item in selected_item_ids]
+    normalized = [int(item) for item in selected_item_ids]
+    if len(set(normalized)) != len(normalized):
+        raise PlannerMassActionPreviewError(
+            code="PMA_SELECTION_SCOPE_MISMATCH",
+            message="selected_item_ids must not contain duplicates",
+        )
+    return normalized
 
 
 def _load_selected_planned_releases(conn: sqlite3.Connection, *, selected_item_ids: list[int]) -> dict[int, dict[str, Any]]:

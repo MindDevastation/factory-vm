@@ -189,6 +189,23 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn("function updateMassActionCountdown()", js)
         self.assertIn("function refreshMassActionExecuteAvailability()", js)
 
+    def test_mass_action_addons_are_presentation_only(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn('id="pma-filter-executable-only"', html)
+        self.assertIn('data-pma-kind-filter="SUCCESS_CREATED_NEW"', html)
+        self.assertIn('id="pma-stale-banner"', html)
+        self.assertIn('id="pma-ttl-remaining"', html)
+        self.assertIn('id="pma-copy-summary-json-btn"', html)
+        self.assertIn('id="pma-copy-result-json-btn"', html)
+        self.assertIn("function massActionVisibleItems()", js)
+        self.assertIn("function updateMassActionCountdown()", js)
+        self.assertIn("async function copyText(text)", js)
+        self.assertNotIn("/v1/planner/mass-actions/${state.massAction.sessionId}/execute/chain", js)
+        mass_action_block = js[js.find("async function createMassActionPreview()"): js.find("async function copyText(text)")]
+        self.assertNotIn("/render", mass_action_block.lower())
+        self.assertNotIn("/upload", mass_action_block.lower())
+        self.assertNotIn("/publish", mass_action_block.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
