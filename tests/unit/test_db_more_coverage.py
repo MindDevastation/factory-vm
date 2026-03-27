@@ -237,6 +237,45 @@ class TestDbMoreCoverage(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_migrate_creates_monthly_planning_template_tables_and_indexes(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                tables = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("monthly_planning_templates", tables)
+                self.assertIn("monthly_planning_template_items", tables)
+
+                header_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='monthly_planning_templates'"
+                    ).fetchall()
+                }
+                self.assertTrue({"idx_mpt_channel_status", "idx_mpt_channel_name"}.issubset(header_indexes))
+
+                item_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='monthly_planning_template_items'"
+                    ).fetchall()
+                }
+                self.assertIn("idx_mpti_template_position", item_indexes)
+
+                item_sql = str(
+                    conn.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='monthly_planning_template_items'"
+                    ).fetchone()["sql"]
+                )
+                self.assertIn("UNIQUE(template_id, item_key)", item_sql)
+                self.assertIn("UNIQUE(template_id, slot_code)", item_sql)
+                self.assertIn("UNIQUE(template_id, position)", item_sql)
+            finally:
+                conn.close()
+
     def test_migrate_creates_planned_releases_table_and_indexes(self):
         with temp_env() as (_td, env):
             conn = dbm.connect(env)
