@@ -139,6 +139,60 @@ class TestMonthlyPlanningTemplatesApi(unittest.TestCase):
             body = resp.json()
             self.assertEqual(body["error"]["code"], "MPT_INVALID_CONTENT_TYPE")
 
+            invalid_position = client.post(
+                "/v1/planner/monthly-planning-templates",
+                headers=auth,
+                json={
+                    "channel_id": 1,
+                    "template_name": "bad-pos",
+                    "content_type": "LONG",
+                    "items": [
+                        {
+                            "item_key": "k1",
+                            "slot_code": "s1",
+                            "position": "oops",
+                            "title": "x",
+                            "day_of_month": 1,
+                            "notes": None,
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(invalid_position.status_code, 400)
+            invalid_body = invalid_position.json()
+            self.assertEqual(invalid_body["error"]["code"], "MPT_INVALID_ITEM_POSITION")
+
+            duplicate_position = client.post(
+                "/v1/planner/monthly-planning-templates",
+                headers=auth,
+                json={
+                    "channel_id": 1,
+                    "template_name": "dup-pos",
+                    "content_type": "LONG",
+                    "items": [
+                        {
+                            "item_key": "k1",
+                            "slot_code": "s1",
+                            "position": 1,
+                            "title": "x",
+                            "day_of_month": 1,
+                            "notes": None,
+                        },
+                        {
+                            "item_key": "k2",
+                            "slot_code": "s2",
+                            "position": 1,
+                            "title": "y",
+                            "day_of_month": 2,
+                            "notes": None,
+                        },
+                    ],
+                },
+            )
+            self.assertEqual(duplicate_position.status_code, 400)
+            duplicate_body = duplicate_position.json()
+            self.assertEqual(duplicate_body["error"]["code"], "MPT_DUPLICATE_POSITION")
+
 
 if __name__ == "__main__":
     unittest.main()

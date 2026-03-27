@@ -107,6 +107,30 @@ class TestMonthlyPlanningTemplateService(unittest.TestCase):
                 with self.assertRaises(MonthlyPlanningTemplateError) as ctx_dup:
                     svc.create_template(**dup)
                 self.assertEqual(ctx_dup.exception.code, "MPT_DUPLICATE_ITEM_KEY")
+
+                dup_position = self._base_payload()
+                dup_position["items"] = [
+                    {
+                        "item_key": "a1",
+                        "slot_code": "slot1",
+                        "position": 1,
+                        "title": "t1",
+                        "day_of_month": 1,
+                        "notes": None,
+                    },
+                    {
+                        "item_key": "a2",
+                        "slot_code": "slot2",
+                        "position": 1,
+                        "title": "t2",
+                        "day_of_month": 2,
+                        "notes": None,
+                    },
+                ]
+                with self.assertRaises(MonthlyPlanningTemplateError) as ctx_dup_position:
+                    svc.create_template(**dup_position)
+                self.assertEqual(ctx_dup_position.exception.code, "MPT_DUPLICATE_POSITION")
+                self.assertIn("unique within template", ctx_dup_position.exception.message)
             finally:
                 conn.close()
 
@@ -133,6 +157,13 @@ class TestMonthlyPlanningTemplateService(unittest.TestCase):
                 with self.assertRaises(MonthlyPlanningTemplateError) as ctx_day:
                     svc.create_template(**payload)
                 self.assertEqual(ctx_day.exception.code, "MPT_INVALID_ITEM_DAY")
+
+                payload = self._base_payload()
+                payload["items"][0]["position"] = "bad"
+                with self.assertRaises(MonthlyPlanningTemplateError) as ctx_position:
+                    svc.create_template(**payload)
+                self.assertEqual(ctx_position.exception.code, "MPT_INVALID_ITEM_POSITION")
+                self.assertIn("integer >= 1", ctx_position.exception.message)
             finally:
                 conn.close()
 

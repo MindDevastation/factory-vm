@@ -317,7 +317,7 @@ class MonthlyPlanningTemplateService:
 
             position_raw = raw.get("position")
             if isinstance(position_raw, bool) or not isinstance(position_raw, int) or position_raw < 1:
-                raise MonthlyPlanningTemplateError("MPT_DUPLICATE_POSITION", "Template item positions must be unique within template.")
+                raise MonthlyPlanningTemplateError("MPT_INVALID_ITEM_POSITION", "position must be an integer >= 1.")
             if position_raw in positions:
                 raise MonthlyPlanningTemplateError("MPT_DUPLICATE_POSITION", "Template item positions must be unique within template.")
             positions.add(position_raw)
