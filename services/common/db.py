@@ -112,6 +112,49 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_pr_status ON planned_releases(status);
         CREATE INDEX IF NOT EXISTS idx_pr_title ON planned_releases(title);
 
+        CREATE TABLE IF NOT EXISTS monthly_planning_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL,
+            template_name TEXT NOT NULL,
+            content_type TEXT NULL,
+            status TEXT NOT NULL,
+            usage_summary_json TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT NULL,
+            created_by TEXT NULL,
+            updated_by TEXT NULL,
+            archived_by TEXT NULL,
+            FOREIGN KEY(channel_id) REFERENCES channels(id),
+            CHECK(status IN ('ACTIVE','ARCHIVED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mpt_channel_status
+            ON monthly_planning_templates(channel_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_mpt_channel_name
+            ON monthly_planning_templates(channel_id, template_name);
+
+        CREATE TABLE IF NOT EXISTS monthly_planning_template_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_id INTEGER NOT NULL,
+            item_key TEXT NOT NULL,
+            slot_code TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            day_of_month INTEGER NULL,
+            notes TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(template_id) REFERENCES monthly_planning_templates(id) ON DELETE CASCADE,
+            UNIQUE(template_id, item_key),
+            UNIQUE(template_id, slot_code),
+            UNIQUE(template_id, position)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mpti_template_position
+            ON monthly_planning_template_items(template_id, position);
+
         CREATE TABLE IF NOT EXISTS planner_release_links (
             planned_release_id INTEGER PRIMARY KEY,
             release_id INTEGER NOT NULL UNIQUE,
