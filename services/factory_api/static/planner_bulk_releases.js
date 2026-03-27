@@ -599,6 +599,20 @@
     $('pma-session-label').textContent = state.massAction.sessionId ? `session_id=${state.massAction.sessionId}` : '';
     $('pma-summary-json').textContent = state.massAction.summary ? JSON.stringify(state.massAction.summary, null, 2) : 'No preview yet.';
     $('pma-result-json').textContent = state.massAction.executeResult ? JSON.stringify(state.massAction.executeResult, null, 2) : 'No execute yet.';
+    const summary = state.massAction.executeResult?.summary || {};
+    $('pma-result-total').textContent = String(summary.total_selected || 0);
+    $('pma-result-succeeded').textContent = String(summary.succeeded || 0);
+    $('pma-result-failed').textContent = String(summary.failed || 0);
+    $('pma-result-skipped').textContent = String(summary.skipped || 0);
+    $('pma-result-created-new').textContent = String(summary.created_new_entities || 0);
+    $('pma-result-returned-existing').textContent = String(summary.returned_existing_entities || 0);
+    refreshMassActionExecuteAvailability();
+  }
+
+  function refreshMassActionExecuteAvailability() {
+    const hasSession = Boolean(state.massAction.sessionId);
+    const confirmed = $('pma-execute-confirm').checked;
+    $('pma-execute-btn').disabled = !(hasSession && confirmed);
   }
 
   function parseIsoDate(value) {
@@ -938,6 +952,8 @@
   $('pma-preview-btn').addEventListener('click', async () => {
     try {
       await createMassActionPreview();
+      $('pma-execute-confirm').checked = false;
+      refreshMassActionExecuteAvailability();
       setNote('Planner mass-action preview created.');
     } catch (e) {
       setNote(e.message);
@@ -965,6 +981,7 @@
     state.massAction.items.forEach((item) => { item._selected = checked; });
     renderMassActionItems();
   });
+  $('pma-execute-confirm').addEventListener('change', refreshMassActionExecuteAvailability);
   $('pma-copy-summary-json-btn').addEventListener('click', async () => {
     try {
       await copyText($('pma-summary-json').textContent || '');
@@ -1025,6 +1042,7 @@
   setMetadataBulkStaleBanner(false);
   setMassActionStaleBanner(false);
   updateMassActionSelectionState();
+  refreshMassActionExecuteAvailability();
   setInterval(updateMassActionCountdown, 1000);
   loadList().catch((e) => setNote(e.message));
 })();

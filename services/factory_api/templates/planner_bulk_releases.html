@@ -269,6 +269,7 @@
   <form method="dialog">
     <h3>Planner · Mass Actions</h3>
     <p class="muted">Preview changes nothing.</p>
+    <p class="muted">Preview is read-only until execute.</p>
     <p class="muted">Execute performs only the selected batch action.</p>
     <p class="muted">No render/upload/publish steps will start.</p>
     <p class="muted">Some items may create new entities, return existing entities, be skipped, or fail.</p>
@@ -317,7 +318,19 @@
       <legend>Execute confirmation</legend>
       <p class="muted">Execute runs only selected subset from preview scope. No scope widening is allowed.</p>
       <label><input type="checkbox" id="pma-execute-confirm"> I confirm execute for selected preview items.</label>
-      <button type="button" id="pma-execute-btn">Execute selected</button>
+      <button type="button" id="pma-execute-btn" disabled>Execute selected</button>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Execute result counters</legend>
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <span><strong>Total:</strong> <span id="pma-result-total">0</span></span>
+        <span><strong>Succeeded:</strong> <span id="pma-result-succeeded">0</span></span>
+        <span><strong>Failed:</strong> <span id="pma-result-failed">0</span></span>
+        <span><strong>Skipped:</strong> <span id="pma-result-skipped">0</span></span>
+        <span><strong>Created new:</strong> <span id="pma-result-created-new">0</span></span>
+        <span><strong>Returned existing:</strong> <span id="pma-result-returned-existing">0</span></span>
+      </div>
     </fieldset>
 
     <table style="margin-top:10px;">

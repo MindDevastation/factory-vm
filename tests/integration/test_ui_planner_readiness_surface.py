@@ -159,6 +159,7 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn("BATCH_MATERIALIZE_SELECTED", html)
         self.assertIn("BATCH_CREATE_JOBS_FOR_SELECTED", html)
         self.assertIn("Preview changes nothing.", html)
+        self.assertIn("Preview is read-only until execute.", html)
         self.assertIn("Execute performs only the selected batch action.", html)
         self.assertIn("No render/upload/publish steps will start.", html)
         self.assertIn("Some items may create new entities, return existing entities, be skipped, or fail.", html)
@@ -171,6 +172,13 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn('id="pma-ttl-remaining"', html)
         self.assertIn('id="pma-summary-json"', html)
         self.assertIn('id="pma-result-json"', html)
+        self.assertIn('id="pma-result-total"', html)
+        self.assertIn('id="pma-result-succeeded"', html)
+        self.assertIn('id="pma-result-failed"', html)
+        self.assertIn('id="pma-result-skipped"', html)
+        self.assertIn('id="pma-result-created-new"', html)
+        self.assertIn('id="pma-result-returned-existing"', html)
+        self.assertIn('id="pma-execute-btn" disabled', html)
         self.assertIn('id="pma-copy-summary-json-btn"', html)
         self.assertIn('id="pma-copy-result-json-btn"', html)
         self.assertIn("function createMassActionPreview()", js)
@@ -179,6 +187,7 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn("/v1/planner/mass-actions/${state.massAction.sessionId}/execute", js)
         self.assertIn("function massActionVisibleItems()", js)
         self.assertIn("function updateMassActionCountdown()", js)
+        self.assertIn("function refreshMassActionExecuteAvailability()", js)
 
 
 if __name__ == "__main__":
