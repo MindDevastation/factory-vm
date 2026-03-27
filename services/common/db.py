@@ -791,6 +791,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_tracks_columns(conn)
     _ensure_metadata_preview_sessions_columns(conn)
     _ensure_planned_release_materialization_binding(conn)
+    _ensure_planned_releases_template_preview_foundation(conn)
     _ensure_releases_current_open_job_relation(conn)
 
 
@@ -902,6 +903,37 @@ def _ensure_planned_release_materialization_binding(conn: sqlite3.Connection) ->
             CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_materialized_release_unique
             ON planned_releases(materialized_release_id)
             WHERE materialized_release_id IS NOT NULL;
+            """
+        )
+
+
+def _ensure_planned_releases_template_preview_foundation(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "planned_releases")
+    if "planning_slot_code" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE planned_releases ADD COLUMN planning_slot_code TEXT NULL;")
+    if "source_template_id" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE planned_releases ADD COLUMN source_template_id INTEGER NULL;")
+    if "source_template_item_key" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE planned_releases ADD COLUMN source_template_item_key TEXT NULL;")
+    if "source_template_target_month" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE planned_releases ADD COLUMN source_template_target_month TEXT NULL;")
+
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_pr_preview_slot_month
+            ON planned_releases(channel_slug, planning_slot_code, publish_at);
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_pr_preview_provenance_month
+            ON planned_releases(source_template_id, source_template_item_key, source_template_target_month);
             """
         )
 
