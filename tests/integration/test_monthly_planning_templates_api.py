@@ -22,6 +22,29 @@ class TestMonthlyPlanningTemplatesApi(unittest.TestCase):
         finally:
             conn.close()
 
+    def _create_template(self, client: TestClient, auth: dict[str, str]) -> int:
+        resp = client.post(
+            "/v1/planner/monthly-planning-templates",
+            headers=auth,
+            json={
+                "channel_id": 1,
+                "template_name": "April core batch",
+                "content_type": "LONG",
+                "items": [
+                    {
+                        "item_key": "day-01-main",
+                        "slot_code": "day_01_main",
+                        "position": 1,
+                        "title": "Release 01",
+                        "day_of_month": 1,
+                        "notes": "optional",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(resp.status_code, 201)
+        return int(resp.json()["id"])
+
     def test_crud_and_archived_visibility(self) -> None:
         with temp_env() as (_td, _):
             env = Env.load()
@@ -192,6 +215,195 @@ class TestMonthlyPlanningTemplatesApi(unittest.TestCase):
             self.assertEqual(duplicate_position.status_code, 400)
             duplicate_body = duplicate_position.json()
             self.assertEqual(duplicate_body["error"]["code"], "MPT_DUPLICATE_POSITION")
+
+    def test_preview_apply_zero_conflicts(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+            tid = self._create_template(client, auth)
+
+            resp = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(body["preview_fingerprint"])
+            self.assertEqual(body["summary"]["total_items"], 1)
+            self.assertEqual(body["summary"]["would_create"], 1)
+            self.assertEqual(body["summary"]["blocked_duplicates"], 0)
+            self.assertEqual(body["summary"]["blocked_invalid_dates"], 0)
+            self.assertEqual(body["summary"]["overlap_warnings"], 0)
+            self.assertEqual(body["items"][0]["outcome"], "WOULD_CREATE")
+            self.assertEqual(body["items"][0]["reasons"], [])
+            self.assertEqual(body["items"][0]["overlap_warnings"], [])
+
+    def test_preview_apply_hard_duplicate(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+            tid = self._create_template(client, auth)
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at, planning_slot_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("darkwood-reverie", "LONG", "existing", "2026-04-01", None, "PLANNED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "day_01_main"),
+                )
+            finally:
+                conn.close()
+
+            resp = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["summary"]["blocked_duplicates"], 1)
+            self.assertEqual(body["items"][0]["outcome"], "BLOCKED_DUPLICATE")
+
+    def test_preview_apply_soft_overlap(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+            tid = self._create_template(client, auth)
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at, planning_slot_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("darkwood-reverie", "LONG", "existing", "2026-04-01", None, "PLANNED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "other_slot"),
+                )
+            finally:
+                conn.close()
+
+            resp = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["summary"]["would_create"], 1)
+            self.assertEqual(body["summary"]["overlap_warnings"], 1)
+            self.assertEqual(body["items"][0]["outcome"], "WOULD_CREATE")
+            self.assertEqual(len(body["items"][0]["overlap_warnings"]), 1)
+
+    def test_preview_apply_invalid_day_for_month(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+
+            resp = client.post(
+                "/v1/planner/monthly-planning-templates",
+                headers=auth,
+                json={
+                    "channel_id": 1,
+                    "template_name": "April invalid day",
+                    "content_type": "LONG",
+                    "items": [
+                        {
+                            "item_key": "day-31-main",
+                            "slot_code": "day_31_main",
+                            "position": 1,
+                            "title": "Release 31",
+                            "day_of_month": 31,
+                            "notes": "optional",
+                        }
+                    ],
+                },
+            )
+            tid = int(resp.json()["id"])
+
+            preview = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(preview.status_code, 200)
+            body = preview.json()
+            self.assertEqual(body["summary"]["blocked_invalid_dates"], 1)
+            self.assertEqual(body["items"][0]["outcome"], "BLOCKED_INVALID_DATE")
+            self.assertEqual(body["items"][0]["reasons"][0]["code"], "MPT_INVALID_ITEM_DAY_FOR_MONTH")
+
+    def test_preview_apply_archived_template_blocked(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+            tid = self._create_template(client, auth)
+            client.post(f"/v1/planner/monthly-planning-templates/{tid}/archive", headers=auth)
+
+            preview = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(preview.status_code, 409)
+            self.assertEqual(preview.json()["error"]["code"], "MPT_TEMPLATE_ARCHIVED")
+
+    def test_preview_apply_scope_mismatch_blocked(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+            tid = self._create_template(client, auth)
+
+            preview = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 2, "target_month": "2026-04"},
+            )
+            self.assertEqual(preview.status_code, 409)
+            self.assertEqual(preview.json()["error"]["code"], "MPT_SCOPE_MISMATCH")
+
+    def test_preview_apply_has_no_persistence_side_effects(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+            tid = self._create_template(client, auth)
+            before = self._snapshot_counts(env)
+
+            preview = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(preview.status_code, 200)
+            after = self._snapshot_counts(env)
+            self.assertEqual(before, after)
 
 
 if __name__ == "__main__":
