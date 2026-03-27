@@ -335,6 +335,109 @@ class TestMonthlyPlanningTemplateService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_execute_apply_requires_preview_fingerprint(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                created = self._create_template(svc)
+                with self.assertRaises(MonthlyPlanningTemplateError) as ctx:
+                    svc.execute_apply(
+                        created["id"],
+                        channel_id=1,
+                        target_month="2026-04",
+                        preview_fingerprint="",
+                        request_id="r-1",
+                    )
+                self.assertEqual(ctx.exception.code, "MPT_PREVIEW_FINGERPRINT_REQUIRED")
+            finally:
+                conn.close()
+
+    def test_execute_apply_success_writes_provenance_and_audit(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                payload = self._base_payload()
+                payload["items"] = [
+                    {**payload["items"][0], "item_key": "a2", "slot_code": "s2", "position": 2, "day_of_month": 2},
+                    {**payload["items"][0], "item_key": "a1", "slot_code": "s1", "position": 1, "day_of_month": 1},
+                ]
+                created = svc.create_template(**payload)
+                preview = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                out = svc.execute_apply(
+                    created["id"],
+                    channel_id=1,
+                    target_month="2026-04",
+                    preview_fingerprint=preview["preview_fingerprint"],
+                    request_id="r-2",
+                )
+                self.assertEqual(out["summary"]["created"], 2)
+                self.assertEqual([row["item_key"] for row in out["items"]], ["a1", "a2"])
+
+                run_row = conn.execute(
+                    "SELECT status, created_count, blocked_duplicate_count, blocked_invalid_date_count, failed_count FROM monthly_planning_template_apply_runs WHERE id = ?",
+                    (out["apply_run_id"],),
+                ).fetchone()
+                self.assertEqual(run_row["status"], "COMPLETED")
+                self.assertEqual(int(run_row["created_count"]), 2)
+
+                created_rows = conn.execute(
+                    """
+                    SELECT source_template_id, source_template_item_key, source_template_target_month, source_template_apply_run_id, planning_slot_code
+                    FROM planned_releases
+                    WHERE source_template_apply_run_id = ?
+                    ORDER BY source_template_item_key
+                    """,
+                    (out["apply_run_id"],),
+                ).fetchall()
+                self.assertEqual(len(created_rows), 2)
+                self.assertEqual(str(created_rows[0]["source_template_target_month"]), "2026-04")
+                self.assertEqual(int(created_rows[0]["source_template_apply_run_id"]), int(out["apply_run_id"]))
+            finally:
+                conn.close()
+
+    def test_execute_apply_stale_preview_and_duplicate_translation(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                created = self._create_template(svc)
+                preview = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at, planning_slot_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("darkwood-reverie", "LONG", "existing", "2026-04-01", None, "PLANNED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "day_01_main"),
+                )
+                with self.assertRaises(MonthlyPlanningTemplateError) as stale:
+                    svc.execute_apply(
+                        created["id"],
+                        channel_id=1,
+                        target_month="2026-04",
+                        preview_fingerprint=preview["preview_fingerprint"],
+                        request_id="r-3",
+                    )
+                self.assertEqual(stale.exception.code, "MPT_PREVIEW_STALE")
+
+                fresh = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                out = svc.execute_apply(
+                    created["id"],
+                    channel_id=1,
+                    target_month="2026-04",
+                    preview_fingerprint=fresh["preview_fingerprint"],
+                    request_id="r-4",
+                )
+                self.assertEqual(out["summary"]["created"], 0)
+                self.assertEqual(out["summary"]["blocked_duplicates"], 1)
+                self.assertEqual(out["items"][0]["outcome"], "BLOCKED_DUPLICATE")
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -248,6 +248,8 @@ class TestDbMoreCoverage(unittest.TestCase):
                 }
                 self.assertIn("monthly_planning_templates", tables)
                 self.assertIn("monthly_planning_template_items", tables)
+                self.assertIn("monthly_planning_template_apply_runs", tables)
+                self.assertIn("monthly_planning_template_apply_run_items", tables)
 
                 header_indexes = {
                     str(r["name"])
@@ -264,6 +266,20 @@ class TestDbMoreCoverage(unittest.TestCase):
                     ).fetchall()
                 }
                 self.assertIn("idx_mpti_template_position", item_indexes)
+                run_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='monthly_planning_template_apply_runs'"
+                    ).fetchall()
+                }
+                self.assertTrue({"idx_mptar_template_month", "idx_mptar_channel_month"}.issubset(run_indexes))
+                run_item_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='monthly_planning_template_apply_run_items'"
+                    ).fetchall()
+                }
+                self.assertIn("idx_mptari_apply_run_position", run_item_indexes)
 
                 item_sql = str(
                     conn.execute(
@@ -308,6 +324,11 @@ class TestDbMoreCoverage(unittest.TestCase):
                     for r in conn.execute("PRAGMA table_info(planned_releases)").fetchall()
                 }
                 self.assertIn("materialized_release_id", columns)
+                self.assertIn("planning_slot_code", columns)
+                self.assertIn("source_template_id", columns)
+                self.assertIn("source_template_item_key", columns)
+                self.assertIn("source_template_target_month", columns)
+                self.assertIn("source_template_apply_run_id", columns)
             finally:
                 conn.close()
 

@@ -390,6 +390,7 @@ class MonthlyPlanningTemplateService:
                     "position": position,
                     "title": str(row["title"]),
                     "day_of_month": day_of_month,
+                    "notes": row.get("notes"),
                     "planned_date": planned_date,
                     "outcome": outcome,
                     "reasons": reasons,
@@ -413,6 +414,200 @@ class MonthlyPlanningTemplateService:
             summary=summary,
         )
         return result
+
+    def execute_apply(
+        self,
+        template_id: Any,
+        *,
+        channel_id: Any,
+        target_month: Any,
+        preview_fingerprint: Any,
+        request_id: str,
+    ) -> dict[str, Any]:
+        normalized_preview_fingerprint = str(preview_fingerprint or "").strip()
+        normalized_request_id = str(request_id or "").strip() or "unknown"
+        if not normalized_preview_fingerprint:
+            raise MonthlyPlanningTemplateError(
+                "MPT_PREVIEW_FINGERPRINT_REQUIRED",
+                "preview_fingerprint is required for apply.",
+            )
+
+        preview = self.preview_apply(template_id, channel_id=channel_id, target_month=target_month)
+        if normalized_preview_fingerprint != str(preview["preview_fingerprint"]):
+            raise MonthlyPlanningTemplateError(
+                "MPT_PREVIEW_STALE",
+                "Preview is stale; rerun preview before apply.",
+            )
+
+        template_row = self._get_template_row_or_raise(template_id)
+        if str(template_row["status"]) != self.STATUS_ACTIVE:
+            raise MonthlyPlanningTemplateError("MPT_TEMPLATE_ARCHIVED", "Archived template cannot be previewed or applied.")
+
+        now_iso = self._now_iso()
+        apply_run_id: int | None = None
+        summary = {
+            "total_items": len(preview["items"]),
+            "created": 0,
+            "blocked_duplicates": 0,
+            "blocked_invalid_dates": 0,
+            "failed": 0,
+            "overlap_warnings": int((preview.get("summary") or {}).get("overlap_warnings") or 0),
+        }
+        results: list[dict[str, Any]] = []
+        channel = dbm.get_channel_by_id(self._conn, int(preview["channel_id"]))
+        channel_slug = str(channel["slug"])
+        template_content_type = template_row.get("content_type")
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            apply_run_id = int(
+                self._conn.execute(
+                    """
+                    INSERT INTO monthly_planning_template_apply_runs(
+                        template_id, channel_id, target_month, preview_fingerprint, started_at, completed_at,
+                        status, request_id, created_count, blocked_duplicate_count, blocked_invalid_date_count, failed_count
+                    ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 0, 0, 0, 0)
+                    """,
+                    (
+                        int(preview["template_id"]),
+                        int(preview["channel_id"]),
+                        str(preview["target_month"]),
+                        normalized_preview_fingerprint,
+                        now_iso,
+                        "STARTED",
+                        normalized_request_id,
+                    ),
+                ).lastrowid
+            )
+
+            for item in sorted(preview["items"], key=lambda rec: int(rec["position"])):
+                item_key = str(item["item_key"])
+                slot_code = str(item["slot_code"])
+                position = int(item["position"])
+                reasons = list(item.get("reasons") or [])
+                outcome = str(item["outcome"])
+                planned_release_id: int | None = None
+                reason_code: str | None = None
+                reason_message: str | None = None
+                if reasons:
+                    reason_code = str(reasons[0].get("code")) if reasons[0].get("code") is not None else None
+                    reason_message = str(reasons[0].get("message")) if reasons[0].get("message") is not None else None
+
+                if outcome == "BLOCKED_INVALID_DATE":
+                    outcome = "BLOCKED_INVALID_DATE"
+                    summary["blocked_invalid_dates"] += 1
+                elif outcome == "BLOCKED_DUPLICATE":
+                    outcome = "BLOCKED_DUPLICATE"
+                    summary["blocked_duplicates"] += 1
+                elif outcome == "WOULD_CREATE":
+                    try:
+                        planned_release_id = int(
+                            self._conn.execute(
+                                """
+                                INSERT INTO planned_releases(
+                                    channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at,
+                                    planning_slot_code, source_template_id, source_template_item_key, source_template_target_month, source_template_apply_run_id
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    channel_slug,
+                                    template_content_type,
+                                    str(item["title"]),
+                                    item["planned_date"],
+                                    item.get("notes"),
+                                    "PLANNED",
+                                    now_iso,
+                                    now_iso,
+                                    slot_code,
+                                    int(preview["template_id"]),
+                                    item_key,
+                                    str(preview["target_month"]),
+                                    apply_run_id,
+                                ),
+                            ).lastrowid
+                        )
+                        outcome = "CREATED"
+                        summary["created"] += 1
+                    except sqlite3.IntegrityError:
+                        outcome = "BLOCKED_DUPLICATE"
+                        summary["blocked_duplicates"] += 1
+                        reason_code = "MPT_DUPLICATE_PLANNING_SLOT"
+                        reason_message = "Planned release with same slot identity already exists in target context."
+                    except Exception:
+                        outcome = "FAILED_INTERNAL"
+                        summary["failed"] += 1
+                        reason_code = "MPT_APPLY_FAILED"
+                        reason_message = "Apply failed due to internal error."
+                else:
+                    outcome = "FAILED_INTERNAL"
+                    summary["failed"] += 1
+                    reason_code = "MPT_APPLY_FAILED"
+                    reason_message = "Apply failed due to internal error."
+
+                self._conn.execute(
+                    """
+                    INSERT INTO monthly_planning_template_apply_run_items(
+                        apply_run_id, template_item_key, slot_code, position, outcome, planned_release_id, reason_code, reason_message
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        apply_run_id,
+                        item_key,
+                        slot_code,
+                        position,
+                        outcome,
+                        planned_release_id,
+                        reason_code,
+                        reason_message,
+                    ),
+                )
+                result_reasons = []
+                if reason_code or reason_message:
+                    result_reasons.append({"code": reason_code, "message": reason_message})
+                results.append(
+                    {
+                        "item_key": item_key,
+                        "slot_code": slot_code,
+                        "outcome": outcome,
+                        "planned_release_id": planned_release_id,
+                        "reasons": result_reasons,
+                    }
+                )
+
+            completed_at = self._now_iso()
+            self._conn.execute(
+                """
+                UPDATE monthly_planning_template_apply_runs
+                SET completed_at = ?, status = ?, created_count = ?, blocked_duplicate_count = ?, blocked_invalid_date_count = ?, failed_count = ?
+                WHERE id = ?
+                """,
+                (
+                    completed_at,
+                    "COMPLETED",
+                    int(summary["created"]),
+                    int(summary["blocked_duplicates"]),
+                    int(summary["blocked_invalid_dates"]),
+                    int(summary["failed"]),
+                    apply_run_id,
+                ),
+            )
+            self._update_usage_summary_from_apply_runs(template_id=int(preview["template_id"]))
+            self._conn.commit()
+        except MonthlyPlanningTemplateError:
+            self._conn.rollback()
+            raise
+        except Exception as exc:
+            self._conn.rollback()
+            raise MonthlyPlanningTemplateError("MPT_APPLY_FAILED", "Apply failed due to internal error.") from exc
+
+        return {
+            "apply_run_id": int(apply_run_id),
+            "template_id": int(preview["template_id"]),
+            "channel_id": int(preview["channel_id"]),
+            "target_month": str(preview["target_month"]),
+            "summary": summary,
+            "items": results,
+        }
 
     def _normalize_channel_id(self, channel_id: Any) -> int:
         if isinstance(channel_id, bool) or channel_id is None:
@@ -660,6 +855,49 @@ class MonthlyPlanningTemplateService:
             "last_applied_target_month": last_applied_target_month,
             "last_applied_at": last_applied_at,
         }
+
+    def _update_usage_summary_from_apply_runs(self, *, template_id: int) -> None:
+        row = self._conn.execute(
+            """
+            SELECT
+                COUNT(1) AS apply_run_count,
+                MAX(completed_at) AS last_applied_at
+            FROM monthly_planning_template_apply_runs
+            WHERE template_id = ? AND status = 'COMPLETED'
+            """,
+            (template_id,),
+        ).fetchone()
+        apply_run_count = int(row["apply_run_count"]) if row and row["apply_run_count"] is not None else 0
+        last_applied_at = row["last_applied_at"] if row else None
+        last_month_row = self._conn.execute(
+            """
+            SELECT target_month
+            FROM monthly_planning_template_apply_runs
+            WHERE template_id = ? AND status = 'COMPLETED'
+            ORDER BY completed_at DESC, id DESC
+            LIMIT 1
+            """,
+            (template_id,),
+        ).fetchone()
+        last_applied_target_month = last_month_row["target_month"] if last_month_row else None
+        usage_summary_json = json.dumps(
+            {
+                "apply_run_count": apply_run_count,
+                "last_applied_target_month": last_applied_target_month,
+                "last_applied_at": last_applied_at,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        self._conn.execute(
+            """
+            UPDATE monthly_planning_templates
+            SET usage_summary_json = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (usage_summary_json, self._now_iso(), template_id),
+        )
 
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
