@@ -290,6 +290,7 @@ class MonthlyPlanningTemplateService:
             (channel_slug, normalized_target_month),
         ).fetchall()
 
+<<<<<<< codex/implement-monthly-planning-template-preview-dm8d8c
         provenance_rows = self._conn.execute(
             """
             SELECT source_template_item_key
@@ -301,6 +302,10 @@ class MonthlyPlanningTemplateService:
 
         existing_by_slot: dict[str, list[dict[str, Any]]] = {}
         existing_by_provenance_item_key = {str(row["source_template_item_key"]) for row in provenance_rows}
+=======
+        existing_by_slot: dict[str, list[dict[str, Any]]] = {}
+        existing_by_provenance: set[tuple[int, str, str]] = set()
+>>>>>>> feature/e4-mf6-monthly-planning-templates
         existing_for_overlap: list[dict[str, Any]] = []
         for row in existing_rows:
             rec = dict(row)
@@ -308,6 +313,15 @@ class MonthlyPlanningTemplateService:
             if isinstance(slot, str) and slot.strip():
                 existing_by_slot.setdefault(slot.strip(), []).append(rec)
 
+<<<<<<< codex/implement-monthly-planning-template-preview-dm8d8c
+=======
+            prov_tid = rec.get("source_template_id")
+            prov_key = rec.get("source_template_item_key")
+            prov_month = rec.get("source_template_target_month")
+            if prov_tid is not None and isinstance(prov_key, str) and isinstance(prov_month, str):
+                existing_by_provenance.add((int(prov_tid), prov_key, prov_month))
+
+>>>>>>> feature/e4-mf6-monthly-planning-templates
             existing_for_overlap.append(rec)
 
         out_items: list[dict[str, Any]] = []
@@ -358,7 +372,11 @@ class MonthlyPlanningTemplateService:
                                 "message": "Planned release with same slot identity already exists in target context.",
                             }
                         )
+<<<<<<< codex/implement-monthly-planning-template-preview-dm8d8c
                     if item_key in existing_by_provenance_item_key:
+=======
+                    if (int(template_row["id"]), item_key, normalized_target_month) in existing_by_provenance:
+>>>>>>> feature/e4-mf6-monthly-planning-templates
                         has_duplicate = True
                         reasons.append(
                             {

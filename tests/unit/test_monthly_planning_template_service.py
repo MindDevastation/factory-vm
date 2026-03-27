@@ -240,7 +240,11 @@ class TestMonthlyPlanningTemplateService(unittest.TestCase):
             finally:
                 conn.close()
 
+<<<<<<< codex/implement-monthly-planning-template-preview-dm8d8c
     def test_preview_hard_duplicate_by_provenance_keys_even_when_publish_at_month_differs(self) -> None:
+=======
+    def test_preview_hard_duplicate_by_provenance_keys(self) -> None:
+>>>>>>> feature/e4-mf6-monthly-planning-templates
         with temp_env() as (_td, env):
             seed_minimal_db(env)
             conn = dbm.connect(env)
@@ -258,7 +262,11 @@ class TestMonthlyPlanningTemplateService(unittest.TestCase):
                         "darkwood-reverie",
                         "LONG",
                         "existing",
+<<<<<<< codex/implement-monthly-planning-template-preview-dm8d8c
                         "2026-03-02",
+=======
+                        "2026-04-02",
+>>>>>>> feature/e4-mf6-monthly-planning-templates
                         None,
                         "PLANNED",
                         "2026-01-01T00:00:00Z",

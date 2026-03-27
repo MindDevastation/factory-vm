@@ -274,6 +274,7 @@ class TestMonthlyPlanningTemplatesApi(unittest.TestCase):
             self.assertEqual(body["summary"]["blocked_duplicates"], 1)
             self.assertEqual(body["items"][0]["outcome"], "BLOCKED_DUPLICATE")
 
+<<<<<<< codex/implement-monthly-planning-template-preview-dm8d8c
     def test_preview_apply_hard_duplicate_by_provenance_even_when_publish_at_month_differs(self) -> None:
         with temp_env() as (_td, _):
             env = Env.load()
@@ -319,6 +320,8 @@ class TestMonthlyPlanningTemplatesApi(unittest.TestCase):
             self.assertEqual(body["summary"]["blocked_duplicates"], 1)
             self.assertEqual(body["items"][0]["outcome"], "BLOCKED_DUPLICATE")
 
+=======
+>>>>>>> feature/e4-mf6-monthly-planning-templates
     def test_preview_apply_soft_overlap(self) -> None:
         with temp_env() as (_td, _):
             env = Env.load()
