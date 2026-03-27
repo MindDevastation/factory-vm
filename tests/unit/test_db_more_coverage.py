@@ -356,6 +356,41 @@ class TestDbMoreCoverage(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_migrate_creates_planner_mass_action_sessions_table_and_indexes(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                tables = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("planner_mass_action_sessions", tables)
+
+                indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='planner_mass_action_sessions'"
+                    ).fetchall()
+                }
+                self.assertTrue(
+                    {
+                        "idx_planner_mass_action_sessions_status",
+                        "idx_planner_mass_action_sessions_expires_at",
+                    }.issubset(indexes)
+                )
+
+                table_sql = str(
+                    conn.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='planner_mass_action_sessions'"
+                    ).fetchone()["sql"]
+                )
+                self.assertIn("BATCH_MATERIALIZE_SELECTED", table_sql)
+                self.assertIn("BATCH_CREATE_JOBS_FOR_SELECTED", table_sql)
+                self.assertIn("CHECK(preview_status IN ('OPEN','EXECUTED','EXPIRED','INVALIDATED'))", table_sql)
+            finally:
+                conn.close()
+
     def test_planner_release_links_constraints(self):
         with temp_env() as (_td, env):
             conn = dbm.connect(env)

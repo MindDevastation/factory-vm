@@ -10,8 +10,10 @@
   <span class="muted" style="margin:0 8px;">|</span>
   <button type="button" id="bulk-create-open">Bulk create series</button>
   <button type="button" id="metadata-bulk-open">Metadata Bulk Preview</button>
+  <button type="button" id="mass-actions-open" disabled>Planner Mass Actions</button>
   <button type="button" id="import-open">Import</button>
   <button type="button" id="bulk-delete-btn" disabled>Delete selected</button>
+  <span class="muted" id="mass-actions-selected-count">Selected: 0</span>
 </p>
 <details style="margin:8px 0 12px 0;">
   <summary><strong>Quick help</strong></summary>
@@ -259,6 +261,93 @@
 
     <menu>
       <button type="button" id="mbp-close-btn">Close</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="mass-actions-dialog" style="min-width:min(1100px, 95vw);">
+  <form method="dialog">
+    <h3>Planner · Mass Actions</h3>
+    <p class="muted">Preview changes nothing.</p>
+    <p class="muted">Preview is read-only until execute.</p>
+    <p class="muted">Execute performs only the selected batch action.</p>
+    <p class="muted">No render/upload/publish steps will start.</p>
+    <p class="muted">Some items may create new entities, return existing entities, be skipped, or fail.</p>
+
+    <fieldset>
+      <legend>Batch action setup</legend>
+      <p><strong>Selected planner items:</strong> <span id="pma-selected-count">0</span></p>
+      <label>Action
+        <select id="pma-action-type">
+          <option value="BATCH_MATERIALIZE_SELECTED">BATCH_MATERIALIZE_SELECTED</option>
+          <option value="BATCH_CREATE_JOBS_FOR_SELECTED">BATCH_CREATE_JOBS_FOR_SELECTED</option>
+        </select>
+      </label>
+      <button type="button" id="pma-preview-btn">Create preview</button>
+      <span class="muted" id="pma-session-label"></span>
+    </fieldset>
+
+    <div id="pma-stale-banner" style="display:none; margin-top:10px; padding:8px; border:1px solid #fbbf24; background:#fffbeb;">
+      <strong>Preview session is stale or expired. Create a new preview.</strong>
+    </div>
+    <p class="muted" style="margin-top:8px;">
+      Expires at: <span id="pma-expires-at">-</span> · Remaining: <span id="pma-ttl-remaining">-</span>
+    </p>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Preview / Result summary</legend>
+      <button type="button" id="pma-copy-summary-json-btn">Copy summary JSON</button>
+      <pre id="pma-summary-json" class="muted" style="white-space:pre-wrap;">No preview yet.</pre>
+      <button type="button" id="pma-copy-result-json-btn">Copy execute result JSON</button>
+      <pre id="pma-result-json" class="muted" style="white-space:pre-wrap;">No execute yet.</pre>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Quick filters</legend>
+      <label><input type="checkbox" id="pma-filter-executable-only"> executable_only (created new + returned existing)</label>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+        <button type="button" data-pma-kind-filter="ALL">all</button>
+        <button type="button" data-pma-kind-filter="SUCCESS_CREATED_NEW">created new</button>
+        <button type="button" data-pma-kind-filter="SUCCESS_RETURNED_EXISTING">returned existing</button>
+        <button type="button" data-pma-kind-filter="SKIPPED_NON_EXECUTABLE">skipped</button>
+        <button type="button" data-pma-kind-filter="FAILED_INVALID_OR_INCONSISTENT">failed</button>
+      </div>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Execute confirmation</legend>
+      <p class="muted">Execute runs only selected subset from preview scope. No scope widening is allowed.</p>
+      <label><input type="checkbox" id="pma-execute-confirm"> I confirm execute for selected preview items.</label>
+      <button type="button" id="pma-execute-btn" disabled>Execute selected</button>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Execute result counters</legend>
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <span><strong>Total:</strong> <span id="pma-result-total">0</span></span>
+        <span><strong>Succeeded:</strong> <span id="pma-result-succeeded">0</span></span>
+        <span><strong>Failed:</strong> <span id="pma-result-failed">0</span></span>
+        <span><strong>Skipped:</strong> <span id="pma-result-skipped">0</span></span>
+        <span><strong>Created new:</strong> <span id="pma-result-created-new">0</span></span>
+        <span><strong>Returned existing:</strong> <span id="pma-result-returned-existing">0</span></span>
+      </div>
+    </fieldset>
+
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="pma-select-all-items"></th>
+          <th>planned_release_id</th>
+          <th>result_kind</th>
+          <th>expected/message</th>
+          <th>reason/details</th>
+        </tr>
+      </thead>
+      <tbody id="pma-items-body"><tr><td colspan="5" class="muted">No preview yet.</td></tr></tbody>
+    </table>
+
+    <menu>
+      <button type="button" id="pma-close-btn">Close</button>
     </menu>
   </form>
 </dialog>
