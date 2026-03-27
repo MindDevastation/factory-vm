@@ -274,6 +274,54 @@ class TestMonthlyPlanningTemplatesApi(unittest.TestCase):
             self.assertEqual(body["summary"]["blocked_duplicates"], 1)
             self.assertEqual(body["items"][0]["outcome"], "BLOCKED_DUPLICATE")
 
+<<<<<<< codex/implement-monthly-planning-template-preview-dm8d8c
+    def test_preview_apply_hard_duplicate_by_provenance_even_when_publish_at_month_differs(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+            tid = self._create_template(client, auth)
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(
+                        channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at,
+                        source_template_id, source_template_item_key, source_template_target_month
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "darkwood-reverie",
+                        "LONG",
+                        "existing",
+                        "2026-03-01",
+                        None,
+                        "PLANNED",
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                        tid,
+                        "day-01-main",
+                        "2026-04",
+                    ),
+                )
+            finally:
+                conn.close()
+
+            resp = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["summary"]["blocked_duplicates"], 1)
+            self.assertEqual(body["items"][0]["outcome"], "BLOCKED_DUPLICATE")
+
+=======
+>>>>>>> feature/e4-mf6-monthly-planning-templates
     def test_preview_apply_soft_overlap(self) -> None:
         with temp_env() as (_td, _):
             env = Env.load()
