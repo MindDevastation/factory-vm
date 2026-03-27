@@ -189,6 +189,28 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn("function updateMassActionCountdown()", js)
         self.assertIn("function refreshMassActionExecuteAvailability()", js)
 
+    def test_monthly_templates_ui_surface_and_wiring_exist(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn("Monthly Planning Templates", html)
+        self.assertIn('id="mpt-list-body"', html)
+        self.assertIn('id="mpt-detail-pane"', html)
+        self.assertIn('id="mpt-preview-modal"', html)
+        self.assertIn('id="mpt-filter-createable-only"', html)
+        self.assertIn('id="mpt-filter-conflicts-only"', html)
+        self.assertIn('id="mpt-copy-preview-json-btn"', html)
+        self.assertIn('id="mpt-copy-apply-json-btn"', html)
+        self.assertIn("Archived templates are visible but cannot be previewed/applied.", html)
+        self.assertIn("Preview creates nothing.", html)
+        self.assertIn("Apply creates planned releases only.", html)
+        self.assertIn("Apply does not start materialization, job creation, render, upload, or publish.", html)
+        self.assertIn("function loadMonthlyTemplates()", js)
+        self.assertIn("function runMonthlyTemplatePreview()", js)
+        self.assertIn("function runMonthlyTemplateApply()", js)
+        self.assertIn("/v1/planner/monthly-planning-templates?", js)
+        self.assertIn("/v1/planner/monthly-planning-templates/${templateId}/preview-apply", js)
+        self.assertIn("/v1/planner/monthly-planning-templates/${templateId}/apply", js)
+        self.assertIn("preview_fingerprint", js)
+
     def test_mass_action_addons_are_presentation_only(self) -> None:
         html, js = self._load_ui_assets()
         self.assertIn('id="pma-filter-executable-only"', html)

@@ -12,6 +12,13 @@
       executeResult: null,
       selectedKinds: new Set(['ALL']),
     },
+    monthlyTemplates: {
+      items: [],
+      activeTemplateId: null,
+      activeTemplate: null,
+      preview: null,
+      applyResult: null,
+    },
     readinessDetail: null,
     readinessDetailPlannedReleaseId: null,
   };
@@ -720,6 +727,209 @@
     ta.remove();
   }
 
+  function monthlyTemplateItemsForUi() {
+    if (!state.monthlyTemplates.preview || !Array.isArray(state.monthlyTemplates.preview.items)) return [];
+    const createableOnly = $('mpt-filter-createable-only').checked;
+    const conflictsOnly = $('mpt-filter-conflicts-only').checked;
+    return state.monthlyTemplates.preview.items.filter((item) => {
+      const outcome = String(item.outcome || '');
+      const overlapWarnings = Array.isArray(item.overlap_warnings) ? item.overlap_warnings : [];
+      const createableOk = !createableOnly || outcome === 'WOULD_CREATE';
+      const conflict = outcome !== 'WOULD_CREATE' || overlapWarnings.length > 0;
+      const conflictsOk = !conflictsOnly || conflict;
+      return createableOk && conflictsOk;
+    });
+  }
+
+  function renderMonthlyTemplatePreviewItems() {
+    const tbody = $('mpt-preview-items-body');
+    const items = monthlyTemplateItemsForUi();
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted">No preview items for current filters.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map((item) => {
+      const reasons = (item.reasons || []).map((r) => `${r.code || '-'}: ${r.message || '-'}`).join('\n') || '-';
+      const overlaps = (item.overlap_warnings || []).map((r) => `${r.code || '-'}: ${r.message || '-'}`).join('\n') || '-';
+      return `<tr>
+        <td>${esc(item.item_key || '-')}</td>
+        <td>${esc(item.slot_code || '-')}</td>
+        <td>${esc(item.position ?? '-')}</td>
+        <td>${esc(item.planned_date || '-')}</td>
+        <td>${esc(item.outcome || '-')}</td>
+        <td><pre style="white-space:pre-wrap; margin:0;">${esc(reasons)}</pre></td>
+        <td><pre style="white-space:pre-wrap; margin:0;">${esc(overlaps)}</pre></td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderMonthlyTemplateDetail() {
+    const pane = $('mpt-detail-pane');
+    const tpl = state.monthlyTemplates.activeTemplate;
+    if (!tpl) {
+      pane.innerHTML = '<p class="muted">Select a template to open detail/editor.</p>';
+      return;
+    }
+    const isArchived = String(tpl.status || '').toUpperCase() === 'ARCHIVED';
+    const itemsJson = JSON.stringify(tpl.items || [], null, 2);
+    pane.innerHTML = `
+      <h3>Template #${esc(tpl.id)} · ${esc(tpl.template_name || '-')}</h3>
+      <p class="muted">Status: ${esc(tpl.status || '-')} · Channel: ${esc(tpl.channel_id || '-')} · Updated: ${esc(tpl.updated_at || '-')}</p>
+      ${isArchived ? '<p class="muted">Archived template is visible but cannot be edited, previewed, or applied.</p>' : ''}
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <label>Name <input id="mpt-detail-name" value="${esc(tpl.template_name || '')}" ${isArchived ? 'disabled' : ''}></label>
+        <label>Content type <input id="mpt-detail-content-type" value="${esc(tpl.content_type || '')}" ${isArchived ? 'disabled' : ''}></label>
+      </div>
+      <div style="margin-top:8px;">
+        <label>Ordered items JSON</label><br>
+        <textarea id="mpt-detail-items-json" rows="10" style="width:100%;" ${isArchived ? 'disabled' : ''}>${esc(itemsJson)}</textarea>
+      </div>
+      <p class="muted">Usage: apply_run_count=${esc(tpl.apply_run_count ?? 0)}, last_target_month=${esc(tpl.last_applied_target_month || '-')}, last_applied_at=${esc(tpl.last_applied_at || '-')}</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+        <button type="button" id="mpt-save-btn" ${isArchived ? 'disabled' : ''}>Save template</button>
+        <button type="button" id="mpt-archive-btn" ${isArchived ? 'disabled' : ''}>Archive template</button>
+        <button type="button" id="mpt-preview-open-btn" ${isArchived ? 'disabled' : ''}>Preview / Apply</button>
+      </div>
+    `;
+    if (!isArchived) {
+      $('mpt-save-btn').addEventListener('click', async () => {
+        try {
+          const itemsRaw = String($('mpt-detail-items-json').value || '').trim();
+          const parsedItems = JSON.parse(itemsRaw || '[]');
+          const payload = {
+            template_name: $('mpt-detail-name').value,
+            content_type: $('mpt-detail-content-type').value || null,
+            items: parsedItems,
+          };
+          const res = await fetch(apiUrl(`/v1/planner/monthly-planning-templates/${tpl.id}`), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) throw new Error(await parseError(res));
+          state.monthlyTemplates.activeTemplate = await res.json();
+          renderMonthlyTemplateDetail();
+          await loadMonthlyTemplates();
+          setNote('Monthly template updated.');
+        } catch (e) {
+          setNote(`Template update failed: ${e.message}`);
+        }
+      });
+      $('mpt-archive-btn').addEventListener('click', async () => {
+        try {
+          const res = await fetch(apiUrl(`/v1/planner/monthly-planning-templates/${tpl.id}/archive`), { method: 'POST' });
+          if (!res.ok) throw new Error(await parseError(res));
+          state.monthlyTemplates.activeTemplate = await res.json();
+          renderMonthlyTemplateDetail();
+          await loadMonthlyTemplates();
+          setNote('Monthly template archived.');
+        } catch (e) {
+          setNote(`Archive failed: ${e.message}`);
+        }
+      });
+      $('mpt-preview-open-btn').addEventListener('click', () => {
+        $('mpt-preview-template-id').value = String(tpl.id || '');
+        $('mpt-preview-channel-id').value = String(tpl.channel_id || $('mpt-channel-id').value || '');
+        $('mpt-preview-modal').showModal();
+      });
+    }
+  }
+
+  async function loadMonthlyTemplateDetail(templateId) {
+    const res = await fetch(apiUrl(`/v1/planner/monthly-planning-templates/${templateId}`));
+    if (!res.ok) throw new Error(await parseError(res));
+    state.monthlyTemplates.activeTemplate = await res.json();
+    state.monthlyTemplates.activeTemplateId = Number(templateId);
+    renderMonthlyTemplateDetail();
+  }
+
+  async function loadMonthlyTemplates() {
+    const p = new URLSearchParams();
+    const channel = String($('mpt-channel-id').value || '').trim();
+    const status = String($('mpt-status').value || '').trim();
+    const q = String($('mpt-q').value || '').trim();
+    if (channel) p.set('channel_id', channel);
+    if (status) p.set('status', status);
+    if (q) p.set('q', q);
+    const res = await fetch(apiUrl(`/v1/planner/monthly-planning-templates?${p.toString()}`));
+    if (!res.ok) throw new Error(await parseError(res));
+    const body = await res.json();
+    state.monthlyTemplates.items = body.items || [];
+    const rows = state.monthlyTemplates.items;
+    const tbody = $('mpt-list-body');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="muted">No templates in scope.</td></tr>';
+      renderMonthlyTemplateDetail();
+      return;
+    }
+    tbody.innerHTML = rows.map((item) => `<tr>
+      <td>${esc(item.id)}</td>
+      <td>${esc(item.template_name)}</td>
+      <td>${esc(item.channel_id)}</td>
+      <td>${esc(item.status)}</td>
+      <td>${esc(item.item_count)}</td>
+      <td>${esc(item.updated_at || '-')}</td>
+      <td><pre style="white-space:pre-wrap; margin:0;">apply_run_count=${esc(item.apply_run_count ?? 0)}
+last_applied_target_month=${esc(item.last_applied_target_month || '-')}
+last_applied_at=${esc(item.last_applied_at || '-')}</pre></td>
+      <td><button type="button" data-mpt-open="${esc(item.id)}">Open</button></td>
+    </tr>`).join('');
+    tbody.querySelectorAll('button[data-mpt-open]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = Number(btn.getAttribute('data-mpt-open'));
+        if (!Number.isInteger(id) || id <= 0) return;
+        try {
+          await loadMonthlyTemplateDetail(id);
+        } catch (e) {
+          setNote(`Template load failed: ${e.message}`);
+        }
+      });
+    });
+  }
+
+  async function runMonthlyTemplatePreview() {
+    const templateId = Number($('mpt-preview-template-id').value);
+    if (!Number.isInteger(templateId) || templateId <= 0) throw new Error('Template is required.');
+    const channel_id = Number($('mpt-preview-channel-id').value);
+    const target_month = String($('mpt-preview-target-month').value || '').trim();
+    if (!Number.isInteger(channel_id) || channel_id <= 0) throw new Error('Valid channel_id is required.');
+    if (!target_month) throw new Error('target_month is required.');
+    const res = await fetch(apiUrl(`/v1/planner/monthly-planning-templates/${templateId}/preview-apply`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel_id, target_month }),
+    });
+    if (!res.ok) throw new Error(await parseError(res));
+    const body = await res.json();
+    state.monthlyTemplates.preview = body;
+    state.monthlyTemplates.applyResult = null;
+    $('mpt-preview-json').textContent = JSON.stringify(body, null, 2);
+    $('mpt-apply-json').textContent = 'No apply yet.';
+    $('mpt-apply-run-btn').disabled = !body.preview_fingerprint;
+    renderMonthlyTemplatePreviewItems();
+  }
+
+  async function runMonthlyTemplateApply() {
+    const templateId = Number($('mpt-preview-template-id').value);
+    const preview = state.monthlyTemplates.preview;
+    if (!preview || !preview.preview_fingerprint) throw new Error('Run preview first.');
+    const payload = {
+      channel_id: Number($('mpt-preview-channel-id').value),
+      target_month: String($('mpt-preview-target-month').value || '').trim(),
+      preview_fingerprint: preview.preview_fingerprint,
+    };
+    const res = await fetch(apiUrl(`/v1/planner/monthly-planning-templates/${templateId}/apply`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await parseError(res));
+    const body = await res.json();
+    state.monthlyTemplates.applyResult = body;
+    $('mpt-apply-json').textContent = JSON.stringify(body, null, 2);
+    await loadMonthlyTemplates();
+  }
+
   function selectedPreviewFields(prefix) {
     const out = [];
     if ($(`${prefix}-title`).checked) out.push('title');
@@ -998,6 +1208,49 @@
       setNote(`Copy failed: ${e.message}`);
     }
   });
+  $('mpt-reload-btn').addEventListener('click', async () => {
+    try {
+      await loadMonthlyTemplates();
+      setNote('Monthly templates reloaded.');
+    } catch (e) {
+      setNote(e.message);
+    }
+  });
+  $('mpt-preview-close-btn').addEventListener('click', () => $('mpt-preview-modal').close());
+  $('mpt-preview-run-btn').addEventListener('click', async () => {
+    try {
+      await runMonthlyTemplatePreview();
+      setNote('Monthly template preview loaded.');
+    } catch (e) {
+      setNote(`Preview failed: ${e.message}`);
+    }
+  });
+  $('mpt-apply-run-btn').addEventListener('click', async () => {
+    try {
+      await runMonthlyTemplateApply();
+      setNote('Monthly template apply completed.');
+    } catch (e) {
+      setNote(`Apply failed: ${e.message}`);
+    }
+  });
+  $('mpt-filter-createable-only').addEventListener('change', renderMonthlyTemplatePreviewItems);
+  $('mpt-filter-conflicts-only').addEventListener('change', renderMonthlyTemplatePreviewItems);
+  $('mpt-copy-preview-json-btn').addEventListener('click', async () => {
+    try {
+      await copyText($('mpt-preview-json').textContent || '');
+      setNote('Preview JSON copied.');
+    } catch (e) {
+      setNote(`Copy failed: ${e.message}`);
+    }
+  });
+  $('mpt-copy-apply-json-btn').addEventListener('click', async () => {
+    try {
+      await copyText($('mpt-apply-json').textContent || '');
+      setNote('Apply result JSON copied.');
+    } catch (e) {
+      setNote(`Copy failed: ${e.message}`);
+    }
+  });
   $('mbp-close-btn').addEventListener('click', () => $('metadata-bulk-modal').close());
   $('mbp-preview-btn').addEventListener('click', async () => {
     try {
@@ -1044,5 +1297,6 @@
   updateMassActionSelectionState();
   refreshMassActionExecuteAvailability();
   setInterval(updateMassActionCountdown, 1000);
+  loadMonthlyTemplates().catch((e) => setNote(`Monthly templates load failed: ${e.message}`));
   loadList().catch((e) => setNote(e.message));
 })();
