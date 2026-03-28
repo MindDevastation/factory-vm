@@ -89,6 +89,34 @@
 </div>
 
 <p class="muted" id="planner-note"></p>
+<fieldset style="margin: 10px 0;">
+  <legend>Monthly Planning Templates</legend>
+  <p class="muted">Archived templates are visible but cannot be previewed/applied.</p>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+    <label>Channel <input id="mpt-channel-id" type="number" min="1" value="1"></label>
+    <label>Status
+      <select id="mpt-status">
+        <option value="">all</option>
+        <option value="ACTIVE">ACTIVE</option>
+        <option value="ARCHIVED">ARCHIVED</option>
+      </select>
+    </label>
+    <label>Search <input id="mpt-q" placeholder="template name"></label>
+    <button type="button" id="mpt-reload-btn">Reload templates</button>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Name</th><th>Channel</th><th>Status</th><th>Item count</th><th>Updated</th><th>Usage summary</th><th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="mpt-list-body"><tr><td colspan="8" class="muted">Loading templates...</td></tr></tbody>
+  </table>
+  <div id="mpt-detail-pane" style="margin-top:10px; padding:10px; border:1px solid #ddd;">
+    <p class="muted">Select a template to open detail/editor.</p>
+  </div>
+</fieldset>
+
 <div id="readiness-summary-strip" style="display:flex; gap:10px; flex-wrap:wrap; margin: 8px 0 12px 0;">
   <span><strong>Total:</strong> <span id="readiness-summary-total">0</span></span>
   <span><strong>READY:</strong> <span id="readiness-summary-ready">0</span></span>
@@ -261,6 +289,66 @@
 
     <menu>
       <button type="button" id="mbp-close-btn">Close</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="mpt-preview-modal" style="min-width:min(1100px, 95vw);">
+  <form method="dialog">
+    <h3>Monthly Template Preview/Apply</h3>
+    <p class="muted">Preview creates nothing.</p>
+    <p class="muted">Apply creates planned releases only.</p>
+    <p class="muted">Apply does not start materialization, job creation, render, upload, or publish.</p>
+    <fieldset>
+      <legend>Target context</legend>
+      <label>Template <input id="mpt-preview-template-id" type="number" readonly></label>
+      <label>Channel <input id="mpt-preview-channel-id" type="number" min="1"></label>
+      <label>Target month <input id="mpt-preview-target-month" placeholder="YYYY-MM"></label>
+      <button type="button" id="mpt-preview-run-btn">Run preview</button>
+      <button type="button" id="mpt-apply-run-btn" disabled>Apply using preview</button>
+    </fieldset>
+    <fieldset style="margin-top:10px;">
+      <legend>Summary / copyable JSON</legend>
+      <button type="button" id="mpt-copy-preview-json-btn">Copy preview JSON</button>
+      <pre id="mpt-preview-json" class="muted" style="white-space:pre-wrap;">No preview yet.</pre>
+      <button type="button" id="mpt-copy-apply-json-btn">Copy apply JSON</button>
+      <pre id="mpt-apply-json" class="muted" style="white-space:pre-wrap;">No apply yet.</pre>
+    </fieldset>
+    <fieldset style="margin-top:10px;">
+      <legend>Item filters</legend>
+      <label><input type="checkbox" id="mpt-filter-createable-only"> createable-only</label>
+      <label><input type="checkbox" id="mpt-filter-conflicts-only"> conflicts-only</label>
+      <span class="muted">Conflicts = blocked duplicate/invalid date or overlap warnings.</span>
+    </fieldset>
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th>item_key</th><th>slot_code</th><th>position</th><th>planned_date</th><th>outcome</th><th>reasons</th><th>overlap_warnings</th>
+        </tr>
+      </thead>
+      <tbody id="mpt-preview-items-body"><tr><td colspan="7" class="muted">No preview yet.</td></tr></tbody>
+    </table>
+    <fieldset style="margin-top:10px;">
+      <legend>Apply result summary</legend>
+      <div id="mpt-apply-summary" style="display:flex; gap:12px; flex-wrap:wrap;">
+        <span><strong>Total:</strong> <span id="mpt-apply-total">0</span></span>
+        <span><strong>Created:</strong> <span id="mpt-apply-created">0</span></span>
+        <span><strong>Blocked duplicate:</strong> <span id="mpt-apply-blocked-duplicate">0</span></span>
+        <span><strong>Blocked invalid date:</strong> <span id="mpt-apply-blocked-invalid-date">0</span></span>
+        <span><strong>Failed:</strong> <span id="mpt-apply-failed">0</span></span>
+        <span><strong>Overlap warnings:</strong> <span id="mpt-apply-overlap-warnings">0</span></span>
+      </div>
+    </fieldset>
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th>item_key</th><th>slot_code</th><th>outcome</th><th>planned_release_id</th><th>reasons</th>
+        </tr>
+      </thead>
+      <tbody id="mpt-apply-items-body"><tr><td colspan="5" class="muted">No apply result yet.</td></tr></tbody>
+    </table>
+    <menu>
+      <button type="button" id="mpt-preview-close-btn">Close</button>
     </menu>
   </form>
 </dialog>
