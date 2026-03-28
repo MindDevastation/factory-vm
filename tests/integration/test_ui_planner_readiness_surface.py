@@ -237,6 +237,25 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertNotIn("/upload", mass_action_block.lower())
         self.assertNotIn("/publish", mass_action_block.lower())
 
+    def test_monthly_template_addons_are_presentation_only(self) -> None:
+        html, js = self._load_ui_assets()
+        self.assertIn('id="mpt-filter-createable-only"', html)
+        self.assertIn('id="mpt-filter-conflicts-only"', html)
+        self.assertIn('id="mpt-copy-preview-json-btn"', html)
+        self.assertIn('id="mpt-copy-apply-json-btn"', html)
+        self.assertIn('id="mpt-apply-summary"', html)
+        self.assertIn("function runMonthlyTemplatePreview()", js)
+        self.assertIn("function runMonthlyTemplateApply()", js)
+        self.assertIn("function copyText(text)", js)
+        self.assertNotIn("/v1/planner/monthly-planning-templates/${templateId}/apply/chain", js)
+        self.assertNotIn("/v1/planner/monthly-planning-templates/${templateId}/apply/materialize", js)
+        monthly_block = js[js.find("async function runMonthlyTemplatePreview()"): js.find("function renderMassActionTable()")]
+        self.assertNotIn("/render", monthly_block.lower())
+        self.assertNotIn("/upload", monthly_block.lower())
+        self.assertNotIn("/publish", monthly_block.lower())
+        self.assertNotIn("/materialize", monthly_block.lower())
+        self.assertNotIn("/jobs/create", monthly_block.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

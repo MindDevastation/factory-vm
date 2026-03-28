@@ -320,6 +320,7 @@ class TestMonthlyPlanningTemplatesApi(unittest.TestCase):
             body = resp.json()
             self.assertEqual(body["summary"]["blocked_duplicates"], 1)
             self.assertEqual(body["items"][0]["outcome"], "BLOCKED_DUPLICATE")
+            self.assertEqual(body["items"][0]["reasons"][0]["code"], "MPT_DUPLICATE_PLANNING_SLOT")
     def test_preview_apply_soft_overlap(self) -> None:
         with temp_env() as (_td, _):
             env = Env.load()
@@ -649,6 +650,161 @@ class TestMonthlyPlanningTemplatesApi(unittest.TestCase):
             )
             self.assertEqual(stale.status_code, 409)
             self.assertEqual(stale.json()["error"]["code"], "MPT_PREVIEW_STALE")
+
+    def test_apply_repeat_with_refreshed_preview_produces_blocked_duplicates_without_new_inserts(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+            tid = self._create_template(client, auth)
+
+            before = self._snapshot_counts(env)
+            first_preview = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(first_preview.status_code, 200)
+            first_fp = first_preview.json()["preview_fingerprint"]
+
+            first_apply = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04", "preview_fingerprint": first_fp},
+            )
+            self.assertEqual(first_apply.status_code, 200)
+            first_body = first_apply.json()
+            self.assertEqual(first_body["summary"]["created"], 1)
+            self.assertEqual(first_body["summary"]["blocked_duplicates"], 0)
+            self.assertEqual(first_body["items"][0]["outcome"], "CREATED")
+
+            second_preview = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(second_preview.status_code, 200)
+            second_body_preview = second_preview.json()
+            self.assertEqual(second_body_preview["summary"]["would_create"], 0)
+            self.assertEqual(second_body_preview["summary"]["blocked_duplicates"], 1)
+            self.assertEqual(second_body_preview["items"][0]["outcome"], "BLOCKED_DUPLICATE")
+            second_fp = second_body_preview["preview_fingerprint"]
+
+            second_apply = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04", "preview_fingerprint": second_fp},
+            )
+            self.assertEqual(second_apply.status_code, 200)
+            second_body = second_apply.json()
+            self.assertEqual(second_body["summary"]["created"], 0)
+            self.assertEqual(second_body["summary"]["blocked_duplicates"], 1)
+            self.assertEqual(second_body["items"][0]["outcome"], "BLOCKED_DUPLICATE")
+
+            after = self._snapshot_counts(env)
+            self.assertEqual(after["planned_releases"], before["planned_releases"] + 1)
+            self.assertEqual(after["jobs"], before["jobs"])
+            self.assertEqual(after["releases"], before["releases"])
+            self.assertEqual(after["apply_runs"], before["apply_runs"] + 2)
+            self.assertEqual(after["apply_run_items"], before["apply_run_items"] + 2)
+
+    def test_apply_mixed_legacy_and_template_created_collision_set_is_deterministic(self) -> None:
+        with temp_env() as (_td, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            auth = basic_auth_header("admin", "testpass")
+
+            create_resp = client.post(
+                "/v1/planner/monthly-planning-templates",
+                headers=auth,
+                json={
+                    "channel_id": 1,
+                    "template_name": "April mixed collisions",
+                    "content_type": "LONG",
+                    "items": [
+                        {
+                            "item_key": "slot-duplicate",
+                            "slot_code": "legacy_slot",
+                            "position": 1,
+                            "title": "Legacy slot duplicate",
+                            "day_of_month": 1,
+                            "notes": None,
+                        },
+                        {
+                            "item_key": "provenance-duplicate",
+                            "slot_code": "new_slot",
+                            "position": 2,
+                            "title": "Provenance duplicate",
+                            "day_of_month": 2,
+                            "notes": None,
+                        },
+                    ],
+                },
+            )
+            self.assertEqual(create_resp.status_code, 201)
+            tid = int(create_resp.json()["id"])
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at, planning_slot_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("darkwood-reverie", "LONG", "legacy-existing", "2026-04-01", None, "PLANNED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "legacy_slot"),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(
+                        channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at,
+                        source_template_id, source_template_item_key, source_template_target_month
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "darkwood-reverie",
+                        "LONG",
+                        "template-existing",
+                        "2026-03-03",
+                        None,
+                        "PLANNED",
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                        tid,
+                        "provenance-duplicate",
+                        "2026-04",
+                    ),
+                )
+            finally:
+                conn.close()
+
+            preview = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/preview-apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04"},
+            )
+            self.assertEqual(preview.status_code, 200)
+            preview_body = preview.json()
+            self.assertEqual(preview_body["summary"]["would_create"], 0)
+            self.assertEqual(preview_body["summary"]["blocked_duplicates"], 2)
+            self.assertEqual({item["outcome"] for item in preview_body["items"]}, {"BLOCKED_DUPLICATE"})
+            fp = preview_body["preview_fingerprint"]
+
+            apply_resp = client.post(
+                f"/v1/planner/monthly-planning-templates/{tid}/apply",
+                headers=auth,
+                json={"channel_id": 1, "target_month": "2026-04", "preview_fingerprint": fp},
+            )
+            self.assertEqual(apply_resp.status_code, 200)
+            body = apply_resp.json()
+            self.assertEqual(body["summary"]["created"], 0)
+            self.assertEqual(body["summary"]["blocked_duplicates"], 2)
+            self.assertEqual({item["outcome"] for item in body["items"]}, {"BLOCKED_DUPLICATE"})
 
 
 if __name__ == "__main__":

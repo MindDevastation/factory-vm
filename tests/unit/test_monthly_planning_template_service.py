@@ -438,6 +438,62 @@ class TestMonthlyPlanningTemplateService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_execute_apply_conflict_translation_is_deterministic_for_uniqueness_race_like_condition(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = MonthlyPlanningTemplateService(conn)
+                created = self._create_template(svc)
+                stale_preview = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+
+                conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at, planning_slot_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("darkwood-reverie", "LONG", "existing", "2026-04-01", None, "PLANNED", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "day_01_main"),
+                )
+
+                with self.assertRaises(MonthlyPlanningTemplateError) as stale:
+                    svc.execute_apply(
+                        created["id"],
+                        channel_id=1,
+                        target_month="2026-04",
+                        preview_fingerprint=stale_preview["preview_fingerprint"],
+                        request_id="r-race-stale",
+                    )
+                self.assertEqual(stale.exception.code, "MPT_PREVIEW_STALE")
+
+                fresh_preview = svc.preview_apply(created["id"], channel_id=1, target_month="2026-04")
+                self.assertEqual(fresh_preview["items"][0]["outcome"], "BLOCKED_DUPLICATE")
+                self.assertEqual(fresh_preview["items"][0]["reasons"][0]["code"], "MPT_DUPLICATE_PLANNING_SLOT")
+
+                out = svc.execute_apply(
+                    created["id"],
+                    channel_id=1,
+                    target_month="2026-04",
+                    preview_fingerprint=fresh_preview["preview_fingerprint"],
+                    request_id="r-race-fresh",
+                )
+                self.assertEqual(out["summary"]["created"], 0)
+                self.assertEqual(out["summary"]["blocked_duplicates"], 1)
+                self.assertEqual(out["items"][0]["outcome"], "BLOCKED_DUPLICATE")
+                self.assertEqual(out["items"][0]["reasons"][0]["code"], "MPT_DUPLICATE_PLANNING_SLOT")
+
+                run_item = conn.execute(
+                    """
+                    SELECT outcome, reason_code
+                    FROM monthly_planning_template_apply_run_items
+                    WHERE apply_run_id = ?
+                    """,
+                    (int(out["apply_run_id"]),),
+                ).fetchone()
+                self.assertEqual(str(run_item["outcome"]), "BLOCKED_DUPLICATE")
+                self.assertEqual(str(run_item["reason_code"]), "MPT_DUPLICATE_PLANNING_SLOT")
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()
