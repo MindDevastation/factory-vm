@@ -246,12 +246,65 @@ def migrate(conn: sqlite3.Connection) -> None:
             root_job_id INTEGER NOT NULL,
             attempt_no INTEGER NOT NULL DEFAULT 1,
             force_refetch_inputs INTEGER NOT NULL DEFAULT 0,
+            publish_state TEXT,
+            publish_target_visibility TEXT,
+            publish_delivery_mode_effective TEXT,
+            publish_resolved_scope TEXT,
+            publish_reason_code TEXT,
+            publish_reason_detail TEXT,
+            publish_scheduled_at REAL,
+            publish_attempt_count INTEGER NOT NULL DEFAULT 0,
+            publish_retry_at REAL,
+            publish_last_error_code TEXT,
+            publish_last_error_message TEXT,
+            publish_in_progress_at REAL,
+            publish_last_transition_at REAL,
+            publish_hold_active INTEGER NOT NULL DEFAULT 0,
+            publish_hold_reason_code TEXT,
+            publish_manual_ack_at REAL,
+            publish_manual_completed_at REAL,
+            publish_manual_published_at REAL,
+            publish_manual_video_id TEXT,
+            publish_manual_url TEXT,
+            publish_drift_detected_at REAL,
+            publish_observed_visibility TEXT,
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL,
             FOREIGN KEY(release_id) REFERENCES releases(id),
             FOREIGN KEY(retry_of_job_id) REFERENCES jobs(id),
             FOREIGN KEY(root_job_id) REFERENCES jobs(id),
-            CHECK(attempt_no >= 1)
+            CHECK(attempt_no >= 1),
+            CHECK(
+                publish_state IS NULL
+                OR publish_state IN (
+                    'private_uploaded',
+                    'policy_blocked',
+                    'waiting_for_schedule',
+                    'ready_to_publish',
+                    'publish_in_progress',
+                    'retry_pending',
+                    'manual_handoff_pending',
+                    'manual_handoff_acknowledged',
+                    'manual_publish_completed',
+                    'published_public',
+                    'published_unlisted',
+                    'publish_failed_terminal',
+                    'publish_state_drift_detected'
+                )
+            ),
+            CHECK(
+                publish_target_visibility IS NULL
+                OR publish_target_visibility IN ('public', 'unlisted')
+            ),
+            CHECK(
+                publish_delivery_mode_effective IS NULL
+                OR publish_delivery_mode_effective IN ('automatic', 'manual')
+            ),
+            CHECK(
+                publish_resolved_scope IS NULL
+                OR publish_resolved_scope IN ('project', 'channel', 'item')
+            ),
+            CHECK(publish_state != 'retry_pending' OR publish_retry_at IS NOT NULL)
         );
 
         CREATE INDEX IF NOT EXISTS idx_jobs_state_priority ON jobs(state, priority, created_at);
@@ -929,6 +982,89 @@ def _ensure_jobs_columns(conn: sqlite3.Connection) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_retry_of_job_id ON jobs(retry_of_job_id);")
     with suppress(Exception):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_root_job_id_attempt_no ON jobs(root_job_id, attempt_no);")
+    if "publish_state" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_state TEXT;")
+    if "publish_target_visibility" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_target_visibility TEXT;")
+    if "publish_delivery_mode_effective" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_delivery_mode_effective TEXT;")
+    if "publish_resolved_scope" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_resolved_scope TEXT;")
+    if "publish_reason_code" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_reason_code TEXT;")
+    if "publish_reason_detail" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_reason_detail TEXT;")
+    if "publish_scheduled_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_scheduled_at REAL;")
+    if "publish_attempt_count" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_attempt_count INTEGER NOT NULL DEFAULT 0;")
+    if "publish_retry_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_retry_at REAL;")
+    if "publish_last_error_code" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_last_error_code TEXT;")
+    if "publish_last_error_message" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_last_error_message TEXT;")
+    if "publish_in_progress_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_in_progress_at REAL;")
+    if "publish_last_transition_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_last_transition_at REAL;")
+    if "publish_hold_active" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_hold_active INTEGER NOT NULL DEFAULT 0;")
+    if "publish_hold_reason_code" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_hold_reason_code TEXT;")
+    if "publish_manual_ack_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_manual_ack_at REAL;")
+    if "publish_manual_completed_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_manual_completed_at REAL;")
+    if "publish_manual_published_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_manual_published_at REAL;")
+    if "publish_manual_video_id" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_manual_video_id TEXT;")
+    if "publish_manual_url" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_manual_url TEXT;")
+    if "publish_drift_detected_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_drift_detected_at REAL;")
+    if "publish_observed_visibility" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_observed_visibility TEXT;")
+
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_jobs_publish_runtime_state_id
+            ON jobs(publish_state ASC, id ASC)
+            WHERE publish_state IS NOT NULL;
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_jobs_publish_runtime_retry_due
+            ON jobs(publish_state ASC, publish_retry_at ASC, id ASC)
+            WHERE publish_state = 'retry_pending' AND publish_retry_at IS NOT NULL;
+            """
+        )
 
 
 def _ensure_planned_release_materialization_binding(conn: sqlite3.Connection) -> None:

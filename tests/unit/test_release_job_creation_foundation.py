@@ -200,6 +200,30 @@ class TestReleaseJobCreationFoundation(unittest.TestCase):
         self.assertEqual(payload["job"]["stage"], "DRAFT")
         self.assertEqual(payload["context"]["channel_slug"], "darkwood-reverie")
 
+    def test_job_insert_baseline_state_stage_unchanged_when_publish_fields_unset(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id = self._insert_release(conn, title="baseline")
+                job_id = self._insert_job(conn, release_id=release_id, state="WAIT_APPROVAL")
+                row = conn.execute(
+                    """
+                    SELECT state, stage, publish_state, publish_retry_at, publish_target_visibility
+                    FROM jobs
+                    WHERE id = ?
+                    """,
+                    (job_id,),
+                ).fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual(str(row["state"]), "WAIT_APPROVAL")
+                self.assertEqual(str(row["stage"]), "DRAFT")
+                self.assertIsNone(row["publish_state"])
+                self.assertIsNone(row["publish_retry_at"])
+                self.assertIsNone(row["publish_target_visibility"])
+            finally:
+                conn.close()
+
     def test_state_summary_and_diagnostics_derivation(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)
