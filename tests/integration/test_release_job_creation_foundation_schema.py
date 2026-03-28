@@ -8,6 +8,31 @@ from tests._helpers import seed_minimal_db, temp_env
 
 
 class TestReleaseJobCreationFoundationSchema(unittest.TestCase):
+    _PUBLISH_RUNTIME_COLUMNS: tuple[str, ...] = (
+        "publish_state",
+        "publish_target_visibility",
+        "publish_delivery_mode_effective",
+        "publish_resolved_scope",
+        "publish_reason_code",
+        "publish_reason_detail",
+        "publish_scheduled_at",
+        "publish_attempt_count",
+        "publish_retry_at",
+        "publish_last_error_code",
+        "publish_last_error_message",
+        "publish_in_progress_at",
+        "publish_last_transition_at",
+        "publish_hold_active",
+        "publish_hold_reason_code",
+        "publish_manual_ack_at",
+        "publish_manual_completed_at",
+        "publish_manual_published_at",
+        "publish_manual_video_id",
+        "publish_manual_url",
+        "publish_drift_detected_at",
+        "publish_observed_visibility",
+    )
+
     def _insert_release(self, conn: sqlite3.Connection, *, title: str) -> int:
         channel = conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()
         assert channel is not None
@@ -86,6 +111,21 @@ class TestReleaseJobCreationFoundationSchema(unittest.TestCase):
                 job_id = self._insert_job(conn, release_id=release_id)
                 row = conn.execute("SELECT release_id FROM jobs WHERE id = ?", (job_id,)).fetchone()
                 self.assertEqual(int(row["release_id"]), release_id)
+            finally:
+                conn.close()
+
+    def test_publish_runtime_schema_columns_and_indexes_present(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                cols = {str(row["name"]) for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+                for column in self._PUBLISH_RUNTIME_COLUMNS:
+                    self.assertIn(column, cols)
+
+                indexes = {str(i["name"]) for i in conn.execute("PRAGMA index_list(jobs)").fetchall()}
+                self.assertIn("idx_jobs_publish_runtime_state_id", indexes)
+                self.assertIn("idx_jobs_publish_runtime_retry_due", indexes)
             finally:
                 conn.close()
 
