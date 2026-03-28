@@ -763,6 +763,33 @@
     }).join('');
   }
 
+  function renderMonthlyTemplateApplyResult() {
+    const body = state.monthlyTemplates.applyResult;
+    const summary = body?.summary || {};
+    $('mpt-apply-total').textContent = String(summary.total_items ?? 0);
+    $('mpt-apply-created').textContent = String(summary.created ?? 0);
+    $('mpt-apply-blocked-duplicate').textContent = String(summary.blocked_duplicates ?? 0);
+    $('mpt-apply-blocked-invalid-date').textContent = String(summary.blocked_invalid_dates ?? 0);
+    $('mpt-apply-failed').textContent = String(summary.failed ?? 0);
+    $('mpt-apply-overlap-warnings').textContent = String(summary.overlap_warnings ?? 0);
+    const tbody = $('mpt-apply-items-body');
+    const items = Array.isArray(body?.items) ? body.items : [];
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="muted">No apply result yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map((item) => {
+      const reasons = (item.reasons || []).map((r) => `${r.code || '-'}: ${r.message || '-'}`).join('\n') || '-';
+      return `<tr>
+        <td>${esc(item.item_key || '-')}</td>
+        <td>${esc(item.slot_code || '-')}</td>
+        <td>${esc(item.outcome || '-')}</td>
+        <td>${esc(item.planned_release_id ?? '-')}</td>
+        <td><pre style="white-space:pre-wrap; margin:0;">${esc(reasons)}</pre></td>
+      </tr>`;
+    }).join('');
+  }
+
   function renderMonthlyTemplateDetail() {
     const pane = $('mpt-detail-pane');
     const tpl = state.monthlyTemplates.activeTemplate;
@@ -907,6 +934,7 @@ last_applied_at=${esc(item.last_applied_at || '-')}</pre></td>
     $('mpt-apply-json').textContent = 'No apply yet.';
     $('mpt-apply-run-btn').disabled = !body.preview_fingerprint;
     renderMonthlyTemplatePreviewItems();
+    renderMonthlyTemplateApplyResult();
   }
 
   async function runMonthlyTemplateApply() {
@@ -927,6 +955,7 @@ last_applied_at=${esc(item.last_applied_at || '-')}</pre></td>
     const body = await res.json();
     state.monthlyTemplates.applyResult = body;
     $('mpt-apply-json').textContent = JSON.stringify(body, null, 2);
+    renderMonthlyTemplateApplyResult();
     await loadMonthlyTemplates();
   }
 

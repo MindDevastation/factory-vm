@@ -328,6 +328,25 @@
       </thead>
       <tbody id="mpt-preview-items-body"><tr><td colspan="7" class="muted">No preview yet.</td></tr></tbody>
     </table>
+    <fieldset style="margin-top:10px;">
+      <legend>Apply result summary</legend>
+      <div id="mpt-apply-summary" style="display:flex; gap:12px; flex-wrap:wrap;">
+        <span><strong>Total:</strong> <span id="mpt-apply-total">0</span></span>
+        <span><strong>Created:</strong> <span id="mpt-apply-created">0</span></span>
+        <span><strong>Blocked duplicate:</strong> <span id="mpt-apply-blocked-duplicate">0</span></span>
+        <span><strong>Blocked invalid date:</strong> <span id="mpt-apply-blocked-invalid-date">0</span></span>
+        <span><strong>Failed:</strong> <span id="mpt-apply-failed">0</span></span>
+        <span><strong>Overlap warnings:</strong> <span id="mpt-apply-overlap-warnings">0</span></span>
+      </div>
+    </fieldset>
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th>item_key</th><th>slot_code</th><th>outcome</th><th>planned_release_id</th><th>reasons</th>
+        </tr>
+      </thead>
+      <tbody id="mpt-apply-items-body"><tr><td colspan="5" class="muted">No apply result yet.</td></tr></tbody>
+    </table>
     <menu>
       <button type="button" id="mpt-preview-close-btn">Close</button>
     </menu>
