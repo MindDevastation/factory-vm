@@ -14,6 +14,19 @@
 </p>
 <p class="muted" id="publish-view-label">View: {{ view }}</p>
 
+<details id="publish-legend">
+  <summary><strong>Publish legend / help</strong></summary>
+  <ul>
+    <li><strong>ready_to_publish</strong>: eligible for publish execution when schedule/policy allows.</li>
+    <li><strong>policy_blocked</strong>: blocked by policy; use unblock only when policy is resolved.</li>
+    <li><strong>manual_handoff_pending</strong>: operator handoff required.</li>
+    <li><strong>manual_handoff_acknowledged</strong>: handoff acknowledged; awaiting completion.</li>
+    <li><strong>manual_publish_completed</strong>: operator reported manual publish completion.</li>
+    <li><strong>publish_failed_terminal</strong>: terminal publish failure; requires explicit operator recovery action.</li>
+  </ul>
+  <p class="muted">Common reason codes include policy_requires_manual, operator_forced_manual, operator_cancelled.</p>
+</details>
+
 <p>
   <label>Channel slug <input id="filter-channel-slug" type="text" /></label>
   <label style="margin-left:8px;">Publish state <input id="filter-publish-state" type="text" /></label>
@@ -21,10 +34,30 @@
 </p>
 
 <p class="muted" id="publish-summary">Loading…</p>
+<p class="muted" id="publish-health-summary">Health: loading…</p>
+
+<div id="publish-bulk-controls" style="margin:8px 0; padding:8px; border:1px solid #ddd;">
+  <strong>Bulk actions</strong>
+  <label style="margin-left:8px;">Action
+    <select id="publish-bulk-action">
+      <option value="retry">retry</option>
+      <option value="unblock">unblock</option>
+      <option value="hold">hold</option>
+      <option value="reschedule">reschedule</option>
+    </select>
+  </label>
+  <label id="publish-bulk-scheduled-wrap" style="margin-left:8px;">Reschedule at (ISO)
+    <input id="publish-bulk-scheduled-at" type="text" placeholder="2026-04-01T12:00:00Z" />
+  </label>
+  <button id="publish-bulk-preview-btn" type="button">Preview</button>
+  <button id="publish-bulk-execute-btn" type="button">Confirm/Execute</button>
+  <span id="publish-bulk-status" class="muted" style="margin-left:8px;">No preview yet.</span>
+</div>
 
 <table id="publish-queue-table">
   <thead>
     <tr>
+      <th><input id="publish-select-all" type="checkbox" aria-label="Select all" /></th>
       <th>Job</th>
       <th>Channel</th>
       <th>Release</th>
@@ -33,10 +66,11 @@
       <th>Scheduled</th>
       <th>Attempts</th>
       <th>Last Error</th>
+      <th>Action</th>
     </tr>
   </thead>
   <tbody>
-    <tr><td colspan="8" class="muted">Loading…</td></tr>
+    <tr><td colspan="10" class="muted">Loading…</td></tr>
   </tbody>
 </table>
 
@@ -47,7 +81,22 @@
   const publishStateInput = document.getElementById('filter-publish-state');
   const refreshBtn = document.getElementById('publish-refresh-btn');
   const summary = document.getElementById('publish-summary');
+  const healthSummary = document.getElementById('publish-health-summary');
   const tbody = document.querySelector('#publish-queue-table tbody');
+  const selectAll = document.getElementById('publish-select-all');
+  const bulkAction = document.getElementById('publish-bulk-action');
+  const bulkScheduledWrap = document.getElementById('publish-bulk-scheduled-wrap');
+  const bulkScheduledAt = document.getElementById('publish-bulk-scheduled-at');
+  const bulkPreviewBtn = document.getElementById('publish-bulk-preview-btn');
+  const bulkExecuteBtn = document.getElementById('publish-bulk-execute-btn');
+  const bulkStatus = document.getElementById('publish-bulk-status');
+
+  let lastBulkPreviewSessionId = null;
+  let lastBulkSelectionFingerprint = null;
+
+  function syncBulkActionInputs() {
+    bulkScheduledWrap.style.display = bulkAction.value === 'reschedule' ? 'inline-block' : 'none';
+  }
 
   function esc(value) {
     return String(value == null ? '' : value)
@@ -56,6 +105,52 @@
       .replaceAll('>', '&gt;')
       .replaceAll('"', '&quot;')
       .replaceAll("'", '&#39;');
+  }
+
+  function selectedJobIds() {
+    return Array.from(document.querySelectorAll('.publish-row-select:checked')).map((el) => Number(el.value));
+  }
+
+  function actionForState(item) {
+    const state = String(item.publish_state || '');
+    if (state === 'publish_failed_terminal') return { label: 'Reset failure', endpoint: 'reset-failure' };
+    if (state === 'policy_blocked') return { label: 'Unblock', endpoint: 'unblock' };
+    if (state === 'manual_handoff_pending') return { label: 'Acknowledge', endpoint: 'acknowledge' };
+    return { label: 'Retry', endpoint: 'retry' };
+  }
+
+  async function performSingleAction(jobId, endpoint) {
+    const payload = {
+      confirm: true,
+      reason: 'ui_queue_single_action',
+      request_id: 'ui-queue-' + jobId + '-' + Date.now()
+    };
+    const resp = await fetch('/v1/publish/jobs/' + encodeURIComponent(jobId) + '/' + endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      alert('Action failed: ' + ((data.error && data.error.message) || 'unknown'));
+      return;
+    }
+    await loadQueue();
+  }
+
+  async function loadHealthSummary() {
+    const resp = await fetch('/v1/publish/queue?view=health');
+    const data = await resp.json();
+    if (!resp.ok) {
+      healthSummary.textContent = 'Health: unavailable';
+      return;
+    }
+    const views = data.summary && data.summary.views ? data.summary.views : {};
+    healthSummary.textContent = 'Health summary → queue: ' + (views.queue || 0)
+      + ', blocked: ' + (views.blocked || 0)
+      + ', failed: ' + (views.failed || 0)
+      + ', manual: ' + (views.manual || 0)
+      + ', health: ' + (views.health || 0);
   }
 
   async function loadQueue() {
@@ -67,7 +162,7 @@
     const data = await resp.json();
     if (!resp.ok) {
       summary.textContent = (data.error && data.error.message) || 'Failed to load queue';
-      tbody.innerHTML = '<tr><td colspan="8" class="muted">Failed to load.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="muted">Failed to load.</td></tr>';
       return;
     }
 
@@ -80,11 +175,13 @@
 
     const rows = Array.isArray(data.items) ? data.items : [];
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="muted">No rows.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="muted">No rows.</td></tr>';
       return;
     }
     tbody.innerHTML = rows.map((item) => {
+      const action = actionForState(item);
       return '<tr>'
+        + '<td><input type="checkbox" class="publish-row-select" value="' + esc(item.job_id) + '" aria-label="Select job ' + esc(item.job_id) + '" /></td>'
         + '<td><a href="/ui/publish/jobs/' + encodeURIComponent(item.job_id) + '">' + esc(item.job_id) + '</a></td>'
         + '<td>' + esc(item.channel_name) + '<div class="muted">' + esc(item.channel_slug) + '</div></td>'
         + '<td>' + esc(item.release_title) + '</td>'
@@ -93,12 +190,88 @@
         + '<td>' + esc(item.publish_scheduled_at) + '</td>'
         + '<td>' + esc(item.publish_attempt_count) + '</td>'
         + '<td>' + esc(item.publish_last_error_message || item.publish_last_error_code) + '</td>'
+        + '<td><button type="button" class="publish-single-action" data-job-id="' + esc(item.job_id) + '" data-endpoint="' + esc(action.endpoint) + '">' + esc(action.label) + '</button></td>'
         + '</tr>';
     }).join('');
+
+    Array.from(document.querySelectorAll('.publish-single-action')).forEach((btn) => {
+      btn.addEventListener('click', async function () {
+        await performSingleAction(Number(btn.dataset.jobId), String(btn.dataset.endpoint));
+      });
+    });
   }
 
-  refreshBtn.addEventListener('click', loadQueue);
+  selectAll.addEventListener('change', function () {
+    Array.from(document.querySelectorAll('.publish-row-select')).forEach((el) => {
+      el.checked = selectAll.checked;
+    });
+  });
+
+  bulkPreviewBtn.addEventListener('click', async function () {
+    const ids = selectedJobIds();
+    if (!ids.length) {
+      bulkStatus.textContent = 'Select at least one row.';
+      return;
+    }
+    const payload = { action: bulkAction.value, selected_job_ids: ids };
+    if (bulkAction.value === 'reschedule') {
+      const scheduledAt = bulkScheduledAt.value.trim();
+      if (!scheduledAt) {
+        bulkStatus.textContent = 'Reschedule requires scheduled_at.';
+        return;
+      }
+      payload.scheduled_at = scheduledAt;
+    }
+    const resp = await fetch('/v1/publish/bulk/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      bulkStatus.textContent = 'Preview failed: ' + ((data.error && data.error.code) || 'unknown');
+      lastBulkPreviewSessionId = null;
+      lastBulkSelectionFingerprint = null;
+      return;
+    }
+    lastBulkPreviewSessionId = data.preview_session_id;
+    lastBulkSelectionFingerprint = data.selection_fingerprint || null;
+    bulkStatus.textContent = 'Preview ready. Session #' + data.preview_session_id;
+  });
+
+  bulkExecuteBtn.addEventListener('click', async function () {
+    if (!lastBulkPreviewSessionId) {
+      bulkStatus.textContent = 'Preview required before execute.';
+      return;
+    }
+    const resp = await fetch('/v1/publish/bulk/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        preview_session_id: lastBulkPreviewSessionId,
+        selection_fingerprint: lastBulkSelectionFingerprint
+      })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      bulkStatus.textContent = 'Execute failed: ' + ((data.error && data.error.code) || 'unknown');
+      return;
+    }
+    bulkStatus.textContent = 'Execute complete for session #' + lastBulkPreviewSessionId;
+    await loadQueue();
+    await loadHealthSummary();
+  });
+
+  refreshBtn.addEventListener('click', async function () {
+    await loadQueue();
+    await loadHealthSummary();
+  });
+
+  bulkAction.addEventListener('change', syncBulkActionInputs);
+  syncBulkActionInputs();
+
   loadQueue();
+  loadHealthSummary();
 })();
 </script>
 {% endblock %}
