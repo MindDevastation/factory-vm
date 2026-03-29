@@ -103,3 +103,23 @@ class TestYouTubeIntegrationMocked(unittest.TestCase):
             c.set_thumbnail(video_id="VID", image_path=Path("/tmp/x.png"))
 
         yt.thumbnails.return_value.set.assert_called_once()
+
+    def test_set_video_privacy_executes(self):
+        from services.integrations import youtube as ytm
+
+        yt = SimpleNamespace()
+        yt.videos = Mock(return_value=SimpleNamespace(update=Mock(return_value=SimpleNamespace(execute=Mock()))))
+
+        with (
+            patch.object(ytm, "_GOOGLE_IMPORT_ERROR", None),
+            patch.object(ytm, "Credentials", SimpleNamespace(from_authorized_user_file=Mock(return_value=SimpleNamespace(valid=True)))),
+            patch.object(ytm, "build", Mock(return_value=yt)),
+        ):
+            c = ytm.YouTubeClient(client_secret_json="client.json", token_json="token.json")
+            c._yt = yt
+            c.set_video_privacy(video_id="VID", privacy_status="public")
+
+        yt.videos.return_value.update.assert_called_once_with(
+            part="status",
+            body={"id": "VID", "status": {"privacyStatus": "public"}},
+        )
