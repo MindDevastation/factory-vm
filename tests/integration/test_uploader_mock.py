@@ -57,6 +57,33 @@ class TestUploaderMock(unittest.TestCase):
         finally:
             conn.close()
 
+    def _mark_ready_for_auto_publish(self, env: Env, *, job_id: int, visibility: str = "public") -> None:
+        conn = dbm.connect(env)
+        try:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET state = 'WAIT_APPROVAL',
+                    publish_state = 'ready_to_publish',
+                    publish_delivery_mode_effective = 'automatic',
+                    publish_target_visibility = ?,
+                    publish_attempt_count = 0,
+                    publish_retry_at = NULL
+                WHERE id = ?
+                """,
+                (visibility, job_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO youtube_uploads(job_id, video_id, url, studio_url, privacy, uploaded_at)
+                VALUES(?, ?, 'https://example.test', 'https://studio.example.test', 'private', 1.0)
+                ON CONFLICT(job_id) DO UPDATE SET video_id=excluded.video_id, privacy='private'
+                """,
+                (job_id, f"mock-{job_id}"),
+            )
+        finally:
+            conn.close()
+
     def test_uploader_mock_sets_wait_approval_and_private_uploaded_init(self) -> None:
         with temp_env() as (_, _env0):
             os.environ["UPLOAD_BACKEND"] = "mock"
@@ -128,6 +155,113 @@ class TestUploaderMock(unittest.TestCase):
             job = self._run_upload(env, job_id=job_id)
             self.assertEqual(job["publish_state"], "manual_handoff_pending")
             self.assertEqual(job["publish_delivery_mode_effective"], "manual")
+
+    def test_auto_publish_executor_success_public(self) -> None:
+        with temp_env() as (_, _env0):
+            os.environ["UPLOAD_BACKEND"] = "mock"
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_policy(env, publish_mode="auto", global_pause=False)
+            job_id = insert_release_and_job(env, state="WAIT_APPROVAL", stage="APPROVAL")
+            self._mark_ready_for_auto_publish(env, job_id=job_id, visibility="public")
+
+            uploader_cycle(env=env, worker_id="t-upl")
+
+            conn = dbm.connect(env)
+            try:
+                job = dict(dbm.get_job(conn, job_id) or {})
+                yt = conn.execute("SELECT privacy FROM youtube_uploads WHERE job_id = ?", (job_id,)).fetchone()
+                self.assertEqual(job["publish_state"], "published_public")
+                self.assertEqual(job["publish_attempt_count"], 1)
+                self.assertEqual(yt["privacy"], "public")
+            finally:
+                conn.close()
+
+    def test_auto_publish_executor_success_unlisted(self) -> None:
+        with temp_env() as (_, _env0):
+            os.environ["UPLOAD_BACKEND"] = "mock"
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_policy(env, publish_mode="auto", global_pause=False)
+            job_id = insert_release_and_job(env, state="WAIT_APPROVAL", stage="APPROVAL")
+            self._mark_ready_for_auto_publish(env, job_id=job_id, visibility="unlisted")
+
+            uploader_cycle(env=env, worker_id="t-upl")
+
+            conn = dbm.connect(env)
+            try:
+                job = dict(dbm.get_job(conn, job_id) or {})
+                yt = conn.execute("SELECT privacy FROM youtube_uploads WHERE job_id = ?", (job_id,)).fetchone()
+                self.assertEqual(job["publish_state"], "published_unlisted")
+                self.assertEqual(job["publish_attempt_count"], 1)
+                self.assertEqual(yt["privacy"], "unlisted")
+            finally:
+                conn.close()
+
+    def test_auto_publish_retriable_failure_lands_retry_pending(self) -> None:
+        with temp_env() as (_, _env0):
+            os.environ["UPLOAD_BACKEND"] = "youtube"
+            os.environ["YT_CLIENT_SECRET_JSON"] = "/tmp/client.json"
+            os.environ["YT_TOKENS_DIR"] = "/tmp/yt-tokens"
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_policy(env, publish_mode="auto", global_pause=False)
+            job_id = insert_release_and_job(env, state="WAIT_APPROVAL", stage="APPROVAL")
+            self._mark_ready_for_auto_publish(env, job_id=job_id, visibility="public")
+            os.makedirs("/tmp/yt-tokens/darkwood-reverie", exist_ok=True)
+            with open("/tmp/yt-tokens/darkwood-reverie/token.json", "w", encoding="utf-8") as fh:
+                fh.write("{}")
+
+            from unittest import mock
+
+            with mock.patch("services.workers.uploader.YouTubeClient") as yt_cls:
+                yt_cls.return_value.set_video_privacy.side_effect = TimeoutError("timeout")
+                uploader_cycle(env=env, worker_id="t-upl")
+
+            conn = dbm.connect(env)
+            try:
+                job = dict(dbm.get_job(conn, job_id) or {})
+                self.assertEqual(job["publish_state"], "retry_pending")
+                self.assertEqual(job["publish_attempt_count"], 1)
+                self.assertEqual(job["publish_last_error_code"], "timeout")
+                self.assertIsNotNone(job["publish_retry_at"])
+            finally:
+                conn.close()
+
+    def test_auto_publish_attempt_three_retriable_exhausts_to_manual_handoff(self) -> None:
+        with temp_env() as (_, _env0):
+            os.environ["UPLOAD_BACKEND"] = "youtube"
+            os.environ["YT_CLIENT_SECRET_JSON"] = "/tmp/client.json"
+            os.environ["YT_TOKENS_DIR"] = "/tmp/yt-tokens"
+            env = Env.load()
+            seed_minimal_db(env)
+            self._seed_policy(env, publish_mode="auto", global_pause=False)
+            job_id = insert_release_and_job(env, state="WAIT_APPROVAL", stage="APPROVAL")
+            self._mark_ready_for_auto_publish(env, job_id=job_id, visibility="public")
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE jobs SET publish_attempt_count = 2 WHERE id = ?", (job_id,))
+            finally:
+                conn.close()
+            os.makedirs("/tmp/yt-tokens/darkwood-reverie", exist_ok=True)
+            with open("/tmp/yt-tokens/darkwood-reverie/token.json", "w", encoding="utf-8") as fh:
+                fh.write("{}")
+
+            from unittest import mock
+
+            with mock.patch("services.workers.uploader.YouTubeClient") as yt_cls:
+                yt_cls.return_value.set_video_privacy.side_effect = TimeoutError("timeout")
+                uploader_cycle(env=env, worker_id="t-upl")
+
+            conn = dbm.connect(env)
+            try:
+                job = dict(dbm.get_job(conn, job_id) or {})
+                self.assertEqual(job["publish_state"], "manual_handoff_pending")
+                self.assertEqual(job["publish_attempt_count"], 3)
+                self.assertEqual(job["publish_reason_code"], "retries_exhausted")
+                self.assertIsNone(job["publish_retry_at"])
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":

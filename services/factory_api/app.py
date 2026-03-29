@@ -36,6 +36,7 @@ from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
 from services.factory_api.publish_audit_status import create_publish_audit_status_router
 from services.factory_api.publish_policy import create_publish_policy_router
+from services.factory_api.publish_job_actions import create_publish_job_actions_router
 from services.factory_api.publish_queue_read import create_publish_queue_read_router
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.playlist_builder.api_adapter import (
@@ -130,6 +131,7 @@ app.include_router(create_db_viewer_router(env))
 app.include_router(create_planner_router(env))
 app.include_router(create_publish_audit_status_router(env))
 app.include_router(create_publish_policy_router(env))
+app.include_router(create_publish_job_actions_router(env))
 app.include_router(create_publish_queue_read_router(env))
 
 
