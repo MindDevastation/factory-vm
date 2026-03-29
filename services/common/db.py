@@ -789,6 +789,30 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_publish_action_log_job_id
             ON publish_action_log(job_id, created_at, id);
 
+        CREATE TABLE IF NOT EXISTS publish_bulk_action_sessions (
+            id TEXT PRIMARY KEY,
+            action_type TEXT NOT NULL,
+            action_payload_json TEXT NOT NULL DEFAULT '{}',
+            selection_fingerprint TEXT NOT NULL,
+            selected_job_ids_json TEXT NOT NULL,
+            preview_status TEXT NOT NULL,
+            aggregate_preview_json TEXT NOT NULL,
+            item_preview_json TEXT NOT NULL,
+            invalidation_reason_code TEXT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            executed_at TEXT NULL,
+            CHECK(action_type IN ('retry','move_to_manual','acknowledge','reschedule','hold','unblock')),
+            CHECK(preview_status IN ('OPEN','EXECUTED','EXPIRED','INVALIDATED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_bulk_action_sessions_status
+            ON publish_bulk_action_sessions(preview_status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_publish_bulk_action_sessions_expires_at
+            ON publish_bulk_action_sessions(expires_at);
+
         CREATE TABLE IF NOT EXISTS canon_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             value TEXT NOT NULL UNIQUE
@@ -3018,6 +3042,49 @@ def insert_planner_mass_action_session(
             preview_status,
             aggregate_preview_json,
             item_preview_json,
+            created_by,
+            created_at,
+            expires_at,
+            executed_at,
+        ),
+    )
+
+
+def insert_publish_bulk_action_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    action_type: str,
+    action_payload_json: str,
+    selection_fingerprint: str,
+    selected_job_ids_json: str,
+    preview_status: str,
+    aggregate_preview_json: str,
+    item_preview_json: str,
+    invalidation_reason_code: str | None,
+    created_by: str | None,
+    created_at: str,
+    expires_at: str,
+    executed_at: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO publish_bulk_action_sessions(
+            id, action_type, action_payload_json, selection_fingerprint, selected_job_ids_json, preview_status,
+            aggregate_preview_json, item_preview_json, invalidation_reason_code,
+            created_by, created_at, expires_at, executed_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            action_type,
+            action_payload_json,
+            selection_fingerprint,
+            selected_job_ids_json,
+            preview_status,
+            aggregate_preview_json,
+            item_preview_json,
+            invalidation_reason_code,
             created_by,
             created_at,
             expires_at,
