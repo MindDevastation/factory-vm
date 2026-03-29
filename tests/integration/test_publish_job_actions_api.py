@@ -227,6 +227,59 @@ class TestPublishJobActionsApi(unittest.TestCase):
             )
             self.assertEqual(unblock_bad.status_code, 409)
 
+    def test_action_state_matrix_complete_all_endpoints(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client, h = self._client(env)
+
+            matrix_cases: list[dict[str, object]] = [
+                # retry
+                {"endpoint": "retry", "state": "retry_pending", "expect": 200, "request_id": "mx-retry-allow"},
+                {"endpoint": "retry", "state": "manual_handoff_pending", "expect": 409, "request_id": "mx-retry-forbid"},
+                # reset-failure
+                {"endpoint": "reset-failure", "state": "publish_failed_terminal", "expect": 200, "request_id": "mx-rf-allow"},
+                {"endpoint": "reset-failure", "state": "ready_to_publish", "expect": 409, "request_id": "mx-rf-forbid"},
+                # move-to-manual
+                {"endpoint": "move-to-manual", "state": "ready_to_publish", "expect": 200, "request_id": "mx-mtm-allow"},
+                {"endpoint": "move-to-manual", "state": "publish_in_progress", "expect": 409, "request_id": "mx-mtm-forbid"},
+                # acknowledge
+                {"endpoint": "acknowledge", "state": "manual_handoff_pending", "expect": 200, "request_id": "mx-ack-allow"},
+                {"endpoint": "acknowledge", "state": "ready_to_publish", "expect": 409, "request_id": "mx-ack-forbid"},
+                # mark-completed
+                {"endpoint": "mark-completed", "state": "manual_handoff_acknowledged", "expect": 200, "request_id": "mx-mc-allow"},
+                {"endpoint": "mark-completed", "state": "manual_handoff_pending", "expect": 409, "request_id": "mx-mc-forbid"},
+                # cancel (forbidden modeled by cancelled job state)
+                {"endpoint": "cancel", "state": "retry_pending", "expect": 200, "request_id": "mx-cancel-allow"},
+                {"endpoint": "cancel", "state": "retry_pending", "expect": 409, "request_id": "mx-cancel-forbid", "job_state": "CANCELLED"},
+                # unblock
+                {"endpoint": "unblock", "state": "policy_blocked", "expect": 200, "request_id": "mx-ub-allow"},
+                {"endpoint": "unblock", "state": "manual_handoff_pending", "expect": 409, "request_id": "mx-ub-forbid"},
+                # reschedule
+                {"endpoint": "reschedule", "state": "ready_to_publish", "expect": 200, "request_id": "mx-rs-allow"},
+                {"endpoint": "reschedule", "state": "manual_handoff_pending", "expect": 409, "request_id": "mx-rs-forbid"},
+            ]
+
+            future_ts = (datetime.now(timezone.utc) + timedelta(days=2)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            for case in matrix_cases:
+                job_id = self._seed_job(
+                    env,
+                    publish_state=str(case["state"]),
+                    state=str(case.get("job_state", "UPLOADED")),
+                )
+                payload = {"confirm": True, "reason": "matrix", "request_id": str(case["request_id"])}
+                if str(case["endpoint"]) == "mark-completed":
+                    payload["actual_published_at"] = "2026-03-29T00:00:00Z"
+                    payload["video_id"] = "yt-matrix"
+                if str(case["endpoint"]) == "reschedule":
+                    payload["scheduled_at"] = future_ts
+
+                resp = client.post(f"/v1/publish/jobs/{job_id}/{case['endpoint']}", headers=h, json=payload)
+                self.assertEqual(
+                    resp.status_code,
+                    int(case["expect"]),
+                    f"endpoint={case['endpoint']} state={case['state']} job_state={case.get('job_state', 'UPLOADED')} body={resp.text}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
