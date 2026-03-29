@@ -211,6 +211,141 @@ class TestPublishQueueReadApi(unittest.TestCase):
             self.assertEqual(no_match.status_code, 200)
             self.assertEqual(no_match.json()["limit"], 1)
 
+    def test_job_detail_effective_decision_uses_current_resolution(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            ts = 1_800_000_200.0
+            job_id = self._seed_publish_job(
+                env,
+                channel_slug="darkwood-reverie",
+                publish_state="ready_to_publish",
+                scheduled_at=ts,
+            )
+
+            conn = dbm.connect(env)
+            try:
+                release_id = int(conn.execute("SELECT release_id FROM jobs WHERE id = ?", (job_id,)).fetchone()["release_id"])
+                conn.execute(
+                    """
+                    INSERT INTO publish_policy_project_defaults(singleton_key, publish_mode, target_visibility, reason_code, created_at, updated_at, updated_by, last_reason, last_request_id)
+                    VALUES(1,'auto','public','policy_requires_manual','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','seed','seed','req-seed-policy')
+                    ON CONFLICT(singleton_key) DO UPDATE SET
+                        publish_mode=excluded.publish_mode,
+                        target_visibility=excluded.target_visibility,
+                        reason_code=excluded.reason_code,
+                        updated_at=excluded.updated_at,
+                        updated_by=excluded.updated_by,
+                        last_reason=excluded.last_reason,
+                        last_request_id=excluded.last_request_id
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO publish_audit_status_project_defaults(singleton_key, status, created_at, updated_at, updated_by, last_reason, last_request_id)
+                    VALUES(1,'approved','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','seed','seed','req-seed-audit')
+                    ON CONFLICT(singleton_key) DO UPDATE SET
+                        status=excluded.status,
+                        updated_at=excluded.updated_at,
+                        updated_by=excluded.updated_by,
+                        last_reason=excluded.last_reason,
+                        last_request_id=excluded.last_request_id
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            baseline = client.get(f"/v1/publish/jobs/{job_id}", headers=h)
+            self.assertEqual(baseline.status_code, 200)
+            baseline_effective = baseline.json()["effective_decision"]
+            self.assertEqual(baseline_effective["decision"], "auto")
+            self.assertEqual(baseline_effective["effective_audit_status"], "approved")
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO publish_global_controls(singleton_key, auto_publish_paused, reason, updated_at, updated_by)
+                    VALUES(1,1,'maintenance','2026-01-02T00:00:00Z','seed')
+                    ON CONFLICT(singleton_key) DO UPDATE SET
+                        auto_publish_paused=excluded.auto_publish_paused,
+                        reason=excluded.reason,
+                        updated_at=excluded.updated_at,
+                        updated_by=excluded.updated_by
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            paused = client.get(f"/v1/publish/jobs/{job_id}", headers=h).json()["effective_decision"]
+            self.assertEqual(paused["decision"], "hold")
+            self.assertEqual(paused["reason_code"], "global_pause_active")
+            self.assertTrue(paused["global_auto_publish_paused"])
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE publish_global_controls SET auto_publish_paused = 0, reason = NULL WHERE singleton_key = 1")
+                conn.execute("UPDATE publish_audit_status_project_defaults SET status = 'pending', updated_at = '2026-01-03T00:00:00Z'")
+                conn.commit()
+            finally:
+                conn.close()
+            audit_pending = client.get(f"/v1/publish/jobs/{job_id}", headers=h).json()["effective_decision"]
+            self.assertEqual(audit_pending["decision"], "hold")
+            self.assertEqual(audit_pending["reason_code"], "audit_not_approved")
+            self.assertEqual(audit_pending["effective_audit_status"], "pending")
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE jobs SET publish_hold_active = 1, publish_hold_reason_code = 'operator_forced_manual' WHERE id = ?", (job_id,))
+                conn.execute("UPDATE publish_audit_status_project_defaults SET status = 'approved', updated_at = '2026-01-04T00:00:00Z'")
+                conn.commit()
+            finally:
+                conn.close()
+            hold_active = client.get(f"/v1/publish/jobs/{job_id}", headers=h).json()["effective_decision"]
+            self.assertEqual(hold_active["decision"], "hold")
+            self.assertEqual(hold_active["reason_code"], "operator_forced_manual")
+            self.assertTrue(hold_active["job_publish_hold_active"])
+
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE jobs SET publish_hold_active = 0, publish_hold_reason_code = NULL WHERE id = ?", (job_id,))
+                conn.execute(
+                    """
+                    INSERT INTO publish_policy_item_overrides(release_id, publish_mode, target_visibility, reason_code, created_at, updated_at, updated_by, last_reason, last_request_id)
+                    VALUES(?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(release_id) DO UPDATE SET
+                        publish_mode=excluded.publish_mode,
+                        target_visibility=excluded.target_visibility,
+                        reason_code=excluded.reason_code,
+                        updated_at=excluded.updated_at,
+                        updated_by=excluded.updated_by,
+                        last_reason=excluded.last_reason,
+                        last_request_id=excluded.last_request_id
+                    """,
+                    (
+                        release_id,
+                        "manual_only",
+                        "public",
+                        "policy_requires_manual",
+                        "2026-01-05T00:00:00Z",
+                        "2026-01-05T00:00:00Z",
+                        "seed",
+                        "seed",
+                        "req-seed-item",
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            manual_mode = client.get(f"/v1/publish/jobs/{job_id}", headers=h).json()["effective_decision"]
+            self.assertEqual(manual_mode["decision"], "manual_only")
+            self.assertEqual(manual_mode["delivery_mode"], "manual_only")
+
 
 if __name__ == "__main__":
     unittest.main()

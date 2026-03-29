@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from services.common import db as dbm
 from services.common.env import Env
+from services.factory_api.publish_policy import resolve_effective_publish_decision
 from services.factory_api.security import require_basic_auth
 from services.publish_runtime.events import read_publish_lifecycle_events
 from services.publish_runtime.queue_summary import assemble_publish_queue_summary
@@ -40,29 +41,6 @@ def _parse_optional_ts(value: str | None) -> float | None:
         pass
     normalized = text.replace("Z", "+00:00")
     return datetime.fromisoformat(normalized).timestamp()
-
-
-def _effective_decision(row: Any) -> dict[str, Any]:
-    if bool(row.get("publish_hold_active") or 0):
-        return {
-            "decision": "hold",
-            "reason_code": row.get("publish_hold_reason_code") or row.get("publish_reason_code"),
-            "delivery_mode": row.get("publish_delivery_mode_effective"),
-            "resolved_scope": row.get("publish_resolved_scope"),
-        }
-    mode = str(row.get("publish_delivery_mode_effective") or "")
-    if mode == "manual":
-        decision = "manual_handoff"
-    elif mode == "automatic":
-        decision = "auto_publish"
-    else:
-        decision = "unknown"
-    return {
-        "decision": decision,
-        "reason_code": row.get("publish_reason_code"),
-        "delivery_mode": row.get("publish_delivery_mode_effective"),
-        "resolved_scope": row.get("publish_resolved_scope"),
-    }
 
 
 def _normalize_event(item: dict[str, Any]) -> dict[str, Any]:
@@ -213,62 +191,69 @@ def create_publish_queue_read_router(env: Env) -> APIRouter:
                 """,
                 (job_id,),
             ).fetchone()
+            if not row:
+                return _job_not_found(job_id)
+            resolved_decision = resolve_effective_publish_decision(conn, job_row=row)
+            events = read_publish_lifecycle_events(storage_root=env.storage_root, limit=200)
+            matched = [event for event in events if int(event.get("job_id") or -1) == job_id]
+
+            return {
+                "job_id": int(row["id"]),
+                "release": {
+                    "release_id": int(row["release_id"]),
+                    "title": row.get("release_title"),
+                    "channel_slug": row.get("channel_slug"),
+                    "channel_name": row.get("channel_name"),
+                },
+                "global_state_stage_summary": {
+                    "state": row.get("state"),
+                    "stage": row.get("stage"),
+                    "progress_pct": float(row.get("progress_pct") or 0.0),
+                    "updated_at": _to_iso_utc(row.get("updated_at")),
+                },
+                "publish_state": row.get("publish_state"),
+                "effective_decision": {
+                    "decision": resolved_decision["decision"],
+                    "reason_code": resolved_decision["effective_reason_code"],
+                    "delivery_mode": resolved_decision["effective_publish_mode"],
+                    "resolved_scope": resolved_decision["resolved_scope"],
+                    "effective_audit_status": resolved_decision["effective_audit_status"],
+                    "global_auto_publish_paused": resolved_decision["global_auto_publish_paused"],
+                    "job_publish_hold_active": resolved_decision["job_publish_hold_active"],
+                },
+                "schedule": {
+                    "scheduled_at": _to_iso_utc(row.get("publish_scheduled_at")),
+                    "retry_at": _to_iso_utc(row.get("publish_retry_at")),
+                    "last_transition_at": _to_iso_utc(row.get("publish_last_transition_at")),
+                },
+                "attempts": {
+                    "publish_attempt_count": int(row.get("publish_attempt_count") or 0),
+                    "job_attempt": int(row.get("attempt") or 0),
+                    "attempt_no": int(row.get("attempt_no") or 1),
+                },
+                "last_error": {
+                    "code": row.get("publish_last_error_code"),
+                    "message": row.get("publish_last_error_message"),
+                },
+                "audit_trail_summary": {
+                    "count": len(matched),
+                    "latest_event_name": matched[0].get("event_name") if matched else None,
+                    "latest_occurred_at": (matched[0].get("occurred_at") if matched else None),
+                },
+                "manual_handoff": {
+                    "ack_at": _to_iso_utc(row.get("publish_manual_ack_at")),
+                    "completed_at": _to_iso_utc(row.get("publish_manual_completed_at")),
+                    "published_at": _to_iso_utc(row.get("publish_manual_published_at")),
+                    "video_id": row.get("publish_manual_video_id"),
+                    "url": row.get("publish_manual_url"),
+                },
+                "drift": {
+                    "detected_at": _to_iso_utc(row.get("publish_drift_detected_at")),
+                    "observed_visibility": row.get("publish_observed_visibility"),
+                },
+            }
         finally:
             conn.close()
-
-        if not row:
-            return _job_not_found(job_id)
-
-        events = read_publish_lifecycle_events(storage_root=env.storage_root, limit=200)
-        matched = [event for event in events if int(event.get("job_id") or -1) == job_id]
-
-        return {
-            "job_id": int(row["id"]),
-            "release": {
-                "release_id": int(row["release_id"]),
-                "title": row.get("release_title"),
-                "channel_slug": row.get("channel_slug"),
-                "channel_name": row.get("channel_name"),
-            },
-            "global_state_stage_summary": {
-                "state": row.get("state"),
-                "stage": row.get("stage"),
-                "progress_pct": float(row.get("progress_pct") or 0.0),
-                "updated_at": _to_iso_utc(row.get("updated_at")),
-            },
-            "publish_state": row.get("publish_state"),
-            "effective_decision": _effective_decision(row),
-            "schedule": {
-                "scheduled_at": _to_iso_utc(row.get("publish_scheduled_at")),
-                "retry_at": _to_iso_utc(row.get("publish_retry_at")),
-                "last_transition_at": _to_iso_utc(row.get("publish_last_transition_at")),
-            },
-            "attempts": {
-                "publish_attempt_count": int(row.get("publish_attempt_count") or 0),
-                "job_attempt": int(row.get("attempt") or 0),
-                "attempt_no": int(row.get("attempt_no") or 1),
-            },
-            "last_error": {
-                "code": row.get("publish_last_error_code"),
-                "message": row.get("publish_last_error_message"),
-            },
-            "audit_trail_summary": {
-                "count": len(matched),
-                "latest_event_name": matched[0].get("event_name") if matched else None,
-                "latest_occurred_at": (matched[0].get("occurred_at") if matched else None),
-            },
-            "manual_handoff": {
-                "ack_at": _to_iso_utc(row.get("publish_manual_ack_at")),
-                "completed_at": _to_iso_utc(row.get("publish_manual_completed_at")),
-                "published_at": _to_iso_utc(row.get("publish_manual_published_at")),
-                "video_id": row.get("publish_manual_video_id"),
-                "url": row.get("publish_manual_url"),
-            },
-            "drift": {
-                "detected_at": _to_iso_utc(row.get("publish_drift_detected_at")),
-                "observed_visibility": row.get("publish_observed_visibility"),
-            },
-        }
 
     @router.get("/jobs/{job_id}/audit")
     def get_publish_job_audit(job_id: int, limit: int = Query(default=50, ge=1, le=200), _: bool = Depends(require_basic_auth(env))):
