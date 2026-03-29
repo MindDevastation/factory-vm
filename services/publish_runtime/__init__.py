@@ -28,6 +28,11 @@ from services.publish_runtime.orchestrator import (
     validate_publish_transition,
 )
 from services.publish_runtime.snapshot import PublishRuntimeSnapshot, build_publish_runtime_snapshot
+from services.publish_runtime.publish_failure_classifier import (
+    RETRIABLE_ERROR_CODES,
+    TERMINAL_ERROR_CODES,
+    classify_publish_failure,
+)
 
 __all__ = [
     "PUBLISH_STATE_VALUES",
@@ -51,6 +56,9 @@ __all__ = [
     "validate_publish_transition",
     "PublishRuntimeSnapshot",
     "build_publish_runtime_snapshot",
+    "RETRIABLE_ERROR_CODES",
+    "TERMINAL_ERROR_CODES",
+    "classify_publish_failure",
     "publish_lifecycle_events_path",
     "append_publish_lifecycle_event",
     "read_publish_lifecycle_events",
