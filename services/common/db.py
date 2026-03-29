@@ -792,6 +792,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS publish_bulk_action_sessions (
             id TEXT PRIMARY KEY,
             action_type TEXT NOT NULL,
+            action_payload_json TEXT NOT NULL DEFAULT '{}',
             selection_fingerprint TEXT NOT NULL,
             selected_job_ids_json TEXT NOT NULL,
             preview_status TEXT NOT NULL,
@@ -3054,6 +3055,7 @@ def insert_publish_bulk_action_session(
     *,
     session_id: str,
     action_type: str,
+    action_payload_json: str,
     selection_fingerprint: str,
     selected_job_ids_json: str,
     preview_status: str,
@@ -3068,14 +3070,15 @@ def insert_publish_bulk_action_session(
     conn.execute(
         """
         INSERT INTO publish_bulk_action_sessions(
-            id, action_type, selection_fingerprint, selected_job_ids_json, preview_status,
+            id, action_type, action_payload_json, selection_fingerprint, selected_job_ids_json, preview_status,
             aggregate_preview_json, item_preview_json, invalidation_reason_code,
             created_by, created_at, expires_at, executed_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             session_id,
             action_type,
+            action_payload_json,
             selection_fingerprint,
             selected_job_ids_json,
             preview_status,

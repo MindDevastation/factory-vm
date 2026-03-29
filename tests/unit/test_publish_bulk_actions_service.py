@@ -40,9 +40,9 @@ class TestPublishBulkActionsService(unittest.TestCase):
             conn.close()
 
     def test_fingerprint_is_deterministic(self) -> None:
-        a = svc._build_selection_fingerprint(action="retry", selected_job_ids=[1, 2, 3])
-        b = svc._build_selection_fingerprint(action="retry", selected_job_ids=[1, 2, 3])
-        c = svc._build_selection_fingerprint(action="retry", selected_job_ids=[1, 3, 2])
+        a = svc._build_selection_fingerprint(action="retry", selected_job_ids=[1, 2, 3], action_payload={})
+        b = svc._build_selection_fingerprint(action="retry", selected_job_ids=[1, 2, 3], action_payload={})
+        c = svc._build_selection_fingerprint(action="retry", selected_job_ids=[1, 3, 2], action_payload={})
         self.assertEqual(a, b)
         self.assertNotEqual(a, c)
 
@@ -52,7 +52,9 @@ class TestPublishBulkActionsService(unittest.TestCase):
             job_id = self._seed_job(env)
             conn = dbm.connect(env)
             try:
-                out = svc.create_bulk_preview_session(conn, action="retry", selected_job_ids=[job_id], created_by="u", ttl_seconds=1)
+                out = svc.create_bulk_preview_session(
+                    conn, action="retry", selected_job_ids=[job_id], scheduled_at=None, created_by="u", ttl_seconds=1
+                )
                 conn.execute(
                     "UPDATE publish_bulk_action_sessions SET expires_at = '2000-01-01T00:00:00+00:00' WHERE id = ?",
                     (out["preview_session_id"],),
@@ -77,7 +79,9 @@ class TestPublishBulkActionsService(unittest.TestCase):
             job_id = self._seed_job(env)
             conn = dbm.connect(env)
             try:
-                out = svc.create_bulk_preview_session(conn, action="retry", selected_job_ids=[job_id], created_by="u", ttl_seconds=30)
+                out = svc.create_bulk_preview_session(
+                    conn, action="retry", selected_job_ids=[job_id], scheduled_at=None, created_by="u", ttl_seconds=30
+                )
                 conn.execute(
                     "UPDATE publish_bulk_action_sessions SET preview_status = 'INVALIDATED', invalidation_reason_code = 'TEST' WHERE id = ?",
                     (out["preview_session_id"],),
@@ -102,7 +106,9 @@ class TestPublishBulkActionsService(unittest.TestCase):
             job_id = self._seed_job(env)
             conn = dbm.connect(env)
             try:
-                out = svc.create_bulk_preview_session(conn, action="retry", selected_job_ids=[job_id], created_by="u", ttl_seconds=30)
+                out = svc.create_bulk_preview_session(
+                    conn, action="retry", selected_job_ids=[job_id], scheduled_at=None, created_by="u", ttl_seconds=30
+                )
                 with self.assertRaises(svc.PublishBulkActionError) as ctx:
                     svc.execute_bulk_preview_session(
                         conn,
@@ -113,6 +119,31 @@ class TestPublishBulkActionsService(unittest.TestCase):
                     )
                 self.assertEqual(ctx.exception.code, "PBA_SCOPE_MISMATCH")
                 self.assertEqual(ctx.exception.details["invalidation"]["kind"], "scope_mismatch")
+            finally:
+                conn.close()
+
+    def test_reschedule_requires_explicit_future_iso_datetime(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            job_id = self._seed_job(env, publish_state="ready_to_publish")
+            conn = dbm.connect(env)
+            try:
+                with self.assertRaises(svc.PublishBulkActionError) as missing:
+                    svc.create_bulk_preview_session(
+                        conn, action="reschedule", selected_job_ids=[job_id], scheduled_at=None, created_by="u", ttl_seconds=30
+                    )
+                self.assertEqual(missing.exception.code, "PJA_INVALID_DATETIME")
+
+                with self.assertRaises(svc.PublishBulkActionError) as past:
+                    svc.create_bulk_preview_session(
+                        conn,
+                        action="reschedule",
+                        selected_job_ids=[job_id],
+                        scheduled_at="2000-01-01T00:00:00Z",
+                        created_by="u",
+                        ttl_seconds=30,
+                    )
+                self.assertEqual(past.exception.code, "PJA_RESCHEDULE_NOT_FUTURE")
             finally:
                 conn.close()
 

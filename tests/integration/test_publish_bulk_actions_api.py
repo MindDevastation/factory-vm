@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -155,6 +156,43 @@ class TestPublishBulkActionsApi(unittest.TestCase):
             items = hold_execute.json()["items"]
             self.assertEqual(items[0]["result_kind"], "SUCCESS_UPDATED")
             self.assertEqual(items[0]["hold_after"], True)
+
+    def test_reschedule_requires_explicit_future_and_executes_previewed_target(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            job_id = self._seed_job(env, publish_state="ready_to_publish")
+            client, h = self._client(env)
+
+            missing = client.post("/v1/publish/bulk/preview", headers=h, json={"action": "reschedule", "selected_job_ids": [job_id]})
+            self.assertEqual(missing.status_code, 422)
+            self.assertEqual(missing.json()["error"]["code"], "PJA_INVALID_DATETIME")
+
+            target = (datetime.now(timezone.utc) + timedelta(days=3)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            preview = client.post(
+                "/v1/publish/bulk/preview",
+                headers=h,
+                json={"action": "reschedule", "selected_job_ids": [job_id], "scheduled_at": target},
+            )
+            self.assertEqual(preview.status_code, 200, preview.text)
+            body = preview.json()
+            self.assertEqual(body["action_payload"]["scheduled_at"], target)
+            self.assertEqual(body["items"][0]["scheduled_at"], target)
+
+            execute = client.post(
+                "/v1/publish/bulk/execute",
+                headers=h,
+                json={"preview_session_id": body["preview_session_id"], "selection_fingerprint": body["selection_fingerprint"]},
+            )
+            self.assertEqual(execute.status_code, 200, execute.text)
+            self.assertEqual(execute.json()["items"][0]["scheduled_at"], target)
+
+            conn = dbm.connect(env)
+            try:
+                row = conn.execute("SELECT publish_scheduled_at FROM jobs WHERE id = ?", (job_id,)).fetchone()
+                self.assertIsNotNone(row)
+                self.assertAlmostEqual(float(row["publish_scheduled_at"]), datetime.fromisoformat(target.replace("Z", "+00:00")).timestamp(), places=3)
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":
