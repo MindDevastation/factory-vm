@@ -46,6 +46,9 @@
       <option value="reschedule">reschedule</option>
     </select>
   </label>
+  <label id="publish-bulk-scheduled-wrap" style="margin-left:8px;">Reschedule at (ISO)
+    <input id="publish-bulk-scheduled-at" type="text" placeholder="2026-04-01T12:00:00Z" />
+  </label>
   <button id="publish-bulk-preview-btn" type="button">Preview</button>
   <button id="publish-bulk-execute-btn" type="button">Confirm/Execute</button>
   <span id="publish-bulk-status" class="muted" style="margin-left:8px;">No preview yet.</span>
@@ -82,12 +85,18 @@
   const tbody = document.querySelector('#publish-queue-table tbody');
   const selectAll = document.getElementById('publish-select-all');
   const bulkAction = document.getElementById('publish-bulk-action');
+  const bulkScheduledWrap = document.getElementById('publish-bulk-scheduled-wrap');
+  const bulkScheduledAt = document.getElementById('publish-bulk-scheduled-at');
   const bulkPreviewBtn = document.getElementById('publish-bulk-preview-btn');
   const bulkExecuteBtn = document.getElementById('publish-bulk-execute-btn');
   const bulkStatus = document.getElementById('publish-bulk-status');
 
   let lastBulkPreviewSessionId = null;
   let lastBulkSelectionFingerprint = null;
+
+  function syncBulkActionInputs() {
+    bulkScheduledWrap.style.display = bulkAction.value === 'reschedule' ? 'inline-block' : 'none';
+  }
 
   function esc(value) {
     return String(value == null ? '' : value)
@@ -204,10 +213,19 @@
       bulkStatus.textContent = 'Select at least one row.';
       return;
     }
+    const payload = { action: bulkAction.value, selected_job_ids: ids };
+    if (bulkAction.value === 'reschedule') {
+      const scheduledAt = bulkScheduledAt.value.trim();
+      if (!scheduledAt) {
+        bulkStatus.textContent = 'Reschedule requires scheduled_at.';
+        return;
+      }
+      payload.scheduled_at = scheduledAt;
+    }
     const resp = await fetch('/v1/publish/bulk/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: bulkAction.value, selected_job_ids: ids })
+      body: JSON.stringify(payload)
     });
     const data = await resp.json();
     if (!resp.ok) {
@@ -248,6 +266,9 @@
     await loadQueue();
     await loadHealthSummary();
   });
+
+  bulkAction.addEventListener('change', syncBulkActionInputs);
+  syncBulkActionInputs();
 
   loadQueue();
   loadHealthSummary();

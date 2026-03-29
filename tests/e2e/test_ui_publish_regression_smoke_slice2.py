@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -53,6 +54,8 @@ class TestUiPublishRegressionSmokeSlice2(unittest.TestCase):
             self.assertEqual(queue_page.status_code, 200)
             self.assertIn("/v1/publish/bulk/preview", queue_page.text)
             self.assertIn("/v1/publish/bulk/execute", queue_page.text)
+            self.assertIn("id=\"publish-bulk-scheduled-at\"", queue_page.text)
+            self.assertIn("payload.scheduled_at = scheduledAt", queue_page.text)
 
             preview = client.post(
                 "/v1/publish/bulk/preview",
@@ -70,6 +73,28 @@ class TestUiPublishRegressionSmokeSlice2(unittest.TestCase):
             )
             self.assertEqual(execute.status_code, 200, execute.text)
             self.assertEqual(execute.json()["summary"]["succeeded_count"], 1)
+
+            target = (datetime.now(timezone.utc) + timedelta(days=2)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            reschedule_preview = client.post(
+                "/v1/publish/bulk/preview",
+                headers=h,
+                json={"action": "reschedule", "selected_job_ids": [retry_job], "scheduled_at": target},
+            )
+            self.assertEqual(reschedule_preview.status_code, 200, reschedule_preview.text)
+            reschedule_body = reschedule_preview.json()
+            self.assertEqual(reschedule_body["action_payload"]["scheduled_at"], target)
+            self.assertEqual(reschedule_body["items"][0]["scheduled_at"], target)
+
+            reschedule_execute = client.post(
+                "/v1/publish/bulk/execute",
+                headers=h,
+                json={
+                    "preview_session_id": reschedule_body["preview_session_id"],
+                    "selection_fingerprint": reschedule_body["selection_fingerprint"],
+                },
+            )
+            self.assertEqual(reschedule_execute.status_code, 200, reschedule_execute.text)
+            self.assertEqual(reschedule_execute.json()["summary"]["succeeded_count"], 1)
 
             # Non-Epic-3 regression smoke
             home = client.get("/", headers=h)

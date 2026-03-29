@@ -75,6 +75,9 @@ class TestUiPublishQueuePagesSlice2(unittest.TestCase):
             self.assertIn("id=\"publish-detail-explain\"", detail_page.text)
             self.assertIn("id=\"publish-detail-actions\"", detail_page.text)
             self.assertIn("mark-completed", detail_page.text)
+            self.assertIn("global_state_stage_summary", detail_page.text)
+            self.assertIn("effective_decision", detail_page.text)
+            self.assertNotIn("data.job ? data.job.state", detail_page.text)
 
 
 if __name__ == "__main__":

@@ -63,17 +63,18 @@
     const resp = await fetch('/v1/publish/jobs/' + encodeURIComponent(jobId));
     const data = await resp.json();
     const summary = {
-      state: data && data.job ? data.job.state : null,
-      publish_state: data && data.job ? data.job.publish_state : null,
+      state: data && data.global_state_stage_summary ? data.global_state_stage_summary.state : null,
+      stage: data && data.global_state_stage_summary ? data.global_state_stage_summary.stage : null,
+      publish_state: data ? data.publish_state : null,
       reasons: {
-        code: data && data.job ? data.job.publish_reason_code : null,
-        detail: data && data.job ? data.job.publish_reason_detail : null
+        code: data && data.effective_decision ? data.effective_decision.reason_code : null,
+        detail: data && data.effective_decision ? data.effective_decision.decision : null
       },
-      attempts: data && data.job ? data.job.publish_attempt_count : null,
-      schedule: data && data.job ? data.job.publish_scheduled_at : null,
+      attempts: data && data.attempts ? data.attempts.publish_attempt_count : null,
+      schedule: data && data.schedule ? data.schedule.scheduled_at : null,
       last_error: {
-        code: data && data.job ? data.job.publish_last_error_code : null,
-        message: data && data.job ? data.job.publish_last_error_message : null
+        code: data && data.last_error ? data.last_error.code : null,
+        message: data && data.last_error ? data.last_error.message : null
       },
       next_actions: [
         'retry', 'unblock', 'move-to-manual', 'acknowledge', 'mark-completed', 'reschedule', 'cancel', 'reset-failure'
