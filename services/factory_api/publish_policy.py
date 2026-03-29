@@ -212,6 +212,50 @@ def _load_global_controls(conn: Any) -> dict[str, Any]:
     }
 
 
+def resolve_effective_publish_decision(conn: Any, *, job_row: Any) -> dict[str, Any]:
+    derived_release_id = int(job_row["release_id"])
+    derived_channel_slug = str(job_row["channel_slug"])
+
+    policy = _resolve_effective_policy(conn, release_id=derived_release_id, channel_slug=derived_channel_slug)
+    audit = resolve_effective_audit_status(conn, channel_slug=derived_channel_slug)
+    controls = _load_global_controls(conn)
+
+    job_hold_active = bool(job_row.get("publish_hold_active") or 0)
+    job_hold_reason_code = validate_publish_reason_code(job_row.get("publish_hold_reason_code"))
+    if job_hold_active and job_hold_reason_code is None:
+        raise ValueError("publish_hold_active requires publish_hold_reason_code")
+
+    audit_effectively_blocking = audit["effective_status"] not in {"approved", "unknown"}
+
+    effective_reason_code = policy["effective_reason_code"]
+    if job_hold_active:
+        effective_reason_code = job_hold_reason_code
+    elif controls["auto_publish_paused"]:
+        effective_reason_code = "global_pause_active"
+    elif audit_effectively_blocking:
+        effective_reason_code = "audit_not_approved"
+
+    decision_mode = str(policy["effective_publish_mode"])
+    if job_hold_active or controls["auto_publish_paused"] or audit_effectively_blocking:
+        decision_mode = "hold"
+
+    return {
+        "job_id": int(job_row["id"]),
+        "release_id": derived_release_id,
+        "channel_slug": derived_channel_slug,
+        "resolved_scope": policy["resolved_scope"],
+        "effective_publish_mode": str(policy["effective_publish_mode"]),
+        "effective_target_visibility": policy["effective_target_visibility"],
+        "effective_reason_code": effective_reason_code,
+        "effective_audit_status": audit["effective_status"],
+        "global_auto_publish_paused": controls["auto_publish_paused"],
+        "global_pause_reason": controls["reason"],
+        "job_publish_hold_active": job_hold_active,
+        "job_publish_hold_reason_code": job_hold_reason_code,
+        "decision": decision_mode,
+    }
+
+
 def create_publish_policy_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/publish", tags=["publish-policy"])
 
@@ -369,40 +413,10 @@ def create_publish_policy_router(env: Env) -> APIRouter:
             if channel_slug is not None and str(channel_slug) != derived_channel_slug:
                 return JSONResponse(status_code=422, content={"error": {"code": "PPP_CHANNEL_MISMATCH", "message": "channel_slug does not match job"}})
 
-            policy = _resolve_effective_policy(conn, release_id=derived_release_id, channel_slug=derived_channel_slug)
-            audit = resolve_effective_audit_status(conn, channel_slug=derived_channel_slug)
-            controls = _load_global_controls(conn)
-
-            job_hold_active = bool(job.get("publish_hold_active") or 0)
-            job_hold_reason_code = validate_publish_reason_code(job.get("publish_hold_reason_code"))
-            if job_hold_active and job_hold_reason_code is None:
+            try:
+                return resolve_effective_publish_decision(conn, job_row=job)
+            except ValueError:
                 return JSONResponse(status_code=422, content={"error": {"code": "PPP_INVALID_JOB_HOLD", "message": "publish_hold_active requires publish_hold_reason_code"}})
-
-            effective_reason_code = policy["effective_reason_code"]
-            if job_hold_active:
-                effective_reason_code = job_hold_reason_code
-            elif controls["auto_publish_paused"]:
-                effective_reason_code = "global_pause_active"
-
-            decision_mode = str(policy["effective_publish_mode"])
-            if job_hold_active or controls["auto_publish_paused"]:
-                decision_mode = "hold"
-
-            return {
-                "job_id": int(job["id"]),
-                "release_id": derived_release_id,
-                "channel_slug": derived_channel_slug,
-                "resolved_scope": policy["resolved_scope"],
-                "effective_publish_mode": str(policy["effective_publish_mode"]),
-                "effective_target_visibility": policy["effective_target_visibility"],
-                "effective_reason_code": effective_reason_code,
-                "effective_audit_status": audit["effective_status"],
-                "global_auto_publish_paused": controls["auto_publish_paused"],
-                "global_pause_reason": controls["reason"],
-                "job_publish_hold_active": job_hold_active,
-                "job_publish_hold_reason_code": job_hold_reason_code,
-                "decision": decision_mode,
-            }
         finally:
             conn.close()
 

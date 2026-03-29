@@ -36,6 +36,7 @@ from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
 from services.factory_api.publish_audit_status import create_publish_audit_status_router
 from services.factory_api.publish_policy import create_publish_policy_router
+from services.factory_api.publish_queue_read import create_publish_queue_read_router
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
@@ -129,6 +130,7 @@ app.include_router(create_db_viewer_router(env))
 app.include_router(create_planner_router(env))
 app.include_router(create_publish_audit_status_router(env))
 app.include_router(create_publish_policy_router(env))
+app.include_router(create_publish_queue_read_router(env))
 
 
 def _create_drive_client(_env: Env) -> DriveClient:
@@ -4795,6 +4797,36 @@ def ui_db_viewer_page(request: Request, _: bool = Depends(require_basic_auth(env
 @app.get("/ui/planner", response_class=HTMLResponse)
 def ui_planner_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("planner_bulk_releases.html", {"request": request})
+
+
+@app.get("/ui/publish/queue", response_class=HTMLResponse)
+def ui_publish_queue_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "queue"})
+
+
+@app.get("/ui/publish/blocked", response_class=HTMLResponse)
+def ui_publish_blocked_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "blocked"})
+
+
+@app.get("/ui/publish/failed", response_class=HTMLResponse)
+def ui_publish_failed_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "failed"})
+
+
+@app.get("/ui/publish/manual", response_class=HTMLResponse)
+def ui_publish_manual_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "manual"})
+
+
+@app.get("/ui/publish/health", response_class=HTMLResponse)
+def ui_publish_health_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "health"})
+
+
+@app.get("/ui/publish/jobs/{job_id}", response_class=HTMLResponse)
+def ui_publish_job_detail_page(job_id: int, request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_job_detail.html", {"request": request, "job_id": job_id})
 
 
 @app.get("/ui/metadata/title-templates", response_class=HTMLResponse)
