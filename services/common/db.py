@@ -668,6 +668,110 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(channel_slug) REFERENCES channels(slug)
         );
 
+        CREATE TABLE IF NOT EXISTS publish_audit_status_project_defaults (
+            singleton_key INTEGER PRIMARY KEY CHECK(singleton_key = 1),
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            CHECK(status IN ('unknown', 'pending', 'approved', 'rejected', 'manual-only', 'suspended'))
+        );
+
+        CREATE TABLE IF NOT EXISTS publish_audit_status_channel_overrides (
+            channel_slug TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug),
+            CHECK(status IN ('unknown', 'pending', 'approved', 'rejected', 'manual-only', 'suspended'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_audit_status_channel_overrides_status
+            ON publish_audit_status_channel_overrides(status);
+
+        CREATE TABLE IF NOT EXISTS publish_audit_status_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope_type TEXT NOT NULL,
+            channel_slug TEXT NULL,
+            previous_status TEXT NULL,
+            status TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            actor_identity TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(scope_type IN ('project_default', 'channel_override')),
+            CHECK(status IN ('unknown', 'pending', 'approved', 'rejected', 'manual-only', 'suspended'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_audit_status_history_created_at
+            ON publish_audit_status_history(created_at, id);
+
+        CREATE INDEX IF NOT EXISTS idx_publish_audit_status_history_scope
+            ON publish_audit_status_history(scope_type, channel_slug, created_at, id);
+
+        CREATE TABLE IF NOT EXISTS publish_policy_project_defaults (
+            singleton_key INTEGER PRIMARY KEY CHECK(singleton_key = 1),
+            publish_mode TEXT NULL,
+            target_visibility TEXT NULL,
+            reason_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            CHECK(publish_mode IS NULL OR publish_mode IN ('auto', 'manual_only', 'hold')),
+            CHECK(target_visibility IS NULL OR target_visibility IN ('public', 'unlisted'))
+        );
+
+        CREATE TABLE IF NOT EXISTS publish_policy_channel_overrides (
+            channel_slug TEXT PRIMARY KEY,
+            publish_mode TEXT NULL,
+            target_visibility TEXT NULL,
+            reason_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug),
+            CHECK(publish_mode IS NULL OR publish_mode IN ('auto', 'manual_only', 'hold')),
+            CHECK(target_visibility IS NULL OR target_visibility IN ('public', 'unlisted'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_policy_channel_overrides_mode
+            ON publish_policy_channel_overrides(publish_mode);
+
+        CREATE TABLE IF NOT EXISTS publish_policy_item_overrides (
+            release_id INTEGER PRIMARY KEY,
+            publish_mode TEXT NULL,
+            target_visibility TEXT NULL,
+            reason_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            CHECK(publish_mode IS NULL OR publish_mode IN ('auto', 'manual_only', 'hold')),
+            CHECK(target_visibility IS NULL OR target_visibility IN ('public', 'unlisted'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_policy_item_overrides_mode
+            ON publish_policy_item_overrides(publish_mode);
+
+        CREATE TABLE IF NOT EXISTS publish_global_controls (
+            singleton_key INTEGER PRIMARY KEY CHECK(singleton_key = 1),
+            auto_publish_paused INTEGER NOT NULL DEFAULT 0 CHECK(auto_publish_paused IN (0, 1)),
+            reason TEXT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS canon_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             value TEXT NOT NULL UNIQUE

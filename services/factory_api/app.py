@@ -34,6 +34,8 @@ from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
+from services.factory_api.publish_audit_status import create_publish_audit_status_router
+from services.factory_api.publish_policy import create_publish_policy_router
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
@@ -125,6 +127,8 @@ templates.TemplateResponse = _template_response_compat
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.include_router(create_db_viewer_router(env))
 app.include_router(create_planner_router(env))
+app.include_router(create_publish_audit_status_router(env))
+app.include_router(create_publish_policy_router(env))
 
 
 def _create_drive_client(_env: Env) -> DriveClient:
