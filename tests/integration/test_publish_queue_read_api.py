@@ -346,6 +346,33 @@ class TestPublishQueueReadApi(unittest.TestCase):
             self.assertEqual(manual_mode["decision"], "manual_only")
             self.assertEqual(manual_mode["delivery_mode"], "manual_only")
 
+    def test_job_detail_returns_controlled_error_for_invalid_job_hold(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            job_id = self._seed_publish_job(
+                env,
+                channel_slug="darkwood-reverie",
+                publish_state="ready_to_publish",
+                scheduled_at=1_800_000_400.0,
+            )
+            conn = dbm.connect(env)
+            try:
+                conn.execute("UPDATE jobs SET publish_hold_active = 1, publish_hold_reason_code = NULL WHERE id = ?", (job_id,))
+                conn.commit()
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.get(f"/v1/publish/jobs/{job_id}", headers=h)
+            self.assertEqual(resp.status_code, 422)
+            body = resp.json()
+            self.assertEqual(body["error"]["code"], "PPP_INVALID_JOB_HOLD")
+            self.assertEqual(body["error"]["message"], "publish_hold_active requires publish_hold_reason_code")
+
 
 if __name__ == "__main__":
     unittest.main()

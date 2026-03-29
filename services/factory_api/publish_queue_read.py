@@ -193,7 +193,13 @@ def create_publish_queue_read_router(env: Env) -> APIRouter:
             ).fetchone()
             if not row:
                 return _job_not_found(job_id)
-            resolved_decision = resolve_effective_publish_decision(conn, job_row=row)
+            try:
+                resolved_decision = resolve_effective_publish_decision(conn, job_row=row)
+            except ValueError:
+                return JSONResponse(
+                    status_code=422,
+                    content={"error": {"code": "PPP_INVALID_JOB_HOLD", "message": "publish_hold_active requires publish_hold_reason_code"}},
+                )
             events = read_publish_lifecycle_events(storage_root=env.storage_root, limit=200)
             matched = [event for event in events if int(event.get("job_id") or -1) == job_id]
 
