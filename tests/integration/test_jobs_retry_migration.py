@@ -79,11 +79,18 @@ class TestJobsRetryMigration(unittest.TestCase):
         self.assertIn("root_job_id", col_names)
         self.assertIn("attempt_no", col_names)
         self.assertIn("force_refetch_inputs", col_names)
+        self.assertIn("publish_state", col_names)
+        self.assertIn("publish_retry_at", col_names)
+        self.assertIn("publish_target_visibility", col_names)
+        self.assertIn("publish_delivery_mode_effective", col_names)
+        self.assertIn("publish_resolved_scope", col_names)
 
         indexes = self.conn.execute("PRAGMA index_list(jobs)").fetchall()
         idx_names = {str(i["name"]) for i in indexes}
         self.assertIn("idx_jobs_retry_of_job_id", idx_names)
         self.assertIn("idx_jobs_root_job_id_attempt_no", idx_names)
+        self.assertIn("idx_jobs_publish_runtime_state_id", idx_names)
+        self.assertIn("idx_jobs_publish_runtime_retry_due", idx_names)
 
     def test_migration_backfills_existing_job_lineage_defaults(self) -> None:
         self._create_legacy_jobs_schema()
