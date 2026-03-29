@@ -451,6 +451,32 @@ class TestDbMoreCoverage(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_migrate_creates_publish_audit_status_tables_and_is_idempotent(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                dbm.migrate(conn)
+                tables = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("publish_audit_status_project_defaults", tables)
+                self.assertIn("publish_audit_status_channel_overrides", tables)
+                self.assertIn("publish_audit_status_history", tables)
+
+                history_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='publish_audit_status_history'"
+                    ).fetchall()
+                }
+                self.assertTrue(
+                    {"idx_publish_audit_status_history_created_at", "idx_publish_audit_status_history_scope"}.issubset(history_indexes)
+                )
+            finally:
+                conn.close()
+
     def test_planner_release_links_constraints(self):
         with temp_env() as (_td, env):
             conn = dbm.connect(env)

@@ -668,6 +668,52 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(channel_slug) REFERENCES channels(slug)
         );
 
+        CREATE TABLE IF NOT EXISTS publish_audit_status_project_defaults (
+            singleton_key INTEGER PRIMARY KEY CHECK(singleton_key = 1),
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            CHECK(status IN ('unknown', 'pending', 'approved', 'rejected', 'manual-only', 'suspended'))
+        );
+
+        CREATE TABLE IF NOT EXISTS publish_audit_status_channel_overrides (
+            channel_slug TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug),
+            CHECK(status IN ('unknown', 'pending', 'approved', 'rejected', 'manual-only', 'suspended'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_audit_status_channel_overrides_status
+            ON publish_audit_status_channel_overrides(status);
+
+        CREATE TABLE IF NOT EXISTS publish_audit_status_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope_type TEXT NOT NULL,
+            channel_slug TEXT NULL,
+            previous_status TEXT NULL,
+            status TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            actor_identity TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(scope_type IN ('project_default', 'channel_override')),
+            CHECK(status IN ('unknown', 'pending', 'approved', 'rejected', 'manual-only', 'suspended'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_audit_status_history_created_at
+            ON publish_audit_status_history(created_at, id);
+
+        CREATE INDEX IF NOT EXISTS idx_publish_audit_status_history_scope
+            ON publish_audit_status_history(scope_type, channel_slug, created_at, id);
+
         CREATE TABLE IF NOT EXISTS canon_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             value TEXT NOT NULL UNIQUE
