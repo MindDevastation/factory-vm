@@ -17,6 +17,7 @@ from services.publish_runtime.events import (
     publish_lifecycle_events_path,
     read_publish_lifecycle_events,
 )
+from services.publish_runtime.schedule import ScheduleEvaluation, evaluate_publish_schedule
 from services.publish_runtime.orchestrator import (
     ENRICHMENT_IMMUTABLE_FIELDS,
     ENRICHMENT_MUTABLE_FIELDS,
@@ -53,4 +54,6 @@ __all__ = [
     "publish_lifecycle_events_path",
     "append_publish_lifecycle_event",
     "read_publish_lifecycle_events",
+    "ScheduleEvaluation",
+    "evaluate_publish_schedule",
 ]
