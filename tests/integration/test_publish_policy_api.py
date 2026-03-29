@@ -80,6 +80,8 @@ class TestPublishPolicyApi(unittest.TestCase):
             self.assertEqual(body["effective_publish_mode"], "auto")
             self.assertEqual(body["effective_target_visibility"], "public")
             self.assertEqual(body["effective_reason_code"], "item_override_block")
+            self.assertEqual(body["decision"], "auto")
+            self.assertEqual(body["effective_audit_status"], "unknown")
             self.assertIn("effective_audit_status", body)
             self.assertIn("job_publish_hold_active", body)
 

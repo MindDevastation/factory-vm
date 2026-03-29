@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Publish Job Detail</h1>
+<p><a href="/ui/publish/queue">Back to queue</a></p>
+<p class="muted" id="publish-job-id">Job #{{ job_id }}</p>
+
+<div class="grid">
+  <div>
+    <h2>Summary</h2>
+    <pre id="publish-detail-summary">Loading…</pre>
+  </div>
+  <div>
+    <h2>Audit (latest)</h2>
+    <pre id="publish-detail-audit">Loading…</pre>
+  </div>
+</div>
+
+<script>
+(async function () {
+  const jobId = {{ job_id }};
+  const summaryEl = document.getElementById('publish-detail-summary');
+  const auditEl = document.getElementById('publish-detail-audit');
+
+  async function loadDetail() {
+    const resp = await fetch('/v1/publish/jobs/' + encodeURIComponent(jobId));
+    const data = await resp.json();
+    summaryEl.textContent = JSON.stringify(data, null, 2);
+  }
+
+  async function loadAudit() {
+    const resp = await fetch('/v1/publish/jobs/' + encodeURIComponent(jobId) + '/audit');
+    const data = await resp.json();
+    auditEl.textContent = JSON.stringify(data, null, 2);
+  }
+
+  await Promise.all([loadDetail(), loadAudit()]);
+})();
+</script>
+{% endblock %}
