@@ -42,6 +42,12 @@ class TestPublishRuntimeDomain(unittest.TestCase):
         self.assertEqual(PUBLISH_DELIVERY_MODE_EFFECTIVE_VALUES, ("automatic", "manual"))
         self.assertEqual(PUBLISH_RESOLVED_SCOPE_VALUES, ("project", "channel", "item"))
 
+
+    def test_states_include_explicit_failure_and_drift_literals(self) -> None:
+        self.assertIn("publish_failed_terminal", PUBLISH_STATE_VALUES)
+        self.assertIn("publish_state_drift_detected", PUBLISH_STATE_VALUES)
+        self.assertNotEqual("publish_failed_terminal", "publish_state_drift_detected")
+
     def test_normalize_helpers_lowercase_and_strip(self) -> None:
         self.assertEqual(normalize_publish_state("  RETRY_PENDING  "), "retry_pending")
         self.assertEqual(normalize_publish_target_visibility("  UNLISTED "), "unlisted")
