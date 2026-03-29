@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Publish Queue</h1>
+<p>
+  <a href="/ui/publish/queue">Queue</a>
+  <span class="muted" style="margin:0 8px;">|</span>
+  <a href="/ui/publish/blocked">Blocked</a>
+  <span class="muted" style="margin:0 8px;">|</span>
+  <a href="/ui/publish/failed">Failed</a>
+  <span class="muted" style="margin:0 8px;">|</span>
+  <a href="/ui/publish/manual">Manual</a>
+  <span class="muted" style="margin:0 8px;">|</span>
+  <a href="/ui/publish/health">Health</a>
+</p>
+<p class="muted" id="publish-view-label">View: {{ view }}</p>
+
+<p>
+  <label>Channel slug <input id="filter-channel-slug" type="text" /></label>
+  <label style="margin-left:8px;">Publish state <input id="filter-publish-state" type="text" /></label>
+  <button id="publish-refresh-btn" type="button">Refresh</button>
+</p>
+
+<p class="muted" id="publish-summary">Loading…</p>
+
+<table id="publish-queue-table">
+  <thead>
+    <tr>
+      <th>Job</th>
+      <th>Channel</th>
+      <th>Release</th>
+      <th>State</th>
+      <th>Publish State</th>
+      <th>Scheduled</th>
+      <th>Attempts</th>
+      <th>Last Error</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td colspan="8" class="muted">Loading…</td></tr>
+  </tbody>
+</table>
+
+<script>
+(function () {
+  const activeView = "{{ view }}";
+  const channelInput = document.getElementById('filter-channel-slug');
+  const publishStateInput = document.getElementById('filter-publish-state');
+  const refreshBtn = document.getElementById('publish-refresh-btn');
+  const summary = document.getElementById('publish-summary');
+  const tbody = document.querySelector('#publish-queue-table tbody');
+
+  function esc(value) {
+    return String(value == null ? '' : value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  async function loadQueue() {
+    const params = new URLSearchParams();
+    params.set('view', activeView);
+    if (channelInput.value.trim()) params.set('channel_slug', channelInput.value.trim());
+    if (publishStateInput.value.trim()) params.set('publish_state', publishStateInput.value.trim());
+    const resp = await fetch('/v1/publish/queue?' + params.toString());
+    const data = await resp.json();
+    if (!resp.ok) {
+      summary.textContent = (data.error && data.error.message) || 'Failed to load queue';
+      tbody.innerHTML = '<tr><td colspan="8" class="muted">Failed to load.</td></tr>';
+      return;
+    }
+
+    const totals = data.summary && data.summary.views ? data.summary.views : {};
+    summary.textContent = 'Total: ' + (data.summary && data.summary.total || 0)
+      + ', Queue: ' + (totals.queue || 0)
+      + ', Blocked: ' + (totals.blocked || 0)
+      + ', Failed: ' + (totals.failed || 0)
+      + ', Manual: ' + (totals.manual || 0);
+
+    const rows = Array.isArray(data.items) ? data.items : [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="muted">No rows.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map((item) => {
+      return '<tr>'
+        + '<td><a href="/ui/publish/jobs/' + encodeURIComponent(item.job_id) + '">' + esc(item.job_id) + '</a></td>'
+        + '<td>' + esc(item.channel_name) + '<div class="muted">' + esc(item.channel_slug) + '</div></td>'
+        + '<td>' + esc(item.release_title) + '</td>'
+        + '<td>' + esc(item.state) + '<div class="muted">' + esc(item.stage) + '</div></td>'
+        + '<td>' + esc(item.publish_state) + '</td>'
+        + '<td>' + esc(item.publish_scheduled_at) + '</td>'
+        + '<td>' + esc(item.publish_attempt_count) + '</td>'
+        + '<td>' + esc(item.publish_last_error_message || item.publish_last_error_code) + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  refreshBtn.addEventListener('click', loadQueue);
+  loadQueue();
+})();
+</script>
+{% endblock %}
