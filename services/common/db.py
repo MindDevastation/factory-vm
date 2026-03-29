@@ -772,6 +772,23 @@ def migrate(conn: sqlite3.Connection) -> None:
             updated_by TEXT NOT NULL
         );
 
+
+        CREATE TABLE IF NOT EXISTS publish_action_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_type TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            job_id INTEGER NOT NULL,
+            actor_identity TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(job_id) REFERENCES jobs(id),
+            UNIQUE(action_type, request_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_action_log_job_id
+            ON publish_action_log(job_id, created_at, id);
+
         CREATE TABLE IF NOT EXISTS canon_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             value TEXT NOT NULL UNIQUE
