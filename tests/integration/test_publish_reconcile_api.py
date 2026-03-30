@@ -106,6 +106,42 @@ class TestPublishReconcileApi(unittest.TestCase):
                 after_conn.close()
             self.assertEqual(before_states, after_states)
 
+
+    def test_pre_publication_states_are_excluded_from_candidates_and_do_not_trigger_source_unavailable(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            excluded_job_id = self._seed_publish_job(env, expected_visibility="public", observed_visibility=None)
+
+            conn = dbm.connect(env)
+            try:
+                ts = dbm.now_ts()
+                conn.execute(
+                    "UPDATE jobs SET publish_state = 'waiting_for_schedule', publish_target_visibility = 'public', publish_last_transition_at = ?, updated_at = ? WHERE id = ?",
+                    (ts, ts, excluded_job_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            resp = client.post("/v1/publish/reconcile/run", headers=headers)
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["status"], "completed")
+            self.assertEqual(body["summary"]["total_jobs"], 0)
+            self.assertEqual(body["summary"]["compared_jobs"], 0)
+            self.assertEqual(body["summary"]["drift_count"], 0)
+            self.assertEqual(body["summary"]["no_drift_count"], 0)
+
+            run_id = int(body["run_id"])
+            detail = client.get(f"/v1/publish/reconcile/runs/{run_id}", headers=headers)
+            self.assertEqual(detail.status_code, 200)
+            self.assertEqual(detail.json()["items"], [])
+
     def test_run_source_unavailable_returns_503_and_persists_run_without_items(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)

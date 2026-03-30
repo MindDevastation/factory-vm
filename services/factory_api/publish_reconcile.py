@@ -96,7 +96,7 @@ def _load_candidates(conn: Any) -> list[Any]:
         JOIN releases r ON r.id = j.release_id
         JOIN channels c ON c.id = r.channel_id
         LEFT JOIN youtube_uploads y ON y.job_id = j.id
-        WHERE j.publish_state IS NOT NULL
+        WHERE j.publish_state IN ('published_public', 'published_unlisted', 'publish_state_drift_detected')
           AND j.publish_target_visibility IN ('public', 'unlisted')
         ORDER BY j.id ASC
         """
