@@ -138,7 +138,6 @@ async def on_reply(message: Message):
                 await message.answer("Причина пустая. Нажми Reject ещё раз.")
                 return
             reject_job(conn, job_id=job_id, comment=reason)
-            dbm.update_job_state(conn, job_id, state="REJECTED", stage="APPROVAL", error_reason=reason)
             await message.answer(f"Job {job_id} отклонён. Причина записана.")
     finally:
         conn.close()

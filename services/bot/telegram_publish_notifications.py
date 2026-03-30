@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,21 @@ def _save_state(env: Env, state: dict[str, Any]) -> None:
     p.write_text(json.dumps(state, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 
 
+
+
+def _parse_event_ts(value: Any) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+
 def _event_key(family: str, row: Any, occurred_at: float) -> str:
     return f"{family}:{int(row['id'])}:{occurred_at:.3f}"
 
@@ -54,7 +70,7 @@ def _collect_candidates(conn: Any, *, now_ts: float) -> list[tuple[str, Any, flo
     out: list[tuple[str, Any, float]] = []
     for row in rows:
         state = str(row["publish_state"])
-        transition_ts = float(row["publish_last_transition_at"] or 0.0)
+        transition_ts = _parse_event_ts(row["publish_last_transition_at"])
         reason_code = str(row["publish_reason_code"] or "")
         if state == "policy_blocked":
             out.append(("policy block", row, transition_ts))
@@ -66,11 +82,11 @@ def _collect_candidates(conn: Any, *, now_ts: float) -> list[tuple[str, Any, flo
             out.append(("retries exhausted", row, transition_ts))
         elif state == "manual_handoff_pending":
             out.append(("manual handoff required", row, transition_ts))
-        elif state == "waiting_for_schedule" and float(row["publish_scheduled_at"] or 0) < now_ts:
-            occurred = float(row["publish_scheduled_at"] or transition_ts)
+        elif state == "waiting_for_schedule" and _parse_event_ts(row["publish_scheduled_at"]) < now_ts:
+            occurred = _parse_event_ts(row["publish_scheduled_at"]) or transition_ts
             out.append(("missed schedule", row, occurred))
         elif state == "publish_state_drift_detected" or row["publish_drift_detected_at"] is not None:
-            occurred = float(row["publish_drift_detected_at"] or transition_ts)
+            occurred = _parse_event_ts(row["publish_drift_detected_at"]) or transition_ts
             out.append(("drift detected", row, occurred))
 
     control = conn.execute(
@@ -79,7 +95,7 @@ def _collect_candidates(conn: Any, *, now_ts: float) -> list[tuple[str, Any, flo
     if control is not None and control["updated_at"] is not None:
         family = "critical global pause" if int(control["auto_publish_paused"] or 0) == 1 else "critical global unblock"
         pseudo = {"id": 0, "publish_state": "policy_blocked", "publish_reason_code": str(control["reason"] or "")}
-        out.append((family, pseudo, float(control["updated_at"])))
+        out.append((family, pseudo, _parse_event_ts(control["updated_at"])))
 
     return out
 

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import importlib
 import unittest
+
+from fastapi.testclient import TestClient
 
 from services.bot.telegram_publish_notifications import send_critical_publish_notifications
 from services.common import db as dbm
-from tests._helpers import seed_minimal_db, temp_env
+from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
 class _FakeBot:
@@ -55,15 +58,11 @@ class TestTelegramPublishNotificationsSmoke(unittest.IsolatedAsyncioTestCase):
             self._seed_state(env, "manual_handoff_pending", reason="invalid_configuration")
             self._seed_state(env, "waiting_for_schedule", reason="missed_schedule_operator_review", scheduled_offset=-60)
             self._seed_state(env, "publish_state_drift_detected")
-            conn = dbm.connect(env)
-            try:
-                conn.execute(
-                    "INSERT OR REPLACE INTO publish_global_controls(singleton_key, auto_publish_paused, reason, updated_at, updated_by) VALUES(1,1,'pause',?,?)",
-                    (dbm.now_ts(), "test"),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+            mod = importlib.import_module("services.factory_api.app")
+            client = TestClient(importlib.reload(mod).app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            pause = client.put("/v1/publish/controls", headers=h, json={"auto_publish_paused": True, "reason": "pause"})
+            self.assertEqual(pause.status_code, 200)
 
             bot = _FakeBot()
             sent = await send_critical_publish_notifications(bot=bot, env=env)
@@ -77,6 +76,12 @@ class TestTelegramPublishNotificationsSmoke(unittest.IsolatedAsyncioTestCase):
             self.assertIn("missed schedule", blob)
             self.assertIn("drift detected", blob)
             self.assertIn("critical global pause", blob)
+
+            unpause = client.put("/v1/publish/controls", headers=h, json={"auto_publish_paused": False, "reason": "resume"})
+            self.assertEqual(unpause.status_code, 200)
+            sent2 = await send_critical_publish_notifications(bot=bot, env=env)
+            self.assertGreaterEqual(sent2, 1)
+            self.assertIn("critical global unblock", "\n".join(bot.messages))
 
 
 if __name__ == "__main__":
