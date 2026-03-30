@@ -36,6 +36,11 @@ class TestRuntimeVisualResolverIntegration(unittest.TestCase):
                 assert job is not None
                 release_id = int(job["release_id"])
                 conn.execute("UPDATE releases SET current_open_job_id = ? WHERE id = ?", (job_id, release_id))
+                release_before = conn.execute(
+                    "SELECT title, description, tags_json FROM releases WHERE id = ?",
+                    (release_id,),
+                ).fetchone()
+                assert release_before is not None
 
                 bg_asset_id = dbm.create_asset(
                     conn,
@@ -89,6 +94,15 @@ class TestRuntimeVisualResolverIntegration(unittest.TestCase):
                 self.assertEqual(str(draft["background_ext"]), "jpeg")
                 self.assertEqual(str(draft["cover_name"]), "new-cover.webp")
                 self.assertEqual(str(draft["cover_ext"]), "webp")
+
+                release_after = conn.execute(
+                    "SELECT title, description, tags_json FROM releases WHERE id = ?",
+                    (release_id,),
+                ).fetchone()
+                assert release_after is not None
+                self.assertEqual(str(release_after["title"]), str(release_before["title"]))
+                self.assertEqual(str(release_after["description"]), str(release_before["description"]))
+                self.assertEqual(str(release_after["tags_json"]), str(release_before["tags_json"]))
             finally:
                 conn.close()
 

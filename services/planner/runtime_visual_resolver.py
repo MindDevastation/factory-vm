@@ -129,8 +129,8 @@ def _sync_ui_job_draft_visual_names(
     background_asset_id: int,
     cover_asset_id: int,
 ) -> None:
-    draft = dbm.get_ui_job_draft(conn, job_id)
-    if not draft:
+    draft_exists = conn.execute("SELECT 1 FROM ui_job_drafts WHERE job_id = ?", (job_id,)).fetchone()
+    if not draft_exists:
         return
     background_asset = conn.execute("SELECT name FROM assets WHERE id = ?", (background_asset_id,)).fetchone()
     cover_asset = conn.execute("SELECT name FROM assets WHERE id = ?", (cover_asset_id,)).fetchone()
@@ -138,17 +138,24 @@ def _sync_ui_job_draft_visual_names(
         return
     background_name = str(background_asset["name"] or "")
     cover_name = str(cover_asset["name"] or "")
-    dbm.update_ui_job_draft(
-        conn,
-        job_id=job_id,
-        title=str(draft["title"]),
-        description=str(draft["description"]),
-        tags_csv=str(draft["tags_csv"]),
-        cover_name=cover_name,
-        cover_ext=_asset_ext(cover_name),
-        background_name=background_name,
-        background_ext=_asset_ext(background_name),
-        audio_ids_text=str(draft["audio_ids_text"]),
+    conn.execute(
+        """
+        UPDATE ui_job_drafts
+        SET cover_name = ?,
+            cover_ext = ?,
+            background_name = ?,
+            background_ext = ?,
+            updated_at = ?
+        WHERE job_id = ?
+        """,
+        (
+            cover_name,
+            _asset_ext(cover_name),
+            background_name,
+            _asset_ext(background_name),
+            dbm.now_ts(),
+            job_id,
+        ),
     )
 
 
