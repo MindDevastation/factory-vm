@@ -409,6 +409,49 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(channel_id) REFERENCES channels(id)
         );
 
+        CREATE TABLE IF NOT EXISTS release_visual_configs (
+            release_id INTEGER PRIMARY KEY,
+            intent_config_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS release_visual_preview_snapshots (
+            id TEXT PRIMARY KEY,
+            release_id INTEGER NOT NULL,
+            intent_snapshot_json TEXT NOT NULL,
+            preview_package_json TEXT NOT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_preview_snapshots_release_created
+            ON release_visual_preview_snapshots(release_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS release_visual_approved_previews (
+            release_id INTEGER PRIMARY KEY,
+            preview_id TEXT NOT NULL UNIQUE,
+            approved_by TEXT NULL,
+            approved_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(preview_id) REFERENCES release_visual_preview_snapshots(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS release_visual_applied_packages (
+            release_id INTEGER PRIMARY KEY,
+            background_asset_id INTEGER NOT NULL,
+            cover_asset_id INTEGER NOT NULL,
+            source_preview_id TEXT NULL,
+            applied_by TEXT NULL,
+            applied_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(background_asset_id) REFERENCES assets(id),
+            FOREIGN KEY(cover_asset_id) REFERENCES assets(id),
+            FOREIGN KEY(source_preview_id) REFERENCES release_visual_preview_snapshots(id)
+        );
+
         CREATE TABLE IF NOT EXISTS playlist_builder_channel_settings (
             channel_slug TEXT PRIMARY KEY,
             default_generation_mode TEXT NOT NULL,
