@@ -6,7 +6,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from services.common import db as dbm
-from services.factory_api.publish_bulk_actions import create_bulk_preview_session, execute_bulk_preview_session
+from services.bot.handlers import run_telegram_bulk_action
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
@@ -59,27 +59,14 @@ class TestTelegramPublishBulkParity(unittest.TestCase):
             )
             self.assertEqual(api_execute.status_code, 200)
 
-            conn = dbm.connect(env)
-            try:
-                tg_preview = create_bulk_preview_session(
-                    conn,
-                    action="retry",
-                    selected_job_ids=[tg_job],
-                    scheduled_at=None,
-                    created_by="telegram:1",
-                    ttl_seconds=1800,
-                )
-                tg_execute = execute_bulk_preview_session(
-                    conn,
-                    preview_session_id=tg_preview["preview_session_id"],
-                    selected_job_ids=None,
-                    selection_fingerprint=tg_preview["selection_fingerprint"],
-                    executed_by="telegram:1",
-                )
-            finally:
-                conn.close()
+            tg_result = run_telegram_bulk_action(
+                env=env,
+                action="retry",
+                selected_job_ids=[tg_job],
+                actor="telegram:1",
+            )
 
-            self.assertEqual(api_execute.json()["summary"]["succeeded_count"], tg_execute["summary"]["succeeded_count"])
+            self.assertEqual(api_execute.json()["summary"]["succeeded_count"], tg_result["execute"]["summary"]["succeeded_count"])
 
 
 if __name__ == "__main__":

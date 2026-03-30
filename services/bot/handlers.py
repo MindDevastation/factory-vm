@@ -18,6 +18,7 @@ from services.common.paths import preview_path, qa_path, logs_path, outbox_dir
 from services.common.logging_setup import get_logger
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
 from services.factory_api.publish_job_actions import execute_publish_job_action
+from services.factory_api.publish_bulk_actions import create_bulk_preview_session, execute_bulk_preview_session, PublishBulkActionError
 from services.bot.telegram_publish_notifications import send_critical_publish_notifications
 
 
@@ -37,6 +38,37 @@ def _kb(job_id: int) -> InlineKeyboardBuilder:
     kb.adjust(2, 2, 2)
     return kb
 
+
+
+
+def run_telegram_bulk_action(
+    *,
+    env: Env,
+    action: str,
+    selected_job_ids: list[int],
+    actor: str,
+    scheduled_at: str | None = None,
+) -> dict[str, Any]:
+    conn = dbm.connect(env)
+    try:
+        preview = create_bulk_preview_session(
+            conn,
+            action=action,
+            selected_job_ids=selected_job_ids,
+            scheduled_at=scheduled_at,
+            created_by=actor,
+            ttl_seconds=1800,
+        )
+        execute = execute_bulk_preview_session(
+            conn,
+            preview_session_id=str(preview["preview_session_id"]),
+            selected_job_ids=None,
+            selection_fingerprint=str(preview["selection_fingerprint"]),
+            executed_by=actor,
+        )
+        return {"ok": True, "preview": preview, "execute": execute}
+    finally:
+        conn.close()
 
 def _ensure_admin(msg_or_cb, env: Env) -> bool:
     # only allow actions in admin chat
@@ -192,6 +224,39 @@ async def cb_publish_action(call: CallbackQuery):
         after = result.get("result", {}).get("publish_state_after")
         await call.message.answer(f"✅ {action} applied for job {job_id} -> {after}")
     await call.answer(action)
+
+
+
+@router.callback_query(F.data.startswith("pubbulk:"))
+async def cb_publish_bulk_action(call: CallbackQuery):
+    env = Env.load()
+    if not _ensure_admin(call, env):
+        await call.answer("Not allowed", show_alert=True)
+        return
+    parts = str(call.data or "").split(":", 3)
+    action = parts[1] if len(parts) > 1 else ""
+    ids_raw = parts[2] if len(parts) > 2 else ""
+    scheduled_at = parts[3] if len(parts) > 3 else None
+    selected_job_ids = [int(item) for item in ids_raw.split(",") if item.strip()]
+
+    try:
+        result = run_telegram_bulk_action(
+            env=env,
+            action=action,
+            selected_job_ids=selected_job_ids,
+            actor=f"telegram:{call.from_user.id}",
+            scheduled_at=scheduled_at,
+        )
+    except PublishBulkActionError as exc:
+        await call.message.answer(f"❌ bulk {action} failed: {exc.code} {exc.message}")
+        await call.answer("bulk failed")
+        return
+
+    summary = result["execute"]["summary"]
+    await call.message.answer(
+        f"✅ bulk {action}: executed={summary['executed_count']} succeeded={summary['succeeded_count']} skipped={summary['skipped_count']}"
+    )
+    await call.answer(f"bulk {action}")
 
 async def start_background_notifier(dp: Dispatcher, bot: Bot, env: Env) -> None:
     async def loop():
