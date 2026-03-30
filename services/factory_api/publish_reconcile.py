@@ -13,6 +13,8 @@ from services.factory_api.security import require_basic_auth
 
 
 SOURCE_UNAVAILABLE_CODE = "PRC_SOURCE_UNAVAILABLE"
+SOURCE_UNAVAILABLE_E3_CODE = "E3_RECONCILE_SOURCE_UNAVAILABLE"
+RUN_NOT_FOUND_E3_CODE = "E3_ACTION_NOT_ALLOWED"
 
 
 @dataclass(frozen=True)
@@ -230,7 +232,8 @@ def create_publish_reconcile_router(env: Env) -> APIRouter:
                 status_code=503,
                 content={
                     "error": {
-                        "code": SOURCE_UNAVAILABLE_CODE,
+                        "code": SOURCE_UNAVAILABLE_E3_CODE,
+                        "legacy_code": SOURCE_UNAVAILABLE_CODE,
                         "message": "publish source unavailable for reconciliation",
                         "run_id": run_id,
                     }
@@ -246,7 +249,10 @@ def create_publish_reconcile_router(env: Env) -> APIRouter:
         try:
             run_row = conn.execute("SELECT * FROM publish_reconcile_runs WHERE id = ?", (run_id,)).fetchone()
             if run_row is None:
-                return JSONResponse(status_code=404, content={"error": {"code": "PRC_RUN_NOT_FOUND", "message": "reconcile run not found"}})
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": {"code": RUN_NOT_FOUND_E3_CODE, "legacy_code": "PRC_RUN_NOT_FOUND", "message": "reconcile run not found"}},
+                )
             item_rows = conn.execute(
                 "SELECT * FROM publish_reconcile_items WHERE run_id = ? ORDER BY id ASC",
                 (run_id,),

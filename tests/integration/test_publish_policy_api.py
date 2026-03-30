@@ -79,8 +79,8 @@ class TestPublishPolicyApi(unittest.TestCase):
             self.assertEqual(body["resolved_scope"], "item")
             self.assertEqual(body["effective_publish_mode"], "auto")
             self.assertEqual(body["effective_target_visibility"], "public")
-            self.assertEqual(body["effective_reason_code"], "item_override_block")
-            self.assertEqual(body["decision"], "auto")
+            self.assertEqual(body["effective_reason_code"], "audit_not_approved")
+            self.assertEqual(body["decision"], "hold")
             self.assertEqual(body["effective_audit_status"], "unknown")
             self.assertIn("effective_audit_status", body)
             self.assertIn("job_publish_hold_active", body)
@@ -106,7 +106,8 @@ class TestPublishPolicyApi(unittest.TestCase):
                 },
             )
             self.assertEqual(bad_mode.status_code, 422)
-            self.assertEqual(bad_mode.json()["error"]["code"], "PPP_INVALID_PUBLISH_MODE")
+            self.assertEqual(bad_mode.json()["error"]["code"], "E3_POLICY_MODE_INVALID")
+            self.assertEqual(bad_mode.json()["error"]["legacy_code"], "PPP_INVALID_PUBLISH_MODE")
 
             bad_visibility = client.put(
                 "/v1/publish/policy/project-default",
@@ -121,7 +122,8 @@ class TestPublishPolicyApi(unittest.TestCase):
                 },
             )
             self.assertEqual(bad_visibility.status_code, 422)
-            self.assertEqual(bad_visibility.json()["error"]["code"], "PPP_INVALID_TARGET_VISIBILITY")
+            self.assertEqual(bad_visibility.json()["error"]["code"], "E3_POLICY_SCOPE_INVALID")
+            self.assertEqual(bad_visibility.json()["error"]["legacy_code"], "PPP_INVALID_TARGET_VISIBILITY")
 
             bad_reason = client.put(
                 "/v1/publish/policy/project-default",
@@ -136,7 +138,8 @@ class TestPublishPolicyApi(unittest.TestCase):
                 },
             )
             self.assertEqual(bad_reason.status_code, 422)
-            self.assertEqual(bad_reason.json()["error"]["code"], "PPP_INVALID_REASON_CODE")
+            self.assertEqual(bad_reason.json()["error"]["code"], "E3_POLICY_SCOPE_INVALID")
+            self.assertEqual(bad_reason.json()["error"]["legacy_code"], "PPP_INVALID_REASON_CODE")
 
 
 if __name__ == "__main__":

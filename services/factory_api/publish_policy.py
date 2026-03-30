@@ -35,6 +35,23 @@ ALLOWED_PUBLISH_REASON_CODES: tuple[str, ...] = (
     "policy_requires_manual",
 )
 
+_E3_ERROR_MAP: dict[str, str] = {
+    "PPP_REQUEST_ID_REQUIRED": "E3_ACTION_CONFIRMATION_REQUIRED",
+    "PPP_CONFIRM_REQUIRED": "E3_ACTION_CONFIRMATION_REQUIRED",
+    "PPP_REASON_REQUIRED": "E3_ACTION_CONFIRMATION_REQUIRED",
+    "PPP_REASON_EMPTY": "E3_ACTION_CONFIRMATION_REQUIRED",
+    "PPP_INVALID_POLICY_FIELD": "E3_POLICY_SCOPE_INVALID",
+    "PPP_INVALID_PUBLISH_MODE": "E3_POLICY_MODE_INVALID",
+    "PPP_INVALID_TARGET_VISIBILITY": "E3_POLICY_SCOPE_INVALID",
+    "PPP_INVALID_REASON_CODE": "E3_POLICY_SCOPE_INVALID",
+    "PPP_CHANNEL_NOT_FOUND": "E3_POLICY_SCOPE_INVALID",
+    "PPP_RELEASE_NOT_FOUND": "E3_POLICY_SCOPE_INVALID",
+    "PPP_JOB_NOT_FOUND": "E3_POLICY_RESOLUTION_FAILED",
+    "PPP_RELEASE_MISMATCH": "E3_POLICY_SCOPE_INVALID",
+    "PPP_CHANNEL_MISMATCH": "E3_POLICY_SCOPE_INVALID",
+    "PPP_INVALID_JOB_HOLD": "E3_POLICY_RESOLUTION_FAILED",
+}
+
 
 class PublishPolicyMutationPayload(BaseModel):
     confirm: bool
@@ -96,9 +113,10 @@ def validate_publish_reason_code(value: str | None) -> str | None:
 
 
 def _mutation_error(*, code: str, message: str, request_id: str, status_code: int = 422) -> JSONResponse:
+    e3_code = _E3_ERROR_MAP.get(code, "E3_ACTION_NOT_ALLOWED")
     return JSONResponse(
         status_code=status_code,
-        content={"error": {"code": code, "message": message, "request_id": request_id}},
+        content={"error": {"code": e3_code, "legacy_code": code, "message": message, "request_id": request_id}},
     )
 
 
@@ -225,7 +243,7 @@ def resolve_effective_publish_decision(conn: Any, *, job_row: Any) -> dict[str, 
     if job_hold_active and job_hold_reason_code is None:
         raise ValueError("publish_hold_active requires publish_hold_reason_code")
 
-    audit_effectively_blocking = audit["effective_status"] not in {"approved", "unknown"}
+    audit_effectively_blocking = audit["effective_status"] != "approved"
 
     effective_reason_code = policy["effective_reason_code"]
     if job_hold_active:
@@ -316,7 +334,7 @@ def create_publish_policy_router(env: Env) -> APIRouter:
         try:
             channel = dbm.get_channel_by_slug(conn, channel_slug)
             if not channel:
-                return JSONResponse(status_code=404, content={"error": {"code": "PPP_CHANNEL_NOT_FOUND", "message": "channel not found", "request_id": request_id}})
+                return _mutation_error(code="PPP_CHANNEL_NOT_FOUND", message="channel not found", request_id=request_id, status_code=404)
             conn.execute("BEGIN IMMEDIATE")
             try:
                 conn.execute(
@@ -364,7 +382,7 @@ def create_publish_policy_router(env: Env) -> APIRouter:
         try:
             release = conn.execute("SELECT id FROM releases WHERE id = ?", (release_id,)).fetchone()
             if not release:
-                return JSONResponse(status_code=404, content={"error": {"code": "PPP_RELEASE_NOT_FOUND", "message": "release not found", "request_id": request_id}})
+                return _mutation_error(code="PPP_RELEASE_NOT_FOUND", message="release not found", request_id=request_id, status_code=404)
             conn.execute("BEGIN IMMEDIATE")
             try:
                 conn.execute(
@@ -405,18 +423,23 @@ def create_publish_policy_router(env: Env) -> APIRouter:
         try:
             job = dbm.get_job(conn, job_id)
             if not job:
-                return JSONResponse(status_code=404, content={"error": {"code": "PPP_JOB_NOT_FOUND", "message": "job not found"}})
+                return _mutation_error(code="PPP_JOB_NOT_FOUND", message="job not found", request_id="", status_code=404)
             derived_release_id = int(job["release_id"])
             derived_channel_slug = str(job["channel_slug"])
             if release_id is not None and int(release_id) != derived_release_id:
-                return JSONResponse(status_code=422, content={"error": {"code": "PPP_RELEASE_MISMATCH", "message": "release_id does not match job"}})
+                return _mutation_error(code="PPP_RELEASE_MISMATCH", message="release_id does not match job", request_id="", status_code=422)
             if channel_slug is not None and str(channel_slug) != derived_channel_slug:
-                return JSONResponse(status_code=422, content={"error": {"code": "PPP_CHANNEL_MISMATCH", "message": "channel_slug does not match job"}})
+                return _mutation_error(code="PPP_CHANNEL_MISMATCH", message="channel_slug does not match job", request_id="", status_code=422)
 
             try:
                 return resolve_effective_publish_decision(conn, job_row=job)
             except ValueError:
-                return JSONResponse(status_code=422, content={"error": {"code": "PPP_INVALID_JOB_HOLD", "message": "publish_hold_active requires publish_hold_reason_code"}})
+                return _mutation_error(
+                    code="PPP_INVALID_JOB_HOLD",
+                    message="publish_hold_active requires publish_hold_reason_code",
+                    request_id="",
+                    status_code=422,
+                )
         finally:
             conn.close()
 
@@ -437,7 +460,7 @@ def create_publish_policy_router(env: Env) -> APIRouter:
         actor = _actor_identity_from_request(request)
         reason = str(payload.reason).strip() if payload.reason is not None else None
         if reason == "":
-            return JSONResponse(status_code=422, content={"error": {"code": "PPP_REASON_EMPTY", "message": "reason must be null or non-empty"}})
+            return _mutation_error(code="PPP_REASON_EMPTY", message="reason must be null or non-empty", request_id="", status_code=422)
 
         now_iso = _now_iso()
         conn = dbm.connect(env)

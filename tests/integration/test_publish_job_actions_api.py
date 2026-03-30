@@ -59,6 +59,15 @@ class TestPublishJobActionsApi(unittest.TestCase):
         with temp_env() as (_td, env):
             seed_minimal_db(env)
             job_id = self._seed_job(env, publish_state="retry_pending")
+            conn = dbm.connect(env)
+            try:
+                conn.execute(
+                    "UPDATE jobs SET locked_by = 'w1', locked_at = ?, retry_at = ?, publish_retry_at = ? WHERE id = ?",
+                    (dbm.now_ts(), dbm.now_ts() + 120, dbm.now_ts() + 120, job_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
             client, h = self._client(env)
             body = {"confirm": True, "reason": "retry now", "request_id": "req-retry-1"}
 
@@ -84,7 +93,8 @@ class TestPublishJobActionsApi(unittest.TestCase):
                 json={"confirm": True, "reason": "operator handoff", "request_id": "req-mtm-1"},
             )
             self.assertEqual(resp.status_code, 409)
-            self.assertEqual(resp.json()["error"]["code"], "PJA_ACTION_FORBIDDEN_STATE")
+            self.assertEqual(resp.json()["error"]["code"], "E3_ACTION_NOT_ALLOWED")
+            self.assertEqual(resp.json()["error"]["legacy_code"], "PJA_ACTION_FORBIDDEN_STATE")
 
     def test_manual_acknowledge_and_mark_completed_flow(self) -> None:
         with temp_env() as (_td, env):
@@ -133,7 +143,8 @@ class TestPublishJobActionsApi(unittest.TestCase):
                 json={"confirm": True, "reason": "x", "request_id": "req-mc-2", "actual_published_at": "2026-03-29T00:00:00Z"},
             )
             self.assertEqual(missing_media.status_code, 422)
-            self.assertEqual(missing_media.json()["error"]["code"], "PJA_MARK_COMPLETED_MEDIA_REQUIRED")
+            self.assertEqual(missing_media.json()["error"]["code"], "E3_ACTION_NOT_ALLOWED")
+            self.assertEqual(missing_media.json()["error"]["legacy_code"], "PJA_MARK_COMPLETED_MEDIA_REQUIRED")
 
     def test_reschedule_validation_and_allowed_state(self) -> None:
         with temp_env() as (_td, env):
@@ -178,6 +189,22 @@ class TestPublishJobActionsApi(unittest.TestCase):
             )
             self.assertEqual(cancelled.status_code, 200)
             self.assertEqual(cancelled.json()["result"]["state_after"], "CANCELLED")
+            self.assertEqual(cancelled.json()["result"]["stage_after"], "CANCELLED")
+
+            conn = dbm.connect(env)
+            try:
+                row = conn.execute(
+                    "SELECT state, stage, retry_at, publish_retry_at, locked_by, locked_at FROM jobs WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+                self.assertEqual(str(row["state"]), "CANCELLED")
+                self.assertEqual(str(row["stage"]), "CANCELLED")
+                self.assertIsNone(row["retry_at"])
+                self.assertIsNone(row["publish_retry_at"])
+                self.assertIsNone(row["locked_by"])
+                self.assertIsNone(row["locked_at"])
+            finally:
+                conn.close()
 
             retry_after_cancel = client.post(
                 f"/v1/publish/jobs/{job_id}/retry",
@@ -185,7 +212,8 @@ class TestPublishJobActionsApi(unittest.TestCase):
                 json={"confirm": True, "reason": "retry", "request_id": "req-cancel-2"},
             )
             self.assertEqual(retry_after_cancel.status_code, 409)
-            self.assertEqual(retry_after_cancel.json()["error"]["code"], "PJA_JOB_CANCELLED")
+            self.assertEqual(retry_after_cancel.json()["error"]["code"], "E3_ACTION_NOT_ALLOWED")
+            self.assertEqual(retry_after_cancel.json()["error"]["legacy_code"], "PJA_JOB_CANCELLED")
 
     def test_action_state_matrix_samples(self) -> None:
         with temp_env() as (_td, env):

@@ -86,7 +86,51 @@ class TestPublishPolicyDecisionResolution(unittest.TestCase):
             h = basic_auth_header(env.basic_user, env.basic_pass)
             resp = client.get("/v1/publish/policy/resolve", headers=h, params={"job_id": job_id})
             self.assertEqual(resp.status_code, 422)
-            self.assertEqual(resp.json()["error"]["code"], "PPP_INVALID_JOB_HOLD")
+            self.assertEqual(resp.json()["error"]["code"], "E3_POLICY_RESOLUTION_FAILED")
+            self.assertEqual(resp.json()["error"]["legacy_code"], "PPP_INVALID_JOB_HOLD")
+
+    def test_resolve_unknown_audit_status_blocks_auto_publish(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            job_id = insert_release_and_job(env, state="WAIT_APPROVAL", stage="UPLOAD")
+
+            mod = importlib.import_module("services.factory_api.app")
+            mod = importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            put_policy = client.put(
+                "/v1/publish/policy/project-default",
+                headers=h,
+                json={
+                    "confirm": True,
+                    "reason": "policy baseline",
+                    "request_id": "req-pol-unknown",
+                    "publish_mode": "auto",
+                    "target_visibility": "public",
+                    "reason_code": "policy_requires_manual",
+                },
+            )
+            self.assertEqual(put_policy.status_code, 200)
+
+            put_audit = client.put(
+                "/v1/publish/audit-status/project-default",
+                headers=h,
+                json={
+                    "confirm": True,
+                    "reason": "reset to unknown",
+                    "request_id": "req-aud-unknown",
+                    "status": "unknown",
+                },
+            )
+            self.assertEqual(put_audit.status_code, 200)
+
+            resolved = client.get("/v1/publish/policy/resolve", headers=h, params={"job_id": job_id})
+            self.assertEqual(resolved.status_code, 200)
+            body = resolved.json()
+            self.assertEqual(body["effective_audit_status"], "unknown")
+            self.assertEqual(body["decision"], "hold")
+            self.assertEqual(body["effective_reason_code"], "audit_not_approved")
 
 
 if __name__ == "__main__":
