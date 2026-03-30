@@ -39,6 +39,7 @@ from services.factory_api.publish_policy import create_publish_policy_router
 from services.factory_api.publish_job_actions import create_publish_job_actions_router
 from services.factory_api.publish_bulk_actions import create_publish_bulk_actions_router
 from services.factory_api.publish_queue_read import create_publish_queue_read_router
+from services.factory_api.publish_reconcile import create_publish_reconcile_router
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
@@ -135,6 +136,7 @@ app.include_router(create_publish_policy_router(env))
 app.include_router(create_publish_job_actions_router(env))
 app.include_router(create_publish_bulk_actions_router(env))
 app.include_router(create_publish_queue_read_router(env))
+app.include_router(create_publish_reconcile_router(env))
 
 
 def _create_drive_client(_env: Env) -> DriveClient:
