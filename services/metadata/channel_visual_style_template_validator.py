@@ -20,6 +20,7 @@ _REQUIRED_LIST_FIELDS: tuple[str, ...] = (
 )
 
 REQUIRED_KEYS: tuple[str, ...] = _REQUIRED_STRING_FIELDS + _REQUIRED_LIST_FIELDS
+_OPTIONAL_DEFAULT_BACKGROUND_ASSET_ID = "default_background_asset_id"
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,28 @@ def validate_template_payload(payload: Any) -> PayloadValidationResult:
                 continue
             normalized_items.append(trimmed)
         normalized[key] = normalized_items
+
+    if _OPTIONAL_DEFAULT_BACKGROUND_ASSET_ID in payload:
+        raw_default_background_asset_id = payload.get(_OPTIONAL_DEFAULT_BACKGROUND_ASSET_ID)
+        try:
+            parsed_default_background_asset_id = int(raw_default_background_asset_id)
+        except (TypeError, ValueError):
+            errors.append(
+                {
+                    "code": "CVST_PAYLOAD_DEFAULT_BACKGROUND_ASSET_ID_TYPE",
+                    "message": "template_payload.default_background_asset_id must be an integer",
+                }
+            )
+        else:
+            if parsed_default_background_asset_id <= 0:
+                errors.append(
+                    {
+                        "code": "CVST_PAYLOAD_DEFAULT_BACKGROUND_ASSET_ID_RANGE",
+                        "message": "template_payload.default_background_asset_id must be > 0",
+                    }
+                )
+            else:
+                normalized[_OPTIONAL_DEFAULT_BACKGROUND_ASSET_ID] = parsed_default_background_asset_id
 
     if errors:
         return PayloadValidationResult(is_valid=False, normalized_payload=None, errors=errors)

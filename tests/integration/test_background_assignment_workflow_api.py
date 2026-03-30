@@ -87,25 +87,24 @@ class TestBackgroundAssignmentWorkflowApi(unittest.TestCase):
                     name="bg-manual.png",
                     path="/tmp/bg-manual.png",
                 )
-                dbm.create_channel_visual_style_template(
-                    conn,
-                    channel_slug="darkwood-reverie",
-                    template_name="Default Visual",
-                    template_payload_json=dbm.json_dumps(self._template_payload_with_default_background(managed_bg)),
-                    status="ACTIVE",
-                    is_default=True,
-                    validation_status="VALID",
-                    validation_errors_json=None,
-                    last_validated_at="2026-01-01T00:00:00+00:00",
-                    created_at="2026-01-01T00:00:00+00:00",
-                    updated_at="2026-01-01T00:00:00+00:00",
-                    archived_at=None,
-                )
             finally:
                 conn.close()
 
             client = self._new_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
+            create_tpl = client.post(
+                "/v1/metadata/channel-visual-style-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Default Visual",
+                    "template_payload": self._template_payload_with_default_background(managed_bg),
+                    "make_default": True,
+                },
+            )
+            self.assertEqual(create_tpl.status_code, 200)
+            created_tpl = create_tpl.json()
+            self.assertEqual(created_tpl["template_payload"]["default_background_asset_id"], managed_bg)
 
             candidates = client.get(f"/v1/visual/releases/{release_id}/background/candidates", headers=headers)
             self.assertEqual(candidates.status_code, 200)
