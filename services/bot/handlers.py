@@ -16,7 +16,10 @@ from services.common.env import Env
 from services.common import db as dbm
 from services.common.paths import preview_path, qa_path, logs_path, outbox_dir
 from services.common.logging_setup import get_logger
-from services.playlist_builder.workflow import write_committed_history_for_published
+from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
+from services.factory_api.publish_job_actions import execute_publish_job_action
+from services.factory_api.publish_bulk_actions import create_bulk_preview_session, execute_bulk_preview_session, PublishBulkActionError
+from services.bot.telegram_publish_notifications import send_critical_publish_notifications
 
 
 router = Router()
@@ -30,9 +33,42 @@ def _kb(job_id: int) -> InlineKeyboardBuilder:
     kb.button(text="📄 QA", callback_data=f"qa:{job_id}")
     kb.button(text="🧾 Logs", callback_data=f"logs:{job_id}")
     kb.button(text="✅ Mark Published", callback_data=f"published:{job_id}")
-    kb.adjust(2, 2, 1)
+    kb.button(text="🔁 Retry Publish", callback_data=f"pubact:retry:{job_id}")
+    kb.button(text="🧰 Move to Manual", callback_data=f"pubact:move_to_manual:{job_id}")
+    kb.adjust(2, 2, 2)
     return kb
 
+
+
+
+def run_telegram_bulk_action(
+    *,
+    env: Env,
+    action: str,
+    selected_job_ids: list[int],
+    actor: str,
+    scheduled_at: str | None = None,
+) -> dict[str, Any]:
+    conn = dbm.connect(env)
+    try:
+        preview = create_bulk_preview_session(
+            conn,
+            action=action,
+            selected_job_ids=selected_job_ids,
+            scheduled_at=scheduled_at,
+            created_by=actor,
+            ttl_seconds=1800,
+        )
+        execute = execute_bulk_preview_session(
+            conn,
+            preview_session_id=str(preview["preview_session_id"]),
+            selected_job_ids=None,
+            selection_fingerprint=str(preview["selection_fingerprint"]),
+            executed_by=actor,
+        )
+        return {"ok": True, "preview": preview, "execute": execute}
+    finally:
+        conn.close()
 
 def _ensure_admin(msg_or_cb, env: Env) -> bool:
     # only allow actions in admin chat
@@ -91,8 +127,7 @@ async def cb_approve(call: CallbackQuery):
     job_id = int(call.data.split(":", 1)[1])
     conn = dbm.connect(env)
     try:
-        dbm.set_approval(conn, job_id, "APPROVE", "approved")
-        dbm.update_job_state(conn, job_id, state="APPROVED", stage="APPROVAL")
+        approve_job(conn, job_id=job_id, comment="approved")
     finally:
         conn.close()
     await call.message.answer(f"✅ Approved job {job_id}. Теперь опубликуй в YouTube Studio и нажми Mark Published.")
@@ -134,8 +169,7 @@ async def on_reply(message: Message):
             if not reason:
                 await message.answer("Причина пустая. Нажми Reject ещё раз.")
                 return
-            dbm.set_approval(conn, job_id, "REJECT", reason)
-            dbm.update_job_state(conn, job_id, state="REJECTED", stage="APPROVAL", error_reason=reason)
+            reject_job(conn, job_id=job_id, comment=reason)
             await message.answer(f"Job {job_id} отклонён. Причина записана.")
     finally:
         conn.close()
@@ -150,16 +184,8 @@ async def cb_published(call: CallbackQuery):
     job_id = int(call.data.split(":", 1)[1])
     conn = dbm.connect(env)
     try:
-        ts = dbm.now_ts()
-        delete_at = ts + 48 * 3600
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            dbm.update_job_state(conn, job_id, state="PUBLISHED", stage="APPROVAL", published_at=ts, delete_mp4_at=delete_at)
-            history_id = write_committed_history_for_published(conn, job_id=job_id)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+        result = mark_job_published(conn, job_id=job_id)
+        history_id = result.get("history_id")
         if history_id is not None:
             log.info("playlist_builder.history.committed_written", extra={"job_id": job_id, "history_id": history_id})
     finally:
@@ -168,11 +194,76 @@ async def cb_published(call: CallbackQuery):
     await call.answer("Published marked")
 
 
+
+
+@router.callback_query(F.data.startswith("pubact:"))
+async def cb_publish_action(call: CallbackQuery):
+    env = Env.load()
+    if not _ensure_admin(call, env):
+        await call.answer("Not allowed", show_alert=True)
+        return
+    _, action, raw_job_id = str(call.data or "").split(":", 2)
+    job_id = int(raw_job_id)
+    conn = dbm.connect(env)
+    try:
+        request_id = f"tg-{action}-{job_id}-{int(dbm.now_ts())}"
+        result = execute_publish_job_action(
+            conn,
+            job_id=job_id,
+            action_type=action,
+            actor=f"telegram:{call.from_user.id}",
+            request_id=request_id,
+            reason=f"telegram callback {action}",
+            extra_payload={},
+        )
+    finally:
+        conn.close()
+    if hasattr(result, "status_code"):
+        await call.message.answer(f"❌ {action} failed: {result.body.decode('utf-8')}")
+    else:
+        after = result.get("result", {}).get("publish_state_after")
+        await call.message.answer(f"✅ {action} applied for job {job_id} -> {after}")
+    await call.answer(action)
+
+
+
+@router.callback_query(F.data.startswith("pubbulk:"))
+async def cb_publish_bulk_action(call: CallbackQuery):
+    env = Env.load()
+    if not _ensure_admin(call, env):
+        await call.answer("Not allowed", show_alert=True)
+        return
+    parts = str(call.data or "").split(":", 3)
+    action = parts[1] if len(parts) > 1 else ""
+    ids_raw = parts[2] if len(parts) > 2 else ""
+    scheduled_at = parts[3] if len(parts) > 3 else None
+    selected_job_ids = [int(item) for item in ids_raw.split(",") if item.strip()]
+
+    try:
+        result = run_telegram_bulk_action(
+            env=env,
+            action=action,
+            selected_job_ids=selected_job_ids,
+            actor=f"telegram:{call.from_user.id}",
+            scheduled_at=scheduled_at,
+        )
+    except PublishBulkActionError as exc:
+        await call.message.answer(f"❌ bulk {action} failed: {exc.code} {exc.message}")
+        await call.answer("bulk failed")
+        return
+
+    summary = result["execute"]["summary"]
+    await call.message.answer(
+        f"✅ bulk {action}: executed={summary['executed_count']} succeeded={summary['succeeded_count']} skipped={summary['skipped_count']}"
+    )
+    await call.answer(f"bulk {action}")
+
 async def start_background_notifier(dp: Dispatcher, bot: Bot, env: Env) -> None:
     async def loop():
         while True:
             try:
                 await _notify_once(bot, env)
+                await send_critical_publish_notifications(bot=bot, env=env)
             except Exception:
                 pass
             await asyncio.sleep(5)

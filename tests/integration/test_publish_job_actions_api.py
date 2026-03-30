@@ -281,5 +281,38 @@ class TestPublishJobActionsApi(unittest.TestCase):
                 )
 
 
+    def test_service_entrypoint_matches_router_retry_result_shape(self) -> None:
+        from services.factory_api.publish_job_actions import execute_publish_job_action
+
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            job_api = self._seed_job(env, publish_state="retry_pending")
+            job_svc = self._seed_job(env, publish_state="retry_pending")
+            client, h = self._client(env)
+
+            api = client.post(
+                f"/v1/publish/jobs/{job_api}/retry",
+                headers=h,
+                json={"confirm": True, "reason": "x", "request_id": "svc-parity-api"},
+            )
+            self.assertEqual(api.status_code, 200)
+
+            conn = dbm.connect(env)
+            try:
+                svc = execute_publish_job_action(
+                    conn,
+                    job_id=job_svc,
+                    action_type="retry",
+                    actor="test",
+                    request_id="svc-parity-svc",
+                    reason="x",
+                    extra_payload={},
+                )
+            finally:
+                conn.close()
+
+            self.assertEqual(api.json()["result"]["publish_state_after"], svc["result"]["publish_state_after"])
+
+
 if __name__ == "__main__":
     unittest.main()

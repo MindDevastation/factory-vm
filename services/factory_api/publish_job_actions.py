@@ -189,6 +189,119 @@ def _execute_operator_action(
         raise
 
 
+
+
+def execute_publish_job_action(
+    conn: Any,
+    *,
+    job_id: int,
+    action_type: str,
+    actor: str,
+    request_id: str,
+    reason: str,
+    extra_payload: dict[str, Any] | None = None,
+) -> dict[str, Any] | JSONResponse:
+    payload = dict(extra_payload or {})
+
+    def _mutate(row: Any) -> dict[str, Any] | JSONResponse:
+        if action_type == "retry":
+            return _apply_publish_transition(
+                conn,
+                job_row=row,
+                action_type="retry",
+                request_id=request_id,
+                to_state="ready_to_publish",
+                updates={"publish_retry_at": None, "publish_last_error_code": None, "publish_last_error_message": None},
+            )
+        if action_type == "reset_failure":
+            return _reset_failure_mutation(conn, row, request_id)
+        if action_type == "move_to_manual":
+            return _apply_publish_transition(
+                conn,
+                job_row=row,
+                action_type="move_to_manual",
+                request_id=request_id,
+                to_state="manual_handoff_pending",
+                updates={"publish_reason_code": "operator_forced_manual", "publish_reason_detail": reason.strip()},
+            )
+        if action_type == "acknowledge":
+            return _apply_publish_transition(
+                conn,
+                job_row=row,
+                action_type="acknowledge",
+                request_id=request_id,
+                to_state="manual_handoff_acknowledged",
+                updates={"publish_manual_ack_at": _now_ts()},
+            )
+        if action_type == "mark_completed":
+            actual_published_at = payload.get("actual_published_at")
+            video_id = payload.get("video_id")
+            url = payload.get("url")
+            if actual_published_at is None:
+                return _mutation_error(code="PJA_INVALID_DATETIME", message="actual_published_at is required", request_id=request_id)
+            parsed = _parse_iso_datetime(str(actual_published_at), request_id=request_id, field_name="actual_published_at")
+            if isinstance(parsed, JSONResponse):
+                return parsed
+            video_id_s = str(video_id or "").strip() or None
+            url_s = str(url or "").strip() or None
+            if not video_id_s and not url_s:
+                return _mutation_error(
+                    code="PJA_MARK_COMPLETED_MEDIA_REQUIRED",
+                    message="at least one of video_id or url is required",
+                    request_id=request_id,
+                    status_code=422,
+                )
+            return _apply_publish_transition(
+                conn,
+                job_row=row,
+                action_type="mark_completed",
+                request_id=request_id,
+                to_state="manual_publish_completed",
+                updates={
+                    "publish_manual_completed_at": _now_ts(),
+                    "publish_manual_published_at": parsed,
+                    "publish_manual_video_id": video_id_s,
+                    "publish_manual_url": url_s,
+                },
+            )
+        if action_type == "cancel":
+            return _cancel_mutation(conn, row, request_id)
+        if action_type == "unblock":
+            return _apply_publish_transition(
+                conn,
+                job_row=row,
+                action_type="unblock",
+                request_id=request_id,
+                to_state="ready_to_publish",
+                updates={"publish_hold_active": 0, "publish_hold_reason_code": None},
+            )
+        if action_type == "reschedule":
+            scheduled_at = payload.get("scheduled_at")
+            parsed = _parse_iso_datetime(str(scheduled_at or ""), request_id=request_id, field_name="scheduled_at")
+            if isinstance(parsed, JSONResponse):
+                return parsed
+            if parsed <= _now_ts():
+                return _mutation_error(code="PJA_RESCHEDULE_NOT_FUTURE", message="scheduled_at must be in the future", request_id=request_id)
+            return _apply_publish_transition(
+                conn,
+                job_row=row,
+                action_type="reschedule",
+                request_id=request_id,
+                to_state="waiting_for_schedule",
+                updates={"publish_scheduled_at": parsed, "publish_retry_at": None},
+            )
+        return _mutation_error(code="PJA_ACTION_UNSUPPORTED", message="unsupported action", request_id=request_id, status_code=422)
+
+    return _execute_operator_action(
+        conn,
+        job_id=job_id,
+        action_type=action_type,
+        request_id=request_id,
+        actor=actor,
+        reason=reason,
+        mutate_fn=_mutate,
+    )
+
 def create_publish_job_actions_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/publish/jobs", tags=["publish-job-actions"])
 
@@ -198,7 +311,7 @@ def create_publish_job_actions_router(env: Env) -> APIRouter:
         request: Request,
         *,
         action_type: str,
-        mutate_fn: Callable[[Any, Any, str], dict[str, Any] | JSONResponse],
+        extra_payload: dict[str, Any] | None = None,
     ):
         validated = _validate_envelope(payload)
         if isinstance(validated, JSONResponse):
@@ -207,78 +320,33 @@ def create_publish_job_actions_router(env: Env) -> APIRouter:
         actor = _actor_identity_from_request(request)
         conn = dbm.connect(env)
         try:
-            return _execute_operator_action(
+            return execute_publish_job_action(
                 conn,
                 job_id=job_id,
                 action_type=action_type,
-                request_id=request_id,
                 actor=actor,
+                request_id=request_id,
                 reason=reason,
-                mutate_fn=lambda row: mutate_fn(conn, row, request_id),
+                extra_payload=extra_payload,
             )
         finally:
             conn.close()
 
     @router.post("/{job_id}/retry")
     def retry(job_id: int, payload: PublishActionEnvelope, request: Request, _: bool = Depends(require_basic_auth(env))):
-        return _run_action(
-            job_id,
-            payload,
-            request,
-            action_type="retry",
-            mutate_fn=lambda conn, row, request_id: _apply_publish_transition(
-                conn,
-                job_row=row,
-                action_type="retry",
-                request_id=request_id,
-                to_state="ready_to_publish",
-                updates={"publish_retry_at": None, "publish_last_error_code": None, "publish_last_error_message": None},
-            ),
-        )
+        return _run_action(job_id, payload, request, action_type="retry")
 
     @router.post("/{job_id}/reset-failure")
     def reset_failure(job_id: int, payload: PublishActionEnvelope, request: Request, _: bool = Depends(require_basic_auth(env))):
-        return _run_action(
-            job_id,
-            payload,
-            request,
-            action_type="reset_failure",
-            mutate_fn=lambda conn, row, request_id: _reset_failure_mutation(conn, row, request_id),
-        )
+        return _run_action(job_id, payload, request, action_type="reset_failure")
 
     @router.post("/{job_id}/move-to-manual")
     def move_to_manual(job_id: int, payload: PublishActionEnvelope, request: Request, _: bool = Depends(require_basic_auth(env))):
-        return _run_action(
-            job_id,
-            payload,
-            request,
-            action_type="move_to_manual",
-            mutate_fn=lambda conn, row, request_id: _apply_publish_transition(
-                conn,
-                job_row=row,
-                action_type="move_to_manual",
-                request_id=request_id,
-                to_state="manual_handoff_pending",
-                updates={"publish_reason_code": "operator_forced_manual", "publish_reason_detail": str(payload.reason).strip()},
-            ),
-        )
+        return _run_action(job_id, payload, request, action_type="move_to_manual")
 
     @router.post("/{job_id}/acknowledge")
     def acknowledge(job_id: int, payload: PublishActionEnvelope, request: Request, _: bool = Depends(require_basic_auth(env))):
-        return _run_action(
-            job_id,
-            payload,
-            request,
-            action_type="acknowledge",
-            mutate_fn=lambda conn, row, request_id: _apply_publish_transition(
-                conn,
-                job_row=row,
-                action_type="acknowledge",
-                request_id=request_id,
-                to_state="manual_handoff_acknowledged",
-                updates={"publish_manual_ack_at": _now_ts()},
-            ),
-        )
+        return _run_action(job_id, payload, request, action_type="acknowledge")
 
     @router.post("/{job_id}/mark-completed")
     def mark_completed(job_id: int, payload: MarkCompletedPayload, request: Request, _: bool = Depends(require_basic_auth(env))):
@@ -302,56 +370,17 @@ def create_publish_job_actions_router(env: Env) -> APIRouter:
 
         conn = dbm.connect(env)
         try:
-            return _execute_operator_action(
-                conn,
-                job_id=job_id,
-                action_type="mark_completed",
-                request_id=request_id,
-                actor=actor,
-                reason=reason,
-                mutate_fn=lambda row: _apply_publish_transition(
-                    conn,
-                    job_row=row,
-                    action_type="mark_completed",
-                    request_id=request_id,
-                    to_state="manual_publish_completed",
-                    updates={
-                        "publish_manual_completed_at": _now_ts(),
-                        "publish_manual_published_at": actual_published_at,
-                        "publish_manual_video_id": video_id,
-                        "publish_manual_url": url,
-                    },
-                ),
-            )
+            return execute_publish_job_action(conn, job_id=job_id, action_type="mark_completed", actor=actor, request_id=request_id, reason=reason, extra_payload={"actual_published_at": payload.actual_published_at, "video_id": video_id, "url": url})
         finally:
             conn.close()
 
     @router.post("/{job_id}/cancel")
     def cancel(job_id: int, payload: PublishActionEnvelope, request: Request, _: bool = Depends(require_basic_auth(env))):
-        return _run_action(
-            job_id,
-            payload,
-            request,
-            action_type="cancel",
-            mutate_fn=lambda conn, row, request_id: _cancel_mutation(conn, row, request_id),
-        )
+        return _run_action(job_id, payload, request, action_type="cancel")
 
     @router.post("/{job_id}/unblock")
     def unblock(job_id: int, payload: PublishActionEnvelope, request: Request, _: bool = Depends(require_basic_auth(env))):
-        return _run_action(
-            job_id,
-            payload,
-            request,
-            action_type="unblock",
-            mutate_fn=lambda conn, row, request_id: _apply_publish_transition(
-                conn,
-                job_row=row,
-                action_type="unblock",
-                request_id=request_id,
-                to_state="ready_to_publish",
-                updates={"publish_hold_active": 0, "publish_hold_reason_code": None},
-            ),
-        )
+        return _run_action(job_id, payload, request, action_type="unblock")
 
     @router.post("/{job_id}/reschedule")
     def reschedule(job_id: int, payload: ReschedulePayload, request: Request, _: bool = Depends(require_basic_auth(env))):
@@ -367,22 +396,7 @@ def create_publish_job_actions_router(env: Env) -> APIRouter:
         actor = _actor_identity_from_request(request)
         conn = dbm.connect(env)
         try:
-            return _execute_operator_action(
-                conn,
-                job_id=job_id,
-                action_type="reschedule",
-                request_id=request_id,
-                actor=actor,
-                reason=reason,
-                mutate_fn=lambda row: _apply_publish_transition(
-                    conn,
-                    job_row=row,
-                    action_type="reschedule",
-                    request_id=request_id,
-                    to_state="waiting_for_schedule",
-                    updates={"publish_scheduled_at": scheduled_at, "publish_retry_at": None},
-                ),
-            )
+            return execute_publish_job_action(conn, job_id=job_id, action_type="reschedule", actor=actor, request_id=request_id, reason=reason, extra_payload={"scheduled_at": payload.scheduled_at})
         finally:
             conn.close()
 
@@ -437,4 +451,4 @@ def _reset_failure_mutation(conn: Any, row: Any, request_id: str) -> dict[str, A
     return {"ok": True, "publish_state_before": from_state, "publish_state_after": "retry_pending"}
 
 
-__all__ = ["create_publish_job_actions_router", "replay_logged_mutation"]
+__all__ = ["create_publish_job_actions_router", "replay_logged_mutation", "execute_publish_job_action"]
