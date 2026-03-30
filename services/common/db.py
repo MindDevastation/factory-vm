@@ -701,6 +701,47 @@ def migrate(conn: sqlite3.Connection) -> None:
             ON video_tag_presets(channel_slug)
             WHERE status = 'ACTIVE' AND is_default = 1;
 
+        CREATE TABLE IF NOT EXISTS channel_visual_style_templates (
+            id INTEGER PRIMARY KEY,
+            channel_slug TEXT NOT NULL,
+            template_name TEXT NOT NULL,
+            template_payload_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            validation_status TEXT NOT NULL,
+            validation_errors_json TEXT NULL,
+            last_validated_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT NULL,
+            CHECK(status IN ('ACTIVE','ARCHIVED')),
+            CHECK(validation_status IN ('VALID','INVALID')),
+            CHECK(LENGTH(TRIM(template_name)) > 0),
+            CHECK(json_valid(template_payload_json))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_visual_style_templates_channel_slug
+            ON channel_visual_style_templates(channel_slug);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_visual_style_templates_channel_slug_status
+            ON channel_visual_style_templates(channel_slug, status);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_visual_style_templates_channel_slug_updated_at
+            ON channel_visual_style_templates(channel_slug, updated_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_visual_style_templates_active_default_unique
+            ON channel_visual_style_templates(channel_slug)
+            WHERE status = 'ACTIVE' AND is_default = 1;
+
+        CREATE TABLE IF NOT EXISTS release_visual_style_template_overrides (
+            release_id INTEGER PRIMARY KEY,
+            template_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(template_id) REFERENCES channel_visual_style_templates(id)
+        );
+
         CREATE TABLE IF NOT EXISTS channel_metadata_defaults (
             channel_slug TEXT PRIMARY KEY,
             default_title_template_id INTEGER NULL,
@@ -2427,6 +2468,260 @@ def activate_video_tag_preset(
         (updated_at, preset_id),
     )
     return int(cur.rowcount or 0) > 0
+
+
+def create_channel_visual_style_template(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    template_name: str,
+    template_payload_json: str,
+    status: str,
+    is_default: bool,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    created_at: str,
+    updated_at: str,
+    archived_at: str | None,
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO channel_visual_style_templates(
+            channel_slug, template_name, template_payload_json, status, is_default,
+            validation_status, validation_errors_json, last_validated_at,
+            created_at, updated_at, archived_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            channel_slug,
+            template_name,
+            template_payload_json,
+            status,
+            int(is_default),
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            created_at,
+            updated_at,
+            archived_at,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def get_channel_visual_style_template_by_id(conn: sqlite3.Connection, template_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute("SELECT * FROM channel_visual_style_templates WHERE id = ?", (template_id,)).fetchone()
+
+
+def list_channel_visual_style_templates(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str | None,
+    status: str | None,
+    q: str | None,
+) -> List[Dict[str, Any]]:
+    where: list[str] = []
+    args: list[Any] = []
+    if channel_slug:
+        where.append("channel_slug = ?")
+        args.append(channel_slug)
+    if status == "ACTIVE":
+        where.append("status = 'ACTIVE'")
+    elif status == "ARCHIVED":
+        where.append("status = 'ARCHIVED'")
+    if q:
+        where.append("template_name LIKE ?")
+        args.append(f"%{q}%")
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+    return conn.execute(
+        f"""
+        SELECT *
+        FROM channel_visual_style_templates
+        {where_clause}
+        ORDER BY updated_at DESC, id DESC
+        """,
+        tuple(args),
+    ).fetchall()
+
+
+def update_channel_visual_style_template_fields(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    template_name: str,
+    template_payload_json: str,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE channel_visual_style_templates
+        SET template_name = ?,
+            template_payload_json = ?,
+            validation_status = ?,
+            validation_errors_json = ?,
+            last_validated_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            template_name,
+            template_payload_json,
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            updated_at,
+            template_id,
+        ),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def set_channel_visual_style_template_default_flag(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    is_default: bool,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE channel_visual_style_templates
+        SET is_default = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (int(is_default), updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def unset_active_default_channel_visual_style_template(conn: sqlite3.Connection, *, channel_slug: str) -> None:
+    conn.execute(
+        """
+        UPDATE channel_visual_style_templates
+        SET is_default = 0
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1
+        """,
+        (channel_slug,),
+    )
+
+
+def archive_channel_visual_style_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    updated_at: str,
+    archived_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE channel_visual_style_templates
+        SET status = 'ARCHIVED',
+            is_default = 0,
+            archived_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (archived_at, updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def activate_channel_visual_style_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE channel_visual_style_templates
+        SET status = 'ACTIVE',
+            archived_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def upsert_release_visual_style_template_override(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    template_id: int,
+    created_at: str,
+    updated_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO release_visual_style_template_overrides(release_id, template_id, created_at, updated_at)
+        VALUES(?, ?, ?, ?)
+        ON CONFLICT(release_id) DO UPDATE SET
+            template_id = excluded.template_id,
+            updated_at = excluded.updated_at
+        """,
+        (release_id, template_id, created_at, updated_at),
+    )
+
+
+def clear_release_visual_style_template_override(conn: sqlite3.Connection, *, release_id: int) -> bool:
+    cur = conn.execute(
+        "DELETE FROM release_visual_style_template_overrides WHERE release_id = ?",
+        (release_id,),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def get_release_visual_style_template_override_by_release_id(conn: sqlite3.Connection, *, release_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute(
+        "SELECT * FROM release_visual_style_template_overrides WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+
+
+def get_active_default_channel_visual_style_template(conn: sqlite3.Connection, *, channel_slug: str) -> Optional[Dict[str, Any]]:
+    return conn.execute(
+        """
+        SELECT *
+        FROM channel_visual_style_templates
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (channel_slug,),
+    ).fetchone()
+
+
+def resolve_release_visual_style_template_rows(conn: sqlite3.Connection, *, release_id: int) -> Dict[str, Any]:
+    release_row = conn.execute(
+        """
+        SELECT r.id AS release_id, c.slug AS channel_slug
+        FROM releases r
+        JOIN channels c ON c.id = r.channel_id
+        WHERE r.id = ?
+        """,
+        (release_id,),
+    ).fetchone()
+    if not release_row:
+        return {"release": None, "override": None, "default": None}
+
+    override_row = conn.execute(
+        """
+        SELECT o.release_id, o.template_id, o.created_at, o.updated_at, t.*
+        FROM release_visual_style_template_overrides o
+        JOIN channel_visual_style_templates t ON t.id = o.template_id
+        WHERE o.release_id = ?
+        """,
+        (release_id,),
+    ).fetchone()
+    default_row = get_active_default_channel_visual_style_template(conn, channel_slug=str(release_row["channel_slug"]))
+    return {"release": release_row, "override": override_row, "default": default_row}
 
 
 def _next_job_id(conn: sqlite3.Connection) -> int:

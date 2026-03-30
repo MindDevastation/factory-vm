@@ -76,6 +76,7 @@ from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
 from services.metadata import (
+    channel_visual_style_template_service,
     channel_defaults_service,
     description_template_service,
     descriptiongen_service,
@@ -286,6 +287,10 @@ def _mtg_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
+def _cvst_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
 def _prj_error(status_code: int, code: str, message: str, release_id: int) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -337,6 +342,22 @@ class MetadataVideoTagPresetCreateRequest(BaseModel):
 class MetadataVideoTagPresetPatchRequest(BaseModel):
     preset_name: str | None = None
     preset_body: list[str] | None = None
+
+
+class ChannelVisualStyleTemplateCreateRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_name: str
+    template_payload: Dict[str, Any]
+    make_default: bool = False
+
+
+class ChannelVisualStyleTemplatePatchRequest(BaseModel):
+    template_name: str | None = None
+    template_payload: Dict[str, Any] | None = None
+
+
+class ChannelVisualStyleTemplateReleaseOverrideRequest(BaseModel):
+    template_id: int
 
 
 class MetadataDescriptionTemplateCreateRequest(BaseModel):
@@ -1636,6 +1657,205 @@ def api_metadata_video_tag_presets_activate(preset_id: int, _: bool = Depends(re
         },
     )
     return item
+
+
+@app.post("/v1/metadata/channel-visual-style-templates")
+def api_metadata_channel_visual_style_templates_create(
+    payload: ChannelVisualStyleTemplateCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = channel_visual_style_template_service.create_channel_visual_style_template(
+                conn,
+                channel_slug=payload.channel_slug,
+                template_name=payload.template_name,
+                template_payload=payload.template_payload,
+                make_default=payload.make_default,
+            )
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            status_code = 404 if exc.code in {"CVST_CHANNEL_NOT_FOUND", "CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return result
+
+
+@app.get("/v1/metadata/channel-visual-style-templates")
+def api_metadata_channel_visual_style_templates_list(
+    channel_slug: str | None = None,
+    status: str = "active",
+    q: str | None = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    status_filter = (status or "active").lower()
+    if status_filter not in {"active", "archived", "all"}:
+        return _cvst_error(422, "CVST_INVALID_STATUS_FILTER", "status must be active|archived|all")
+    conn = dbm.connect(env)
+    try:
+        rows = channel_visual_style_template_service.list_channel_visual_style_templates(
+            conn,
+            channel_slug=channel_slug,
+            status_filter=status_filter,
+            q=q,
+        )
+    finally:
+        conn.close()
+    return {"items": rows}
+
+
+@app.get("/v1/metadata/channel-visual-style-templates/{template_id}")
+def api_metadata_channel_visual_style_templates_detail(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = channel_visual_style_template_service.get_channel_visual_style_template(conn, template_id=template_id)
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            status_code = 404 if exc.code in {"CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.patch("/v1/metadata/channel-visual-style-templates/{template_id}")
+def api_metadata_channel_visual_style_templates_patch(
+    template_id: int,
+    payload: ChannelVisualStyleTemplatePatchRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = channel_visual_style_template_service.update_channel_visual_style_template(
+                conn,
+                template_id=template_id,
+                template_name=payload.template_name,
+                template_payload=payload.template_payload,
+            )
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.post("/v1/metadata/channel-visual-style-templates/{template_id}/archive")
+def api_metadata_channel_visual_style_templates_archive(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = channel_visual_style_template_service.archive_channel_visual_style_template(conn, template_id=template_id)
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.post("/v1/metadata/channel-visual-style-templates/{template_id}/activate")
+def api_metadata_channel_visual_style_templates_activate(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = channel_visual_style_template_service.activate_channel_visual_style_template(conn, template_id=template_id)
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.post("/v1/metadata/channel-visual-style-templates/{template_id}/set-default")
+def api_metadata_channel_visual_style_templates_set_default(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = channel_visual_style_template_service.set_default_channel_visual_style_template(conn, template_id=template_id)
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.post("/v1/metadata/channel-visual-style-templates/releases/{release_id}/override")
+def api_metadata_channel_visual_style_templates_release_override_set(
+    release_id: int,
+    payload: ChannelVisualStyleTemplateReleaseOverrideRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            out = channel_visual_style_template_service.set_release_visual_style_template_override(
+                conn,
+                release_id=release_id,
+                template_id=payload.template_id,
+            )
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_RELEASE_NOT_FOUND", "CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return out
+
+
+@app.post("/v1/metadata/channel-visual-style-templates/releases/{release_id}/override/clear")
+def api_metadata_channel_visual_style_templates_release_override_clear(
+    release_id: int,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            out = channel_visual_style_template_service.clear_release_visual_style_template_override(
+                conn,
+                release_id=release_id,
+            )
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_RELEASE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return out
+
+
+@app.get("/v1/metadata/channel-visual-style-templates/releases/{release_id}/effective")
+def api_metadata_channel_visual_style_templates_release_effective(
+    release_id: int,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            out = channel_visual_style_template_service.resolve_effective_channel_visual_style_template_for_release(
+                conn,
+                release_id=release_id,
+            )
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            status_code = 404 if exc.code in {"CVST_RELEASE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return out
 
 
 @app.post("/v1/metadata/description-templates")
