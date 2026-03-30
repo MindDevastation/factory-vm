@@ -8,10 +8,10 @@ import sqlite3
 from typing import Any
 
 from services.common import db as dbm
+from services.metadata import channel_visual_style_template_service
 from services.planner.background_source_adapter_registry import (
     ALLOWED_BACKGROUND_SOURCE_FAMILIES,
     BackgroundCandidate,
-    BackgroundSourceAdapterError,
     build_default_background_source_adapter_registry,
 )
 from services.planner.runtime_visual_resolver import apply_release_visual_package
@@ -43,13 +43,13 @@ def list_background_candidates(
         deduped[candidate.asset_id] = candidate
     ordered = sorted(deduped.values(), key=lambda item: item.asset_id, reverse=True)
 
-    prefill_asset_id = _resolve_prefill_background_asset_id(conn, release_id=release_id)
+    prefill_asset_id, prefill_template_assisted = _resolve_prefill_background_asset_id(conn, release_id=release_id)
     payload_candidates: list[dict[str, Any]] = []
     for item in ordered:
         row = asdict(item)
         if prefill_asset_id is not None and item.asset_id == prefill_asset_id:
             row["selection_mode_prefill"] = "auto_assisted"
-            row["template_assisted"] = bool(template_assisted)
+            row["template_assisted"] = bool(prefill_template_assisted)
         payload_candidates.append(row)
 
     return {
@@ -59,7 +59,7 @@ def list_background_candidates(
         "prefill": {
             "background_asset_id": prefill_asset_id,
             "selection_mode": "auto_assisted" if prefill_asset_id is not None else "manual",
-            "template_assisted": bool(template_assisted),
+            "template_assisted": bool(prefill_template_assisted),
         },
         "candidates": payload_candidates,
     }
@@ -84,6 +84,7 @@ def preview_background_assignment(
     )
 
     selection_mode = "manual" if background_asset_id is not None else "auto_assisted"
+    template_assisted_effective = False if background_asset_id is not None else bool(selected.get("template_assisted", False))
     now_iso = _now_iso()
     preview_id = f"vbg-{secrets.token_hex(8)}"
     intent_snapshot = {
@@ -92,7 +93,7 @@ def preview_background_assignment(
             "source_family": str(selected["source_family"]),
             "source_reference": selected.get("source_reference"),
             "selection_mode": selection_mode,
-            "template_assisted": bool(template_assisted),
+            "template_assisted": bool(template_assisted_effective),
         }
     }
     preview_package = {
@@ -100,7 +101,7 @@ def preview_background_assignment(
         "source_family": str(selected["source_family"]),
         "source_reference": selected.get("source_reference"),
         "selection_mode": selection_mode,
-        "template_assisted": bool(template_assisted),
+        "template_assisted": bool(template_assisted_effective),
     }
     conn.execute(
         """
@@ -271,18 +272,51 @@ def _get_release(conn: sqlite3.Connection, *, release_id: int) -> dict[str, Any]
     return dict(row)
 
 
-def _resolve_prefill_background_asset_id(conn: sqlite3.Connection, *, release_id: int) -> int | None:
+def _resolve_prefill_background_asset_id(conn: sqlite3.Connection, *, release_id: int) -> tuple[int | None, bool]:
     decision = dbm.get_release_visual_background_decision_by_release_id(conn, release_id=release_id)
     if decision and decision.get("background_asset_id") is not None:
-        return int(decision["background_asset_id"])
+        return int(decision["background_asset_id"]), bool(int(decision.get("template_assisted") or 0))
 
     applied = conn.execute(
         "SELECT background_asset_id FROM release_visual_applied_packages WHERE release_id = ?",
         (release_id,),
     ).fetchone()
     if applied and applied["background_asset_id"] is not None:
-        return int(applied["background_asset_id"])
-    return None
+        return int(applied["background_asset_id"]), False
+
+    assisted_asset_id = _resolve_assisted_prefill_asset_id(conn, release_id=release_id)
+    if assisted_asset_id is None:
+        return None, False
+    return assisted_asset_id, True
+
+
+def _resolve_assisted_prefill_asset_id(conn: sqlite3.Connection, *, release_id: int) -> int | None:
+    resolved = channel_visual_style_template_service.resolve_effective_channel_visual_style_template_for_release(
+        conn,
+        release_id=release_id,
+    )
+    template = resolved.get("effective_template") or {}
+    payload = template.get("template_payload") if isinstance(template, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    raw_asset_id = payload.get("default_background_asset_id")
+    if raw_asset_id is None:
+        return None
+    try:
+        asset_id = int(raw_asset_id)
+    except (TypeError, ValueError):
+        return None
+
+    release = conn.execute("SELECT channel_id FROM releases WHERE id = ?", (release_id,)).fetchone()
+    if not release:
+        return None
+    exists = conn.execute(
+        "SELECT id FROM assets WHERE id = ? AND channel_id = ?",
+        (asset_id, int(release["channel_id"])),
+    ).fetchone()
+    if not exists:
+        return None
+    return asset_id
 
 
 def _now_iso() -> str:

@@ -48,6 +48,21 @@ class TestBackgroundAssignmentWorkflowApi(unittest.TestCase):
         dbm.link_job_input(conn, job_id, cover_asset_id, "COVER", 0)
         return release_id, int(channel["id"]), cover_asset_id
 
+    def _template_payload_with_default_background(self, background_asset_id: int) -> dict[str, object]:
+        return {
+            "palette_guidance": "palette",
+            "typography_rules": "type",
+            "text_layout_rules": "layout",
+            "composition_framing_rules": "framing",
+            "branding_rules": "branding",
+            "output_profile_guidance": "output",
+            "background_compatibility_guidance": "bg",
+            "cover_composition_guidance": "cover",
+            "allowed_motifs": ["motif"],
+            "banned_motifs": ["ban"],
+            "default_background_asset_id": background_asset_id,
+        }
+
     def test_candidate_preview_approve_apply_flow_and_provenance(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
@@ -63,6 +78,29 @@ class TestBackgroundAssignmentWorkflowApi(unittest.TestCase):
                     name="bg-managed.png",
                     path="/tmp/bg-managed.png",
                 )
+                manual_bg = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="local://bg-manual",
+                    name="bg-manual.png",
+                    path="/tmp/bg-manual.png",
+                )
+                dbm.create_channel_visual_style_template(
+                    conn,
+                    channel_slug="darkwood-reverie",
+                    template_name="Default Visual",
+                    template_payload_json=dbm.json_dumps(self._template_payload_with_default_background(managed_bg)),
+                    status="ACTIVE",
+                    is_default=True,
+                    validation_status="VALID",
+                    validation_errors_json=None,
+                    last_validated_at="2026-01-01T00:00:00+00:00",
+                    created_at="2026-01-01T00:00:00+00:00",
+                    updated_at="2026-01-01T00:00:00+00:00",
+                    archived_at=None,
+                )
             finally:
                 conn.close()
 
@@ -74,21 +112,27 @@ class TestBackgroundAssignmentWorkflowApi(unittest.TestCase):
             body = candidates.json()
             self.assertIn("managed_library", body["source_families"])
             self.assertTrue(any(int(item["asset_id"]) == managed_bg for item in body["candidates"]))
+            self.assertEqual(int(body["prefill"]["background_asset_id"]), managed_bg)
+            self.assertEqual(body["prefill"]["selection_mode"], "auto_assisted")
+            self.assertTrue(body["prefill"]["template_assisted"])
+            assisted_candidate = next(item for item in body["candidates"] if int(item["asset_id"]) == managed_bg)
+            self.assertEqual(assisted_candidate["selection_mode_prefill"], "auto_assisted")
+            self.assertTrue(assisted_candidate["template_assisted"])
 
             preview = client.post(
                 f"/v1/visual/releases/{release_id}/background/preview",
                 headers=headers,
                 json={
-                    "background_asset_id": managed_bg,
-                    "source_family": "managed_library",
-                    "source_reference": "managed://bg-1",
+                    "background_asset_id": manual_bg,
+                    "source_family": "operator_imported",
+                    "source_reference": "local://bg-manual",
                     "template_assisted": True,
                 },
             )
             self.assertEqual(preview.status_code, 200)
             preview_id = preview.json()["preview_id"]
             self.assertEqual(preview.json()["selection"]["selection_mode"], "manual")
-            self.assertTrue(preview.json()["selection"]["template_assisted"])
+            self.assertFalse(preview.json()["selection"]["template_assisted"])
 
             approve = client.post(
                 f"/v1/visual/releases/{release_id}/background/approve",
@@ -100,11 +144,11 @@ class TestBackgroundAssignmentWorkflowApi(unittest.TestCase):
             apply_r = client.post(f"/v1/visual/releases/{release_id}/background/apply", headers=headers)
             self.assertEqual(apply_r.status_code, 200)
             applied = apply_r.json()
-            self.assertEqual(int(applied["background_asset_id"]), managed_bg)
+            self.assertEqual(int(applied["background_asset_id"]), manual_bg)
             self.assertIn("background_asset", applied["summary"])
-            self.assertEqual(applied["summary"]["background_asset"]["source_family"], "managed_library")
+            self.assertEqual(applied["summary"]["background_asset"]["source_family"], "operator_imported")
             self.assertEqual(applied["summary"]["background_asset"]["selection_mode"], "manual")
-            self.assertTrue(applied["summary"]["background_asset"]["template_assisted"])
+            self.assertFalse(applied["summary"]["background_asset"]["template_assisted"])
 
             conn2 = dbm.connect(env)
             try:
@@ -113,9 +157,9 @@ class TestBackgroundAssignmentWorkflowApi(unittest.TestCase):
                     (release_id,),
                 ).fetchone()
                 assert provenance is not None
-                self.assertEqual(str(provenance["source_family"]), "managed_library")
+                self.assertEqual(str(provenance["source_family"]), "operator_imported")
                 self.assertEqual(str(provenance["selection_mode"]), "manual")
-                self.assertEqual(int(provenance["template_assisted"]), 1)
+                self.assertEqual(int(provenance["template_assisted"]), 0)
             finally:
                 conn2.close()
 
