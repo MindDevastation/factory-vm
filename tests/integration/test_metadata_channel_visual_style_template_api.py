@@ -14,6 +14,24 @@ class TestMetadataChannelVisualStyleTemplateApi(unittest.TestCase):
         importlib.reload(mod)
         return TestClient(mod.app)
 
+    def _insert_release(self, env, *, channel_slug: str = "darkwood-reverie") -> int:
+        from services.common import db as dbm
+
+        conn = dbm.connect(env)
+        try:
+            channel = dbm.get_channel_by_slug(conn, channel_slug)
+            assert channel is not None
+            cur = conn.execute(
+                """
+                INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                VALUES(?, 'r', 'd', '[]', NULL, NULL, ?, 1.0)
+                """,
+                (int(channel["id"]), f"meta-visual-{channel_slug}"),
+            )
+            return int(cur.lastrowid)
+        finally:
+            conn.close()
+
     def test_crud_archive_activate_set_default_and_contract_shape(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
@@ -160,6 +178,122 @@ class TestMetadataChannelVisualStyleTemplateApi(unittest.TestCase):
             ]
             self.assertEqual(len(darkwood_defaults), 1)
             self.assertEqual(len(channel_b_defaults), 0)
+
+    def test_effective_resolution_source_visibility_and_clear_override(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            release_id = self._insert_release(env)
+
+            default_row = client.post(
+                "/v1/metadata/channel-visual-style-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Default",
+                    "template_payload": _payload("forest"),
+                    "make_default": True,
+                },
+            ).json()
+            override_row = client.post(
+                "/v1/metadata/channel-visual-style-templates",
+                headers=headers,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "template_name": "Override",
+                    "template_payload": _payload("mist"),
+                    "make_default": False,
+                },
+            ).json()
+
+            before = client.get(
+                f"/v1/metadata/channel-visual-style-templates/releases/{release_id}/effective",
+                headers=headers,
+            )
+            self.assertEqual(before.status_code, 200)
+            body_before = before.json()
+            self.assertEqual(body_before["source"], "channel_default")
+            self.assertFalse(body_before["is_override"])
+            self.assertFalse(body_before["has_override"])
+            self.assertEqual(body_before["default_template_id"], int(default_row["id"]))
+            self.assertEqual(body_before["effective_template"]["id"], int(default_row["id"]))
+
+            set_override = client.post(
+                f"/v1/metadata/channel-visual-style-templates/releases/{release_id}/override",
+                headers=headers,
+                json={"template_id": int(override_row["id"])},
+            )
+            self.assertEqual(set_override.status_code, 200)
+            set_body = set_override.json()
+            self.assertEqual(set_body["release_id"], release_id)
+            self.assertEqual(set_body["template_id"], int(override_row["id"]))
+
+            after = client.get(
+                f"/v1/metadata/channel-visual-style-templates/releases/{release_id}/effective",
+                headers=headers,
+            )
+            self.assertEqual(after.status_code, 200)
+            body_after = after.json()
+            self.assertEqual(body_after["source"], "release_override")
+            self.assertTrue(body_after["is_override"])
+            self.assertTrue(body_after["has_override"])
+            self.assertEqual(body_after["override_template_id"], int(override_row["id"]))
+            self.assertEqual(body_after["default_template_id"], int(default_row["id"]))
+            self.assertEqual(body_after["effective_template"]["id"], int(override_row["id"]))
+
+            clear = client.post(
+                f"/v1/metadata/channel-visual-style-templates/releases/{release_id}/override/clear",
+                headers=headers,
+            )
+            self.assertEqual(clear.status_code, 200)
+            self.assertEqual(clear.json(), {"release_id": release_id, "cleared": True})
+
+            after_clear = client.get(
+                f"/v1/metadata/channel-visual-style-templates/releases/{release_id}/effective",
+                headers=headers,
+            )
+            self.assertEqual(after_clear.status_code, 200)
+            body_after_clear = after_clear.json()
+            self.assertEqual(body_after_clear["source"], "channel_default")
+            self.assertFalse(body_after_clear["is_override"])
+            self.assertFalse(body_after_clear["has_override"])
+            self.assertEqual(body_after_clear["effective_template"]["id"], int(default_row["id"]))
+
+    def test_effective_resolution_returns_none_when_no_templates_and_release_fields_unchanged(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            release_id = self._insert_release(env, channel_slug="channel-b")
+
+            effective = client.get(
+                f"/v1/metadata/channel-visual-style-templates/releases/{release_id}/effective",
+                headers=headers,
+            )
+            self.assertEqual(effective.status_code, 200)
+            body = effective.json()
+            self.assertEqual(body["source"], "none")
+            self.assertFalse(body["is_override"])
+            self.assertFalse(body["has_override"])
+            self.assertIsNone(body["effective_template"])
+            self.assertIsNone(body["override_template_id"])
+            self.assertIsNone(body["default_template_id"])
+
+            from services.common import db as dbm
+
+            conn = dbm.connect(env)
+            try:
+                release_row = conn.execute(
+                    "SELECT title, description, tags_json FROM releases WHERE id = ?",
+                    (release_id,),
+                ).fetchone()
+                assert release_row is not None
+                self.assertEqual(str(release_row["title"]), "r")
+                self.assertEqual(str(release_row["description"]), "d")
+                self.assertEqual(str(release_row["tags_json"]), "[]")
+            finally:
+                conn.close()
 
 
 
