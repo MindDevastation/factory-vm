@@ -190,6 +190,103 @@ def set_default_channel_visual_style_template(conn: sqlite3.Connection, *, templ
     return _serialize_template(updated)
 
 
+def set_release_visual_style_template_override(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    template_id: int,
+) -> Dict[str, Any]:
+    rows = dbm.resolve_release_visual_style_template_rows(conn, release_id=release_id)
+    release_row = rows["release"]
+    if not release_row:
+        raise ChannelVisualStyleTemplateError(code="CVST_RELEASE_NOT_FOUND", message="Release not found")
+
+    template_row = dbm.get_channel_visual_style_template_by_id(conn, template_id)
+    if not template_row:
+        raise ChannelVisualStyleTemplateError(code="CVST_TEMPLATE_NOT_FOUND", message="Template not found")
+    if str(template_row["status"]) != "ACTIVE":
+        raise ChannelVisualStyleTemplateError(
+            code="CVST_TEMPLATE_ARCHIVED_NOT_ALLOWED_AS_OVERRIDE",
+            message="Archived template cannot be used as release override",
+        )
+
+    if str(template_row["channel_slug"]) != str(release_row["channel_slug"]):
+        raise ChannelVisualStyleTemplateError(
+            code="CVST_TEMPLATE_CHANNEL_MISMATCH",
+            message="Template channel does not match release channel",
+        )
+
+    now_iso = _now_iso()
+    dbm.upsert_release_visual_style_template_override(
+        conn,
+        release_id=release_id,
+        template_id=template_id,
+        created_at=now_iso,
+        updated_at=now_iso,
+    )
+    out = get_release_visual_style_template_override(conn, release_id=release_id)
+    assert out is not None
+    return out
+
+
+def clear_release_visual_style_template_override(conn: sqlite3.Connection, *, release_id: int) -> Dict[str, Any]:
+    rows = dbm.resolve_release_visual_style_template_rows(conn, release_id=release_id)
+    release_row = rows["release"]
+    if not release_row:
+        raise ChannelVisualStyleTemplateError(code="CVST_RELEASE_NOT_FOUND", message="Release not found")
+    cleared = dbm.clear_release_visual_style_template_override(conn, release_id=release_id)
+    return {"release_id": int(release_id), "cleared": bool(cleared)}
+
+
+def get_release_visual_style_template_override(conn: sqlite3.Connection, *, release_id: int) -> Dict[str, Any] | None:
+    row = dbm.get_release_visual_style_template_override_by_release_id(conn, release_id=release_id)
+    if not row:
+        return None
+    template = dbm.get_channel_visual_style_template_by_id(conn, int(row["template_id"]))
+    if not template:
+        return None
+    return {
+        "release_id": int(row["release_id"]),
+        "template_id": int(row["template_id"]),
+        "created_at": str(row["created_at"]),
+        "updated_at": str(row["updated_at"]),
+        "template": _serialize_template(template),
+    }
+
+
+def resolve_effective_channel_visual_style_template_for_release(conn: sqlite3.Connection, *, release_id: int) -> Dict[str, Any]:
+    rows = dbm.resolve_release_visual_style_template_rows(conn, release_id=release_id)
+    release_row = rows["release"]
+    if not release_row:
+        raise ChannelVisualStyleTemplateError(code="CVST_RELEASE_NOT_FOUND", message="Release not found")
+
+    override_meta = dbm.get_release_visual_style_template_override_by_release_id(conn, release_id=release_id)
+    override_row = rows["override"]
+    default_row = rows["default"]
+
+    source = "none"
+    effective_template: Dict[str, Any] | None = None
+    is_override = False
+    if override_row and str(override_row["status"]) == "ACTIVE" and str(override_row["channel_slug"]) == str(release_row["channel_slug"]):
+        source = "release_override"
+        is_override = True
+        effective_template = _serialize_template(override_row)
+    elif default_row:
+        source = "channel_default"
+        effective_template = _serialize_template(default_row)
+
+    return {
+        "release_id": int(release_row["release_id"]),
+        "channel_slug": str(release_row["channel_slug"]),
+        "source": source,
+        "is_override": is_override,
+        "has_override": bool(override_meta is not None),
+        "effective_template": effective_template,
+        "override_template_id": int(override_meta["template_id"]) if override_meta else None,
+        "default_template_id": int(default_row["id"]) if default_row else None,
+    }
+
+
 def _ensure_template_payload_valid(conn: sqlite3.Connection, *, row: Dict[str, Any]) -> None:
     payload = _decode_payload_json(str(row["template_payload_json"]))
     validation = validate_template_payload(payload)

@@ -79,6 +79,42 @@ class TestChannelVisualStyleTemplatesDbSchema(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_release_override_table_exists_with_required_columns_and_pk_release_id(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(release_visual_style_template_overrides)").fetchall()}
+                self.assertTrue({"release_id", "template_id", "created_at", "updated_at"}.issubset(cols))
+
+                now = "2026-03-30T00:00:00+00:00"
+                payload_json = dbm.json_dumps(_valid_payload())
+                template_id = int(
+                    conn.execute(
+                        """
+                        INSERT INTO channel_visual_style_templates(
+                            channel_slug, template_name, template_payload_json, status, is_default,
+                            validation_status, validation_errors_json, last_validated_at,
+                            created_at, updated_at, archived_at
+                        ) VALUES(?, ?, ?, 'ACTIVE', 1, 'VALID', NULL, ?, ?, ?, NULL)
+                        """,
+                        ("darkwood-reverie", "A", payload_json, now, now, now),
+                    ).lastrowid
+                )
+                release_id = _insert_release(conn, channel_slug="darkwood-reverie", suffix="schema")
+
+                conn.execute(
+                    "INSERT INTO release_visual_style_template_overrides(release_id, template_id, created_at, updated_at) VALUES(?, ?, ?, ?)",
+                    (release_id, template_id, now, now),
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO release_visual_style_template_overrides(release_id, template_id, created_at, updated_at) VALUES(?, ?, ?, ?)",
+                        (release_id, template_id, now, now),
+                    )
+            finally:
+                conn.close()
+
 
 def _valid_payload() -> dict[str, object]:
     return {
@@ -93,6 +129,19 @@ def _valid_payload() -> dict[str, object]:
         "background_compatibility_guidance": "Works on dark backgrounds",
         "cover_composition_guidance": "Leave top third for text",
     }
+
+
+def _insert_release(conn: sqlite3.Connection, *, channel_slug: str, suffix: str) -> int:
+    channel = dbm.get_channel_by_slug(conn, channel_slug)
+    assert channel is not None
+    cur = conn.execute(
+        """
+        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+        VALUES(?, 'r', 'd', '[]', NULL, NULL, ?, 1.0)
+        """,
+        (int(channel["id"]), f"meta-{suffix}"),
+    )
+    return int(cur.lastrowid)
 
 
 if __name__ == "__main__":

@@ -733,6 +733,15 @@ def migrate(conn: sqlite3.Connection) -> None:
             ON channel_visual_style_templates(channel_slug)
             WHERE status = 'ACTIVE' AND is_default = 1;
 
+        CREATE TABLE IF NOT EXISTS release_visual_style_template_overrides (
+            release_id INTEGER PRIMARY KEY,
+            template_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(template_id) REFERENCES channel_visual_style_templates(id)
+        );
+
         CREATE TABLE IF NOT EXISTS channel_metadata_defaults (
             channel_slug TEXT PRIMARY KEY,
             default_title_template_id INTEGER NULL,
@@ -2639,6 +2648,80 @@ def activate_channel_visual_style_template(
         (updated_at, template_id),
     )
     return int(cur.rowcount or 0) > 0
+
+
+def upsert_release_visual_style_template_override(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    template_id: int,
+    created_at: str,
+    updated_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO release_visual_style_template_overrides(release_id, template_id, created_at, updated_at)
+        VALUES(?, ?, ?, ?)
+        ON CONFLICT(release_id) DO UPDATE SET
+            template_id = excluded.template_id,
+            updated_at = excluded.updated_at
+        """,
+        (release_id, template_id, created_at, updated_at),
+    )
+
+
+def clear_release_visual_style_template_override(conn: sqlite3.Connection, *, release_id: int) -> bool:
+    cur = conn.execute(
+        "DELETE FROM release_visual_style_template_overrides WHERE release_id = ?",
+        (release_id,),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def get_release_visual_style_template_override_by_release_id(conn: sqlite3.Connection, *, release_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute(
+        "SELECT * FROM release_visual_style_template_overrides WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+
+
+def get_active_default_channel_visual_style_template(conn: sqlite3.Connection, *, channel_slug: str) -> Optional[Dict[str, Any]]:
+    return conn.execute(
+        """
+        SELECT *
+        FROM channel_visual_style_templates
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (channel_slug,),
+    ).fetchone()
+
+
+def resolve_release_visual_style_template_rows(conn: sqlite3.Connection, *, release_id: int) -> Dict[str, Any]:
+    release_row = conn.execute(
+        """
+        SELECT r.id AS release_id, c.slug AS channel_slug
+        FROM releases r
+        JOIN channels c ON c.id = r.channel_id
+        WHERE r.id = ?
+        """,
+        (release_id,),
+    ).fetchone()
+    if not release_row:
+        return {"release": None, "override": None, "default": None}
+
+    override_row = conn.execute(
+        """
+        SELECT o.release_id, o.template_id, o.created_at, o.updated_at, t.*
+        FROM release_visual_style_template_overrides o
+        JOIN channel_visual_style_templates t ON t.id = o.template_id
+        WHERE o.release_id = ?
+        """,
+        (release_id,),
+    ).fetchone()
+    default_row = get_active_default_channel_visual_style_template(conn, channel_slug=str(release_row["channel_slug"]))
+    return {"release": release_row, "override": override_row, "default": default_row}
 
 
 def _next_job_id(conn: sqlite3.Connection) -> int:
