@@ -40,6 +40,7 @@ from services.factory_api.publish_job_actions import create_publish_job_actions_
 from services.factory_api.publish_bulk_actions import create_publish_bulk_actions_router
 from services.factory_api.publish_queue_read import create_publish_queue_read_router
 from services.factory_api.publish_reconcile import create_publish_reconcile_router
+from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
@@ -5115,36 +5116,20 @@ def api_job_qa(job_id: int, _: bool = Depends(require_basic_auth(env))):
 
 @app.post("/v1/jobs/{job_id}/approve")
 def api_approve(job_id: int, payload: ApprovePayload, _: bool = Depends(require_basic_auth(env))):
-    comment = (payload.comment or "approved").strip() or "approved"
     conn = dbm.connect(env)
     try:
-        job = dbm.get_job(conn, job_id)
-        if not job:
-            raise HTTPException(404)
-        if str(job.get("state")) != "WAIT_APPROVAL":
-            raise HTTPException(409, "job is not in WAIT_APPROVAL")
-        dbm.set_approval(conn, job_id, "APPROVE", comment)
-        dbm.update_job_state(conn, job_id, state="APPROVED", stage="APPROVAL")
+        return approve_job(conn, job_id=job_id, comment=(payload.comment or "approved"))
     finally:
         conn.close()
-    return {"ok": True}
 
 
 @app.post("/v1/jobs/{job_id}/reject")
 def api_reject(job_id: int, payload: RejectPayload, _: bool = Depends(require_basic_auth(env))):
-    comment = payload.comment.strip()
     conn = dbm.connect(env)
     try:
-        job = dbm.get_job(conn, job_id)
-        if not job:
-            raise HTTPException(404)
-        if str(job.get("state")) != "WAIT_APPROVAL":
-            raise HTTPException(409, "job is not in WAIT_APPROVAL")
-        dbm.set_approval(conn, job_id, "REJECT", comment)
-        dbm.update_job_state(conn, job_id, state="REJECTED", stage="APPROVAL")
+        return reject_job(conn, job_id=job_id, comment=payload.comment)
     finally:
         conn.close()
-    return {"ok": True}
 
 
 
@@ -5179,23 +5164,10 @@ def api_cancel(job_id: int, payload: CancelPayload, _: bool = Depends(require_ba
 def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
-        job = dbm.get_job(conn, job_id)
-        if not job:
-            raise HTTPException(404)
-        if str(job.get("state")) not in ("APPROVED", "WAIT_APPROVAL"):
-            raise HTTPException(409, "job is not in APPROVED/WAIT_APPROVAL")
-        ts = dbm.now_ts()
-        delete_at = ts + 48 * 3600
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            dbm.update_job_state(conn, job_id, state="PUBLISHED", stage="APPROVAL", published_at=ts, delete_mp4_at=delete_at)
-            history_id = write_committed_history_for_published(conn, job_id=job_id)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        if history_id is not None:
-            logger.info("playlist_builder.history.committed_written", extra={"job_id": job_id, "history_id": history_id})
+        result = mark_job_published(conn, job_id=job_id)
+        if result.get("history_id") is not None:
+            logger.info("playlist_builder.history.committed_written", extra={"job_id": job_id, "history_id": result["history_id"]})
+        return {"ok": True, "delete_mp4_at": result["delete_mp4_at"]}
     except PlaylistBuilderApiError as exc:
         status = {
             "PLB_COMMITTED_HISTORY_MISSING_DRAFT": 409,
@@ -5205,7 +5177,6 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
         return _plb_error(status, exc.code, exc.message)
     finally:
         conn.close()
-    return {"ok": True, "delete_mp4_at": delete_at}
 
 
 @app.get("/v1/ui/jobs/statuses")

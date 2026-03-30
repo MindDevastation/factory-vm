@@ -125,5 +125,88 @@ class TestPipelineE2EMocked(unittest.TestCase):
             self.assertEqual(job3["state"], "CLEANED")
 
 
+    def _seed_publish_job(self, env, *, publish_state: str, reason_code: str | None = None, scheduled_at: float | None = None) -> int:
+        conn = dbm.connect(env)
+        try:
+            ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+            assert ch
+            ts = dbm.now_ts()
+            cur = conn.execute(
+                "INSERT INTO releases(channel_id, title, description, tags_json, created_at) VALUES(?,?,?,?,?)",
+                (int(ch["id"]), f"e2e-{publish_state}", "d", "[]", ts),
+            )
+            job_id = dbm.insert_job_with_lineage_defaults(
+                conn,
+                release_id=int(cur.lastrowid),
+                job_type="UI",
+                state="UPLOADED",
+                stage="PUBLISH",
+                priority=1,
+                attempt=0,
+                created_at=ts,
+                updated_at=ts,
+            )
+            conn.execute(
+                "UPDATE jobs SET publish_state=?, publish_reason_code=?, publish_scheduled_at=?, publish_last_transition_at=?, publish_drift_detected_at=? WHERE id=?",
+                (publish_state, reason_code, scheduled_at, ts, ts if publish_state == "publish_state_drift_detected" else None, job_id),
+            )
+            conn.commit()
+            return job_id
+        finally:
+            conn.close()
+
+    def test_epic3_publish_paths_manual_auto_retry_drift(self) -> None:
+        with temp_env() as (_, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+            mod = importlib.import_module("services.factory_api.app")
+            client = TestClient(importlib.reload(mod).app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            # baseline approval + manual completion
+            j_manual = self._seed_publish_job(env, publish_state="manual_handoff_pending")
+            ack = client.post(f"/v1/publish/jobs/{j_manual}/acknowledge", headers=h, json={"confirm": True, "reason": "own", "request_id": "e2e-ack"})
+            self.assertEqual(ack.status_code, 200)
+            done = client.post(
+                f"/v1/publish/jobs/{j_manual}/mark-completed",
+                headers=h,
+                json={"confirm": True, "reason": "done", "request_id": "e2e-done", "actual_published_at": "2026-03-29T00:00:00Z", "video_id": "yt-1"},
+            )
+            self.assertEqual(done.status_code, 200)
+
+            # automatic scheduled publish path (reschedule -> waiting_for_schedule)
+            j_sched = self._seed_publish_job(env, publish_state="ready_to_publish")
+            rs = client.post(
+                f"/v1/publish/jobs/{j_sched}/reschedule",
+                headers=h,
+                json={"confirm": True, "reason": "delay", "request_id": "e2e-rs", "scheduled_at": "2026-12-01T00:00:00Z"},
+            )
+            self.assertEqual(rs.status_code, 200)
+            self.assertEqual(rs.json()["result"]["publish_state_after"], "waiting_for_schedule")
+
+            # retries exhausted -> manual handoff
+            j_retry = self._seed_publish_job(env, publish_state="manual_handoff_pending", reason_code="retries_exhausted")
+            detail_retry = client.get(f"/v1/publish/jobs/{j_retry}", headers=h)
+            self.assertEqual(detail_retry.status_code, 200)
+            self.assertEqual(detail_retry.json()["publish_state"], "manual_handoff_pending")
+
+            # external manual publish -> drift detected -> operator completion path
+            j_drift = self._seed_publish_job(env, publish_state="publish_state_drift_detected", reason_code="external_manual_publish_detected")
+            to_manual = client.post(
+                f"/v1/publish/jobs/{j_drift}/move-to-manual",
+                headers=h,
+                json={"confirm": True, "reason": "operator handling", "request_id": "e2e-mtm"},
+            )
+            self.assertEqual(to_manual.status_code, 200)
+            ack2 = client.post(f"/v1/publish/jobs/{j_drift}/acknowledge", headers=h, json={"confirm": True, "reason": "ack", "request_id": "e2e-ack2"})
+            self.assertEqual(ack2.status_code, 200)
+            done2 = client.post(
+                f"/v1/publish/jobs/{j_drift}/mark-completed",
+                headers=h,
+                json={"confirm": True, "reason": "completed", "request_id": "e2e-done2", "actual_published_at": "2026-03-29T00:00:00Z", "url": "https://youtube.test/v"},
+            )
+            self.assertEqual(done2.status_code, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

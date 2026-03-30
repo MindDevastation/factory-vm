@@ -195,5 +195,49 @@ class TestPublishBulkActionsApi(unittest.TestCase):
                 conn.close()
 
 
+    def test_service_helpers_match_router_bulk_retry_summary(self) -> None:
+        from services.factory_api.publish_bulk_actions import create_bulk_preview_session, execute_bulk_preview_session
+
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            api_job = self._seed_job(env, publish_state="retry_pending")
+            svc_job = self._seed_job(env, publish_state="retry_pending")
+            client, h = self._client(env)
+
+            api_preview = client.post("/v1/publish/bulk/preview", headers=h, json={"action": "retry", "selected_job_ids": [api_job]})
+            self.assertEqual(api_preview.status_code, 200)
+            api_exec = client.post(
+                "/v1/publish/bulk/execute",
+                headers=h,
+                json={
+                    "preview_session_id": api_preview.json()["preview_session_id"],
+                    "selection_fingerprint": api_preview.json()["selection_fingerprint"],
+                },
+            )
+            self.assertEqual(api_exec.status_code, 200)
+
+            conn = dbm.connect(env)
+            try:
+                svc_preview = create_bulk_preview_session(
+                    conn,
+                    action="retry",
+                    selected_job_ids=[svc_job],
+                    scheduled_at=None,
+                    created_by="test",
+                    ttl_seconds=1800,
+                )
+                svc_exec = execute_bulk_preview_session(
+                    conn,
+                    preview_session_id=svc_preview["preview_session_id"],
+                    selected_job_ids=None,
+                    selection_fingerprint=svc_preview["selection_fingerprint"],
+                    executed_by="test",
+                )
+            finally:
+                conn.close()
+
+            self.assertEqual(api_exec.json()["summary"]["succeeded_count"], svc_exec["summary"]["succeeded_count"])
+
+
 if __name__ == "__main__":
     unittest.main()
