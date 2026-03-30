@@ -813,6 +813,48 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_publish_bulk_action_sessions_expires_at
             ON publish_bulk_action_sessions(expires_at);
 
+        CREATE TABLE IF NOT EXISTS publish_reconcile_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger_mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error_code TEXT NULL,
+            error_message TEXT NULL,
+            total_jobs INTEGER NOT NULL DEFAULT 0,
+            compared_jobs INTEGER NOT NULL DEFAULT 0,
+            drift_count INTEGER NOT NULL DEFAULT 0,
+            no_drift_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL,
+            CHECK(trigger_mode IN ('manual')),
+            CHECK(status IN ('completed', 'source_unavailable'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_reconcile_runs_created_at
+            ON publish_reconcile_runs(created_at, id);
+
+        CREATE TABLE IF NOT EXISTS publish_reconcile_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            job_id INTEGER NOT NULL,
+            release_id INTEGER NOT NULL,
+            channel_slug TEXT NOT NULL,
+            publish_state_snapshot TEXT NOT NULL,
+            expected_visibility TEXT NOT NULL,
+            observed_visibility TEXT NOT NULL,
+            drift_classification TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES publish_reconcile_runs(id),
+            FOREIGN KEY(job_id) REFERENCES jobs(id),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            CHECK(drift_classification IN ('drift_detected', 'no_drift'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_reconcile_items_run_id
+            ON publish_reconcile_items(run_id, id);
+
+        CREATE INDEX IF NOT EXISTS idx_publish_reconcile_items_classification
+            ON publish_reconcile_items(drift_classification, run_id, id);
+
         CREATE TABLE IF NOT EXISTS canon_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             value TEXT NOT NULL UNIQUE
