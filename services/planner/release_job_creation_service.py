@@ -13,6 +13,7 @@ from services.planner.release_job_creation_foundation import (
     get_release_by_id,
     validate_open_job_invariants,
 )
+from services.planner.runtime_visual_resolver import resolve_runtime_visual_bindings_for_release
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ class ReleaseJobCreationService:
         current_open_job = get_current_open_job_for_release(self._conn, release=release)
 
         if current_open_job is not None:
+            resolve_runtime_visual_bindings_for_release(self._conn, release_id=release_id)
             return self._build_result(
                 release=release,
                 job=current_open_job,
@@ -128,6 +130,7 @@ class ReleaseJobCreationService:
                 message="Job creation failed.",
                 details={"release_id": release_id},
             )
+        resolve_runtime_visual_bindings_for_release(self._conn, release_id=release_id)
 
         return self._build_result(
             release=release_after,
