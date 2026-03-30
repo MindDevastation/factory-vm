@@ -4,7 +4,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from aiogram import Bot, Router, F
 from aiogram.filters import Command
@@ -24,6 +24,18 @@ from services.bot.telegram_publish_notifications import send_critical_publish_no
 
 router = Router()
 log = get_logger("bot")
+
+
+def _telegram_reply_payload(*, action: str, target: dict[str, Any], result: str, request_id: str, error_code: str | None = None) -> str:
+    payload: dict[str, Any] = {
+        "action": action,
+        "target": target,
+        "result": result,
+        "request_id": request_id,
+    }
+    if error_code:
+        payload["error_code"] = error_code
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def _kb(job_id: int) -> InlineKeyboardBuilder:
@@ -204,9 +216,9 @@ async def cb_publish_action(call: CallbackQuery):
         return
     _, action, raw_job_id = str(call.data or "").split(":", 2)
     job_id = int(raw_job_id)
+    request_id = f"tg-{action}-{job_id}-{int(dbm.now_ts())}"
     conn = dbm.connect(env)
     try:
-        request_id = f"tg-{action}-{job_id}-{int(dbm.now_ts())}"
         result = execute_publish_job_action(
             conn,
             job_id=job_id,
@@ -219,10 +231,27 @@ async def cb_publish_action(call: CallbackQuery):
     finally:
         conn.close()
     if hasattr(result, "status_code"):
-        await call.message.answer(f"❌ {action} failed: {result.body.decode('utf-8')}")
+        body = json.loads(result.body.decode("utf-8"))
+        err = body.get("error") or {}
+        await call.message.answer(
+            _telegram_reply_payload(
+                action=action,
+                target={"job_id": job_id},
+                result="failed",
+                request_id=str(err.get("request_id") or request_id),
+                error_code=str(err.get("code") or "E3_ACTION_NOT_ALLOWED"),
+            )
+        )
     else:
-        after = result.get("result", {}).get("publish_state_after")
-        await call.message.answer(f"✅ {action} applied for job {job_id} -> {after}")
+        await call.message.answer(
+            _telegram_reply_payload(
+                action=action,
+                target={"job_id": job_id},
+                result="ok",
+                request_id=request_id,
+                error_code=None,
+            )
+        )
     await call.answer(action)
 
 
@@ -239,6 +268,7 @@ async def cb_publish_bulk_action(call: CallbackQuery):
     scheduled_at = parts[3] if len(parts) > 3 else None
     selected_job_ids = [int(item) for item in ids_raw.split(",") if item.strip()]
 
+    request_id = f"tg-bulk-{action}-{int(dbm.now_ts())}"
     try:
         result = run_telegram_bulk_action(
             env=env,
@@ -248,13 +278,27 @@ async def cb_publish_bulk_action(call: CallbackQuery):
             scheduled_at=scheduled_at,
         )
     except PublishBulkActionError as exc:
-        await call.message.answer(f"❌ bulk {action} failed: {exc.code} {exc.message}")
+        await call.message.answer(
+            _telegram_reply_payload(
+                action=action,
+                target={"job_ids": selected_job_ids, "count": len(selected_job_ids)},
+                result="failed",
+                request_id=request_id,
+                error_code=exc.code,
+            )
+        )
         await call.answer("bulk failed")
         return
 
     summary = result["execute"]["summary"]
     await call.message.answer(
-        f"✅ bulk {action}: executed={summary['executed_count']} succeeded={summary['succeeded_count']} skipped={summary['skipped_count']}"
+        _telegram_reply_payload(
+            action=action,
+            target={"job_ids": selected_job_ids, "count": len(selected_job_ids)},
+            result=f"ok executed={summary['executed_count']} succeeded={summary['succeeded_count']} skipped={summary['skipped_count']}",
+            request_id=request_id,
+            error_code=None,
+        )
     )
     await call.answer(f"bulk {action}")
 

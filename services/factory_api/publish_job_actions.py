@@ -14,6 +14,19 @@ from services.common.env import Env
 from services.factory_api.security import require_basic_auth
 from services.publish_runtime.orchestrator import is_publish_transition_allowed
 
+_E3_ERROR_MAP: dict[str, str] = {
+    "PJA_REQUEST_ID_REQUIRED": "E3_ACTION_CONFIRMATION_REQUIRED",
+    "PJA_CONFIRM_REQUIRED": "E3_ACTION_CONFIRMATION_REQUIRED",
+    "PJA_REASON_REQUIRED": "E3_ACTION_CONFIRMATION_REQUIRED",
+    "PJA_JOB_NOT_FOUND": "E3_ACTION_NOT_ALLOWED",
+    "PJA_JOB_CANCELLED": "E3_ACTION_NOT_ALLOWED",
+    "PJA_ACTION_FORBIDDEN_STATE": "E3_ACTION_NOT_ALLOWED",
+    "PJA_INVALID_DATETIME": "E3_ACTION_NOT_ALLOWED",
+    "PJA_MARK_COMPLETED_MEDIA_REQUIRED": "E3_ACTION_NOT_ALLOWED",
+    "PJA_RESCHEDULE_NOT_FUTURE": "E3_ACTION_NOT_ALLOWED",
+    "PJA_ACTION_UNSUPPORTED": "E3_ACTION_NOT_ALLOWED",
+}
+
 
 class PublishActionEnvelope(BaseModel):
     confirm: bool
@@ -52,7 +65,11 @@ def _actor_identity_from_request(request: Request) -> str:
 
 
 def _mutation_error(*, code: str, message: str, request_id: str, status_code: int = 422) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message, "request_id": request_id}})
+    e3_code = _E3_ERROR_MAP.get(code, "E3_ACTION_NOT_ALLOWED")
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": {"code": e3_code, "legacy_code": code, "message": message, "request_id": request_id}},
+    )
 
 
 def _validate_envelope(payload: PublishActionEnvelope) -> tuple[str, str] | JSONResponse:
@@ -410,8 +427,13 @@ def _cancel_mutation(conn: Any, row: Any, request_id: str) -> dict[str, Any] | J
     from_state = str(row.get("publish_state") or "")
     updates = {
         "state": "CANCELLED",
+        "stage": "CANCELLED",
         "publish_reason_code": "operator_cancelled",
         "publish_reason_detail": "cancelled by operator",
+        "locked_by": None,
+        "locked_at": None,
+        "retry_at": None,
+        "publish_retry_at": None,
     }
     if from_state and is_publish_transition_allowed(
         from_publish_state=from_state,
@@ -422,18 +444,39 @@ def _cancel_mutation(conn: Any, row: Any, request_id: str) -> dict[str, Any] | J
         conn.execute(
             """
             UPDATE jobs
-            SET state = ?, publish_state = ?, publish_reason_code = ?, publish_reason_detail = ?, publish_last_transition_at = ?, updated_at = ?
+            SET state = ?, stage = ?, publish_state = ?, publish_reason_code = ?, publish_reason_detail = ?, retry_at = NULL, publish_retry_at = NULL, locked_by = NULL, locked_at = NULL, publish_last_transition_at = ?, updated_at = ?
             WHERE id = ?
             """,
-            ("CANCELLED", "publish_failed_terminal", "operator_cancelled", "cancelled by operator", _now_ts(), _now_ts(), int(row["id"])),
+            ("CANCELLED", "CANCELLED", "publish_failed_terminal", "operator_cancelled", "cancelled by operator", _now_ts(), _now_ts(), int(row["id"])),
         )
-        return {"ok": True, "publish_state_before": from_state, "publish_state_after": "publish_failed_terminal", "state_after": "CANCELLED"}
+        return {
+            "ok": True,
+            "publish_state_before": from_state,
+            "publish_state_after": "publish_failed_terminal",
+            "state_after": "CANCELLED",
+            "stage_after": "CANCELLED",
+        }
 
+    publish_state_after = None if from_state == "retry_pending" else (from_state or None)
     conn.execute(
-        "UPDATE jobs SET state = ?, publish_reason_code = ?, publish_reason_detail = ?, updated_at = ? WHERE id = ?",
-        (updates["state"], updates["publish_reason_code"], updates["publish_reason_detail"], _now_ts(), int(row["id"])),
+        "UPDATE jobs SET state = ?, stage = ?, publish_state = ?, publish_reason_code = ?, publish_reason_detail = ?, retry_at = NULL, publish_retry_at = NULL, locked_by = NULL, locked_at = NULL, updated_at = ? WHERE id = ?",
+        (
+            updates["state"],
+            updates["stage"],
+            publish_state_after,
+            updates["publish_reason_code"],
+            updates["publish_reason_detail"],
+            _now_ts(),
+            int(row["id"]),
+        ),
     )
-    return {"ok": True, "publish_state_before": from_state or None, "publish_state_after": from_state or None, "state_after": "CANCELLED"}
+    return {
+        "ok": True,
+        "publish_state_before": from_state or None,
+        "publish_state_after": publish_state_after,
+        "state_after": "CANCELLED",
+        "stage_after": "CANCELLED",
+    }
 
 
 def _reset_failure_mutation(conn: Any, row: Any, request_id: str) -> dict[str, Any] | JSONResponse:

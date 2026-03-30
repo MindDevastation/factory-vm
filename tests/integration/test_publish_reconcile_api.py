@@ -155,7 +155,8 @@ class TestPublishReconcileApi(unittest.TestCase):
             resp = client.post("/v1/publish/reconcile/run", headers=headers)
             self.assertEqual(resp.status_code, 503)
             body = resp.json()
-            self.assertEqual(body["error"]["code"], "PRC_SOURCE_UNAVAILABLE")
+            self.assertEqual(body["error"]["code"], "E3_RECONCILE_SOURCE_UNAVAILABLE")
+            self.assertEqual(body["error"]["legacy_code"], "PRC_SOURCE_UNAVAILABLE")
             run_id = int(body["error"]["run_id"])
 
             conn = dbm.connect(env)

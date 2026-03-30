@@ -90,7 +90,8 @@ class TestPublishBulkActionsApi(unittest.TestCase):
 
             execute = client.post("/v1/publish/bulk/execute", headers=h, json={"preview_session_id": sid})
             self.assertEqual(execute.status_code, 409)
-            self.assertEqual(execute.json()["error"]["code"], "PBA_SESSION_EXPIRED")
+            self.assertEqual(execute.json()["error"]["code"], "E3_BULK_SESSION_EXPIRED")
+            self.assertEqual(execute.json()["error"]["legacy_code"], "PBA_SESSION_EXPIRED")
             self.assertEqual(execute.json()["error"]["details"]["invalidation"]["kind"], "expired")
 
     def test_execute_scope_mismatch_and_outside_snapshot(self) -> None:
@@ -108,7 +109,8 @@ class TestPublishBulkActionsApi(unittest.TestCase):
                 json={"preview_session_id": b["preview_session_id"], "selection_fingerprint": "bad"},
             )
             self.assertEqual(mismatch.status_code, 409)
-            self.assertEqual(mismatch.json()["error"]["code"], "PBA_SCOPE_MISMATCH")
+            self.assertEqual(mismatch.json()["error"]["code"], "E3_BULK_SCOPE_MISMATCH")
+            self.assertEqual(mismatch.json()["error"]["legacy_code"], "PBA_SCOPE_MISMATCH")
 
             preview2 = client.post("/v1/publish/bulk/preview", headers=h, json={"action": "retry", "selected_job_ids": [j1]})
             outside = client.post(
@@ -117,7 +119,8 @@ class TestPublishBulkActionsApi(unittest.TestCase):
                 json={"preview_session_id": preview2.json()["preview_session_id"], "selected_job_ids": [j1, j2]},
             )
             self.assertEqual(outside.status_code, 409)
-            self.assertEqual(outside.json()["error"]["code"], "PBA_EXECUTE_OUTSIDE_SNAPSHOT")
+            self.assertEqual(outside.json()["error"]["code"], "E3_BULK_SCOPE_MISMATCH")
+            self.assertEqual(outside.json()["error"]["legacy_code"], "PBA_EXECUTE_OUTSIDE_SNAPSHOT")
 
     def test_mixed_allowed_forbidden_and_hold(self) -> None:
         with temp_env() as (_td, env):
@@ -165,7 +168,8 @@ class TestPublishBulkActionsApi(unittest.TestCase):
 
             missing = client.post("/v1/publish/bulk/preview", headers=h, json={"action": "reschedule", "selected_job_ids": [job_id]})
             self.assertEqual(missing.status_code, 422)
-            self.assertEqual(missing.json()["error"]["code"], "PJA_INVALID_DATETIME")
+            self.assertEqual(missing.json()["error"]["code"], "E3_ACTION_NOT_ALLOWED")
+            self.assertEqual(missing.json()["error"]["legacy_code"], "PJA_INVALID_DATETIME")
 
             target = (datetime.now(timezone.utc) + timedelta(days=3)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
             preview = client.post(

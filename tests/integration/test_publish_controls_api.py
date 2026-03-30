@@ -58,7 +58,8 @@ class TestPublishControlsApi(unittest.TestCase):
                 json={"auto_publish_paused": True, "reason": "   "},
             )
             self.assertEqual(bad.status_code, 422)
-            self.assertEqual(bad.json()["error"]["code"], "PPP_REASON_EMPTY")
+            self.assertEqual(bad.json()["error"]["code"], "E3_ACTION_CONFIRMATION_REQUIRED")
+            self.assertEqual(bad.json()["error"]["legacy_code"], "PPP_REASON_EMPTY")
 
 
 if __name__ == "__main__":

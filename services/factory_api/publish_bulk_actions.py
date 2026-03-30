@@ -27,6 +27,13 @@ ALLOWED_BULK_ACTIONS = {"retry", "move_to_manual", "acknowledge", "reschedule", 
 MAX_BULK_SELECTION = 200
 PREVIEW_TTL_SECONDS = 1800
 
+_E3_ERROR_MAP: dict[str, str] = {
+    "PBA_SESSION_NOT_FOUND": "E3_BULK_SESSION_NOT_FOUND",
+    "PBA_SESSION_EXPIRED": "E3_BULK_SESSION_EXPIRED",
+    "PBA_SCOPE_MISMATCH": "E3_BULK_SCOPE_MISMATCH",
+    "PBA_EXECUTE_OUTSIDE_SNAPSHOT": "E3_BULK_SCOPE_MISMATCH",
+}
+
 
 class PublishBulkPreviewPayload(BaseModel):
     action: str
@@ -306,7 +313,13 @@ def execute_bulk_preview_session(
 
 
 def _bulk_error(exc: PublishBulkActionError) -> JSONResponse:
-    payload: dict[str, Any] = {"error": {"code": exc.code, "message": exc.message}}
+    payload: dict[str, Any] = {
+        "error": {
+            "code": _E3_ERROR_MAP.get(exc.code, "E3_ACTION_NOT_ALLOWED"),
+            "legacy_code": exc.code,
+            "message": exc.message,
+        }
+    }
     if exc.details:
         payload["error"]["details"] = exc.details
     return JSONResponse(status_code=exc.status_code, content=payload)

@@ -370,7 +370,8 @@ class TestPublishQueueReadApi(unittest.TestCase):
             resp = client.get(f"/v1/publish/jobs/{job_id}", headers=h)
             self.assertEqual(resp.status_code, 422)
             body = resp.json()
-            self.assertEqual(body["error"]["code"], "PPP_INVALID_JOB_HOLD")
+            self.assertEqual(body["error"]["code"], "E3_POLICY_RESOLUTION_FAILED")
+            self.assertEqual(body["error"]["legacy_code"], "PPP_INVALID_JOB_HOLD")
             self.assertEqual(body["error"]["message"], "publish_hold_active requires publish_hold_reason_code")
 
 
