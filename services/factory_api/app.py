@@ -464,6 +464,10 @@ class CoverCandidateSelectRequest(BaseModel):
     candidate_id: str = Field(min_length=1)
 
 
+class CoverApproveRequest(BaseModel):
+    candidate_id: str | None = None
+
+
 def _mdo_sources_from_defaults(defaults: Dict[str, Any]) -> List[Dict[str, Any]]:
     field_pairs = (
         ("title", "title_template"),
@@ -1172,6 +1176,50 @@ def api_visual_cover_candidate_select(
             )
         except cover_assignment_service.CoverAssignmentError as exc:
             status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/approve")
+def api_visual_cover_candidate_approve(
+    release_id: int,
+    payload: CoverApproveRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.approve_cover_candidate(
+                conn,
+                release_id=release_id,
+                candidate_id=payload.candidate_id,
+                approved_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND", "VCOVER_PREVIEW_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/apply")
+def api_visual_cover_candidate_apply(
+    release_id: int,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.apply_cover_candidate(
+                conn,
+                release_id=release_id,
+                applied_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_PREVIEW_NOT_FOUND"} else 422
             return _vcover_error(status_code, exc.code, exc.message)
     finally:
         conn.close()

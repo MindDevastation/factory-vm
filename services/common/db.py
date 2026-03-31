@@ -3028,6 +3028,39 @@ def resolve_canonical_cover_asset_id_for_background_apply(conn: sqlite3.Connecti
     return int(row["asset_id"])
 
 
+def resolve_canonical_background_asset_id_for_cover_apply(conn: sqlite3.Connection, *, release_id: int) -> int | None:
+    applied = conn.execute(
+        "SELECT background_asset_id FROM release_visual_applied_packages WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    if applied and applied["background_asset_id"] is not None:
+        return int(applied["background_asset_id"])
+
+    release_row = conn.execute(
+        "SELECT channel_id, current_open_job_id FROM releases WHERE id = ?",
+        (release_id,),
+    ).fetchone()
+    if not release_row or release_row["current_open_job_id"] is None:
+        return None
+
+    row = conn.execute(
+        """
+        SELECT ji.asset_id
+        FROM job_inputs ji
+        JOIN assets a ON a.id = ji.asset_id
+        WHERE ji.job_id = ?
+          AND ji.role = 'BACKGROUND'
+          AND a.channel_id = ?
+        ORDER BY ji.order_index ASC, ji.asset_id ASC
+        LIMIT 1
+        """,
+        (int(release_row["current_open_job_id"]), int(release_row["channel_id"])),
+    ).fetchone()
+    if not row:
+        return None
+    return int(row["asset_id"])
+
+
 def list_background_candidate_assets(
     conn: sqlite3.Connection,
     *,

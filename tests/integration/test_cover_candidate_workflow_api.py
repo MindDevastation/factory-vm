@@ -29,6 +29,48 @@ class TestCoverCandidateWorkflowApi(unittest.TestCase):
         )
         return release_id, int(channel["id"])
 
+    def _seed_release_with_runtime_job(self, conn) -> tuple[int, int, int, int]:
+        channel = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+        assert channel is not None
+        job_id = dbm.create_ui_job_draft(
+            conn,
+            channel_id=int(channel["id"]),
+            title="cover apply flow",
+            description="desc",
+            tags_csv="a",
+            cover_name="cover-old.png",
+            cover_ext="png",
+            background_name="bg-old.png",
+            background_ext="png",
+            audio_ids_text="1",
+            job_type="UI",
+        )
+        job = dbm.get_job(conn, job_id)
+        assert job is not None
+        release_id = int(job["release_id"])
+        conn.execute("UPDATE releases SET current_open_job_id = ? WHERE id = ?", (job_id, release_id))
+        bg_asset_id = dbm.create_asset(
+            conn,
+            channel_id=int(channel["id"]),
+            kind="IMAGE",
+            origin="LOCAL",
+            origin_id="local://bg-runtime",
+            name="bg-runtime.png",
+            path="/tmp/bg-runtime.png",
+        )
+        old_cover_asset_id = dbm.create_asset(
+            conn,
+            channel_id=int(channel["id"]),
+            kind="IMAGE",
+            origin="LOCAL",
+            origin_id="local://cover-old",
+            name="cover-old.png",
+            path="/tmp/cover-old.png",
+        )
+        dbm.link_job_input(conn, job_id, bg_asset_id, "BACKGROUND", 0)
+        dbm.link_job_input(conn, job_id, old_cover_asset_id, "COVER", 0)
+        return release_id, int(channel["id"]), int(bg_asset_id), int(job_id)
+
     def test_cover_input_candidate_preview_select_flow_with_provenance(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
@@ -130,6 +172,79 @@ class TestCoverCandidateWorkflowApi(unittest.TestCase):
             )
             self.assertEqual(missing.status_code, 404)
             self.assertEqual(missing.json()["error"]["code"], "VCOVER_RELEASE_NOT_FOUND")
+
+    def test_cover_approve_apply_uses_selected_cover_for_thumbnail_and_runtime(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id, channel_id, background_asset_id, job_id = self._seed_release_with_runtime_job(conn)
+                new_cover_asset_id = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="local://cover-new",
+                    name="cover-new.png",
+                    path="/tmp/cover-new.png",
+                )
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            created = client.post(
+                f"/v1/visual/releases/{release_id}/cover/candidates",
+                headers=headers,
+                json={
+                    "cover_asset_id": new_cover_asset_id,
+                    "source_provider_family": "manual_provider",
+                    "source_reference": "manual://cover-new",
+                    "selection_mode": "manual",
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            candidate_id = str(created.json()["candidate_id"])
+
+            selected = client.post(
+                f"/v1/visual/releases/{release_id}/cover/select",
+                headers=headers,
+                json={"candidate_id": candidate_id},
+            )
+            self.assertEqual(selected.status_code, 200)
+
+            approved = client.post(
+                f"/v1/visual/releases/{release_id}/cover/approve",
+                headers=headers,
+                json={},
+            )
+            self.assertEqual(approved.status_code, 200)
+            self.assertEqual(str(approved.json()["candidate_id"]), candidate_id)
+
+            applied = client.post(f"/v1/visual/releases/{release_id}/cover/apply", headers=headers)
+            self.assertEqual(applied.status_code, 200)
+            body = applied.json()
+            self.assertEqual(int(body["background_asset_id"]), background_asset_id)
+            self.assertEqual(int(body["cover_asset_id"]), new_cover_asset_id)
+            self.assertEqual(body["summary"]["thumbnail_source"]["source_kind"], "cover_asset")
+            self.assertEqual(int(body["summary"]["thumbnail_source"]["asset_id"]), new_cover_asset_id)
+
+            conn2 = dbm.connect(env)
+            try:
+                package = conn2.execute(
+                    "SELECT background_asset_id, cover_asset_id FROM release_visual_applied_packages WHERE release_id = ?",
+                    (release_id,),
+                ).fetchone()
+                assert package is not None
+                self.assertEqual(int(package["background_asset_id"]), background_asset_id)
+                self.assertEqual(int(package["cover_asset_id"]), new_cover_asset_id)
+                role_rows = conn2.execute(
+                    "SELECT role, asset_id FROM job_inputs WHERE job_id = ? AND role IN ('BACKGROUND','COVER') ORDER BY role ASC",
+                    (job_id,),
+                ).fetchall()
+                self.assertEqual([(str(r["role"]), int(r["asset_id"])) for r in role_rows], [("BACKGROUND", background_asset_id), ("COVER", new_cover_asset_id)])
+            finally:
+                conn2.close()
 
 
 if __name__ == "__main__":

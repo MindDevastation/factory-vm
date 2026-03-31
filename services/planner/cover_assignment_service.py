@@ -6,6 +6,12 @@ import secrets
 import sqlite3
 from typing import Any
 
+from services.common import db as dbm
+from services.planner.runtime_visual_resolver import apply_release_visual_package
+from services.visual_domain import build_visual_package_summary
+
+COVER_PREVIEW_SCOPE = dbm.VISUAL_PREVIEW_SCOPE_COVER
+
 
 class CoverAssignmentError(Exception):
     def __init__(self, *, code: str, message: str):
@@ -191,6 +197,134 @@ def select_cover_candidate_for_approval(
     }
 
 
+def approve_cover_candidate(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    candidate_id: str | None,
+    approved_by: str | None,
+) -> dict[str, Any]:
+    _get_release(conn, release_id=release_id)
+    candidate = _resolve_candidate_for_approval(conn, release_id=release_id, candidate_id=candidate_id)
+    preview_id = f"vcvp-{secrets.token_hex(8)}"
+    now_iso = _now_iso()
+    intent_snapshot = {
+        "cover": {
+            "asset_id": int(candidate["cover_asset"]["asset_id"]),
+            "source_provider_family": str(candidate["source_provider_family"]),
+            "source_reference": candidate["source_reference"],
+            "selection_mode": candidate["selection_mode"],
+            "input_payload_id": candidate["input_payload_id"],
+            "template_ref": candidate["template_ref"],
+        }
+    }
+    preview_package = {
+        "cover_asset_id": int(candidate["cover_asset"]["asset_id"]),
+        "source_provider_family": str(candidate["source_provider_family"]),
+        "source_reference": candidate["source_reference"],
+        "selection_mode": candidate["selection_mode"],
+        "input_payload_id": candidate["input_payload_id"],
+        "template_ref": candidate["template_ref"],
+    }
+    conn.execute(
+        """
+        INSERT INTO release_visual_preview_snapshots(
+            id, release_id, preview_scope, intent_snapshot_json, preview_package_json, created_by, created_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            preview_id,
+            release_id,
+            COVER_PREVIEW_SCOPE,
+            json.dumps(intent_snapshot, sort_keys=True),
+            json.dumps(preview_package, sort_keys=True),
+            approved_by,
+            now_iso,
+        ),
+    )
+    dbm.upsert_release_visual_approved_preview(
+        conn,
+        release_id=release_id,
+        preview_scope=COVER_PREVIEW_SCOPE,
+        preview_id=preview_id,
+        approved_by=approved_by,
+        approved_at=now_iso,
+    )
+    return {
+        "release_id": release_id,
+        "preview_id": preview_id,
+        "candidate_id": candidate["candidate_id"],
+        "approved": True,
+    }
+
+
+def apply_cover_candidate(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    applied_by: str | None,
+) -> dict[str, Any]:
+    _get_release(conn, release_id=release_id)
+    approved = dbm.get_release_visual_approved_preview(
+        conn,
+        release_id=release_id,
+        preview_scope=COVER_PREVIEW_SCOPE,
+    )
+    if not approved:
+        raise CoverAssignmentError(code="VCOVER_APPROVAL_REQUIRED", message="approved cover preview is required before apply")
+
+    snapshot = conn.execute(
+        "SELECT id, preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
+        (str(approved["preview_id"]),),
+    ).fetchone()
+    if not snapshot:
+        raise CoverAssignmentError(code="VCOVER_PREVIEW_NOT_FOUND", message="approved cover preview not found")
+    parsed = json.loads(str(snapshot["preview_package_json"]) or "{}")
+    cover_asset_id = int(parsed.get("cover_asset_id") or 0)
+    if cover_asset_id <= 0:
+        raise CoverAssignmentError(code="VCOVER_INVALID_PREVIEW", message="approved preview has no cover asset")
+
+    background_asset_id = dbm.resolve_canonical_background_asset_id_for_cover_apply(conn, release_id=release_id)
+    if background_asset_id is None:
+        raise CoverAssignmentError(
+            code="VCOVER_CANONICAL_BACKGROUND_REQUIRED",
+            message="cover apply requires canonical background asset",
+        )
+
+    resolved = apply_release_visual_package(
+        conn,
+        release_id=release_id,
+        background_asset_id=int(background_asset_id),
+        cover_asset_id=cover_asset_id,
+        source_preview_id=str(snapshot["id"]),
+        applied_by=applied_by,
+    )
+    summary = build_visual_package_summary(
+        release_id=release_id,
+        package={
+            "background_asset_id": int(background_asset_id),
+            "cover_asset_id": cover_asset_id,
+            "source_family": str(parsed.get("source_provider_family") or "known_resolved"),
+            "source_reference": parsed.get("source_reference"),
+            "selection_mode": str(parsed.get("selection_mode") or "manual"),
+            "template_assisted": str(parsed.get("selection_mode") or "manual") == "auto_assisted",
+            "is_auto_assisted": str(parsed.get("selection_mode") or "manual") == "auto_assisted",
+        },
+    )
+    return {
+        "release_id": release_id,
+        "preview_id": str(snapshot["id"]),
+        "background_asset_id": int(background_asset_id),
+        "cover_asset_id": cover_asset_id,
+        "runtime": {
+            "runtime_bound": bool(resolved.runtime_bound),
+            "deferred": bool(resolved.deferred),
+            "job_id": resolved.job_id,
+        },
+        "summary": summary,
+    }
+
+
 def _candidate_payload(conn: sqlite3.Connection, *, candidate_id: str) -> dict[str, Any]:
     row = conn.execute(
         """
@@ -218,6 +352,26 @@ def _candidate_row(conn: sqlite3.Connection, *, release_id: int, candidate_id: s
     if not row:
         raise CoverAssignmentError(code="VCOVER_CANDIDATE_NOT_FOUND", message="cover candidate not found")
     return _candidate_row_to_payload(row)
+
+
+def _resolve_candidate_for_approval(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    candidate_id: str | None,
+) -> dict[str, Any]:
+    if candidate_id:
+        return _candidate_row(conn, release_id=release_id, candidate_id=candidate_id)
+    selected = conn.execute(
+        "SELECT candidate_id FROM release_visual_cover_selected_candidates WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    if not selected:
+        raise CoverAssignmentError(
+            code="VCOVER_SELECTION_REQUIRED",
+            message="select a cover candidate before approve",
+        )
+    return _candidate_row(conn, release_id=release_id, candidate_id=str(selected["candidate_id"]))
 
 
 def _candidate_row_to_payload(row: dict[str, Any]) -> dict[str, Any]:
