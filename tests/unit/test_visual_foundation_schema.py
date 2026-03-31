@@ -19,6 +19,7 @@ class TestVisualFoundationSchema(unittest.TestCase):
                 self.assertIn("release_visual_configs", tables)
                 self.assertIn("release_visual_preview_snapshots", tables)
                 self.assertIn("release_visual_approved_previews", tables)
+                self.assertIn("release_visual_approved_previews_scoped", tables)
                 self.assertIn("release_visual_applied_packages", tables)
                 self.assertNotIn("release_visual_thumbnails", tables)
 
@@ -37,6 +38,7 @@ class TestVisualFoundationSchema(unittest.TestCase):
                     {
                         "id",
                         "release_id",
+                        "preview_scope",
                         "intent_snapshot_json",
                         "preview_package_json",
                         "created_by",
@@ -54,6 +56,15 @@ class TestVisualFoundationSchema(unittest.TestCase):
                     for row in conn.execute("PRAGMA table_info(release_visual_approved_previews)").fetchall()
                 }
                 self.assertEqual(approved_cols, {"release_id", "preview_id", "approved_by", "approved_at"})
+
+                scoped_approved_cols = {
+                    str(row["name"])
+                    for row in conn.execute("PRAGMA table_info(release_visual_approved_previews_scoped)").fetchall()
+                }
+                self.assertEqual(
+                    scoped_approved_cols,
+                    {"release_id", "preview_scope", "preview_id", "approved_by", "approved_at"},
+                )
 
                 applied_cols = {
                     str(row["name"])

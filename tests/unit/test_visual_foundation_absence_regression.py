@@ -72,10 +72,12 @@ class TestVisualFoundationAbsenceRegression(unittest.TestCase):
                 visual_config_count = conn.execute("SELECT COUNT(*) AS c FROM release_visual_configs").fetchone()
                 visual_snapshot_count = conn.execute("SELECT COUNT(*) AS c FROM release_visual_preview_snapshots").fetchone()
                 visual_approved_count = conn.execute("SELECT COUNT(*) AS c FROM release_visual_approved_previews").fetchone()
+                visual_approved_scoped_count = conn.execute("SELECT COUNT(*) AS c FROM release_visual_approved_previews_scoped").fetchone()
                 visual_applied_count = conn.execute("SELECT COUNT(*) AS c FROM release_visual_applied_packages").fetchone()
                 self.assertEqual(int(visual_config_count["c"]), 0)
                 self.assertEqual(int(visual_snapshot_count["c"]), 0)
                 self.assertEqual(int(visual_approved_count["c"]), 0)
+                self.assertEqual(int(visual_approved_scoped_count["c"]), 0)
                 self.assertEqual(int(visual_applied_count["c"]), 0)
             finally:
                 conn.close()

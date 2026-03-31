@@ -34,6 +34,15 @@ UI_JOB_STATES: tuple[str, ...] = (
     "CLEANED",
 )
 
+VISUAL_PREVIEW_SCOPE_BACKGROUND = "background"
+VISUAL_PREVIEW_SCOPE_COVER = "cover"
+VISUAL_PREVIEW_SCOPE_PACKAGE = "package"
+VISUAL_PREVIEW_SCOPES: tuple[str, ...] = (
+    VISUAL_PREVIEW_SCOPE_BACKGROUND,
+    VISUAL_PREVIEW_SCOPE_COVER,
+    VISUAL_PREVIEW_SCOPE_PACKAGE,
+)
+
 
 def _dict_factory(cursor: sqlite3.Cursor, row: Tuple[Any, ...]) -> Dict[str, Any]:
     return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
@@ -420,15 +429,20 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS release_visual_preview_snapshots (
             id TEXT PRIMARY KEY,
             release_id INTEGER NOT NULL,
+            preview_scope TEXT NOT NULL DEFAULT 'package',
             intent_snapshot_json TEXT NOT NULL,
             preview_package_json TEXT NOT NULL,
             created_by TEXT NULL,
             created_at TEXT NOT NULL,
-            FOREIGN KEY(release_id) REFERENCES releases(id)
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            CHECK(preview_scope IN ('background','cover','package'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_release_visual_preview_snapshots_release_created
             ON release_visual_preview_snapshots(release_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_preview_snapshots_release_scope_created
+            ON release_visual_preview_snapshots(release_id, preview_scope, created_at);
 
         CREATE TABLE IF NOT EXISTS release_visual_approved_previews (
             release_id INTEGER PRIMARY KEY,
@@ -437,6 +451,18 @@ def migrate(conn: sqlite3.Connection) -> None:
             approved_at TEXT NOT NULL,
             FOREIGN KEY(release_id) REFERENCES releases(id),
             FOREIGN KEY(preview_id) REFERENCES release_visual_preview_snapshots(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS release_visual_approved_previews_scoped (
+            release_id INTEGER NOT NULL,
+            preview_scope TEXT NOT NULL,
+            preview_id TEXT NOT NULL UNIQUE,
+            approved_by TEXT NULL,
+            approved_at TEXT NOT NULL,
+            PRIMARY KEY(release_id, preview_scope),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(preview_id) REFERENCES release_visual_preview_snapshots(id),
+            CHECK(preview_scope IN ('background','cover','package'))
         );
 
         CREATE TABLE IF NOT EXISTS release_visual_applied_packages (
@@ -1172,6 +1198,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_ui_job_drafts_columns(conn)
     _ensure_tracks_columns(conn)
     _ensure_metadata_preview_sessions_columns(conn)
+    _ensure_release_visual_scoped_preview_approval(conn)
     _ensure_planned_release_materialization_binding(conn)
     _ensure_planned_releases_template_preview_foundation(conn)
     _ensure_monthly_planning_template_apply_schema(conn)
@@ -1623,6 +1650,72 @@ def _ensure_metadata_preview_sessions_columns(conn: sqlite3.Connection) -> None:
     if "effective_source_provenance_json" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN effective_source_provenance_json TEXT NOT NULL DEFAULT '{}';")
+
+
+def _ensure_release_visual_scoped_preview_approval(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "release_visual_preview_snapshots"):
+        cols = _table_columns(conn, "release_visual_preview_snapshots")
+        if "preview_scope" not in cols:
+            with suppress(Exception):
+                conn.execute(
+                    "ALTER TABLE release_visual_preview_snapshots "
+                    "ADD COLUMN preview_scope TEXT NOT NULL DEFAULT 'package';"
+                )
+        with suppress(Exception):
+            conn.execute(
+                "UPDATE release_visual_preview_snapshots SET preview_scope = 'package' "
+                "WHERE preview_scope IS NULL OR TRIM(preview_scope) = '';"
+            )
+        with suppress(Exception):
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_release_visual_preview_snapshots_release_scope_created
+                ON release_visual_preview_snapshots(release_id, preview_scope, created_at);
+                """
+            )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS release_visual_approved_previews_scoped (
+            release_id INTEGER NOT NULL,
+            preview_scope TEXT NOT NULL,
+            preview_id TEXT NOT NULL UNIQUE,
+            approved_by TEXT NULL,
+            approved_at TEXT NOT NULL,
+            PRIMARY KEY(release_id, preview_scope),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(preview_id) REFERENCES release_visual_preview_snapshots(id),
+            CHECK(preview_scope IN ('background','cover','package'))
+        );
+        """
+    )
+
+    legacy_rows = conn.execute(
+        """
+        SELECT ap.release_id, ap.preview_id, ap.approved_by, ap.approved_at
+        FROM release_visual_approved_previews ap
+        LEFT JOIN release_visual_approved_previews_scoped scoped
+          ON scoped.release_id = ap.release_id
+         AND scoped.preview_scope = ?
+        WHERE scoped.release_id IS NULL
+        """,
+        (VISUAL_PREVIEW_SCOPE_BACKGROUND,),
+    ).fetchall()
+    for row in legacy_rows:
+        conn.execute(
+            """
+            INSERT INTO release_visual_approved_previews_scoped(
+                release_id, preview_scope, preview_id, approved_by, approved_at
+            ) VALUES(?, ?, ?, ?, ?)
+            """,
+            (
+                int(row["release_id"]),
+                VISUAL_PREVIEW_SCOPE_BACKGROUND,
+                str(row["preview_id"]),
+                row["approved_by"],
+                str(row["approved_at"]),
+            ),
+        )
 
 
 def now_ts() -> float:
@@ -2737,6 +2830,81 @@ def resolve_release_visual_style_template_rows(conn: sqlite3.Connection, *, rele
     ).fetchone()
     default_row = get_active_default_channel_visual_style_template(conn, channel_slug=str(release_row["channel_slug"]))
     return {"release": release_row, "override": override_row, "default": default_row}
+
+
+def upsert_release_visual_approved_preview(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    preview_scope: str,
+    preview_id: str,
+    approved_by: str | None,
+    approved_at: str,
+) -> None:
+    _validate_visual_preview_scope(preview_scope)
+    conn.execute(
+        """
+        INSERT INTO release_visual_approved_previews_scoped(
+            release_id, preview_scope, preview_id, approved_by, approved_at
+        ) VALUES(?, ?, ?, ?, ?)
+        ON CONFLICT(release_id, preview_scope) DO UPDATE SET
+            preview_id=excluded.preview_id,
+            approved_by=excluded.approved_by,
+            approved_at=excluded.approved_at
+        """,
+        (release_id, preview_scope, preview_id, approved_by, approved_at),
+    )
+    if preview_scope == VISUAL_PREVIEW_SCOPE_BACKGROUND:
+        conn.execute(
+            """
+            INSERT INTO release_visual_approved_previews(release_id, preview_id, approved_by, approved_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(release_id) DO UPDATE SET
+                preview_id=excluded.preview_id,
+                approved_by=excluded.approved_by,
+                approved_at=excluded.approved_at
+            """,
+            (release_id, preview_id, approved_by, approved_at),
+        )
+
+
+def get_release_visual_approved_preview(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    preview_scope: str,
+) -> Optional[Dict[str, Any]]:
+    _validate_visual_preview_scope(preview_scope)
+    row = conn.execute(
+        """
+        SELECT release_id, preview_scope, preview_id, approved_by, approved_at
+        FROM release_visual_approved_previews_scoped
+        WHERE release_id = ? AND preview_scope = ?
+        """,
+        (release_id, preview_scope),
+    ).fetchone()
+    if row:
+        return row
+    if preview_scope != VISUAL_PREVIEW_SCOPE_BACKGROUND:
+        return None
+    legacy = conn.execute(
+        "SELECT release_id, preview_id, approved_by, approved_at FROM release_visual_approved_previews WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    if not legacy:
+        return None
+    return {
+        "release_id": int(legacy["release_id"]),
+        "preview_scope": VISUAL_PREVIEW_SCOPE_BACKGROUND,
+        "preview_id": legacy["preview_id"],
+        "approved_by": legacy["approved_by"],
+        "approved_at": legacy["approved_at"],
+    }
+
+
+def _validate_visual_preview_scope(preview_scope: str) -> None:
+    if preview_scope not in VISUAL_PREVIEW_SCOPES:
+        raise ValueError(f"unsupported visual preview scope: {preview_scope}")
 
 
 def upsert_release_visual_background_decision(

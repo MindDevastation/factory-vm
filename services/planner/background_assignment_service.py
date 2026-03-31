@@ -17,6 +17,8 @@ from services.planner.background_source_adapter_registry import (
 from services.planner.runtime_visual_resolver import apply_release_visual_package
 from services.visual_domain import build_visual_package_summary
 
+BACKGROUND_PREVIEW_SCOPE = dbm.VISUAL_PREVIEW_SCOPE_BACKGROUND
+
 
 class BackgroundAssignmentError(Exception):
     def __init__(self, *, code: str, message: str):
@@ -106,10 +108,18 @@ def preview_background_assignment(
     conn.execute(
         """
         INSERT INTO release_visual_preview_snapshots(
-            id, release_id, intent_snapshot_json, preview_package_json, created_by, created_at
-        ) VALUES(?, ?, ?, ?, ?, ?)
+            id, release_id, preview_scope, intent_snapshot_json, preview_package_json, created_by, created_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?)
         """,
-        (preview_id, release_id, json.dumps(intent_snapshot, sort_keys=True), json.dumps(preview_package, sort_keys=True), selected_by, now_iso),
+        (
+            preview_id,
+            release_id,
+            BACKGROUND_PREVIEW_SCOPE,
+            json.dumps(intent_snapshot, sort_keys=True),
+            json.dumps(preview_package, sort_keys=True),
+            selected_by,
+            now_iso,
+        ),
     )
     return {
         "release_id": release_id,
@@ -130,23 +140,23 @@ def approve_background_assignment(
     approved_by: str | None,
 ) -> dict[str, Any]:
     preview_row = conn.execute(
-        "SELECT id, release_id FROM release_visual_preview_snapshots WHERE id = ?",
+        "SELECT id, release_id, preview_scope FROM release_visual_preview_snapshots WHERE id = ?",
         (preview_id,),
     ).fetchone()
     if not preview_row or int(preview_row["release_id"]) != int(release_id):
         raise BackgroundAssignmentError(code="VBG_PREVIEW_NOT_FOUND", message="Background preview not found")
+    preview_scope = str(preview_row.get("preview_scope") or dbm.VISUAL_PREVIEW_SCOPE_PACKAGE)
+    if preview_scope not in {BACKGROUND_PREVIEW_SCOPE, dbm.VISUAL_PREVIEW_SCOPE_PACKAGE}:
+        raise BackgroundAssignmentError(code="VBG_PREVIEW_SCOPE_MISMATCH", message="Background preview scope mismatch")
 
     now_iso = _now_iso()
-    conn.execute(
-        """
-        INSERT INTO release_visual_approved_previews(release_id, preview_id, approved_by, approved_at)
-        VALUES(?, ?, ?, ?)
-        ON CONFLICT(release_id) DO UPDATE SET
-            preview_id=excluded.preview_id,
-            approved_by=excluded.approved_by,
-            approved_at=excluded.approved_at
-        """,
-        (release_id, preview_id, approved_by, now_iso),
+    dbm.upsert_release_visual_approved_preview(
+        conn,
+        release_id=release_id,
+        preview_scope=BACKGROUND_PREVIEW_SCOPE,
+        preview_id=preview_id,
+        approved_by=approved_by,
+        approved_at=now_iso,
     )
     return {"release_id": release_id, "preview_id": preview_id, "approved": True}
 
@@ -157,10 +167,11 @@ def apply_background_assignment(
     release_id: int,
     applied_by: str | None,
 ) -> dict[str, Any]:
-    approved = conn.execute(
-        "SELECT preview_id FROM release_visual_approved_previews WHERE release_id = ?",
-        (release_id,),
-    ).fetchone()
+    approved = dbm.get_release_visual_approved_preview(
+        conn,
+        release_id=release_id,
+        preview_scope=BACKGROUND_PREVIEW_SCOPE,
+    )
     if not approved:
         raise BackgroundAssignmentError(code="VBG_APPROVAL_REQUIRED", message="Approved background preview is required before apply")
 
