@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+ANALYTICS_ENTITY_TYPES: tuple[str, ...] = (
+    "CHANNEL",
+    "RELEASE",
+    "BATCH",
+    "JOB_RUNTIME",
+    "PORTFOLIO",
+)
+
+ANALYTICS_SOURCE_FAMILIES: tuple[str, ...] = (
+    "EXTERNAL_YOUTUBE",
+    "INTERNAL_OPERATIONAL",
+    "DERIVED_ROLLUP",
+    "COMPARISON_BASELINE",
+    "EXPLAINABILITY_OUTPUT",
+)
+
+ANALYTICS_WINDOW_TYPES: tuple[str, ...] = (
+    "POINT_IN_TIME",
+    "BOUNDED_WINDOW",
+    "ROLLING_BASELINE",
+    "LAST_KNOWN_CURRENT",
+    "MONTHLY_BATCH",
+)
+
+ANALYTICS_SNAPSHOT_STATUSES: tuple[str, ...] = (
+    "CURRENT",
+    "HISTORICAL",
+    "SUPERSEDED",
+    "PARTIAL",
+    "FAILED",
+)
+
+ANALYTICS_FRESHNESS_STATUSES: tuple[str, ...] = (
+    "FRESH",
+    "STALE",
+    "PARTIAL",
+    "UNKNOWN",
+)
+
+ANALYTICS_ROLLUP_RELATION_TYPES: tuple[str, ...] = (
+    "CHANNEL_TO_RELEASE",
+    "RELEASE_TO_JOB_RUNTIME",
+    "RELEASE_TO_BATCH",
+    "PORTFOLIO_TO_ENTITY",
+)

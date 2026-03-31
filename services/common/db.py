@@ -1281,6 +1281,147 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_tcta_track_state
             ON track_custom_tag_assignments(track_pk, state);
+
+        CREATE TABLE IF NOT EXISTS analytics_external_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            source_family TEXT NOT NULL,
+            external_namespace TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(entity_type IN ('CHANNEL','RELEASE','BATCH','JOB_RUNTIME','PORTFOLIO')),
+            CHECK(source_family IN ('EXTERNAL_YOUTUBE','INTERNAL_OPERATIONAL','DERIVED_ROLLUP','COMPARISON_BASELINE','EXPLAINABILITY_OUTPUT')),
+            UNIQUE(entity_type, entity_ref, source_family, external_namespace, external_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aei_entity
+            ON analytics_external_identities(entity_type, entity_ref);
+
+        CREATE INDEX IF NOT EXISTS idx_aei_source_external
+            ON analytics_external_identities(source_family, external_namespace, external_id);
+
+        CREATE TABLE IF NOT EXISTS analytics_scope_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            channel_id INTEGER NULL,
+            release_id INTEGER NULL,
+            job_id INTEGER NULL,
+            batch_ref TEXT NULL,
+            portfolio_ref TEXT NULL,
+            normalized_scope_key TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(entity_type IN ('CHANNEL','RELEASE','BATCH','JOB_RUNTIME','PORTFOLIO')),
+            UNIQUE(entity_type, entity_ref),
+            FOREIGN KEY(channel_id) REFERENCES channels(id),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(job_id) REFERENCES jobs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_asl_scope_lookup
+            ON analytics_scope_links(normalized_scope_key, entity_type, entity_ref);
+
+        CREATE TABLE IF NOT EXISTS analytics_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            normalized_scope_key TEXT NOT NULL,
+            source_family TEXT NOT NULL,
+            window_type TEXT NOT NULL,
+            window_start_ts REAL NULL,
+            window_end_ts REAL NULL,
+            snapshot_status TEXT NOT NULL,
+            freshness_status TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL,
+            explainability_json TEXT NOT NULL DEFAULT '{}',
+            lineage_json TEXT NOT NULL DEFAULT '{}',
+            anomaly_markers_json TEXT NOT NULL DEFAULT '[]',
+            comparison_baseline_snapshot_id INTEGER NULL,
+            captured_at REAL NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(entity_type IN ('CHANNEL','RELEASE','BATCH','JOB_RUNTIME','PORTFOLIO')),
+            CHECK(source_family IN ('EXTERNAL_YOUTUBE','INTERNAL_OPERATIONAL','DERIVED_ROLLUP','COMPARISON_BASELINE','EXPLAINABILITY_OUTPUT')),
+            CHECK(window_type IN ('POINT_IN_TIME','BOUNDED_WINDOW','ROLLING_BASELINE','LAST_KNOWN_CURRENT','MONTHLY_BATCH')),
+            CHECK(snapshot_status IN ('CURRENT','HISTORICAL','SUPERSEDED','PARTIAL','FAILED')),
+            CHECK(freshness_status IN ('FRESH','STALE','PARTIAL','UNKNOWN')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(comparison_baseline_snapshot_id) REFERENCES analytics_snapshots(id)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_as_current_scope_unique
+            ON analytics_snapshots(normalized_scope_key)
+            WHERE is_current = 1;
+
+        CREATE INDEX IF NOT EXISTS idx_as_read_filters
+            ON analytics_snapshots(entity_type, entity_ref, source_family, window_type, captured_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_as_scope_current
+            ON analytics_snapshots(normalized_scope_key, is_current, captured_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_as_baseline
+            ON analytics_snapshots(comparison_baseline_snapshot_id)
+            WHERE comparison_baseline_snapshot_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS analytics_rollup_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_snapshot_id INTEGER NOT NULL,
+            child_snapshot_id INTEGER NOT NULL,
+            relation_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(relation_type IN ('CHANNEL_TO_RELEASE','RELEASE_TO_JOB_RUNTIME','RELEASE_TO_BATCH','PORTFOLIO_TO_ENTITY')),
+            FOREIGN KEY(parent_snapshot_id) REFERENCES analytics_snapshots(id),
+            FOREIGN KEY(child_snapshot_id) REFERENCES analytics_snapshots(id),
+            UNIQUE(parent_snapshot_id, child_snapshot_id, relation_type)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_arl_parent
+            ON analytics_rollup_links(parent_snapshot_id, relation_type);
+
+        CREATE INDEX IF NOT EXISTS idx_arl_child
+            ON analytics_rollup_links(child_snapshot_id, relation_type);
+
+        CREATE TABLE IF NOT EXISTS analytics_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            source_family TEXT NULL,
+            window_type TEXT NULL,
+            snapshot_status TEXT NULL,
+            freshness_status TEXT NULL,
+            snapshot_id INTEGER NULL,
+            comparison_baseline_snapshot_id INTEGER NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(event_type IN (
+                'SNAPSHOT_CREATED',
+                'SNAPSHOT_MARKED_CURRENT',
+                'SNAPSHOT_SUPERSEDED',
+                'LINKAGE_CREATED',
+                'LINKAGE_UPDATED',
+                'BASELINE_REFERENCE_ATTACHED',
+                'LINEAGE_PAYLOAD_PERSISTED',
+                'PARTIAL_SNAPSHOT_STORED',
+                'FAILED_SNAPSHOT_STORED'
+            )),
+            FOREIGN KEY(snapshot_id) REFERENCES analytics_snapshots(id),
+            FOREIGN KEY(comparison_baseline_snapshot_id) REFERENCES analytics_snapshots(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_events_scope
+            ON analytics_events(entity_type, entity_ref, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_events_snapshot
+            ON analytics_events(snapshot_id, event_type);
         """
     )
 
