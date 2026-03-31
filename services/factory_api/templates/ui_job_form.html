@@ -187,6 +187,11 @@
     <p>
       <button id="visual-load-effective-btn" type="button" {% if locked %}disabled{% endif %}>Load Effective Visual Template</button>
       <button id="visual-background-candidates-btn" type="button" {% if locked %}disabled{% endif %}>Background Candidates</button>
+      <button id="visual-cover-candidates-btn" type="button" {% if locked %}disabled{% endif %}>Cover Candidates</button>
+      <button id="visual-cover-preview-btn" type="button" {% if locked %}disabled{% endif %}>Cover Preview</button>
+      <button id="visual-cover-select-btn" type="button" {% if locked %}disabled{% endif %}>Cover Select</button>
+      <button id="visual-cover-approve-btn" type="button" {% if locked %}disabled{% endif %}>Cover Approve</button>
+      <button id="visual-cover-apply-btn" type="button" {% if locked %}disabled{% endif %}>Cover Apply</button>
       <button id="visual-history-btn" type="button" {% if locked %}disabled{% endif %}>History / Reuse Context</button>
     </p>
     <p>
@@ -394,6 +399,11 @@ const visualWorkflowStatus = document.getElementById('visual-workflow-status');
 const visualWorkflowOutput = document.getElementById('visual-workflow-output');
 const visualLoadEffectiveBtn = document.getElementById('visual-load-effective-btn');
 const visualBackgroundCandidatesBtn = document.getElementById('visual-background-candidates-btn');
+const visualCoverCandidatesBtn = document.getElementById('visual-cover-candidates-btn');
+const visualCoverPreviewBtn = document.getElementById('visual-cover-preview-btn');
+const visualCoverSelectBtn = document.getElementById('visual-cover-select-btn');
+const visualCoverApproveBtn = document.getElementById('visual-cover-approve-btn');
+const visualCoverApplyBtn = document.getElementById('visual-cover-apply-btn');
 const visualHistoryBtn = document.getElementById('visual-history-btn');
 const visualBatchPreviewBtn = document.getElementById('visual-batch-preview-btn');
 const visualBatchExecuteBtn = document.getElementById('visual-batch-execute-btn');
@@ -1621,6 +1631,137 @@ const hasTagsPicker =
     visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
   }
 
+  function getCoverCandidateIdFromOutput() {
+    try {
+      const parsed = JSON.parse(visualWorkflowOutput.textContent || '{}');
+      if (parsed && parsed.selected_candidate_id) return String(parsed.selected_candidate_id);
+      if (parsed && Array.isArray(parsed.candidates) && parsed.candidates.length > 0 && parsed.candidates[0].candidate_id) {
+        return String(parsed.candidates[0].candidate_id);
+      }
+    } catch (_err) {}
+    return '';
+  }
+
+  function requestCoverCandidateId(actionLabel) {
+    const fallback = getCoverCandidateIdFromOutput();
+    const input = window.prompt(`${actionLabel}: provide cover candidate id`, fallback || '');
+    return (input || '').trim();
+  }
+
+  async function loadVisualCoverCandidates() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    visualWorkflowStatus.textContent = 'Loading cover candidates...';
+    const resp = await fetch(`/v1/visual/releases/${activeReleaseId}/cover/candidates`, { credentials: 'same-origin' });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to load cover candidates';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Cover candidates loaded.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function previewVisualCoverCandidate() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    const candidateId = requestCoverCandidateId('Cover preview');
+    if (!candidateId) {
+      visualWorkflowStatus.textContent = 'Cover preview cancelled (missing candidate id).';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Loading cover preview...';
+    const resp = await fetch(`/v1/visual/releases/${activeReleaseId}/cover/candidates/${encodeURIComponent(candidateId)}/preview`, { credentials: 'same-origin' });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to preview cover candidate';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Cover preview loaded.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function selectVisualCoverCandidate() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    const candidateId = requestCoverCandidateId('Cover select');
+    if (!candidateId) {
+      visualWorkflowStatus.textContent = 'Cover select cancelled (missing candidate id).';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Selecting cover candidate for approval...';
+    const resp = await fetch(`/v1/visual/releases/${activeReleaseId}/cover/select`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidate_id: candidateId }),
+    });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to select cover candidate';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Cover candidate selected for approval.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function approveVisualCoverCandidate() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    visualWorkflowStatus.textContent = 'Approving selected cover candidate...';
+    const resp = await fetch(`/v1/visual/releases/${activeReleaseId}/cover/approve`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to approve cover candidate';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Cover candidate approved.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function applyVisualCoverCandidate() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    let approvePayload = null;
+    try {
+      approvePayload = JSON.parse(visualWorkflowOutput.textContent || '{}');
+    } catch (_err) {}
+    const staleToken = approvePayload && approvePayload.stale_token ? String(approvePayload.stale_token) : '';
+    const conflictToken = approvePayload && approvePayload.conflict_token ? String(approvePayload.conflict_token) : '';
+    if (!staleToken || !conflictToken) {
+      visualWorkflowStatus.textContent = 'Run Cover Approve first to capture apply tokens.';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Applying approved cover candidate...';
+    const performApply = async (reuseOverrideConfirmed) => {
+      return fetch(`/v1/visual/releases/${activeReleaseId}/cover/apply`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stale_token: staleToken,
+          conflict_token: conflictToken,
+          reuse_override_confirmed: !!reuseOverrideConfirmed,
+        }),
+      });
+    };
+    let resp = await performApply(false);
+    let payload = await parseJsonSafe(resp);
+    if (!resp.ok && payload && payload.error && payload.error.code === 'VCOVER_REUSE_OVERRIDE_REQUIRED') {
+      const confirmed = window.confirm('Cover reuse override required. Apply with override?');
+      if (confirmed) {
+        resp = await performApply(true);
+        payload = await parseJsonSafe(resp);
+      }
+    }
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to apply cover candidate';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Cover candidate applied.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
   async function loadVisualHistory() {
     if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
     visualWorkflowStatus.textContent = 'Loading visual history/reuse context...';
@@ -1685,6 +1826,11 @@ const hasTagsPicker =
 
   if (visualLoadEffectiveBtn) visualLoadEffectiveBtn.addEventListener('click', loadVisualWorkflowEffectiveTemplate);
   if (visualBackgroundCandidatesBtn) visualBackgroundCandidatesBtn.addEventListener('click', loadVisualBackgroundCandidates);
+  if (visualCoverCandidatesBtn) visualCoverCandidatesBtn.addEventListener('click', loadVisualCoverCandidates);
+  if (visualCoverPreviewBtn) visualCoverPreviewBtn.addEventListener('click', previewVisualCoverCandidate);
+  if (visualCoverSelectBtn) visualCoverSelectBtn.addEventListener('click', selectVisualCoverCandidate);
+  if (visualCoverApproveBtn) visualCoverApproveBtn.addEventListener('click', approveVisualCoverCandidate);
+  if (visualCoverApplyBtn) visualCoverApplyBtn.addEventListener('click', applyVisualCoverCandidate);
   if (visualHistoryBtn) visualHistoryBtn.addEventListener('click', loadVisualHistory);
   if (visualBatchPreviewBtn) visualBatchPreviewBtn.addEventListener('click', runVisualBatchPreviewEntry);
   if (visualBatchExecuteBtn) visualBatchExecuteBtn.addEventListener('click', runVisualBatchExecuteEntry);
