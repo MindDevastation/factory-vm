@@ -9,7 +9,7 @@ from typing import Any
 from services.common import db as dbm
 from services.planner.runtime_visual_resolver import apply_release_visual_package
 from services.planner import visual_history_service
-from services.visual_domain import build_visual_package_summary
+from services.visual_domain import VisualLifecycleError, build_apply_tokens, build_visual_package_summary, validate_apply_safety
 
 COVER_PREVIEW_SCOPE = dbm.VISUAL_PREVIEW_SCOPE_COVER
 
@@ -291,6 +291,8 @@ def apply_cover_candidate(
     release_id: int,
     applied_by: str | None,
     reuse_override_confirmed: bool = False,
+    stale_token: str | None = None,
+    conflict_token: str | None = None,
 ) -> dict[str, Any]:
     _get_release(conn, release_id=release_id)
     approved = dbm.get_release_visual_approved_preview(
@@ -318,6 +320,37 @@ def apply_cover_candidate(
             code="VCOVER_CANONICAL_BACKGROUND_REQUIRED",
             message="cover apply requires canonical background asset",
         )
+    applied_package = conn.execute(
+        "SELECT source_preview_id FROM release_visual_applied_packages WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    current_intent = {"background": {"asset_id": int(background_asset_id)}, "cover": {"asset_id": cover_asset_id}}
+    expected_tokens = build_apply_tokens(
+        release_id=release_id,
+        snapshot_row=dict(snapshot),
+        current_intent_config_json=current_intent,
+    )
+    try:
+        validate_apply_safety(
+            release_id=release_id,
+            snapshot_row=dict(snapshot),
+            approved_preview_row=dict(approved),
+            applied_package_row=dict(applied_package) if applied_package else None,
+            current_intent_config_json=current_intent,
+            provided_stale_token=stale_token or expected_tokens.stale_token,
+            provided_conflict_token=conflict_token or expected_tokens.conflict_token,
+        )
+    except VisualLifecycleError as lifecycle_exc:
+        code_map = {
+            "VISUAL_PREVIEW_STALE": "VCOVER_PREVIEW_STALE",
+            "VISUAL_APPLY_CONFLICT": "VCOVER_APPLY_CONFLICT",
+            "VISUAL_ALREADY_APPLIED": "VCOVER_ALREADY_APPLIED",
+            "VISUAL_APPROVAL_REQUIRED": "VCOVER_APPROVAL_REQUIRED",
+        }
+        raise CoverAssignmentError(
+            code=code_map.get(lifecycle_exc.code, "VCOVER_APPLY_CONFLICT"),
+            message=lifecycle_exc.message,
+        ) from lifecycle_exc
 
     reuse = visual_history_service.lookup_exact_reuse_warnings(
         conn,

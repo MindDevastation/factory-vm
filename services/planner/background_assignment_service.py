@@ -16,7 +16,7 @@ from services.planner.background_source_adapter_registry import (
 )
 from services.planner.runtime_visual_resolver import apply_release_visual_package
 from services.planner import visual_history_service
-from services.visual_domain import build_visual_package_summary
+from services.visual_domain import VisualLifecycleError, build_apply_tokens, build_visual_package_summary, validate_apply_safety
 
 BACKGROUND_PREVIEW_SCOPE = dbm.VISUAL_PREVIEW_SCOPE_BACKGROUND
 
@@ -199,6 +199,8 @@ def apply_background_assignment(
     release_id: int,
     applied_by: str | None,
     reuse_override_confirmed: bool = False,
+    stale_token: str | None = None,
+    conflict_token: str | None = None,
 ) -> dict[str, Any]:
     approved = dbm.get_release_visual_approved_preview(
         conn,
@@ -226,6 +228,37 @@ def apply_background_assignment(
             code="VBG_CANONICAL_COVER_REQUIRED",
             message="Background apply requires canonical cover asset",
         )
+    applied_package = conn.execute(
+        "SELECT source_preview_id FROM release_visual_applied_packages WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    current_intent = {"background": {"asset_id": background_asset_id}, "cover": {"asset_id": int(cover_asset_id)}}
+    expected_tokens = build_apply_tokens(
+        release_id=release_id,
+        snapshot_row=dict(snapshot),
+        current_intent_config_json=current_intent,
+    )
+    try:
+        validate_apply_safety(
+            release_id=release_id,
+            snapshot_row=dict(snapshot),
+            approved_preview_row=dict(approved),
+            applied_package_row=dict(applied_package) if applied_package else None,
+            current_intent_config_json=current_intent,
+            provided_stale_token=stale_token or expected_tokens.stale_token,
+            provided_conflict_token=conflict_token or expected_tokens.conflict_token,
+        )
+    except VisualLifecycleError as lifecycle_exc:
+        code_map = {
+            "VISUAL_PREVIEW_STALE": "VBG_PREVIEW_STALE",
+            "VISUAL_APPLY_CONFLICT": "VBG_APPLY_CONFLICT",
+            "VISUAL_ALREADY_APPLIED": "VBG_ALREADY_APPLIED",
+            "VISUAL_APPROVAL_REQUIRED": "VBG_APPROVAL_REQUIRED",
+        }
+        raise BackgroundAssignmentError(
+            code=code_map.get(lifecycle_exc.code, "VBG_APPLY_CONFLICT"),
+            message=lifecycle_exc.message,
+        ) from lifecycle_exc
 
     reuse = visual_history_service.lookup_exact_reuse_warnings(
         conn,

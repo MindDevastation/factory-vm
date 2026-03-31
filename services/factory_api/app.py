@@ -478,6 +478,8 @@ class CoverApproveRequest(BaseModel):
 
 class VisualApplyRequest(BaseModel):
     reuse_override_confirmed: bool = False
+    stale_token: str | None = None
+    conflict_token: str | None = None
 
 
 class VisualBatchPreviewRequest(BaseModel):
@@ -1089,6 +1091,8 @@ def api_visual_background_apply(
                 release_id=release_id,
                 applied_by=env.basic_user,
                 reuse_override_confirmed=bool(payload.reuse_override_confirmed) if payload is not None else False,
+                stale_token=(payload.stale_token if payload is not None else None),
+                conflict_token=(payload.conflict_token if payload is not None else None),
             )
         except background_assignment_service.BackgroundAssignmentError as exc:
             status_code = 404 if exc.code in {"VBG_RELEASE_NOT_FOUND", "VBG_PREVIEW_NOT_FOUND"} else 422
@@ -1246,6 +1250,8 @@ def api_visual_cover_candidate_apply(
                 release_id=release_id,
                 applied_by=env.basic_user,
                 reuse_override_confirmed=bool(payload.reuse_override_confirmed) if payload is not None else False,
+                stale_token=(payload.stale_token if payload is not None else None),
+                conflict_token=(payload.conflict_token if payload is not None else None),
             )
         except cover_assignment_service.CoverAssignmentError as exc:
             status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_PREVIEW_NOT_FOUND"} else 422

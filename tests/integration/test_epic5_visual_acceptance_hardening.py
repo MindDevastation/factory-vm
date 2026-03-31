@@ -164,6 +164,57 @@ class TestEpic5VisualAcceptanceHardening(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_background_apply_rejects_stale_and_conflict_tokens(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                channel = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert channel is not None
+                channel_id = int(channel["id"])
+                release_id = int(conn.execute("INSERT INTO releases(channel_id, title, description, tags_json, created_at) VALUES(?, 'bg-guard', 'd', '[]', 1.0)", (channel_id,)).lastrowid)
+                bg_asset_id = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="LOCAL", origin_id="local://bg-guard", name="bg-guard.png", path="/tmp/bg-guard.png")
+                cover_asset_id = dbm.create_asset(conn, channel_id=channel_id, kind="IMAGE", origin="LOCAL", origin_id="local://cover-guard", name="cover-guard.png", path="/tmp/cover-guard.png")
+                conn.execute(
+                    "INSERT INTO release_visual_applied_packages(release_id, background_asset_id, cover_asset_id, source_preview_id, applied_by, applied_at) VALUES(?, ?, ?, NULL, 'seed', '2026-01-01T00:00:00+00:00')",
+                    (release_id, bg_asset_id, cover_asset_id),
+                )
+                preview = background_assignment_service.preview_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    background_asset_id=bg_asset_id,
+                    source_family=None,
+                    source_reference=None,
+                    template_assisted=False,
+                    selected_by="operator",
+                )
+                background_assignment_service.approve_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    preview_id=str(preview["preview_id"]),
+                    approved_by="operator",
+                )
+                with self.assertRaises(background_assignment_service.BackgroundAssignmentError) as stale_err:
+                    background_assignment_service.apply_background_assignment(
+                        conn,
+                        release_id=release_id,
+                        applied_by="operator",
+                        reuse_override_confirmed=True,
+                        stale_token="invalid-stale-token",
+                    )
+                self.assertEqual(stale_err.exception.code, "VBG_PREVIEW_STALE")
+                with self.assertRaises(background_assignment_service.BackgroundAssignmentError) as conflict_err:
+                    background_assignment_service.apply_background_assignment(
+                        conn,
+                        release_id=release_id,
+                        applied_by="operator",
+                        reuse_override_confirmed=True,
+                        conflict_token="invalid-conflict-token",
+                    )
+                self.assertEqual(conflict_err.exception.code, "VBG_APPLY_CONFLICT")
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

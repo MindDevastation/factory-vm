@@ -339,6 +339,52 @@ class TestCoverCandidateWorkflowApi(unittest.TestCase):
             finally:
                 conn2.close()
 
+    def test_cover_apply_rejects_stale_and_conflict_tokens(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id, channel_id, _background_asset_id, _job_id = self._seed_release_with_runtime_job(conn)
+                cover_asset_id = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="local://cover-token-guard",
+                    name="cover-token-guard.png",
+                    path="/tmp/cover-token-guard.png",
+                )
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            created = client.post(
+                f"/v1/visual/releases/{release_id}/cover/candidates",
+                headers=headers,
+                json={"cover_asset_id": cover_asset_id, "source_provider_family": "manual_provider", "selection_mode": "manual"},
+            )
+            self.assertEqual(created.status_code, 200)
+            candidate_id = str(created.json()["candidate_id"])
+            self.assertEqual(client.post(f"/v1/visual/releases/{release_id}/cover/select", headers=headers, json={"candidate_id": candidate_id}).status_code, 200)
+            self.assertEqual(client.post(f"/v1/visual/releases/{release_id}/cover/approve", headers=headers, json={}).status_code, 200)
+
+            stale = client.post(
+                f"/v1/visual/releases/{release_id}/cover/apply",
+                headers=headers,
+                json={"stale_token": "invalid-stale-token"},
+            )
+            self.assertEqual(stale.status_code, 422)
+            self.assertEqual(stale.json()["error"]["code"], "VCOVER_PREVIEW_STALE")
+
+            conflict = client.post(
+                f"/v1/visual/releases/{release_id}/cover/apply",
+                headers=headers,
+                json={"conflict_token": "invalid-conflict-token"},
+            )
+            self.assertEqual(conflict.status_code, 422)
+            self.assertEqual(conflict.json()["error"]["code"], "VCOVER_APPLY_CONFLICT")
+
 
 if __name__ == "__main__":
     unittest.main()
