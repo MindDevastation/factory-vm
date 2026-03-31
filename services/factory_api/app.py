@@ -42,6 +42,7 @@ from services.factory_api.publish_queue_read import create_publish_queue_read_ro
 from services.factory_api.publish_reconcile import create_publish_reconcile_router
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
+from services.planner import background_assignment_service
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
     build_channel_settings_payload,
@@ -302,6 +303,10 @@ def _prj_error(status_code: int, code: str, message: str, release_id: int) -> JS
     )
 
 
+def _vbg_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
 class MetadataTitleTemplatePreviewRequest(BaseModel):
     channel_slug: str = Field(min_length=1)
     template_body: str
@@ -422,6 +427,17 @@ class MetadataChannelDefaultsUpdateRequest(BaseModel):
     default_title_template_id: int | None = None
     default_description_template_id: int | None = None
     default_video_tag_preset_id: int | None = None
+
+
+class BackgroundPreviewRequest(BaseModel):
+    background_asset_id: int | None = None
+    source_family: str | None = None
+    source_reference: str | None = None
+    template_assisted: bool = False
+
+
+class BackgroundApproveRequest(BaseModel):
+    preview_id: str = Field(min_length=1)
 
 
 def _mdo_sources_from_defaults(defaults: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -932,6 +948,98 @@ def api_metadata_preview_apply_apply(
             "error_codes": [],
         },
     )
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/background/candidates")
+def api_visual_background_candidates(
+    release_id: int,
+    template_assisted: bool = False,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = background_assignment_service.list_background_candidates(
+                conn,
+                release_id=release_id,
+                template_assisted=template_assisted,
+            )
+        except background_assignment_service.BackgroundAssignmentError as exc:
+            status_code = 404 if exc.code == "VBG_RELEASE_NOT_FOUND" else 422
+            return _vbg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/background/preview")
+def api_visual_background_preview(
+    release_id: int,
+    payload: BackgroundPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = background_assignment_service.preview_background_assignment(
+                conn,
+                release_id=release_id,
+                background_asset_id=payload.background_asset_id,
+                source_family=payload.source_family,
+                source_reference=payload.source_reference,
+                template_assisted=payload.template_assisted,
+                selected_by=env.basic_user,
+            )
+        except background_assignment_service.BackgroundAssignmentError as exc:
+            status_code = 404 if exc.code in {"VBG_RELEASE_NOT_FOUND", "VBG_PREVIEW_NOT_FOUND"} else 422
+            return _vbg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/background/approve")
+def api_visual_background_approve(
+    release_id: int,
+    payload: BackgroundApproveRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = background_assignment_service.approve_background_assignment(
+                conn,
+                release_id=release_id,
+                preview_id=payload.preview_id,
+                approved_by=env.basic_user,
+            )
+        except background_assignment_service.BackgroundAssignmentError as exc:
+            status_code = 404 if exc.code in {"VBG_RELEASE_NOT_FOUND", "VBG_PREVIEW_NOT_FOUND"} else 422
+            return _vbg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/background/apply")
+def api_visual_background_apply(
+    release_id: int,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = background_assignment_service.apply_background_assignment(
+                conn,
+                release_id=release_id,
+                applied_by=env.basic_user,
+            )
+        except background_assignment_service.BackgroundAssignmentError as exc:
+            status_code = 404 if exc.code in {"VBG_RELEASE_NOT_FOUND", "VBG_PREVIEW_NOT_FOUND"} else 422
+            return _vbg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
     return body
 
 

@@ -43,7 +43,16 @@ class TestVisualDomain(unittest.TestCase):
         )
 
         self.assertEqual(summary["release"], {"release_id": 77})
-        self.assertEqual(summary["background_asset"], {"asset_id": 101})
+        self.assertEqual(
+            summary["background_asset"],
+            {
+                "asset_id": 101,
+                "source_family": None,
+                "source_reference": None,
+                "selection_mode": None,
+                "template_assisted": False,
+            },
+        )
         self.assertEqual(summary["cover_asset"], {"asset_id": 202})
         self.assertEqual(summary["thumbnail_source"], {"source_kind": "cover_asset", "asset_id": 202})
         self.assertEqual(summary["template_ref"], {"template_id": "tmpl-1", "name": "default"})

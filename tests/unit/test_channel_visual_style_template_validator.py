@@ -12,6 +12,7 @@ class TestChannelVisualStyleTemplateValidator(unittest.TestCase):
         self.assertEqual(result.errors, [])
         assert result.normalized_payload is not None
         self.assertEqual(result.normalized_payload["allowed_motifs"], ["forest", "mist"])
+        self.assertEqual(result.normalized_payload["default_background_asset_id"], 42)
 
     def test_missing_required_key(self) -> None:
         payload = _valid_payload()
@@ -42,6 +43,21 @@ class TestChannelVisualStyleTemplateValidator(unittest.TestCase):
         self.assertEqual(result.errors[0]["code"], "CVST_PAYLOAD_LIST_ITEM_EMPTY")
         self.assertEqual(result.errors[0]["message"], "template_payload.allowed_motifs[1] must be non-empty")
 
+    def test_default_background_asset_id_rejects_non_integer_like(self) -> None:
+        payload = _valid_payload()
+        payload["default_background_asset_id"] = "abc"
+        result = validate_template_payload(payload)
+        self.assertFalse(result.is_valid)
+        self.assertEqual(result.errors[0]["code"], "CVST_PAYLOAD_DEFAULT_BACKGROUND_ASSET_ID_TYPE")
+
+    def test_default_background_asset_id_rejects_zero_and_negative(self) -> None:
+        for raw in (0, -1):
+            payload = _valid_payload()
+            payload["default_background_asset_id"] = raw
+            result = validate_template_payload(payload)
+            self.assertFalse(result.is_valid)
+            self.assertEqual(result.errors[0]["code"], "CVST_PAYLOAD_DEFAULT_BACKGROUND_ASSET_ID_RANGE")
+
 
 def _valid_payload() -> dict[str, object]:
     return {
@@ -55,6 +71,7 @@ def _valid_payload() -> dict[str, object]:
         "output_profile_guidance": "16:9 high contrast",
         "background_compatibility_guidance": "Works on dark backgrounds",
         "cover_composition_guidance": "Leave top third for text",
+        "default_background_asset_id": 42,
     }
 
 

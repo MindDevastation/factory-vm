@@ -3,6 +3,12 @@ from __future__ import annotations
 import unittest
 
 from services.common import db as dbm
+from services.planner.background_assignment_service import (
+    BackgroundAssignmentError,
+    apply_background_assignment,
+    approve_background_assignment,
+    preview_background_assignment,
+)
 from services.planner.runtime_visual_resolver import apply_release_visual_package
 from tests._helpers import seed_minimal_db, temp_env
 
@@ -164,6 +170,125 @@ class TestRuntimeVisualResolverIntegration(unittest.TestCase):
                 inputs_count = conn.execute("SELECT COUNT(*) AS c FROM job_inputs").fetchone()
                 assert inputs_count is not None
                 self.assertEqual(int(inputs_count["c"]), 0)
+            finally:
+                conn.close()
+
+    def test_background_only_apply_preserves_existing_applied_cover(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                channel_id = self._channel_id(conn)
+                release_id = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, current_open_job_id, created_at)
+                        VALUES(?, 'r3', 'd3', '[]', NULL, NULL, 'origin-s2-preserve-cover', NULL, 1.0)
+                        """,
+                        (channel_id,),
+                    ).lastrowid
+                )
+                previous_bg = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="bg-prev",
+                    name="bg-prev.png",
+                    path="/tmp/bg-prev.png",
+                )
+                cover_asset_id = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="cover-prev",
+                    name="cover-prev.png",
+                    path="/tmp/cover-prev.png",
+                )
+                apply_release_visual_package(
+                    conn,
+                    release_id=release_id,
+                    background_asset_id=previous_bg,
+                    cover_asset_id=cover_asset_id,
+                    source_preview_id=None,
+                    applied_by="seed",
+                )
+                next_bg = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="MANAGED",
+                    origin_id="managed://next-bg",
+                    name="next-bg.png",
+                    path="/tmp/next-bg.png",
+                )
+
+                preview = preview_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    background_asset_id=next_bg,
+                    source_family="managed_library",
+                    source_reference="managed://next-bg",
+                    template_assisted=False,
+                    selected_by="tester",
+                )
+                approve_background_assignment(conn, release_id=release_id, preview_id=str(preview["preview_id"]), approved_by="tester")
+                apply_background_assignment(conn, release_id=release_id, applied_by="tester")
+
+                applied = conn.execute(
+                    "SELECT background_asset_id, cover_asset_id FROM release_visual_applied_packages WHERE release_id = ?",
+                    (release_id,),
+                ).fetchone()
+                assert applied is not None
+                self.assertEqual(int(applied["background_asset_id"]), next_bg)
+                self.assertEqual(int(applied["cover_asset_id"]), cover_asset_id)
+            finally:
+                conn.close()
+
+    def test_background_only_apply_forbidden_when_no_canonical_cover(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                channel_id = self._channel_id(conn)
+                release_id = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, current_open_job_id, created_at)
+                        VALUES(?, 'r4', 'd4', '[]', NULL, NULL, 'origin-s2-no-cover', NULL, 1.0)
+                        """,
+                        (channel_id,),
+                    ).lastrowid
+                )
+                bg_asset_id = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="bg-only-s2",
+                    name="bg-only-s2.png",
+                    path="/tmp/bg-only-s2.png",
+                )
+                preview = preview_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    background_asset_id=bg_asset_id,
+                    source_family="operator_imported",
+                    source_reference="bg-only-s2",
+                    template_assisted=False,
+                    selected_by="tester",
+                )
+                approve_background_assignment(conn, release_id=release_id, preview_id=str(preview["preview_id"]), approved_by="tester")
+                with self.assertRaises(BackgroundAssignmentError) as ctx:
+                    apply_background_assignment(conn, release_id=release_id, applied_by="tester")
+                self.assertEqual(ctx.exception.code, "VBG_CANONICAL_COVER_REQUIRED")
+                row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM release_visual_applied_packages WHERE release_id = ?",
+                    (release_id,),
+                ).fetchone()
+                assert row is not None
+                self.assertEqual(int(row["c"]), 0)
             finally:
                 conn.close()
 
