@@ -196,7 +196,13 @@ def build_visual_package_summary(
 
     return {
         "release": {"release_id": int(release_id)},
-        "background_asset": {"asset_id": background_asset_id},
+        "background_asset": {
+            "asset_id": background_asset_id,
+            "source_family": package.get("source_family"),
+            "source_reference": package.get("source_reference"),
+            "selection_mode": package.get("selection_mode"),
+            "template_assisted": bool(package.get("template_assisted", False)),
+        },
         "cover_asset": {"asset_id": cover_asset_id},
         "thumbnail_source": {
             "source_kind": "cover_asset",

@@ -452,6 +452,21 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(source_preview_id) REFERENCES release_visual_preview_snapshots(id)
         );
 
+        CREATE TABLE IF NOT EXISTS release_visual_background_decisions (
+            release_id INTEGER PRIMARY KEY,
+            background_asset_id INTEGER NOT NULL,
+            source_family TEXT NOT NULL,
+            source_reference TEXT NULL,
+            selection_mode TEXT NOT NULL,
+            template_assisted INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(background_asset_id) REFERENCES assets(id),
+            CHECK(source_family IN ('managed_library','channel_source','operator_imported','known_resolved')),
+            CHECK(selection_mode IN ('manual','auto_assisted'))
+        );
+
         CREATE TABLE IF NOT EXISTS playlist_builder_channel_settings (
             channel_slug TEXT PRIMARY KEY,
             default_generation_mode TEXT NOT NULL,
@@ -2722,6 +2737,146 @@ def resolve_release_visual_style_template_rows(conn: sqlite3.Connection, *, rele
     ).fetchone()
     default_row = get_active_default_channel_visual_style_template(conn, channel_slug=str(release_row["channel_slug"]))
     return {"release": release_row, "override": override_row, "default": default_row}
+
+
+def upsert_release_visual_background_decision(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    background_asset_id: int,
+    source_family: str,
+    source_reference: str | None,
+    selection_mode: str,
+    template_assisted: bool,
+    created_at: str,
+    updated_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO release_visual_background_decisions(
+            release_id, background_asset_id, source_family, source_reference, selection_mode,
+            template_assisted, created_at, updated_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(release_id) DO UPDATE SET
+            background_asset_id=excluded.background_asset_id,
+            source_family=excluded.source_family,
+            source_reference=excluded.source_reference,
+            selection_mode=excluded.selection_mode,
+            template_assisted=excluded.template_assisted,
+            updated_at=excluded.updated_at
+        """,
+        (
+            release_id,
+            background_asset_id,
+            source_family,
+            source_reference,
+            selection_mode,
+            1 if template_assisted else 0,
+            created_at,
+            updated_at,
+        ),
+    )
+
+
+def get_release_visual_background_decision_by_release_id(conn: sqlite3.Connection, *, release_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute(
+        "SELECT * FROM release_visual_background_decisions WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+
+
+def resolve_canonical_cover_asset_id_for_background_apply(conn: sqlite3.Connection, *, release_id: int) -> int | None:
+    applied = conn.execute(
+        "SELECT cover_asset_id FROM release_visual_applied_packages WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    if applied and applied["cover_asset_id"] is not None:
+        return int(applied["cover_asset_id"])
+
+    release_row = conn.execute(
+        "SELECT channel_id, current_open_job_id FROM releases WHERE id = ?",
+        (release_id,),
+    ).fetchone()
+    if not release_row or release_row["current_open_job_id"] is None:
+        return None
+
+    row = conn.execute(
+        """
+        SELECT ji.asset_id
+        FROM job_inputs ji
+        JOIN assets a ON a.id = ji.asset_id
+        WHERE ji.job_id = ?
+          AND ji.role = 'COVER'
+          AND a.channel_id = ?
+        ORDER BY ji.order_index ASC, ji.asset_id ASC
+        LIMIT 1
+        """,
+        (int(release_row["current_open_job_id"]), int(release_row["channel_id"])),
+    ).fetchone()
+    if not row:
+        return None
+    return int(row["asset_id"])
+
+
+def list_background_candidate_assets(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    channel_id: int,
+    source_family: str,
+) -> list[Dict[str, Any]]:
+    if source_family == "managed_library":
+        rows = conn.execute(
+            """
+            SELECT id, name, origin_id
+            FROM assets
+            WHERE channel_id = ? AND kind = 'IMAGE' AND UPPER(origin) = 'MANAGED'
+            ORDER BY id DESC
+            """,
+            (channel_id,),
+        ).fetchall()
+    elif source_family == "channel_source":
+        rows = conn.execute(
+            """
+            SELECT id, name, origin_id
+            FROM assets
+            WHERE channel_id = ? AND kind = 'IMAGE' AND UPPER(origin) = 'CHANNEL'
+            ORDER BY id DESC
+            """,
+            (channel_id,),
+        ).fetchall()
+    elif source_family == "operator_imported":
+        rows = conn.execute(
+            """
+            SELECT id, name, origin_id
+            FROM assets
+            WHERE channel_id = ? AND kind = 'IMAGE' AND UPPER(origin) IN ('LOCAL', 'OPERATOR')
+            ORDER BY id DESC
+            """,
+            (channel_id,),
+        ).fetchall()
+    elif source_family == "known_resolved":
+        rows = conn.execute(
+            """
+            SELECT a.id, a.name, a.origin_id
+            FROM assets a
+            WHERE a.channel_id = ?
+              AND a.kind = 'IMAGE'
+              AND a.id IN (
+                SELECT background_asset_id FROM release_visual_applied_packages WHERE release_id = ?
+                UNION
+                SELECT ji.asset_id
+                FROM jobs j
+                JOIN job_inputs ji ON ji.job_id = j.id
+                WHERE j.release_id = ? AND ji.role = 'BACKGROUND'
+              )
+            ORDER BY a.id DESC
+            """,
+            (channel_id, release_id, release_id),
+        ).fetchall()
+    else:
+        rows = []
+    return [dict(row) for row in rows]
 
 
 def _next_job_id(conn: sqlite3.Connection) -> int:
