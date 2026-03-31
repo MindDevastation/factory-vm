@@ -44,6 +44,7 @@ from services.factory_api.approval_actions import approve_job, reject_job, mark_
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
+from services.planner import visual_batch_service
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
     build_channel_settings_payload,
@@ -312,6 +313,13 @@ def _vcover_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
+def _vbatch_error(status_code: int, code: str, message: str, details: Dict[str, Any] | None = None) -> JSONResponse:
+    err: Dict[str, Any] = {"code": code, "message": message}
+    if details:
+        err["details"] = details
+    return JSONResponse(status_code=status_code, content={"error": err})
+
+
 class MetadataTitleTemplatePreviewRequest(BaseModel):
     channel_slug: str = Field(min_length=1)
     template_body: str
@@ -469,6 +477,19 @@ class CoverApproveRequest(BaseModel):
 
 
 class VisualApplyRequest(BaseModel):
+    reuse_override_confirmed: bool = False
+
+
+class VisualBatchPreviewRequest(BaseModel):
+    action_type: str = Field(min_length=1)
+    selected_release_ids: list[int] = Field(min_length=1)
+    action_payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class VisualBatchExecuteRequest(BaseModel):
+    preview_session_id: str = Field(min_length=1)
+    selected_release_ids: list[int] = Field(min_length=1)
+    overwrite_confirmed: bool = False
     reuse_override_confirmed: bool = False
 
 
@@ -1229,6 +1250,84 @@ def api_visual_cover_candidate_apply(
         except cover_assignment_service.CoverAssignmentError as exc:
             status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_PREVIEW_NOT_FOUND"} else 422
             return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/history")
+def api_visual_release_history(
+    release_id: int,
+    limit: int = 20,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    limit_clamped = max(1, min(int(limit), 100))
+    conn = dbm.connect(env)
+    try:
+        release = conn.execute("SELECT id FROM releases WHERE id = ?", (release_id,)).fetchone()
+        if not release:
+            return _vcover_error(404, "VVIS_RELEASE_NOT_FOUND", "visual release not found")
+        rows = conn.execute(
+            """
+            SELECT id, preview_scope, history_stage, preview_id, background_asset_id, cover_asset_id, decision_mode, reuse_warning_json, actor, created_at
+            FROM release_visual_history_events
+            WHERE release_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (release_id, limit_clamped),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {"release_id": release_id, "items": [dict(row) for row in rows]}
+
+
+@app.post("/v1/visual/batch/preview")
+def api_visual_batch_preview(
+    payload: VisualBatchPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = visual_batch_service.create_visual_batch_preview_session(
+                conn,
+                action_type=payload.action_type,
+                selected_release_ids=list(payload.selected_release_ids),
+                created_by=env.basic_user,
+                action_payload=dict(payload.action_payload),
+            )
+            conn.commit()
+        except visual_batch_service.VisualBatchError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code == "VBATCH_RELEASES_NOT_FOUND" else 422
+            return _vbatch_error(status_code, exc.code, exc.message, exc.details)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/batch/execute")
+def api_visual_batch_execute(
+    payload: VisualBatchExecuteRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = visual_batch_service.execute_visual_batch_preview_session(
+                conn,
+                preview_session_id=payload.preview_session_id,
+                selected_release_ids=list(payload.selected_release_ids),
+                overwrite_confirmed=bool(payload.overwrite_confirmed),
+                reuse_override_confirmed=bool(payload.reuse_override_confirmed),
+                executed_by=env.basic_user,
+            )
+            conn.commit()
+        except visual_batch_service.VisualBatchError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code == "VBATCH_SESSION_NOT_FOUND" else 409 if exc.code.startswith("VBATCH_PREVIEW_") else 422
+            return _vbatch_error(status_code, exc.code, exc.message, exc.details)
     finally:
         conn.close()
     return body
