@@ -265,6 +265,35 @@ class TestBackgroundAssignmentWorkflowApi(unittest.TestCase):
                 json={"background_asset_id": bg_id, "source_family": "generation"},
             )
             self.assertEqual(preview.status_code, 422)
+            self.assertEqual(preview.json()["error"]["code"], "VBG_GENERATION_NOT_SUPPORTED")
+            self.assertEqual(preview.json()["error"]["message"], "Background generation is not supported")
+
+    def test_unknown_source_family_keeps_unsupported_error_contract(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                release_id, channel_id, _cover_asset_id = self._seed_release_with_job(conn)
+                bg_id = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="local://bg-unknown-family",
+                    name="bg-unknown-family.png",
+                    path="/tmp/bg-unknown-family.png",
+                )
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            preview = client.post(
+                f"/v1/visual/releases/{release_id}/background/preview",
+                headers=headers,
+                json={"background_asset_id": bg_id, "source_family": "unknown-family"},
+            )
+            self.assertEqual(preview.status_code, 422)
             self.assertEqual(preview.json()["error"]["code"], "VBG_UNSUPPORTED_SOURCE_FAMILY")
 
 

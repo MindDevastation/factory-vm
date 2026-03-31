@@ -363,10 +363,10 @@ def _select_candidate_or_error(
     requested_source_reference: str | None,
 ) -> dict[str, Any]:
     candidates = list(candidates_payload.get("candidates") or [])
-    if requested_source_family and requested_source_family not in ALLOWED_BACKGROUND_SOURCE_FAMILIES:
-        raise BackgroundAssignmentError(code="VBG_UNSUPPORTED_SOURCE_FAMILY", message="Unsupported source family")
     if requested_source_family == "generation":
         raise BackgroundAssignmentError(code="VBG_GENERATION_NOT_SUPPORTED", message="Background generation is not supported")
+    if requested_source_family and requested_source_family not in ALLOWED_BACKGROUND_SOURCE_FAMILIES:
+        raise BackgroundAssignmentError(code="VBG_UNSUPPORTED_SOURCE_FAMILY", message="Unsupported source family")
 
     if requested_asset_id is not None:
         for item in candidates:
