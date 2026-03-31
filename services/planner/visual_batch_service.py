@@ -9,6 +9,7 @@ from typing import Any
 
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
+from services.planner import visual_history_service
 
 ALLOWED_ACTION_TYPES = {
     "BULK_ASSIGN_BACKGROUND",
@@ -82,6 +83,24 @@ def create_visual_batch_preview_session(
                 item_entry["status"] = "BLOCKED"
                 item_entry["reason_code"] = getattr(preview_exc, "code", "VBATCH_PREVIEW_FAILED")
                 item_entry["reason_detail"] = str(preview_exc)
+        if action_type == "BULK_ASSIGN_BACKGROUND":
+            target_background_id = selected_background_asset_id or _extract_preview_background_asset_id(item_entry)
+            target_cover_id = _resolve_cover_for_batch_background_apply(conn, release_id=release_id)
+            if target_background_id is not None and target_cover_id is not None:
+                reuse = visual_history_service.lookup_exact_reuse_warnings(
+                    conn,
+                    release_id=release_id,
+                    background_asset_id=target_background_id,
+                    cover_asset_id=target_cover_id,
+                )
+                if reuse.get("requires_override"):
+                    item_entry["warning_codes"].append("REUSE_OVERRIDE_REQUIRED")
+                    item_entry["reuse_warning"] = {
+                        "requires_override": True,
+                        "prior_usage": reuse.get("prior_usage", []),
+                        "warnings": reuse.get("warnings", []),
+                    }
+                    warnings_total += 1
         per_item.append(
             item_entry
         )
@@ -390,3 +409,20 @@ def _as_optional_positive_int(value: Any) -> int | None:
         return None
     parsed = int(value)
     return parsed if parsed > 0 else None
+
+
+def _extract_preview_background_asset_id(item_entry: dict[str, Any]) -> int | None:
+    selection = item_entry.get("preview_selection")
+    if not isinstance(selection, dict):
+        return None
+    return _as_optional_positive_int(selection.get("background_asset_id"))
+
+
+def _resolve_cover_for_batch_background_apply(conn: sqlite3.Connection, *, release_id: int) -> int | None:
+    row = conn.execute(
+        "SELECT cover_asset_id FROM release_visual_applied_packages WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return _as_optional_positive_int(row["cover_asset_id"])

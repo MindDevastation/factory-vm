@@ -193,6 +193,113 @@ class TestVisualBatchService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_batch_preview_surfaces_reuse_warning_with_prior_usage_and_override_path(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                channel = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert channel is not None
+                channel_id = int(channel["id"])
+
+                shared_cover = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="local://shared-cover",
+                    name="shared-cover.png",
+                    path="/tmp/shared-cover.png",
+                )
+                reused_background = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="local://reused-bg",
+                    name="reused-bg.png",
+                    path="/tmp/reused-bg.png",
+                )
+                alt_background = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="local://alt-bg",
+                    name="alt-bg.png",
+                    path="/tmp/alt-bg.png",
+                )
+
+                prior_release = int(
+                    conn.execute(
+                        "INSERT INTO releases(channel_id, title, description, tags_json, created_at) VALUES(?, 'prior', 'd', '[]', 1.0)",
+                        (channel_id,),
+                    ).lastrowid
+                )
+                target_release = int(
+                    conn.execute(
+                        "INSERT INTO releases(channel_id, title, description, tags_json, created_at) VALUES(?, 'target', 'd', '[]', 1.0)",
+                        (channel_id,),
+                    ).lastrowid
+                )
+                conn.execute(
+                    """
+                    INSERT INTO release_visual_applied_packages(release_id, background_asset_id, cover_asset_id, source_preview_id, applied_by, applied_at)
+                    VALUES(?, ?, ?, NULL, 'seed', ?)
+                    """,
+                    (prior_release, int(reused_background), int(shared_cover), datetime.now(timezone.utc).isoformat()),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO release_visual_applied_packages(release_id, background_asset_id, cover_asset_id, source_preview_id, applied_by, applied_at)
+                    VALUES(?, ?, ?, NULL, 'seed', ?)
+                    """,
+                    (target_release, int(alt_background), int(shared_cover), datetime.now(timezone.utc).isoformat()),
+                )
+
+                preview = vbatch.create_visual_batch_preview_session(
+                    conn,
+                    action_type="BULK_ASSIGN_BACKGROUND",
+                    selected_release_ids=[target_release],
+                    created_by="operator",
+                    action_payload={"background_asset_id": int(reused_background)},
+                )
+                item = preview["items"][0]
+                self.assertIn("REUSE_OVERRIDE_REQUIRED", item["warning_codes"])
+                self.assertIn("reuse_warning", item)
+                self.assertTrue(item["reuse_warning"]["requires_override"])
+                self.assertEqual(int(item["reuse_warning"]["prior_usage"][0]["release_id"]), prior_release)
+
+                blocked = vbatch.execute_visual_batch_preview_session(
+                    conn,
+                    preview_session_id=preview["preview_session_id"],
+                    selected_release_ids=[target_release],
+                    overwrite_confirmed=True,
+                    reuse_override_confirmed=False,
+                    executed_by="operator",
+                )
+                self.assertEqual(blocked["items"][0]["status"], "BLOCKED")
+                self.assertEqual(blocked["items"][0]["reason_code"], "VBG_REUSE_OVERRIDE_REQUIRED")
+
+                preview_override = vbatch.create_visual_batch_preview_session(
+                    conn,
+                    action_type="BULK_ASSIGN_BACKGROUND",
+                    selected_release_ids=[target_release],
+                    created_by="operator",
+                    action_payload={"background_asset_id": int(reused_background)},
+                )
+                allowed = vbatch.execute_visual_batch_preview_session(
+                    conn,
+                    preview_session_id=preview_override["preview_session_id"],
+                    selected_release_ids=[target_release],
+                    overwrite_confirmed=True,
+                    reuse_override_confirmed=True,
+                    executed_by="operator",
+                )
+                self.assertEqual(allowed["items"][0]["status"], "APPLIED")
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()
