@@ -182,6 +182,7 @@
         <li><b>Auto-assisted</b> = template/default prefill path; <b>operator override</b> = explicit manual choice.</li>
         <li><b>Reuse warning</b> = same identity was used previously in channel; check prior usage and confirm override when required.</li>
         <li><b>Thumbnail rule</b> = thumbnail is derived from cover asset (no separate thumbnail entity).</li>
+        <li><b>Template management (Epic 5)</b> = API-first operator flow via <code>/v1/metadata/channel-visual-style-templates</code> (list/create/update/activate/set-default) plus release override/effective endpoints.</li>
       </ul>
     </details>
     <p>
@@ -1617,6 +1618,18 @@ const hasTagsPicker =
     visualWorkflowStatus.textContent = 'Effective visual template loaded.';
     visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
   }
+
+  // Epic-5 visual style template management is API-first by design.
+  // These route templates are surfaced here for operator discoverability from the job edit workflow.
+  const visualStyleTemplateApiRoutes = {
+    listOrCreate: '/v1/metadata/channel-visual-style-templates',
+    detailOrPatch: '/v1/metadata/channel-visual-style-templates/${templateId}',
+    activate: '/v1/metadata/channel-visual-style-templates/${templateId}/activate',
+    setDefault: '/v1/metadata/channel-visual-style-templates/${templateId}/set-default',
+    releaseOverride: '/v1/metadata/channel-visual-style-templates/releases/${activeReleaseId}/override',
+    releaseOverrideClear: '/v1/metadata/channel-visual-style-templates/releases/${activeReleaseId}/override/clear',
+    releaseEffective: '/v1/metadata/channel-visual-style-templates/releases/${activeReleaseId}/effective',
+  };
 
   async function loadVisualBackgroundCandidates() {
     if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;

@@ -418,6 +418,10 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(channel_id) REFERENCES channels(id)
         );
 
+        -- Legacy/compat table: kept for backward compatibility.
+        -- Epic-5 operational flow does not read/write this table as canonical state.
+        -- Canonical persisted state is represented by release_visual_preview_snapshots,
+        -- release_visual_approved_previews_scoped, and release_visual_applied_packages.
         CREATE TABLE IF NOT EXISTS release_visual_configs (
             release_id INTEGER PRIMARY KEY,
             intent_config_json TEXT NOT NULL,

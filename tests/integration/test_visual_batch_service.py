@@ -306,6 +306,117 @@ class TestVisualBatchService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_stress_sanity_large_scope_preview_execute_guards_reuse_and_expiry(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                channel = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert channel is not None
+                channel_id = int(channel["id"])
+
+                selected_release_ids: list[int] = []
+                for idx in range(12):
+                    release_id, _ = self._seed_release(
+                        conn,
+                        title=f"stress-{idx}",
+                        with_applied_package=(idx % 2 == 0),
+                    )
+                    selected_release_ids.append(release_id)
+
+                target_release = selected_release_ids[0]
+                target_cover_row = conn.execute(
+                    "SELECT cover_asset_id FROM release_visual_applied_packages WHERE release_id = ?",
+                    (target_release,),
+                ).fetchone()
+                assert target_cover_row is not None
+                target_cover_id = int(target_cover_row["cover_asset_id"])
+
+                shared_background = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="local://stress-shared-bg",
+                    name="stress-shared-bg.png",
+                    path="/tmp/stress-shared-bg.png",
+                )
+                prior_release = int(
+                    conn.execute(
+                        "INSERT INTO releases(channel_id, title, description, tags_json, created_at) VALUES(?, 'stress-prior', 'd', '[]', 1.0)",
+                        (channel_id,),
+                    ).lastrowid
+                )
+                conn.execute(
+                    """
+                    INSERT INTO release_visual_applied_packages(release_id, background_asset_id, cover_asset_id, source_preview_id, applied_by, applied_at)
+                    VALUES(?, ?, ?, NULL, 'seed', ?)
+                    """,
+                    (prior_release, int(shared_background), target_cover_id, datetime.now(timezone.utc).isoformat()),
+                )
+
+                preview = vbatch.create_visual_batch_preview_session(
+                    conn,
+                    action_type="BULK_ASSIGN_BACKGROUND",
+                    selected_release_ids=selected_release_ids,
+                    created_by="operator",
+                    action_payload={"background_asset_id": int(shared_background)},
+                )
+                self.assertEqual(preview["aggregate"]["scope_total"], 12)
+                self.assertEqual(len(preview["items"]), 12)
+                self.assertEqual(preview["aggregate"]["ready_total"], 12)
+                reuse_items = [item for item in preview["items"] if "REUSE_OVERRIDE_REQUIRED" in item.get("warning_codes", [])]
+                self.assertGreaterEqual(len(reuse_items), 1)
+                self.assertIn("reuse_warning", reuse_items[0])
+                self.assertGreaterEqual(len(reuse_items[0]["reuse_warning"]["prior_usage"]), 1)
+
+                with self.assertRaises(vbatch.VisualBatchError) as scope_invalid:
+                    vbatch.execute_visual_batch_preview_session(
+                        conn,
+                        preview_session_id=preview["preview_session_id"],
+                        selected_release_ids=selected_release_ids[:10],
+                        overwrite_confirmed=True,
+                        reuse_override_confirmed=False,
+                        executed_by="operator",
+                    )
+                self.assertEqual(scope_invalid.exception.code, "VBATCH_PREVIEW_SCOPE_INVALIDATED")
+
+                executed = vbatch.execute_visual_batch_preview_session(
+                    conn,
+                    preview_session_id=preview["preview_session_id"],
+                    selected_release_ids=selected_release_ids,
+                    overwrite_confirmed=False,
+                    reuse_override_confirmed=False,
+                    executed_by="operator",
+                )
+                blocked = {int(item["release_id"]): item for item in executed["items"] if item["status"] == "BLOCKED"}
+                self.assertIn(target_release, blocked)
+                self.assertEqual(blocked[target_release]["reason_code"], "OVERWRITE_REQUIRES_EXPLICIT_DECISION")
+
+                preview_expired = vbatch.create_visual_batch_preview_session(
+                    conn,
+                    action_type="BULK_GENERATE_PREVIEWS",
+                    selected_release_ids=selected_release_ids,
+                    created_by="operator",
+                )
+                conn.execute(
+                    "UPDATE release_visual_batch_preview_sessions SET expires_at = ? WHERE id = ?",
+                    ((datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(), preview_expired["preview_session_id"]),
+                )
+                conn.commit()
+                with self.assertRaises(vbatch.VisualBatchError) as expired_err:
+                    vbatch.execute_visual_batch_preview_session(
+                        conn,
+                        preview_session_id=preview_expired["preview_session_id"],
+                        selected_release_ids=selected_release_ids,
+                        overwrite_confirmed=True,
+                        reuse_override_confirmed=False,
+                        executed_by="operator",
+                    )
+                self.assertEqual(expired_err.exception.code, "VBATCH_PREVIEW_SESSION_EXPIRED")
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()
