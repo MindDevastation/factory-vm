@@ -1521,6 +1521,30 @@ class TestUiPagesSlice4(unittest.TestCase):
             )
             self.assertEqual(batch_execute.status_code, 200)
             self.assertEqual(batch_execute.json()["items"][0]["status"], "BLOCKED")
+            self.assertEqual(batch_execute.json()["items"][0]["reason_code"], "VBG_REUSE_OVERRIDE_REQUIRED")
+
+            batch_preview_override = client.post(
+                "/v1/visual/batch/preview",
+                headers=h,
+                json={
+                    "action_type": "BULK_ASSIGN_BACKGROUND",
+                    "selected_release_ids": [release_id],
+                    "action_payload": {"background_asset_id": bg_asset_id},
+                },
+            )
+            self.assertEqual(batch_preview_override.status_code, 200)
+            batch_execute_override = client.post(
+                "/v1/visual/batch/execute",
+                headers=h,
+                json={
+                    "preview_session_id": batch_preview_override.json()["preview_session_id"],
+                    "selected_release_ids": [release_id],
+                    "overwrite_confirmed": True,
+                    "reuse_override_confirmed": True,
+                },
+            )
+            self.assertEqual(batch_execute_override.status_code, 200)
+            self.assertEqual(batch_execute_override.json()["items"][0]["status"], "APPLIED")
 
             # Regression: existing non-visual page still renders.
             create_page = client.get("/ui/jobs/create", headers=h)

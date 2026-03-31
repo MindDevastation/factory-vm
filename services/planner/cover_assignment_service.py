@@ -355,6 +355,11 @@ def apply_cover_candidate(
             "is_auto_assisted": str(parsed.get("selection_mode") or "manual") == "auto_assisted",
         },
     )
+    reuse_audit: dict[str, Any] | None = None
+    if reuse["warnings"]:
+        reuse_audit = dict(reuse)
+        reuse_audit["override_confirmed"] = bool(reuse_override_confirmed)
+        reuse_audit["override_applied"] = bool(reuse["requires_override"] and reuse_override_confirmed)
     visual_history_service.record_visual_history_event(
         conn,
         release_id=release_id,
@@ -365,7 +370,7 @@ def apply_cover_candidate(
         cover_asset_id=cover_asset_id,
         template_ref=parsed.get("template_ref"),
         decision_mode=str(parsed.get("selection_mode") or "manual"),
-        reuse_warning=reuse if reuse["warnings"] else None,
+        reuse_warning=reuse_audit,
         actor=applied_by,
     )
     return {
