@@ -81,15 +81,23 @@ class TestVisualHistoryService(unittest.TestCase):
                     created_by="tester",
                 )
                 cover_svc.select_cover_candidate_for_approval(conn, release_id=new_release, candidate_id=str(candidate["candidate_id"]), selected_by="tester")
-                cover_svc.approve_cover_candidate(conn, release_id=new_release, candidate_id=None, approved_by="tester")
+                approved = cover_svc.approve_cover_candidate(conn, release_id=new_release, candidate_id=None, approved_by="tester")
                 with self.assertRaises(Exception) as ctx:
-                    cover_svc.apply_cover_candidate(conn, release_id=new_release, applied_by="tester")
+                    cover_svc.apply_cover_candidate(
+                        conn,
+                        release_id=new_release,
+                        applied_by="tester",
+                        stale_token=str(approved["stale_token"]),
+                        conflict_token=str(approved["conflict_token"]),
+                    )
                 self.assertEqual(getattr(ctx.exception, "code", ""), "VCOVER_REUSE_OVERRIDE_REQUIRED")
                 applied = cover_svc.apply_cover_candidate(
                     conn,
                     release_id=new_release,
                     applied_by="tester",
                     reuse_override_confirmed=True,
+                    stale_token=str(approved["stale_token"]),
+                    conflict_token=str(approved["conflict_token"]),
                 )
                 self.assertTrue(applied["reuse"]["requires_override"])
             finally:

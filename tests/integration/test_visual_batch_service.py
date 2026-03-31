@@ -170,6 +170,12 @@ class TestVisualBatchService(unittest.TestCase):
                     created_by="operator",
                 )
                 with mock.patch(
+                    "services.planner.visual_batch_service._resolve_cover_apply_tokens",
+                    return_value={"stale_token": "s", "conflict_token": "c"},
+                ), mock.patch(
+                    "services.planner.visual_batch_service._resolve_background_apply_tokens",
+                    return_value={"stale_token": "s", "conflict_token": "c"},
+                ), mock.patch(
                     "services.planner.visual_batch_service.cover_assignment_service.apply_cover_candidate",
                     return_value={"preview_id": "mock-cover-preview"},
                 ), mock.patch(

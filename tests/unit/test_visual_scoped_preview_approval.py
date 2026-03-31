@@ -184,7 +184,7 @@ class TestVisualScopedPreviewApproval(unittest.TestCase):
                     template_assisted=False,
                     selected_by="operator",
                 )
-                bg_svc.approve_background_assignment(
+                approved = bg_svc.approve_background_assignment(
                     conn,
                     release_id=release_id,
                     preview_id=str(preview["preview_id"]),
@@ -204,7 +204,13 @@ class TestVisualScopedPreviewApproval(unittest.TestCase):
                 self.assertIsNotNone(legacy_approval)
                 self.assertEqual(str(legacy_approval["preview_id"]), str(preview["preview_id"]))
 
-                applied = bg_svc.apply_background_assignment(conn, release_id=release_id, applied_by="operator")
+                applied = bg_svc.apply_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    applied_by="operator",
+                    stale_token=str(approved["stale_token"]),
+                    conflict_token=str(approved["conflict_token"]),
+                )
                 self.assertEqual(int(applied["background_asset_id"]), background_asset_id)
                 self.assertEqual(int(applied["cover_asset_id"]), cover_asset_id)
                 self.assertEqual(applied["summary"]["thumbnail_source"]["source_kind"], "cover_asset")

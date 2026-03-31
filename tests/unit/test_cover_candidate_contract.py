@@ -130,8 +130,14 @@ class TestCoverCandidateContract(unittest.TestCase):
                     candidate_id=str(candidate["candidate_id"]),
                     selected_by="tester",
                 )
-                svc.approve_cover_candidate(conn, release_id=release_id, candidate_id=None, approved_by="tester")
-                applied = svc.apply_cover_candidate(conn, release_id=release_id, applied_by="tester")
+                approved = svc.approve_cover_candidate(conn, release_id=release_id, candidate_id=None, approved_by="tester")
+                applied = svc.apply_cover_candidate(
+                    conn,
+                    release_id=release_id,
+                    applied_by="tester",
+                    stale_token=str(approved["stale_token"]),
+                    conflict_token=str(approved["conflict_token"]),
+                )
                 self.assertEqual(int(applied["summary"]["thumbnail_source"]["asset_id"]), selected_cover_asset_id)
                 self.assertEqual(applied["summary"]["thumbnail_source"]["source_kind"], "cover_asset")
             finally:

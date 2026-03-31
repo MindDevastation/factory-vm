@@ -73,8 +73,20 @@ class TestEpic5VisualAcceptanceHardening(unittest.TestCase):
             self.assertEqual(created.status_code, 200)
             candidate_id = str(created.json()["candidate_id"])
             self.assertEqual(client.post(f"/v1/visual/releases/{release_id}/cover/select", headers=h, json={"candidate_id": candidate_id}).status_code, 200)
-            self.assertEqual(client.post(f"/v1/visual/releases/{release_id}/cover/approve", headers=h, json={}).status_code, 200)
-            applied = client.post(f"/v1/visual/releases/{release_id}/cover/apply", headers=h, json={"reuse_override_confirmed": True})
+            approved = client.post(f"/v1/visual/releases/{release_id}/cover/approve", headers=h, json={})
+            self.assertEqual(approved.status_code, 200)
+            approved_body = approved.json()
+            self.assertTrue(str(approved_body["stale_token"]))
+            self.assertTrue(str(approved_body["conflict_token"]))
+            applied = client.post(
+                f"/v1/visual/releases/{release_id}/cover/apply",
+                headers=h,
+                json={
+                    "reuse_override_confirmed": True,
+                    "stale_token": approved_body["stale_token"],
+                    "conflict_token": approved_body["conflict_token"],
+                },
+            )
             self.assertEqual(applied.status_code, 200)
             self.assertEqual(applied.json()["summary"]["thumbnail_source"]["source_kind"], "cover_asset")
 
@@ -136,18 +148,30 @@ class TestEpic5VisualAcceptanceHardening(unittest.TestCase):
                     template_assisted=False,
                     selected_by="operator",
                 )
-                background_assignment_service.approve_background_assignment(
+                approved = background_assignment_service.approve_background_assignment(
                     conn,
                     release_id=target_release,
                     preview_id=str(preview["preview_id"]),
                     approved_by="operator",
                 )
+                self.assertTrue(str(approved["stale_token"]))
+                self.assertTrue(str(approved["conflict_token"]))
                 with self.assertRaises(background_assignment_service.BackgroundAssignmentError):
                     background_assignment_service.apply_background_assignment(
-                        conn, release_id=target_release, applied_by="operator", reuse_override_confirmed=False
+                        conn,
+                        release_id=target_release,
+                        applied_by="operator",
+                        reuse_override_confirmed=False,
+                        stale_token=str(approved["stale_token"]),
+                        conflict_token=str(approved["conflict_token"]),
                     )
                 background_assignment_service.apply_background_assignment(
-                    conn, release_id=target_release, applied_by="operator", reuse_override_confirmed=True
+                    conn,
+                    release_id=target_release,
+                    applied_by="operator",
+                    reuse_override_confirmed=True,
+                    stale_token=str(approved["stale_token"]),
+                    conflict_token=str(approved["conflict_token"]),
                 )
                 history = conn.execute(
                     "SELECT reuse_warning_json, decision_mode, preview_id FROM release_visual_history_events WHERE release_id = ? AND history_stage = 'APPLIED' ORDER BY id DESC LIMIT 1",
@@ -188,12 +212,30 @@ class TestEpic5VisualAcceptanceHardening(unittest.TestCase):
                     template_assisted=False,
                     selected_by="operator",
                 )
-                background_assignment_service.approve_background_assignment(
+                approved = background_assignment_service.approve_background_assignment(
                     conn,
                     release_id=release_id,
                     preview_id=str(preview["preview_id"]),
                     approved_by="operator",
                 )
+                with self.assertRaises(background_assignment_service.BackgroundAssignmentError) as missing_stale_err:
+                    background_assignment_service.apply_background_assignment(
+                        conn,
+                        release_id=release_id,
+                        applied_by="operator",
+                        reuse_override_confirmed=True,
+                        conflict_token=str(approved["conflict_token"]),
+                    )
+                self.assertEqual(missing_stale_err.exception.code, "VBG_PREVIEW_STALE")
+                with self.assertRaises(background_assignment_service.BackgroundAssignmentError) as missing_conflict_err:
+                    background_assignment_service.apply_background_assignment(
+                        conn,
+                        release_id=release_id,
+                        applied_by="operator",
+                        reuse_override_confirmed=True,
+                        stale_token=str(approved["stale_token"]),
+                    )
+                self.assertEqual(missing_conflict_err.exception.code, "VBG_APPLY_CONFLICT")
                 with self.assertRaises(background_assignment_service.BackgroundAssignmentError) as stale_err:
                     background_assignment_service.apply_background_assignment(
                         conn,
@@ -201,6 +243,7 @@ class TestEpic5VisualAcceptanceHardening(unittest.TestCase):
                         applied_by="operator",
                         reuse_override_confirmed=True,
                         stale_token="invalid-stale-token",
+                        conflict_token=str(approved["conflict_token"]),
                     )
                 self.assertEqual(stale_err.exception.code, "VBG_PREVIEW_STALE")
                 with self.assertRaises(background_assignment_service.BackgroundAssignmentError) as conflict_err:
@@ -209,6 +252,7 @@ class TestEpic5VisualAcceptanceHardening(unittest.TestCase):
                         release_id=release_id,
                         applied_by="operator",
                         reuse_override_confirmed=True,
+                        stale_token=str(approved["stale_token"]),
                         conflict_token="invalid-conflict-token",
                     )
                 self.assertEqual(conflict_err.exception.code, "VBG_APPLY_CONFLICT")

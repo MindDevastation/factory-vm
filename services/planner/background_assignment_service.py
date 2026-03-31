@@ -173,10 +173,11 @@ def approve_background_assignment(
         approved_at=now_iso,
     )
     snapshot = conn.execute(
-        "SELECT preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
+        "SELECT id, intent_snapshot_json, preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
         (preview_id,),
     ).fetchone()
     parsed = json.loads(str(snapshot["preview_package_json"]) or "{}") if snapshot else {}
+    background_asset_id = int(parsed.get("background_asset_id") or 0) or None
     visual_history_service.record_visual_history_event(
         conn,
         release_id=release_id,
@@ -190,7 +191,20 @@ def approve_background_assignment(
         reuse_warning=None,
         actor=approved_by,
     )
-    return {"release_id": release_id, "preview_id": preview_id, "approved": True}
+    cover_asset_id = dbm.resolve_canonical_cover_asset_id_for_background_apply(conn, release_id=release_id)
+    current_intent = {"background": {"asset_id": int(background_asset_id or 0)}, "cover": {"asset_id": int(cover_asset_id or 0)}}
+    apply_tokens = build_apply_tokens(
+        release_id=release_id,
+        snapshot_row=dict(snapshot),
+        current_intent_config_json=current_intent,
+    )
+    return {
+        "release_id": release_id,
+        "preview_id": preview_id,
+        "approved": True,
+        "stale_token": apply_tokens.stale_token,
+        "conflict_token": apply_tokens.conflict_token,
+    }
 
 
 def apply_background_assignment(
@@ -211,7 +225,7 @@ def apply_background_assignment(
         raise BackgroundAssignmentError(code="VBG_APPROVAL_REQUIRED", message="Approved background preview is required before apply")
 
     snapshot = conn.execute(
-        "SELECT id, preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
+        "SELECT id, intent_snapshot_json, preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
         (str(approved["preview_id"]),),
     ).fetchone()
     if not snapshot:
@@ -233,11 +247,10 @@ def apply_background_assignment(
         (release_id,),
     ).fetchone()
     current_intent = {"background": {"asset_id": background_asset_id}, "cover": {"asset_id": int(cover_asset_id)}}
-    expected_tokens = build_apply_tokens(
-        release_id=release_id,
-        snapshot_row=dict(snapshot),
-        current_intent_config_json=current_intent,
-    )
+    if not stale_token:
+        raise BackgroundAssignmentError(code="VBG_PREVIEW_STALE", message="stale_token is required before apply")
+    if not conflict_token:
+        raise BackgroundAssignmentError(code="VBG_APPLY_CONFLICT", message="conflict_token is required before apply")
     try:
         validate_apply_safety(
             release_id=release_id,
@@ -245,8 +258,8 @@ def apply_background_assignment(
             approved_preview_row=dict(approved),
             applied_package_row=dict(applied_package) if applied_package else None,
             current_intent_config_json=current_intent,
-            provided_stale_token=stale_token or expected_tokens.stale_token,
-            provided_conflict_token=conflict_token or expected_tokens.conflict_token,
+            provided_stale_token=stale_token,
+            provided_conflict_token=conflict_token,
         )
     except VisualLifecycleError as lifecycle_exc:
         code_map = {

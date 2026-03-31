@@ -220,9 +220,19 @@ class TestCoverCandidateWorkflowApi(unittest.TestCase):
                 json={},
             )
             self.assertEqual(approved.status_code, 200)
-            self.assertEqual(str(approved.json()["candidate_id"]), candidate_id)
+            approved_body = approved.json()
+            self.assertEqual(str(approved_body["candidate_id"]), candidate_id)
+            self.assertTrue(str(approved_body["stale_token"]))
+            self.assertTrue(str(approved_body["conflict_token"]))
 
-            applied = client.post(f"/v1/visual/releases/{release_id}/cover/apply", headers=headers)
+            applied = client.post(
+                f"/v1/visual/releases/{release_id}/cover/apply",
+                headers=headers,
+                json={
+                    "stale_token": approved_body["stale_token"],
+                    "conflict_token": approved_body["conflict_token"],
+                },
+            )
             self.assertEqual(applied.status_code, 200)
             body = applied.json()
             self.assertEqual(int(body["background_asset_id"]), background_asset_id)
@@ -301,16 +311,27 @@ class TestCoverCandidateWorkflowApi(unittest.TestCase):
                 ).status_code,
                 200,
             )
+            approved = client.post(
+                f"/v1/visual/releases/{release_id}/cover/approve",
+                headers=headers,
+                json={},
+            )
             self.assertEqual(
-                client.post(
-                    f"/v1/visual/releases/{release_id}/cover/approve",
-                    headers=headers,
-                    json={},
-                ).status_code,
+                approved.status_code,
                 200,
             )
+            approved_body = approved.json()
+            self.assertTrue(str(approved_body["stale_token"]))
+            self.assertTrue(str(approved_body["conflict_token"]))
 
-            blocked = client.post(f"/v1/visual/releases/{release_id}/cover/apply", headers=headers, json={})
+            blocked = client.post(
+                f"/v1/visual/releases/{release_id}/cover/apply",
+                headers=headers,
+                json={
+                    "stale_token": approved_body["stale_token"],
+                    "conflict_token": approved_body["conflict_token"],
+                },
+            )
             self.assertEqual(blocked.status_code, 422)
             self.assertEqual(blocked.json()["error"]["code"], "VCOVER_REUSE_OVERRIDE_REQUIRED")
             self.assertIn("prior_release_id", blocked.json()["error"]["message"])
@@ -318,7 +339,11 @@ class TestCoverCandidateWorkflowApi(unittest.TestCase):
             applied = client.post(
                 f"/v1/visual/releases/{release_id}/cover/apply",
                 headers=headers,
-                json={"reuse_override_confirmed": True},
+                json={
+                    "reuse_override_confirmed": True,
+                    "stale_token": approved_body["stale_token"],
+                    "conflict_token": approved_body["conflict_token"],
+                },
             )
             self.assertEqual(applied.status_code, 200)
             self.assertTrue(applied.json()["reuse"]["requires_override"])
@@ -367,12 +392,31 @@ class TestCoverCandidateWorkflowApi(unittest.TestCase):
             self.assertEqual(created.status_code, 200)
             candidate_id = str(created.json()["candidate_id"])
             self.assertEqual(client.post(f"/v1/visual/releases/{release_id}/cover/select", headers=headers, json={"candidate_id": candidate_id}).status_code, 200)
-            self.assertEqual(client.post(f"/v1/visual/releases/{release_id}/cover/approve", headers=headers, json={}).status_code, 200)
+            approved = client.post(f"/v1/visual/releases/{release_id}/cover/approve", headers=headers, json={})
+            self.assertEqual(approved.status_code, 200)
+            approved_body = approved.json()
+
+            missing_stale = client.post(
+                f"/v1/visual/releases/{release_id}/cover/apply",
+                headers=headers,
+                json={"conflict_token": approved_body["conflict_token"]},
+            )
+            self.assertEqual(missing_stale.status_code, 422)
+
+            missing_conflict = client.post(
+                f"/v1/visual/releases/{release_id}/cover/apply",
+                headers=headers,
+                json={"stale_token": approved_body["stale_token"]},
+            )
+            self.assertEqual(missing_conflict.status_code, 422)
 
             stale = client.post(
                 f"/v1/visual/releases/{release_id}/cover/apply",
                 headers=headers,
-                json={"stale_token": "invalid-stale-token"},
+                json={
+                    "stale_token": "invalid-stale-token",
+                    "conflict_token": approved_body["conflict_token"],
+                },
             )
             self.assertEqual(stale.status_code, 422)
             self.assertEqual(stale.json()["error"]["code"], "VCOVER_PREVIEW_STALE")
@@ -380,7 +424,10 @@ class TestCoverCandidateWorkflowApi(unittest.TestCase):
             conflict = client.post(
                 f"/v1/visual/releases/{release_id}/cover/apply",
                 headers=headers,
-                json={"conflict_token": "invalid-conflict-token"},
+                json={
+                    "stale_token": approved_body["stale_token"],
+                    "conflict_token": "invalid-conflict-token",
+                },
             )
             self.assertEqual(conflict.status_code, 422)
             self.assertEqual(conflict.json()["error"]["code"], "VCOVER_APPLY_CONFLICT")

@@ -7,9 +7,11 @@ import secrets
 import sqlite3
 from typing import Any
 
+from services.common import db as dbm
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
 from services.planner import visual_history_service
+from services.visual_domain import build_apply_tokens
 
 ALLOWED_ACTION_TYPES = {
     "BULK_ASSIGN_BACKGROUND",
@@ -227,11 +229,14 @@ def execute_visual_batch_preview_session(
 
         if action_type == "BULK_APPROVE_APPLY":
             try:
+                cover_tokens = _resolve_cover_apply_tokens(conn, release_id=release_id)
                 output = cover_assignment_service.apply_cover_candidate(
                     conn,
                     release_id=release_id,
                     applied_by=executed_by,
                     reuse_override_confirmed=reuse_override_confirmed,
+                    stale_token=cover_tokens["stale_token"],
+                    conflict_token=cover_tokens["conflict_token"],
                 )
                 executed_count += 1
                 results.append(
@@ -244,11 +249,14 @@ def execute_visual_batch_preview_session(
             except Exception as cover_exc:
                 if getattr(cover_exc, "code", "") == "VCOVER_APPROVAL_REQUIRED":
                     try:
+                        background_tokens = _resolve_background_apply_tokens(conn, release_id=release_id)
                         output = background_assignment_service.apply_background_assignment(
                             conn,
                             release_id=release_id,
                             applied_by=executed_by,
                             reuse_override_confirmed=reuse_override_confirmed,
+                            stale_token=background_tokens["stale_token"],
+                            conflict_token=background_tokens["conflict_token"],
                         )
                         executed_count += 1
                         results.append(
@@ -289,7 +297,7 @@ def execute_visual_batch_preview_session(
                     template_assisted=False,
                     selected_by=executed_by,
                 )
-                background_assignment_service.approve_background_assignment(
+                approved = background_assignment_service.approve_background_assignment(
                     conn,
                     release_id=release_id,
                     preview_id=str(preview["preview_id"]),
@@ -300,6 +308,8 @@ def execute_visual_batch_preview_session(
                     release_id=release_id,
                     applied_by=executed_by,
                     reuse_override_confirmed=reuse_override_confirmed,
+                    stale_token=str(approved["stale_token"]),
+                    conflict_token=str(approved["conflict_token"]),
                 )
                 executed_count += 1
                 results.append(
@@ -398,6 +408,62 @@ def _load_release_rows(conn: sqlite3.Connection, release_ids: list[int]) -> list
 def _scope_fingerprint(*, action_type: str, release_ids: list[int]) -> str:
     payload = f"{action_type}|{','.join(str(item) for item in release_ids)}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _resolve_cover_apply_tokens(conn: sqlite3.Connection, *, release_id: int) -> dict[str, str]:
+    approved = dbm.get_release_visual_approved_preview(conn, release_id=release_id, preview_scope=cover_assignment_service.COVER_PREVIEW_SCOPE)
+    if not approved:
+        raise cover_assignment_service.CoverAssignmentError(code="VCOVER_APPROVAL_REQUIRED", message="approved cover preview is required before apply")
+    snapshot = conn.execute(
+        "SELECT id, intent_snapshot_json, preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
+        (str(approved["preview_id"]),),
+    ).fetchone()
+    if not snapshot:
+        raise cover_assignment_service.CoverAssignmentError(code="VCOVER_PREVIEW_NOT_FOUND", message="approved cover preview not found")
+    parsed = json.loads(str(snapshot["preview_package_json"]) or "{}")
+    cover_asset_id = int(parsed.get("cover_asset_id") or 0)
+    if cover_asset_id <= 0:
+        raise cover_assignment_service.CoverAssignmentError(code="VCOVER_INVALID_PREVIEW", message="approved preview has no cover asset")
+    background_asset_id = dbm.resolve_canonical_background_asset_id_for_cover_apply(conn, release_id=release_id)
+    if background_asset_id is None:
+        raise cover_assignment_service.CoverAssignmentError(
+            code="VCOVER_CANONICAL_BACKGROUND_REQUIRED",
+            message="cover apply requires canonical background asset",
+        )
+    tokens = build_apply_tokens(
+        release_id=release_id,
+        snapshot_row=dict(snapshot),
+        current_intent_config_json={"background": {"asset_id": int(background_asset_id)}, "cover": {"asset_id": cover_asset_id}},
+    )
+    return {"stale_token": tokens.stale_token, "conflict_token": tokens.conflict_token}
+
+
+def _resolve_background_apply_tokens(conn: sqlite3.Connection, *, release_id: int) -> dict[str, str]:
+    approved = dbm.get_release_visual_approved_preview(conn, release_id=release_id, preview_scope=background_assignment_service.BACKGROUND_PREVIEW_SCOPE)
+    if not approved:
+        raise background_assignment_service.BackgroundAssignmentError(code="VBG_APPROVAL_REQUIRED", message="Approved background preview is required before apply")
+    snapshot = conn.execute(
+        "SELECT id, intent_snapshot_json, preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
+        (str(approved["preview_id"]),),
+    ).fetchone()
+    if not snapshot:
+        raise background_assignment_service.BackgroundAssignmentError(code="VBG_PREVIEW_NOT_FOUND", message="Approved background preview not found")
+    parsed = json.loads(str(snapshot["preview_package_json"]) or "{}")
+    background_asset_id = int(parsed.get("background_asset_id") or 0)
+    if background_asset_id <= 0:
+        raise background_assignment_service.BackgroundAssignmentError(code="VBG_INVALID_PREVIEW", message="Approved preview has no background asset")
+    cover_asset_id = dbm.resolve_canonical_cover_asset_id_for_background_apply(conn, release_id=release_id)
+    if cover_asset_id is None:
+        raise background_assignment_service.BackgroundAssignmentError(
+            code="VBG_CANONICAL_COVER_REQUIRED",
+            message="Background apply requires canonical cover asset",
+        )
+    tokens = build_apply_tokens(
+        release_id=release_id,
+        snapshot_row=dict(snapshot),
+        current_intent_config_json={"background": {"asset_id": background_asset_id}, "cover": {"asset_id": int(cover_asset_id)}},
+    )
+    return {"stale_token": tokens.stale_token, "conflict_token": tokens.conflict_token}
 
 
 def _now_iso() -> str:

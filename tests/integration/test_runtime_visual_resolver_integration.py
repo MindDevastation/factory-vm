@@ -233,8 +233,14 @@ class TestRuntimeVisualResolverIntegration(unittest.TestCase):
                     template_assisted=False,
                     selected_by="tester",
                 )
-                approve_background_assignment(conn, release_id=release_id, preview_id=str(preview["preview_id"]), approved_by="tester")
-                apply_background_assignment(conn, release_id=release_id, applied_by="tester")
+                approved = approve_background_assignment(conn, release_id=release_id, preview_id=str(preview["preview_id"]), approved_by="tester")
+                apply_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    applied_by="tester",
+                    stale_token=str(approved["stale_token"]),
+                    conflict_token=str(approved["conflict_token"]),
+                )
 
                 applied = conn.execute(
                     "SELECT background_asset_id, cover_asset_id FROM release_visual_applied_packages WHERE release_id = ?",
@@ -279,9 +285,15 @@ class TestRuntimeVisualResolverIntegration(unittest.TestCase):
                     template_assisted=False,
                     selected_by="tester",
                 )
-                approve_background_assignment(conn, release_id=release_id, preview_id=str(preview["preview_id"]), approved_by="tester")
+                approved = approve_background_assignment(conn, release_id=release_id, preview_id=str(preview["preview_id"]), approved_by="tester")
                 with self.assertRaises(BackgroundAssignmentError) as ctx:
-                    apply_background_assignment(conn, release_id=release_id, applied_by="tester")
+                    apply_background_assignment(
+                        conn,
+                        release_id=release_id,
+                        applied_by="tester",
+                        stale_token=str(approved["stale_token"]),
+                        conflict_token=str(approved["conflict_token"]),
+                    )
                 self.assertEqual(ctx.exception.code, "VBG_CANONICAL_COVER_REQUIRED")
                 row = conn.execute(
                     "SELECT COUNT(*) AS c FROM release_visual_applied_packages WHERE release_id = ?",
