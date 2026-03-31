@@ -15,7 +15,10 @@ from services.planner.background_source_adapter_registry import (
     build_default_background_source_adapter_registry,
 )
 from services.planner.runtime_visual_resolver import apply_release_visual_package
-from services.visual_domain import build_visual_package_summary
+from services.planner import visual_history_service
+from services.visual_domain import VisualLifecycleError, build_apply_tokens, build_visual_package_summary, validate_apply_safety
+
+BACKGROUND_PREVIEW_SCOPE = dbm.VISUAL_PREVIEW_SCOPE_BACKGROUND
 
 
 class BackgroundAssignmentError(Exception):
@@ -106,10 +109,31 @@ def preview_background_assignment(
     conn.execute(
         """
         INSERT INTO release_visual_preview_snapshots(
-            id, release_id, intent_snapshot_json, preview_package_json, created_by, created_at
-        ) VALUES(?, ?, ?, ?, ?, ?)
+            id, release_id, preview_scope, intent_snapshot_json, preview_package_json, created_by, created_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?)
         """,
-        (preview_id, release_id, json.dumps(intent_snapshot, sort_keys=True), json.dumps(preview_package, sort_keys=True), selected_by, now_iso),
+        (
+            preview_id,
+            release_id,
+            BACKGROUND_PREVIEW_SCOPE,
+            json.dumps(intent_snapshot, sort_keys=True),
+            json.dumps(preview_package, sort_keys=True),
+            selected_by,
+            now_iso,
+        ),
+    )
+    visual_history_service.record_visual_history_event(
+        conn,
+        release_id=release_id,
+        preview_scope=BACKGROUND_PREVIEW_SCOPE,
+        history_stage="PREVIEWED",
+        preview_id=preview_id,
+        background_asset_id=int(selected["asset_id"]),
+        cover_asset_id=None,
+        template_ref=None,
+        decision_mode=selection_mode,
+        reuse_warning=None,
+        actor=selected_by,
     )
     return {
         "release_id": release_id,
@@ -130,25 +154,57 @@ def approve_background_assignment(
     approved_by: str | None,
 ) -> dict[str, Any]:
     preview_row = conn.execute(
-        "SELECT id, release_id FROM release_visual_preview_snapshots WHERE id = ?",
+        "SELECT id, release_id, preview_scope FROM release_visual_preview_snapshots WHERE id = ?",
         (preview_id,),
     ).fetchone()
     if not preview_row or int(preview_row["release_id"]) != int(release_id):
         raise BackgroundAssignmentError(code="VBG_PREVIEW_NOT_FOUND", message="Background preview not found")
+    preview_scope = str(preview_row.get("preview_scope") or dbm.VISUAL_PREVIEW_SCOPE_PACKAGE)
+    if preview_scope not in {BACKGROUND_PREVIEW_SCOPE, dbm.VISUAL_PREVIEW_SCOPE_PACKAGE}:
+        raise BackgroundAssignmentError(code="VBG_PREVIEW_SCOPE_MISMATCH", message="Background preview scope mismatch")
 
     now_iso = _now_iso()
-    conn.execute(
-        """
-        INSERT INTO release_visual_approved_previews(release_id, preview_id, approved_by, approved_at)
-        VALUES(?, ?, ?, ?)
-        ON CONFLICT(release_id) DO UPDATE SET
-            preview_id=excluded.preview_id,
-            approved_by=excluded.approved_by,
-            approved_at=excluded.approved_at
-        """,
-        (release_id, preview_id, approved_by, now_iso),
+    dbm.upsert_release_visual_approved_preview(
+        conn,
+        release_id=release_id,
+        preview_scope=BACKGROUND_PREVIEW_SCOPE,
+        preview_id=preview_id,
+        approved_by=approved_by,
+        approved_at=now_iso,
     )
-    return {"release_id": release_id, "preview_id": preview_id, "approved": True}
+    snapshot = conn.execute(
+        "SELECT id, intent_snapshot_json, preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
+        (preview_id,),
+    ).fetchone()
+    parsed = json.loads(str(snapshot["preview_package_json"]) or "{}") if snapshot else {}
+    background_asset_id = int(parsed.get("background_asset_id") or 0) or None
+    visual_history_service.record_visual_history_event(
+        conn,
+        release_id=release_id,
+        preview_scope=BACKGROUND_PREVIEW_SCOPE,
+        history_stage="APPROVED",
+        preview_id=preview_id,
+        background_asset_id=int(parsed.get("background_asset_id") or 0) or None,
+        cover_asset_id=None,
+        template_ref=None,
+        decision_mode=str(parsed.get("selection_mode") or "manual"),
+        reuse_warning=None,
+        actor=approved_by,
+    )
+    cover_asset_id = dbm.resolve_canonical_cover_asset_id_for_background_apply(conn, release_id=release_id)
+    current_intent = {"background": {"asset_id": int(background_asset_id or 0)}, "cover": {"asset_id": int(cover_asset_id or 0)}}
+    apply_tokens = build_apply_tokens(
+        release_id=release_id,
+        snapshot_row=dict(snapshot),
+        current_intent_config_json=current_intent,
+    )
+    return {
+        "release_id": release_id,
+        "preview_id": preview_id,
+        "approved": True,
+        "stale_token": apply_tokens.stale_token,
+        "conflict_token": apply_tokens.conflict_token,
+    }
 
 
 def apply_background_assignment(
@@ -156,16 +212,20 @@ def apply_background_assignment(
     *,
     release_id: int,
     applied_by: str | None,
+    reuse_override_confirmed: bool = False,
+    stale_token: str | None = None,
+    conflict_token: str | None = None,
 ) -> dict[str, Any]:
-    approved = conn.execute(
-        "SELECT preview_id FROM release_visual_approved_previews WHERE release_id = ?",
-        (release_id,),
-    ).fetchone()
+    approved = dbm.get_release_visual_approved_preview(
+        conn,
+        release_id=release_id,
+        preview_scope=BACKGROUND_PREVIEW_SCOPE,
+    )
     if not approved:
         raise BackgroundAssignmentError(code="VBG_APPROVAL_REQUIRED", message="Approved background preview is required before apply")
 
     snapshot = conn.execute(
-        "SELECT id, preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
+        "SELECT id, intent_snapshot_json, preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
         (str(approved["preview_id"]),),
     ).fetchone()
     if not snapshot:
@@ -181,6 +241,52 @@ def apply_background_assignment(
         raise BackgroundAssignmentError(
             code="VBG_CANONICAL_COVER_REQUIRED",
             message="Background apply requires canonical cover asset",
+        )
+    applied_package = conn.execute(
+        "SELECT source_preview_id FROM release_visual_applied_packages WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    current_intent = {"background": {"asset_id": background_asset_id}, "cover": {"asset_id": int(cover_asset_id)}}
+    if not stale_token:
+        raise BackgroundAssignmentError(code="VBG_PREVIEW_STALE", message="stale_token is required before apply")
+    if not conflict_token:
+        raise BackgroundAssignmentError(code="VBG_APPLY_CONFLICT", message="conflict_token is required before apply")
+    try:
+        validate_apply_safety(
+            release_id=release_id,
+            snapshot_row=dict(snapshot),
+            approved_preview_row=dict(approved),
+            applied_package_row=dict(applied_package) if applied_package else None,
+            current_intent_config_json=current_intent,
+            provided_stale_token=stale_token,
+            provided_conflict_token=conflict_token,
+        )
+    except VisualLifecycleError as lifecycle_exc:
+        code_map = {
+            "VISUAL_PREVIEW_STALE": "VBG_PREVIEW_STALE",
+            "VISUAL_APPLY_CONFLICT": "VBG_APPLY_CONFLICT",
+            "VISUAL_ALREADY_APPLIED": "VBG_ALREADY_APPLIED",
+            "VISUAL_APPROVAL_REQUIRED": "VBG_APPROVAL_REQUIRED",
+        }
+        raise BackgroundAssignmentError(
+            code=code_map.get(lifecycle_exc.code, "VBG_APPLY_CONFLICT"),
+            message=lifecycle_exc.message,
+        ) from lifecycle_exc
+
+    reuse = visual_history_service.lookup_exact_reuse_warnings(
+        conn,
+        release_id=release_id,
+        background_asset_id=background_asset_id,
+        cover_asset_id=int(cover_asset_id),
+    )
+    if reuse["requires_override"] and not reuse_override_confirmed:
+        prior = reuse["prior_usage"][0] if reuse["prior_usage"] else {}
+        raise BackgroundAssignmentError(
+            code="VBG_REUSE_OVERRIDE_REQUIRED",
+            message=(
+                "Exact reuse warning requires explicit override; "
+                f"prior_release_id={prior.get('release_id')}"
+            ),
         )
 
     now_iso = _now_iso()
@@ -216,6 +322,24 @@ def apply_background_assignment(
             "is_auto_assisted": str(parsed.get("selection_mode") or "manual") == "auto_assisted",
         },
     )
+    reuse_audit: dict[str, Any] | None = None
+    if reuse["warnings"]:
+        reuse_audit = dict(reuse)
+        reuse_audit["override_confirmed"] = bool(reuse_override_confirmed)
+        reuse_audit["override_applied"] = bool(reuse["requires_override"] and reuse_override_confirmed)
+    visual_history_service.record_visual_history_event(
+        conn,
+        release_id=release_id,
+        preview_scope=BACKGROUND_PREVIEW_SCOPE,
+        history_stage="APPLIED",
+        preview_id=str(snapshot["id"]),
+        background_asset_id=background_asset_id,
+        cover_asset_id=int(cover_asset_id),
+        template_ref=None,
+        decision_mode=str(parsed.get("selection_mode") or "manual"),
+        reuse_warning=reuse_audit,
+        actor=applied_by,
+    )
     return {
         "release_id": release_id,
         "preview_id": str(snapshot["id"]),
@@ -227,6 +351,7 @@ def apply_background_assignment(
             "job_id": resolved.job_id,
         },
         "summary": summary,
+        "reuse": reuse,
     }
 
 

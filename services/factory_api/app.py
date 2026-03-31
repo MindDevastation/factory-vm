@@ -43,6 +43,8 @@ from services.factory_api.publish_reconcile import create_publish_reconcile_rout
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
+from services.planner import cover_assignment_service
+from services.planner import visual_batch_service
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
     build_channel_settings_payload,
@@ -307,6 +309,17 @@ def _vbg_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
+def _vcover_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _vbatch_error(status_code: int, code: str, message: str, details: Dict[str, Any] | None = None) -> JSONResponse:
+    err: Dict[str, Any] = {"code": code, "message": message}
+    if details:
+        err["details"] = details
+    return JSONResponse(status_code=status_code, content={"error": err})
+
+
 class MetadataTitleTemplatePreviewRequest(BaseModel):
     channel_slug: str = Field(min_length=1)
     template_body: str
@@ -438,6 +451,48 @@ class BackgroundPreviewRequest(BaseModel):
 
 class BackgroundApproveRequest(BaseModel):
     preview_id: str = Field(min_length=1)
+
+
+class CoverInputPayloadRequest(BaseModel):
+    provider_family: str = Field(min_length=1)
+    input_payload: Dict[str, Any] = Field(default_factory=dict)
+    template_ref: Dict[str, Any] | None = None
+
+
+class CoverCandidateCreateRequest(BaseModel):
+    cover_asset_id: int
+    source_provider_family: str = Field(min_length=1)
+    source_reference: str | None = None
+    input_payload_id: int | None = None
+    selection_mode: str = "manual"
+    template_ref: Dict[str, Any] | None = None
+
+
+class CoverCandidateSelectRequest(BaseModel):
+    candidate_id: str = Field(min_length=1)
+
+
+class CoverApproveRequest(BaseModel):
+    candidate_id: str | None = None
+
+
+class VisualApplyRequest(BaseModel):
+    reuse_override_confirmed: bool = False
+    stale_token: str = Field(min_length=1)
+    conflict_token: str = Field(min_length=1)
+
+
+class VisualBatchPreviewRequest(BaseModel):
+    action_type: str = Field(min_length=1)
+    selected_release_ids: list[int] = Field(min_length=1)
+    action_payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class VisualBatchExecuteRequest(BaseModel):
+    preview_session_id: str = Field(min_length=1)
+    selected_release_ids: list[int] = Field(min_length=1)
+    overwrite_confirmed: bool = False
+    reuse_override_confirmed: bool = False
 
 
 def _mdo_sources_from_defaults(defaults: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1025,6 +1080,7 @@ def api_visual_background_approve(
 @app.post("/v1/visual/releases/{release_id}/background/apply")
 def api_visual_background_apply(
     release_id: int,
+    payload: VisualApplyRequest,
     _: bool = Depends(require_basic_auth(env)),
 ):
     conn = dbm.connect(env)
@@ -1034,10 +1090,250 @@ def api_visual_background_apply(
                 conn,
                 release_id=release_id,
                 applied_by=env.basic_user,
+                reuse_override_confirmed=bool(payload.reuse_override_confirmed),
+                stale_token=payload.stale_token,
+                conflict_token=payload.conflict_token,
             )
         except background_assignment_service.BackgroundAssignmentError as exc:
             status_code = 404 if exc.code in {"VBG_RELEASE_NOT_FOUND", "VBG_PREVIEW_NOT_FOUND"} else 422
             return _vbg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/input-payload")
+def api_visual_cover_input_payload_create(
+    release_id: int,
+    payload: CoverInputPayloadRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.create_cover_selection_input(
+                conn,
+                release_id=release_id,
+                provider_family=payload.provider_family,
+                input_payload=dict(payload.input_payload),
+                template_ref=dict(payload.template_ref) if payload.template_ref is not None else None,
+                created_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code == "VCOVER_RELEASE_NOT_FOUND" else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/candidates")
+def api_visual_cover_candidate_create(
+    release_id: int,
+    payload: CoverCandidateCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.create_cover_candidate_reference(
+                conn,
+                release_id=release_id,
+                cover_asset_id=payload.cover_asset_id,
+                source_provider_family=payload.source_provider_family,
+                source_reference=payload.source_reference,
+                input_payload_id=payload.input_payload_id,
+                selection_mode=payload.selection_mode,
+                template_ref=dict(payload.template_ref) if payload.template_ref is not None else None,
+                created_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_ASSET_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/cover/candidates")
+def api_visual_cover_candidates_list(
+    release_id: int,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.list_cover_candidates(conn, release_id=release_id)
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code == "VCOVER_RELEASE_NOT_FOUND" else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/cover/candidates/{candidate_id}/preview")
+def api_visual_cover_candidate_preview(
+    release_id: int,
+    candidate_id: str,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.preview_cover_candidate(conn, release_id=release_id, candidate_id=candidate_id)
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/select")
+def api_visual_cover_candidate_select(
+    release_id: int,
+    payload: CoverCandidateSelectRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.select_cover_candidate_for_approval(
+                conn,
+                release_id=release_id,
+                candidate_id=payload.candidate_id,
+                selected_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/approve")
+def api_visual_cover_candidate_approve(
+    release_id: int,
+    payload: CoverApproveRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.approve_cover_candidate(
+                conn,
+                release_id=release_id,
+                candidate_id=payload.candidate_id,
+                approved_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND", "VCOVER_PREVIEW_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/apply")
+def api_visual_cover_candidate_apply(
+    release_id: int,
+    payload: VisualApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.apply_cover_candidate(
+                conn,
+                release_id=release_id,
+                applied_by=env.basic_user,
+                reuse_override_confirmed=bool(payload.reuse_override_confirmed),
+                stale_token=payload.stale_token,
+                conflict_token=payload.conflict_token,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_PREVIEW_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/history")
+def api_visual_release_history(
+    release_id: int,
+    limit: int = 20,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    limit_clamped = max(1, min(int(limit), 100))
+    conn = dbm.connect(env)
+    try:
+        release = conn.execute("SELECT id FROM releases WHERE id = ?", (release_id,)).fetchone()
+        if not release:
+            return _vcover_error(404, "VVIS_RELEASE_NOT_FOUND", "visual release not found")
+        rows = conn.execute(
+            """
+            SELECT id, preview_scope, history_stage, preview_id, background_asset_id, cover_asset_id, decision_mode, reuse_warning_json, actor, created_at
+            FROM release_visual_history_events
+            WHERE release_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (release_id, limit_clamped),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {"release_id": release_id, "items": [dict(row) for row in rows]}
+
+
+@app.post("/v1/visual/batch/preview")
+def api_visual_batch_preview(
+    payload: VisualBatchPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = visual_batch_service.create_visual_batch_preview_session(
+                conn,
+                action_type=payload.action_type,
+                selected_release_ids=list(payload.selected_release_ids),
+                created_by=env.basic_user,
+                action_payload=dict(payload.action_payload),
+            )
+            conn.commit()
+        except visual_batch_service.VisualBatchError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code == "VBATCH_RELEASES_NOT_FOUND" else 422
+            return _vbatch_error(status_code, exc.code, exc.message, exc.details)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/batch/execute")
+def api_visual_batch_execute(
+    payload: VisualBatchExecuteRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = visual_batch_service.execute_visual_batch_preview_session(
+                conn,
+                preview_session_id=payload.preview_session_id,
+                selected_release_ids=list(payload.selected_release_ids),
+                overwrite_confirmed=bool(payload.overwrite_confirmed),
+                reuse_override_confirmed=bool(payload.reuse_override_confirmed),
+                executed_by=env.basic_user,
+            )
+            conn.commit()
+        except visual_batch_service.VisualBatchError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code == "VBATCH_SESSION_NOT_FOUND" else 409 if exc.code.startswith("VBATCH_PREVIEW_") else 422
+            return _vbatch_error(status_code, exc.code, exc.message, exc.details)
     finally:
         conn.close()
     return body

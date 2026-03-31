@@ -139,8 +139,18 @@ class TestBackgroundAssignmentWorkflowApi(unittest.TestCase):
                 json={"preview_id": preview_id},
             )
             self.assertEqual(approve.status_code, 200)
+            approve_body = approve.json()
+            self.assertTrue(str(approve_body["stale_token"]))
+            self.assertTrue(str(approve_body["conflict_token"]))
 
-            apply_r = client.post(f"/v1/visual/releases/{release_id}/background/apply", headers=headers)
+            apply_r = client.post(
+                f"/v1/visual/releases/{release_id}/background/apply",
+                headers=headers,
+                json={
+                    "stale_token": approve_body["stale_token"],
+                    "conflict_token": approve_body["conflict_token"],
+                },
+            )
             self.assertEqual(apply_r.status_code, 200)
             applied = apply_r.json()
             self.assertEqual(int(applied["background_asset_id"]), manual_bg)
@@ -205,8 +215,16 @@ class TestBackgroundAssignmentWorkflowApi(unittest.TestCase):
                 json={"preview_id": preview_id},
             )
             self.assertEqual(approve.status_code, 200)
+            approve_body = approve.json()
 
-            apply_r = client.post(f"/v1/visual/releases/{release_id}/background/apply", headers=headers)
+            apply_r = client.post(
+                f"/v1/visual/releases/{release_id}/background/apply",
+                headers=headers,
+                json={
+                    "stale_token": approve_body["stale_token"],
+                    "conflict_token": approve_body["conflict_token"],
+                },
+            )
             self.assertEqual(apply_r.status_code, 422)
             self.assertEqual(apply_r.json()["error"]["code"], "VBG_CANONICAL_COVER_REQUIRED")
 

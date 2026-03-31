@@ -1406,6 +1406,161 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertEqual(apply_payload["release_metadata_after"]["tags_json"], ["ambient", "night"])
             self.assertEqual(apply_payload["release_metadata_after"]["description"], "darkwood-reverie explicit")
 
+    def test_job_edit_visual_workflow_surface_history_reuse_and_batch_entry_points(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                channel = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert channel
+                channel_id = int(channel["id"])
+                job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=channel_id,
+                    title="visual ui",
+                    description="d",
+                    tags_csv="a",
+                    cover_name="cover",
+                    cover_ext="png",
+                    background_name="bg",
+                    background_ext="png",
+                    audio_ids_text="1",
+                )
+                release_id = int(conn.execute("SELECT release_id FROM jobs WHERE id = ?", (job_id,)).fetchone()["release_id"])
+                bg_asset_id = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="local://ui-bg",
+                    name="ui-bg.png",
+                    path="/tmp/ui-bg.png",
+                )
+                cover_asset_id = dbm.create_asset(
+                    conn,
+                    channel_id=channel_id,
+                    kind="IMAGE",
+                    origin="LOCAL",
+                    origin_id="local://ui-cover",
+                    name="ui-cover.png",
+                    path="/tmp/ui-cover.png",
+                )
+                prior_release = int(
+                    conn.execute(
+                        "INSERT INTO releases(channel_id, title, description, tags_json, created_at) VALUES(?, 'prior-ui', 'd', '[]', 1.0)",
+                        (channel_id,),
+                    ).lastrowid
+                )
+                conn.execute(
+                    """
+                    INSERT INTO release_visual_applied_packages(release_id, background_asset_id, cover_asset_id, source_preview_id, applied_by, applied_at)
+                    VALUES(?, ?, ?, NULL, 'seed', '2026-01-01T00:00:00+00:00')
+                    """,
+                    (prior_release, bg_asset_id, cover_asset_id),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO release_visual_applied_packages(release_id, background_asset_id, cover_asset_id, source_preview_id, applied_by, applied_at)
+                    VALUES(?, ?, ?, NULL, 'seed', '2026-01-02T00:00:00+00:00')
+                    """,
+                    (release_id, bg_asset_id, cover_asset_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            edit_page = client.get(f"/ui/jobs/{job_id}/edit", headers=h)
+            self.assertEqual(edit_page.status_code, 200)
+            self.assertIn('id="visual-workflow-section"', edit_page.text)
+            self.assertIn('id="visual-workflow-legend"', edit_page.text)
+            self.assertIn("proposed visual package", edit_page.text)
+            self.assertIn("thumbnail is derived from cover asset", edit_page.text)
+            self.assertIn("/v1/metadata/channel-visual-style-templates/releases/${activeReleaseId}/effective", edit_page.text)
+            self.assertIn("/v1/visual/releases/${activeReleaseId}/background/candidates", edit_page.text)
+            self.assertIn("Cover Candidates", edit_page.text)
+            self.assertIn("Cover Preview", edit_page.text)
+            self.assertIn("Cover Select", edit_page.text)
+            self.assertIn("Cover Approve", edit_page.text)
+            self.assertIn("Cover Apply", edit_page.text)
+            self.assertIn("/v1/visual/releases/${activeReleaseId}/cover/candidates", edit_page.text)
+            self.assertIn("/v1/visual/releases/${activeReleaseId}/cover/candidates/${encodeURIComponent(candidateId)}/preview", edit_page.text)
+            self.assertIn("/v1/visual/releases/${activeReleaseId}/cover/select", edit_page.text)
+            self.assertIn("/v1/visual/releases/${activeReleaseId}/cover/approve", edit_page.text)
+            self.assertIn("/v1/visual/releases/${activeReleaseId}/cover/apply", edit_page.text)
+            self.assertIn("/v1/visual/releases/${activeReleaseId}/history?limit=20", edit_page.text)
+            self.assertIn("/v1/visual/batch/preview", edit_page.text)
+            self.assertIn("/v1/visual/batch/execute", edit_page.text)
+
+            history = client.get(f"/v1/visual/releases/{release_id}/history?limit=20", headers=h)
+            self.assertEqual(history.status_code, 200)
+            self.assertEqual(history.json()["release_id"], release_id)
+            self.assertIsInstance(history.json()["items"], list)
+
+            batch_preview = client.post(
+                "/v1/visual/batch/preview",
+                headers=h,
+                json={
+                    "action_type": "BULK_ASSIGN_BACKGROUND",
+                    "selected_release_ids": [release_id],
+                    "action_payload": {"background_asset_id": bg_asset_id},
+                },
+            )
+            self.assertEqual(batch_preview.status_code, 200)
+            item = batch_preview.json()["items"][0]
+            self.assertIn("warning_codes", item)
+            self.assertIn("REUSE_OVERRIDE_REQUIRED", item["warning_codes"])
+            self.assertIn("reuse_warning", item)
+            self.assertGreaterEqual(len(item["reuse_warning"]["prior_usage"]), 1)
+
+            batch_execute = client.post(
+                "/v1/visual/batch/execute",
+                headers=h,
+                json={
+                    "preview_session_id": batch_preview.json()["preview_session_id"],
+                    "selected_release_ids": [release_id],
+                    "overwrite_confirmed": True,
+                    "reuse_override_confirmed": False,
+                },
+            )
+            self.assertEqual(batch_execute.status_code, 200)
+            self.assertEqual(batch_execute.json()["items"][0]["status"], "BLOCKED")
+            self.assertEqual(batch_execute.json()["items"][0]["reason_code"], "VBG_REUSE_OVERRIDE_REQUIRED")
+
+            batch_preview_override = client.post(
+                "/v1/visual/batch/preview",
+                headers=h,
+                json={
+                    "action_type": "BULK_ASSIGN_BACKGROUND",
+                    "selected_release_ids": [release_id],
+                    "action_payload": {"background_asset_id": bg_asset_id},
+                },
+            )
+            self.assertEqual(batch_preview_override.status_code, 200)
+            batch_execute_override = client.post(
+                "/v1/visual/batch/execute",
+                headers=h,
+                json={
+                    "preview_session_id": batch_preview_override.json()["preview_session_id"],
+                    "selected_release_ids": [release_id],
+                    "overwrite_confirmed": True,
+                    "reuse_override_confirmed": True,
+                },
+            )
+            self.assertEqual(batch_execute_override.status_code, 200)
+            self.assertEqual(batch_execute_override.json()["items"][0]["status"], "APPLIED")
+
+            # Regression: existing non-visual page still renders.
+            create_page = client.get("/ui/jobs/create", headers=h)
+            self.assertEqual(create_page.status_code, 200)
+            self.assertIn("Create Job", create_page.text)
+
     def test_channel_metadata_defaults_page_operator_flow(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
