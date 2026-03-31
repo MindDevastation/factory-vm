@@ -493,6 +493,48 @@ def migrate(conn: sqlite3.Connection) -> None:
             CHECK(selection_mode IN ('manual','auto_assisted'))
         );
 
+        CREATE TABLE IF NOT EXISTS release_visual_cover_selection_inputs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            release_id INTEGER NOT NULL,
+            provider_family TEXT NOT NULL,
+            input_payload_json TEXT NOT NULL,
+            template_ref_json TEXT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_cover_selection_inputs_release_created
+            ON release_visual_cover_selection_inputs(release_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS release_visual_cover_candidates (
+            id TEXT PRIMARY KEY,
+            release_id INTEGER NOT NULL,
+            source_provider_family TEXT NOT NULL,
+            source_reference TEXT NULL,
+            input_payload_id INTEGER NULL,
+            candidate_ref_json TEXT NOT NULL,
+            selection_mode TEXT NOT NULL,
+            template_ref_json TEXT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(input_payload_id) REFERENCES release_visual_cover_selection_inputs(id),
+            CHECK(selection_mode IN ('manual','auto_assisted'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_cover_candidates_release_created
+            ON release_visual_cover_candidates(release_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS release_visual_cover_selected_candidates (
+            release_id INTEGER PRIMARY KEY,
+            candidate_id TEXT NOT NULL UNIQUE,
+            selected_by TEXT NULL,
+            selected_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(candidate_id) REFERENCES release_visual_cover_candidates(id)
+        );
+
         CREATE TABLE IF NOT EXISTS playlist_builder_channel_settings (
             channel_slug TEXT PRIMARY KEY,
             default_generation_mode TEXT NOT NULL,

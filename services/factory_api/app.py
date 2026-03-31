@@ -43,6 +43,7 @@ from services.factory_api.publish_reconcile import create_publish_reconcile_rout
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
+from services.planner import cover_assignment_service
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
     build_channel_settings_payload,
@@ -307,6 +308,10 @@ def _vbg_error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
+def _vcover_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
 class MetadataTitleTemplatePreviewRequest(BaseModel):
     channel_slug: str = Field(min_length=1)
     template_body: str
@@ -438,6 +443,25 @@ class BackgroundPreviewRequest(BaseModel):
 
 class BackgroundApproveRequest(BaseModel):
     preview_id: str = Field(min_length=1)
+
+
+class CoverInputPayloadRequest(BaseModel):
+    provider_family: str = Field(min_length=1)
+    input_payload: Dict[str, Any] = Field(default_factory=dict)
+    template_ref: Dict[str, Any] | None = None
+
+
+class CoverCandidateCreateRequest(BaseModel):
+    cover_asset_id: int
+    source_provider_family: str = Field(min_length=1)
+    source_reference: str | None = None
+    input_payload_id: int | None = None
+    selection_mode: str = "manual"
+    template_ref: Dict[str, Any] | None = None
+
+
+class CoverCandidateSelectRequest(BaseModel):
+    candidate_id: str = Field(min_length=1)
 
 
 def _mdo_sources_from_defaults(defaults: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1038,6 +1062,117 @@ def api_visual_background_apply(
         except background_assignment_service.BackgroundAssignmentError as exc:
             status_code = 404 if exc.code in {"VBG_RELEASE_NOT_FOUND", "VBG_PREVIEW_NOT_FOUND"} else 422
             return _vbg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/input-payload")
+def api_visual_cover_input_payload_create(
+    release_id: int,
+    payload: CoverInputPayloadRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.create_cover_selection_input(
+                conn,
+                release_id=release_id,
+                provider_family=payload.provider_family,
+                input_payload=dict(payload.input_payload),
+                template_ref=dict(payload.template_ref) if payload.template_ref is not None else None,
+                created_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code == "VCOVER_RELEASE_NOT_FOUND" else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/candidates")
+def api_visual_cover_candidate_create(
+    release_id: int,
+    payload: CoverCandidateCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.create_cover_candidate_reference(
+                conn,
+                release_id=release_id,
+                cover_asset_id=payload.cover_asset_id,
+                source_provider_family=payload.source_provider_family,
+                source_reference=payload.source_reference,
+                input_payload_id=payload.input_payload_id,
+                selection_mode=payload.selection_mode,
+                template_ref=dict(payload.template_ref) if payload.template_ref is not None else None,
+                created_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_ASSET_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/cover/candidates")
+def api_visual_cover_candidates_list(
+    release_id: int,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.list_cover_candidates(conn, release_id=release_id)
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code == "VCOVER_RELEASE_NOT_FOUND" else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/cover/candidates/{candidate_id}/preview")
+def api_visual_cover_candidate_preview(
+    release_id: int,
+    candidate_id: str,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.preview_cover_candidate(conn, release_id=release_id, candidate_id=candidate_id)
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/select")
+def api_visual_cover_candidate_select(
+    release_id: int,
+    payload: CoverCandidateSelectRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.select_cover_candidate_for_approval(
+                conn,
+                release_id=release_id,
+                candidate_id=payload.candidate_id,
+                selected_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
     finally:
         conn.close()
     return body
