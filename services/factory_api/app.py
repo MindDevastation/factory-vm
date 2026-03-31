@@ -468,6 +468,10 @@ class CoverApproveRequest(BaseModel):
     candidate_id: str | None = None
 
 
+class VisualApplyRequest(BaseModel):
+    reuse_override_confirmed: bool = False
+
+
 def _mdo_sources_from_defaults(defaults: Dict[str, Any]) -> List[Dict[str, Any]]:
     field_pairs = (
         ("title", "title_template"),
@@ -1053,6 +1057,7 @@ def api_visual_background_approve(
 @app.post("/v1/visual/releases/{release_id}/background/apply")
 def api_visual_background_apply(
     release_id: int,
+    payload: VisualApplyRequest | None = None,
     _: bool = Depends(require_basic_auth(env)),
 ):
     conn = dbm.connect(env)
@@ -1062,6 +1067,7 @@ def api_visual_background_apply(
                 conn,
                 release_id=release_id,
                 applied_by=env.basic_user,
+                reuse_override_confirmed=bool(payload.reuse_override_confirmed) if payload is not None else False,
             )
         except background_assignment_service.BackgroundAssignmentError as exc:
             status_code = 404 if exc.code in {"VBG_RELEASE_NOT_FOUND", "VBG_PREVIEW_NOT_FOUND"} else 422
@@ -1208,6 +1214,7 @@ def api_visual_cover_candidate_approve(
 @app.post("/v1/visual/releases/{release_id}/cover/apply")
 def api_visual_cover_candidate_apply(
     release_id: int,
+    payload: VisualApplyRequest | None = None,
     _: bool = Depends(require_basic_auth(env)),
 ):
     conn = dbm.connect(env)
@@ -1217,6 +1224,7 @@ def api_visual_cover_candidate_apply(
                 conn,
                 release_id=release_id,
                 applied_by=env.basic_user,
+                reuse_override_confirmed=bool(payload.reuse_override_confirmed) if payload is not None else False,
             )
         except cover_assignment_service.CoverAssignmentError as exc:
             status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_PREVIEW_NOT_FOUND"} else 422

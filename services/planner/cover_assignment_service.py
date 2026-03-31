@@ -8,6 +8,7 @@ from typing import Any
 
 from services.common import db as dbm
 from services.planner.runtime_visual_resolver import apply_release_visual_package
+from services.planner import visual_history_service
 from services.visual_domain import build_visual_package_summary
 
 COVER_PREVIEW_SCOPE = dbm.VISUAL_PREVIEW_SCOPE_COVER
@@ -242,6 +243,19 @@ def approve_cover_candidate(
             now_iso,
         ),
     )
+    visual_history_service.record_visual_history_event(
+        conn,
+        release_id=release_id,
+        preview_scope=COVER_PREVIEW_SCOPE,
+        history_stage="PREVIEWED",
+        preview_id=preview_id,
+        background_asset_id=None,
+        cover_asset_id=int(candidate["cover_asset"]["asset_id"]),
+        template_ref=candidate.get("template_ref"),
+        decision_mode=str(candidate.get("selection_mode") or "manual"),
+        reuse_warning=None,
+        actor=approved_by,
+    )
     dbm.upsert_release_visual_approved_preview(
         conn,
         release_id=release_id,
@@ -249,6 +263,19 @@ def approve_cover_candidate(
         preview_id=preview_id,
         approved_by=approved_by,
         approved_at=now_iso,
+    )
+    visual_history_service.record_visual_history_event(
+        conn,
+        release_id=release_id,
+        preview_scope=COVER_PREVIEW_SCOPE,
+        history_stage="APPROVED",
+        preview_id=preview_id,
+        background_asset_id=None,
+        cover_asset_id=int(candidate["cover_asset"]["asset_id"]),
+        template_ref=candidate.get("template_ref"),
+        decision_mode=str(candidate.get("selection_mode") or "manual"),
+        reuse_warning=None,
+        actor=approved_by,
     )
     return {
         "release_id": release_id,
@@ -263,6 +290,7 @@ def apply_cover_candidate(
     *,
     release_id: int,
     applied_by: str | None,
+    reuse_override_confirmed: bool = False,
 ) -> dict[str, Any]:
     _get_release(conn, release_id=release_id)
     approved = dbm.get_release_visual_approved_preview(
@@ -291,6 +319,22 @@ def apply_cover_candidate(
             message="cover apply requires canonical background asset",
         )
 
+    reuse = visual_history_service.lookup_exact_reuse_warnings(
+        conn,
+        release_id=release_id,
+        background_asset_id=int(background_asset_id),
+        cover_asset_id=cover_asset_id,
+    )
+    if reuse["requires_override"] and not reuse_override_confirmed:
+        prior = reuse["prior_usage"][0] if reuse["prior_usage"] else {}
+        raise CoverAssignmentError(
+            code="VCOVER_REUSE_OVERRIDE_REQUIRED",
+            message=(
+                "Exact reuse warning requires explicit override; "
+                f"prior_release_id={prior.get('release_id')}"
+            ),
+        )
+
     resolved = apply_release_visual_package(
         conn,
         release_id=release_id,
@@ -311,6 +355,19 @@ def apply_cover_candidate(
             "is_auto_assisted": str(parsed.get("selection_mode") or "manual") == "auto_assisted",
         },
     )
+    visual_history_service.record_visual_history_event(
+        conn,
+        release_id=release_id,
+        preview_scope=COVER_PREVIEW_SCOPE,
+        history_stage="APPLIED",
+        preview_id=str(snapshot["id"]),
+        background_asset_id=int(background_asset_id),
+        cover_asset_id=cover_asset_id,
+        template_ref=parsed.get("template_ref"),
+        decision_mode=str(parsed.get("selection_mode") or "manual"),
+        reuse_warning=reuse if reuse["warnings"] else None,
+        actor=applied_by,
+    )
     return {
         "release_id": release_id,
         "preview_id": str(snapshot["id"]),
@@ -322,6 +379,7 @@ def apply_cover_candidate(
             "job_id": resolved.job_id,
         },
         "summary": summary,
+        "reuse": reuse,
     }
 
 

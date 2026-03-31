@@ -15,6 +15,7 @@ from services.planner.background_source_adapter_registry import (
     build_default_background_source_adapter_registry,
 )
 from services.planner.runtime_visual_resolver import apply_release_visual_package
+from services.planner import visual_history_service
 from services.visual_domain import build_visual_package_summary
 
 BACKGROUND_PREVIEW_SCOPE = dbm.VISUAL_PREVIEW_SCOPE_BACKGROUND
@@ -121,6 +122,19 @@ def preview_background_assignment(
             now_iso,
         ),
     )
+    visual_history_service.record_visual_history_event(
+        conn,
+        release_id=release_id,
+        preview_scope=BACKGROUND_PREVIEW_SCOPE,
+        history_stage="PREVIEWED",
+        preview_id=preview_id,
+        background_asset_id=int(selected["asset_id"]),
+        cover_asset_id=None,
+        template_ref=None,
+        decision_mode=selection_mode,
+        reuse_warning=None,
+        actor=selected_by,
+    )
     return {
         "release_id": release_id,
         "preview_id": preview_id,
@@ -158,6 +172,24 @@ def approve_background_assignment(
         approved_by=approved_by,
         approved_at=now_iso,
     )
+    snapshot = conn.execute(
+        "SELECT preview_package_json FROM release_visual_preview_snapshots WHERE id = ?",
+        (preview_id,),
+    ).fetchone()
+    parsed = json.loads(str(snapshot["preview_package_json"]) or "{}") if snapshot else {}
+    visual_history_service.record_visual_history_event(
+        conn,
+        release_id=release_id,
+        preview_scope=BACKGROUND_PREVIEW_SCOPE,
+        history_stage="APPROVED",
+        preview_id=preview_id,
+        background_asset_id=int(parsed.get("background_asset_id") or 0) or None,
+        cover_asset_id=None,
+        template_ref=None,
+        decision_mode=str(parsed.get("selection_mode") or "manual"),
+        reuse_warning=None,
+        actor=approved_by,
+    )
     return {"release_id": release_id, "preview_id": preview_id, "approved": True}
 
 
@@ -166,6 +198,7 @@ def apply_background_assignment(
     *,
     release_id: int,
     applied_by: str | None,
+    reuse_override_confirmed: bool = False,
 ) -> dict[str, Any]:
     approved = dbm.get_release_visual_approved_preview(
         conn,
@@ -192,6 +225,22 @@ def apply_background_assignment(
         raise BackgroundAssignmentError(
             code="VBG_CANONICAL_COVER_REQUIRED",
             message="Background apply requires canonical cover asset",
+        )
+
+    reuse = visual_history_service.lookup_exact_reuse_warnings(
+        conn,
+        release_id=release_id,
+        background_asset_id=background_asset_id,
+        cover_asset_id=int(cover_asset_id),
+    )
+    if reuse["requires_override"] and not reuse_override_confirmed:
+        prior = reuse["prior_usage"][0] if reuse["prior_usage"] else {}
+        raise BackgroundAssignmentError(
+            code="VBG_REUSE_OVERRIDE_REQUIRED",
+            message=(
+                "Exact reuse warning requires explicit override; "
+                f"prior_release_id={prior.get('release_id')}"
+            ),
         )
 
     now_iso = _now_iso()
@@ -227,6 +276,19 @@ def apply_background_assignment(
             "is_auto_assisted": str(parsed.get("selection_mode") or "manual") == "auto_assisted",
         },
     )
+    visual_history_service.record_visual_history_event(
+        conn,
+        release_id=release_id,
+        preview_scope=BACKGROUND_PREVIEW_SCOPE,
+        history_stage="APPLIED",
+        preview_id=str(snapshot["id"]),
+        background_asset_id=background_asset_id,
+        cover_asset_id=int(cover_asset_id),
+        template_ref=None,
+        decision_mode=str(parsed.get("selection_mode") or "manual"),
+        reuse_warning=reuse if reuse["warnings"] else None,
+        actor=applied_by,
+    )
     return {
         "release_id": release_id,
         "preview_id": str(snapshot["id"]),
@@ -238,6 +300,7 @@ def apply_background_assignment(
             "job_id": resolved.job_id,
         },
         "summary": summary,
+        "reuse": reuse,
     }
 
 

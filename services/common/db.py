@@ -535,6 +535,31 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(candidate_id) REFERENCES release_visual_cover_candidates(id)
         );
 
+        CREATE TABLE IF NOT EXISTS release_visual_history_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            release_id INTEGER NOT NULL,
+            channel_id INTEGER NOT NULL,
+            preview_scope TEXT NOT NULL,
+            history_stage TEXT NOT NULL,
+            preview_id TEXT NULL,
+            background_asset_id INTEGER NULL,
+            cover_asset_id INTEGER NULL,
+            template_ref_json TEXT NULL,
+            decision_mode TEXT NULL,
+            reuse_warning_json TEXT NULL,
+            actor TEXT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            CHECK(preview_scope IN ('background','cover','package')),
+            CHECK(history_stage IN ('PREVIEWED','APPROVED','APPLIED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_history_release_stage_created
+            ON release_visual_history_events(release_id, history_stage, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_history_channel_assets_created
+            ON release_visual_history_events(channel_id, background_asset_id, cover_asset_id, created_at);
+
         CREATE TABLE IF NOT EXISTS playlist_builder_channel_settings (
             channel_slug TEXT PRIMARY KEY,
             default_generation_mode TEXT NOT NULL,
