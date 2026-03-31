@@ -31,6 +31,19 @@ class TestVisualFoundationSchema(unittest.TestCase):
                     configs_cols,
                     {"release_id", "intent_config_json", "created_at", "updated_at"},
                 )
+                # release_visual_configs is retained only as a legacy compatibility table.
+                # Active Epic-5 operational state is persisted in snapshot/approved/applied tables.
+                for table_name in (
+                    "release_visual_preview_snapshots",
+                    "release_visual_approved_previews_scoped",
+                    "release_visual_applied_packages",
+                ):
+                    create_sql_row = conn.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                        (table_name,),
+                    ).fetchone()
+                    assert create_sql_row is not None
+                    self.assertNotIn("release_visual_configs", str(create_sql_row["sql"]))
 
                 snapshot_cols = {
                     str(row["name"])
