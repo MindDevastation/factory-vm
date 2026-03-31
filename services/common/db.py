@@ -560,6 +560,27 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_release_visual_history_channel_assets_created
             ON release_visual_history_events(channel_id, background_asset_id, cover_asset_id, created_at);
 
+        CREATE TABLE IF NOT EXISTS release_visual_batch_preview_sessions (
+            id TEXT PRIMARY KEY,
+            action_type TEXT NOT NULL,
+            selected_release_ids_json TEXT NOT NULL,
+            scope_fingerprint TEXT NOT NULL,
+            session_status TEXT NOT NULL,
+            aggregate_preview_json TEXT NOT NULL,
+            per_item_preview_json TEXT NOT NULL,
+            invalidation_reason_code TEXT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            executed_at TEXT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_batch_preview_sessions_status
+            ON release_visual_batch_preview_sessions(session_status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_batch_preview_sessions_expires
+            ON release_visual_batch_preview_sessions(expires_at);
+
         CREATE TABLE IF NOT EXISTS playlist_builder_channel_settings (
             channel_slug TEXT PRIMARY KEY,
             default_generation_mode TEXT NOT NULL,
