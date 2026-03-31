@@ -19,10 +19,11 @@ ALLOWED_ACTION_TYPES = {
 
 
 class VisualBatchError(Exception):
-    def __init__(self, *, code: str, message: str):
+    def __init__(self, *, code: str, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.details = details or {}
 
 
 def create_visual_batch_preview_session(
@@ -31,6 +32,7 @@ def create_visual_batch_preview_session(
     action_type: str,
     selected_release_ids: list[int],
     created_by: str | None,
+    action_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if action_type not in ALLOWED_ACTION_TYPES:
         raise VisualBatchError(code="VBATCH_ACTION_INVALID", message="unsupported visual batch action")
@@ -40,25 +42,48 @@ def create_visual_batch_preview_session(
 
     rows = _load_release_rows(conn, release_ids)
     scope_fingerprint = _scope_fingerprint(action_type=action_type, release_ids=release_ids)
+    payload = dict(action_payload or {})
+    selected_background_asset_id = _as_optional_positive_int(payload.get("background_asset_id"))
     per_item: list[dict[str, Any]] = []
     warnings_total = 0
+    preview_ready_total = 0
     for row in rows:
+        release_id = int(row["id"])
         applied = conn.execute(
             "SELECT background_asset_id, cover_asset_id, applied_at FROM release_visual_applied_packages WHERE release_id = ?",
-            (int(row["id"]),),
+            (release_id,),
         ).fetchone()
         item_warning_codes: list[str] = []
         if applied:
             item_warning_codes.append("OVERWRITE_REQUIRES_EXPLICIT_DECISION")
         warnings_total += len(item_warning_codes)
+        item_entry: dict[str, Any] = {
+            "release_id": release_id,
+            "channel_id": int(row["channel_id"]),
+            "status": "READY",
+            "warning_codes": item_warning_codes,
+            "applied_package_exists": bool(applied),
+        }
+        if action_type in {"BULK_ASSIGN_BACKGROUND", "BULK_GENERATE_PREVIEWS", "BULK_RERUN_ASSISTED"}:
+            try:
+                preview = background_assignment_service.preview_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    background_asset_id=selected_background_asset_id,
+                    source_family=None,
+                    source_reference=None,
+                    template_assisted=(action_type == "BULK_RERUN_ASSISTED"),
+                    selected_by=created_by,
+                )
+                preview_ready_total += 1
+                item_entry["preview_id"] = preview["preview_id"]
+                item_entry["preview_selection"] = preview["selection"]
+            except Exception as preview_exc:
+                item_entry["status"] = "BLOCKED"
+                item_entry["reason_code"] = getattr(preview_exc, "code", "VBATCH_PREVIEW_FAILED")
+                item_entry["reason_detail"] = str(preview_exc)
         per_item.append(
-            {
-                "release_id": int(row["id"]),
-                "channel_id": int(row["channel_id"]),
-                "status": "READY",
-                "warning_codes": item_warning_codes,
-                "applied_package_exists": bool(applied),
-            }
+            item_entry
         )
 
     created_at = _now_iso()
@@ -66,9 +91,11 @@ def create_visual_batch_preview_session(
     session_id = f"vbatch-{secrets.token_hex(10)}"
     aggregate = {
         "action_type": action_type,
+        "background_asset_id": selected_background_asset_id,
         "scope_total": len(release_ids),
         "warnings_total": warnings_total,
-        "ready_total": len(release_ids),
+        "ready_total": sum(1 for item in per_item if str(item["status"]) == "READY"),
+        "preview_ready_total": preview_ready_total,
     }
     conn.execute(
         """
@@ -123,7 +150,15 @@ def execute_visual_batch_preview_session(
             "UPDATE release_visual_batch_preview_sessions SET session_status = 'EXPIRED', invalidation_reason_code = 'PREVIEW_SESSION_EXPIRED' WHERE id = ?",
             (preview_session_id,),
         )
-        raise VisualBatchError(code="VBATCH_PREVIEW_SESSION_EXPIRED", message="preview session expired")
+        raise VisualBatchError(
+            code="VBATCH_PREVIEW_SESSION_EXPIRED",
+            message="preview session expired",
+            details={
+                "invalidation_reason_code": "PREVIEW_SESSION_EXPIRED",
+                "preview_session_id": preview_session_id,
+                "expires_at": str(row["expires_at"]),
+            },
+        )
 
     if str(row["session_status"]) != "OPEN":
         raise VisualBatchError(code="VBATCH_PREVIEW_NOT_OPEN", message="preview session is not open for execute")
@@ -135,13 +170,23 @@ def execute_visual_batch_preview_session(
             "UPDATE release_visual_batch_preview_sessions SET invalidation_reason_code = 'PREVIEW_SCOPE_INVALIDATED' WHERE id = ?",
             (preview_session_id,),
         )
-        raise VisualBatchError(code="VBATCH_PREVIEW_SCOPE_INVALIDATED", message="execute scope does not match preview scope")
+        raise VisualBatchError(
+            code="VBATCH_PREVIEW_SCOPE_INVALIDATED",
+            message="execute scope does not match preview scope",
+            details={
+                "invalidation_reason_code": "PREVIEW_SCOPE_INVALIDATED",
+                "preview_scope": preview_scope,
+                "requested_scope": requested_scope,
+            },
+        )
 
     action_type = str(row["action_type"])
     results: list[dict[str, Any]] = []
     executed_count = 0
     blocked_count = 0
     warning_count = 0
+    session_payload = json.loads(str(row["aggregate_preview_json"]) or "{}")
+    selected_background_asset_id = _as_optional_positive_int(session_payload.get("background_asset_id"))
     for release_id in requested_scope:
         applied = conn.execute(
             "SELECT 1 FROM release_visual_applied_packages WHERE release_id = ?",
@@ -156,6 +201,7 @@ def execute_visual_batch_preview_session(
                     "status": "BLOCKED",
                     "reason_code": "OVERWRITE_REQUIRES_EXPLICIT_DECISION",
                     "reason_detail": "release already has applied package",
+                    "overwrite_requires_confirmation": True,
                 }
             )
             continue
@@ -213,6 +259,76 @@ def execute_visual_batch_preview_session(
                             "reason_detail": str(cover_exc),
                         }
                     )
+        elif action_type == "BULK_ASSIGN_BACKGROUND":
+            try:
+                preview = background_assignment_service.preview_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    background_asset_id=selected_background_asset_id,
+                    source_family=None,
+                    source_reference=None,
+                    template_assisted=False,
+                    selected_by=executed_by,
+                )
+                background_assignment_service.approve_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    preview_id=str(preview["preview_id"]),
+                    approved_by=executed_by,
+                )
+                output = background_assignment_service.apply_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    applied_by=executed_by,
+                    reuse_override_confirmed=reuse_override_confirmed,
+                )
+                executed_count += 1
+                results.append(
+                    {
+                        "release_id": release_id,
+                        "status": "APPLIED",
+                        "applied_preview_id": output["preview_id"],
+                    }
+                )
+            except Exception as bg_exc:
+                blocked_count += 1
+                results.append(
+                    {
+                        "release_id": release_id,
+                        "status": "BLOCKED",
+                        "reason_code": getattr(bg_exc, "code", "VBATCH_APPLY_FAILED"),
+                        "reason_detail": str(bg_exc),
+                    }
+                )
+        elif action_type in {"BULK_GENERATE_PREVIEWS", "BULK_RERUN_ASSISTED"}:
+            try:
+                preview = background_assignment_service.preview_background_assignment(
+                    conn,
+                    release_id=release_id,
+                    background_asset_id=selected_background_asset_id,
+                    source_family=None,
+                    source_reference=None,
+                    template_assisted=(action_type == "BULK_RERUN_ASSISTED"),
+                    selected_by=executed_by,
+                )
+                executed_count += 1
+                results.append(
+                    {
+                        "release_id": release_id,
+                        "status": "PREVIEWED",
+                        "preview_id": preview["preview_id"],
+                    }
+                )
+            except Exception as preview_exc:
+                blocked_count += 1
+                results.append(
+                    {
+                        "release_id": release_id,
+                        "status": "BLOCKED",
+                        "reason_code": getattr(preview_exc, "code", "VBATCH_PREVIEW_FAILED"),
+                        "reason_detail": str(preview_exc),
+                    }
+                )
         else:
             executed_count += 1
             results.append(
@@ -267,3 +383,10 @@ def _scope_fingerprint(*, action_type: str, release_ids: list[int]) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _as_optional_positive_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    parsed = int(value)
+    return parsed if parsed > 0 else None
