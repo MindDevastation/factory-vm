@@ -68,3 +68,10 @@ from .operational_kpi import (
     derive_operational_kpis,
     normalize_problem_listing_filters,
 )
+from .operational_kpi_runtime import (
+    create_recompute_run,
+    finalize_recompute_run,
+    list_operational_problems,
+    read_operational_kpis,
+    recompute_operational_kpis,
+)
