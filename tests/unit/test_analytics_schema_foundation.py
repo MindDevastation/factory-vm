@@ -9,6 +9,11 @@ from services.analytics_center.literals import (
     ANALYTICS_EXTERNAL_TARGET_SCOPE_TYPES,
     ANALYTICS_ENTITY_TYPES,
     ANALYTICS_FRESHNESS_STATUSES,
+    ANALYTICS_OPERATIONAL_KPI_FAMILIES,
+    ANALYTICS_OPERATIONAL_KPI_STATUS_CLASSES,
+    ANALYTICS_OPERATIONAL_RECOMPUTE_MODES,
+    ANALYTICS_OPERATIONAL_RUN_STATES,
+    ANALYTICS_OPERATIONAL_SCOPE_TYPES,
     ANALYTICS_ROLLUP_RELATION_TYPES,
     ANALYTICS_SNAPSHOT_STATUSES,
     ANALYTICS_SOURCE_FAMILIES,
@@ -70,6 +75,27 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
             ("INITIAL_BACKFILL", "SCHEDULED_SYNC", "MANUAL_REFRESH", "PARTIAL_REFRESH", "STALE_RESYNC"),
         )
         self.assertEqual(ANALYTICS_EXTERNAL_SYNC_STATES, ("RUNNING", "SUCCEEDED", "PARTIAL", "FAILED"))
+        self.assertEqual(ANALYTICS_OPERATIONAL_SCOPE_TYPES, ("CHANNEL", "RELEASE", "BATCH_MONTH", "PORTFOLIO"))
+        self.assertEqual(ANALYTICS_OPERATIONAL_KPI_STATUS_CLASSES, ("NORMAL", "ANOMALY", "RISK"))
+        self.assertEqual(
+            ANALYTICS_OPERATIONAL_KPI_FAMILIES,
+            (
+                "PIPELINE_TIMING",
+                "QA_STATUS",
+                "UPLOAD_OUTCOME",
+                "PUBLISH_OUTCOME",
+                "RETRY_BURDEN",
+                "READINESS",
+                "DRIFT_RECONCILE",
+                "CADENCE_ADHERENCE",
+                "BATCH_COMPLETENESS",
+            ),
+        )
+        self.assertEqual(
+            ANALYTICS_OPERATIONAL_RECOMPUTE_MODES,
+            ("FULL_RECOMPUTE", "INCREMENTAL_RECOMPUTE", "TARGETED_RECOMPUTE"),
+        )
+        self.assertEqual(ANALYTICS_OPERATIONAL_RUN_STATES, ("RUNNING", "SUCCEEDED", "PARTIAL", "FAILED"))
 
     def test_migrate_creates_required_analytics_tables_and_indexes(self) -> None:
         with temp_env() as (_td, env):
@@ -89,6 +115,8 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     "analytics_external_sync_runs",
                     "analytics_external_scope_status",
                     "analytics_external_audit_events",
+                    "analytics_operational_kpi_runs",
+                    "analytics_operational_kpi_snapshots",
                 ):
                     self.assertIn(table, tables)
 
@@ -135,6 +163,18 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_external_audit_events)").fetchall()
                 }
                 self.assertIn("idx_analytics_external_audit_events_scope_time", audit_indexes)
+
+                kpi_run_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_operational_kpi_runs)").fetchall()
+                }
+                self.assertIn("idx_aokr_scope_time", kpi_run_indexes)
+                self.assertIn("idx_aokr_state_time", kpi_run_indexes)
+
+                kpi_snapshot_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_operational_kpi_snapshots)").fetchall()
+                }
+                self.assertIn("idx_aoks_scope_family_current", kpi_snapshot_indexes)
+                self.assertIn("idx_aoks_status_class", kpi_snapshot_indexes)
 
                 external_snapshot_indexes = {
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_snapshots)").fetchall()

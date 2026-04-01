@@ -1528,6 +1528,61 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_analytics_external_audit_events_scope_time
             ON analytics_external_audit_events(provider_name, target_scope_type, target_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_operational_kpi_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            recompute_mode TEXT NOT NULL,
+            run_state TEXT NOT NULL,
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            computed_kpi_count INTEGER NOT NULL DEFAULT 0,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')),
+            CHECK(run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aokr_scope_time
+            ON analytics_operational_kpi_runs(target_scope_type, target_scope_ref, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_aokr_state_time
+            ON analytics_operational_kpi_runs(run_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_operational_kpi_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            kpi_family TEXT NOT NULL,
+            kpi_code TEXT NOT NULL,
+            status_class TEXT NOT NULL,
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            is_current INTEGER NOT NULL DEFAULT 0,
+            value_payload_json TEXT NOT NULL,
+            explainability_payload_json TEXT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(kpi_family IN ('PIPELINE_TIMING', 'QA_STATUS', 'UPLOAD_OUTCOME', 'PUBLISH_OUTCOME', 'RETRY_BURDEN', 'READINESS', 'DRIFT_RECONCILE', 'CADENCE_ADHERENCE', 'BATCH_COMPLETENESS')),
+            CHECK(status_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_operational_kpi_runs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aoks_scope_family_current
+            ON analytics_operational_kpi_snapshots(scope_type, scope_ref, kpi_family, kpi_code, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_aoks_status_class
+            ON analytics_operational_kpi_snapshots(status_class, created_at DESC);
         """
     )
 
