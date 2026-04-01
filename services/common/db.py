@@ -1583,6 +1583,35 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_aoks_status_class
             ON analytics_operational_kpi_snapshots(status_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_operational_kpi_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            kpi_family TEXT NULL,
+            kpi_code TEXT NULL,
+            status_class TEXT NULL,
+            snapshot_id INTEGER NULL,
+            recompute_mode TEXT NULL,
+            run_state TEXT NULL,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(
+                recompute_mode IS NULL
+                OR recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')
+            ),
+            CHECK(
+                run_state IS NULL
+                OR run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')
+            )
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aoke_scope_time
+            ON analytics_operational_kpi_events(target_scope_type, target_scope_ref, created_at DESC);
         """
     )
 
