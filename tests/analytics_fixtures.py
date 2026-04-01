@@ -31,3 +31,32 @@ def make_snapshot_input(
         is_current=is_current,
         comparison_baseline_snapshot_id=comparison_baseline_snapshot_id,
     )
+
+
+def make_sync_run_payload(
+    *,
+    target_scope_type: str = "CHANNEL",
+    target_scope_ref: str = "darkwood-reverie",
+    run_mode: str = "MANUAL_REFRESH",
+) -> dict:
+    return {
+        "provider_name": "YOUTUBE",
+        "target_scope_type": target_scope_type,
+        "target_scope_ref": target_scope_ref,
+        "run_mode": run_mode,
+        "metric_families_requested": ["views", "impressions", "ctr"],
+        "observed_from": dbm.now_ts() - 86400.0,
+        "observed_to": dbm.now_ts(),
+        "freshness_basis": "window_end",
+    }
+
+
+def make_coverage_payload_inputs() -> dict:
+    return {
+        "metric_families_requested": ["views", "impressions", "ctr", "watch_time"],
+        "metric_families_returned": ["views", "impressions"],
+        "metric_families_unavailable": ["ctr"],
+        "covered_window": {"from": dbm.now_ts() - 86400.0, "to": dbm.now_ts()},
+        "incomplete_backfill": True,
+        "freshness_basis": "window_end",
+    }

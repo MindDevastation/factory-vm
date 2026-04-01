@@ -32,3 +32,15 @@ from .errors import AnalyticsDomainError
 from .helpers import normalized_scope_identity, validate_json_payload, supersede_existing_current_snapshot
 from .write_service import SnapshotWriteInput, write_external_identity, write_rollup_link, write_scope_link, write_snapshot
 from .read_service import SnapshotReadFilters, normalize_read_filters, read_linkage_for_scope, read_snapshots, resolve_current_snapshot
+from .external_sync import (
+    SyncTarget,
+    build_coverage_payload,
+    classify_external_availability,
+    create_or_update_youtube_video_link,
+    create_sync_run,
+    link_channel_identity,
+    link_release_video_context,
+    normalize_metric_families,
+    plan_fetch_targets,
+    transition_sync_run,
+)
