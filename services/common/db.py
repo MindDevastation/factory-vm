@@ -1755,6 +1755,97 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_ape_scope_time
             ON analytics_prediction_events(target_scope_type, target_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_recommendation_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recommendation_scope_type TEXT NOT NULL,
+            recommendation_scope_ref TEXT NOT NULL,
+            recommendation_family TEXT NOT NULL,
+            recompute_mode TEXT NOT NULL,
+            run_state TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            recommendation_count INTEGER NOT NULL DEFAULT 0,
+            open_count INTEGER NOT NULL DEFAULT 0,
+            warning_count INTEGER NOT NULL DEFAULT 0,
+            critical_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            created_at REAL NOT NULL,
+            CHECK(recommendation_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recommendation_family IN ('PUBLISH_TIMING_SUGGESTION', 'CADENCE_BATCH_HEALTH_SUGGESTION', 'WEAK_RELEASE_ATTENTION', 'OPERATIONAL_REMEDIATION', 'CHANNEL_OPTIMIZATION', 'ANOMALY_RISK_ALERT', 'CONTENT_PACKAGING_SUGGESTION')),
+            CHECK(recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')),
+            CHECK(run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_arr_scope_family_mode_time
+            ON analytics_recommendation_runs(recommendation_scope_type, recommendation_scope_ref, recommendation_family, recompute_mode, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_arr_state_time
+            ON analytics_recommendation_runs(run_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_recommendation_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL REFERENCES analytics_recommendation_runs(id) ON DELETE SET NULL,
+            recommendation_scope_type TEXT NOT NULL,
+            recommendation_scope_ref TEXT NOT NULL,
+            recommendation_family TEXT NOT NULL,
+            issue_key TEXT NOT NULL,
+            title_text TEXT NOT NULL,
+            summary_text TEXT NOT NULL,
+            severity_class TEXT NOT NULL,
+            confidence_class TEXT NOT NULL,
+            lifecycle_status TEXT NOT NULL DEFAULT 'OPEN',
+            target_domain TEXT NOT NULL,
+            target_pointer_payload_json TEXT NOT NULL,
+            explainability_payload_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(recommendation_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recommendation_family IN ('PUBLISH_TIMING_SUGGESTION', 'CADENCE_BATCH_HEALTH_SUGGESTION', 'WEAK_RELEASE_ATTENTION', 'OPERATIONAL_REMEDIATION', 'CHANNEL_OPTIMIZATION', 'ANOMALY_RISK_ALERT', 'CONTENT_PACKAGING_SUGGESTION')),
+            CHECK(severity_class IN ('INFO', 'WARNING', 'CRITICAL')),
+            CHECK(confidence_class IN ('LOW', 'MEDIUM', 'HIGH')),
+            CHECK(lifecycle_status IN ('OPEN', 'ACKNOWLEDGED', 'DISMISSED', 'SUPERSEDED')),
+            CHECK(target_domain IN ('PUBLISH', 'METADATA', 'VISUALS', 'PLANNER', 'OPERATIONAL_TROUBLESHOOTING'))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ars_current_open_scope_issue
+            ON analytics_recommendation_snapshots(recommendation_scope_type, recommendation_scope_ref, recommendation_family, issue_key)
+            WHERE is_current = 1 AND lifecycle_status = 'OPEN';
+
+        CREATE INDEX IF NOT EXISTS idx_ars_scope_family_status
+            ON analytics_recommendation_snapshots(recommendation_scope_type, recommendation_scope_ref, recommendation_family, lifecycle_status, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_ars_queue_order
+            ON analytics_recommendation_snapshots(is_current, lifecycle_status, severity_class, confidence_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_recommendation_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            recommendation_scope_type TEXT NOT NULL,
+            recommendation_scope_ref TEXT NOT NULL,
+            recommendation_family TEXT NULL,
+            target_domain TEXT NULL,
+            severity_class TEXT NULL,
+            confidence_class TEXT NULL,
+            lifecycle_status TEXT NULL,
+            recommendation_id INTEGER NULL,
+            run_state TEXT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(recommendation_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recommendation_family IS NULL OR recommendation_family IN ('PUBLISH_TIMING_SUGGESTION', 'CADENCE_BATCH_HEALTH_SUGGESTION', 'WEAK_RELEASE_ATTENTION', 'OPERATIONAL_REMEDIATION', 'CHANNEL_OPTIMIZATION', 'ANOMALY_RISK_ALERT', 'CONTENT_PACKAGING_SUGGESTION')),
+            CHECK(target_domain IS NULL OR target_domain IN ('PUBLISH', 'METADATA', 'VISUALS', 'PLANNER', 'OPERATIONAL_TROUBLESHOOTING')),
+            CHECK(severity_class IS NULL OR severity_class IN ('INFO', 'WARNING', 'CRITICAL')),
+            CHECK(confidence_class IS NULL OR confidence_class IN ('LOW', 'MEDIUM', 'HIGH')),
+            CHECK(lifecycle_status IS NULL OR lifecycle_status IN ('OPEN', 'ACKNOWLEDGED', 'DISMISSED', 'SUPERSEDED')),
+            CHECK(run_state IS NULL OR run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_are_scope_time
+            ON analytics_recommendation_events(recommendation_scope_type, recommendation_scope_ref, created_at DESC);
         """
     )
 

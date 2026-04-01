@@ -16,6 +16,14 @@ from services.analytics_center.literals import (
     ANALYTICS_MF4_RUN_KINDS,
     ANALYTICS_MF4_SCOPE_TYPES,
     ANALYTICS_MF4_VARIANCE_CLASSES,
+    ANALYTICS_MF5_CONFIDENCE_CLASSES,
+    ANALYTICS_MF5_LIFECYCLE_STATUSES,
+    ANALYTICS_MF5_RECOMMENDATION_FAMILIES,
+    ANALYTICS_MF5_RECOMPUTE_MODES,
+    ANALYTICS_MF5_RUN_STATES,
+    ANALYTICS_MF5_SCOPE_TYPES,
+    ANALYTICS_MF5_SEVERITY_CLASSES,
+    ANALYTICS_MF5_TARGET_DOMAINS,
     ANALYTICS_OPERATIONAL_KPI_FAMILIES,
     ANALYTICS_OPERATIONAL_KPI_STATUS_CLASSES,
     ANALYTICS_OPERATIONAL_RECOMPUTE_MODES,
@@ -123,6 +131,26 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
             ("BASELINE_RECOMPUTE", "COMPARISON_RECOMPUTE", "PREDICTION_RECOMPUTE", "FULL_STACK_RECOMPUTE"),
         )
 
+        self.assertEqual(ANALYTICS_MF5_SCOPE_TYPES, ("CHANNEL", "RELEASE", "BATCH_MONTH", "PORTFOLIO"))
+        self.assertEqual(
+            ANALYTICS_MF5_RECOMMENDATION_FAMILIES,
+            (
+                "PUBLISH_TIMING_SUGGESTION",
+                "CADENCE_BATCH_HEALTH_SUGGESTION",
+                "WEAK_RELEASE_ATTENTION",
+                "OPERATIONAL_REMEDIATION",
+                "CHANNEL_OPTIMIZATION",
+                "ANOMALY_RISK_ALERT",
+                "CONTENT_PACKAGING_SUGGESTION",
+            ),
+        )
+        self.assertEqual(ANALYTICS_MF5_TARGET_DOMAINS, ("PUBLISH", "METADATA", "VISUALS", "PLANNER", "OPERATIONAL_TROUBLESHOOTING"))
+        self.assertEqual(ANALYTICS_MF5_SEVERITY_CLASSES, ("INFO", "WARNING", "CRITICAL"))
+        self.assertEqual(ANALYTICS_MF5_CONFIDENCE_CLASSES, ("LOW", "MEDIUM", "HIGH"))
+        self.assertEqual(ANALYTICS_MF5_LIFECYCLE_STATUSES, ("OPEN", "ACKNOWLEDGED", "DISMISSED", "SUPERSEDED"))
+        self.assertEqual(ANALYTICS_MF5_RECOMPUTE_MODES, ("FULL_RECOMPUTE", "INCREMENTAL_RECOMPUTE", "TARGETED_RECOMPUTE"))
+        self.assertEqual(ANALYTICS_MF5_RUN_STATES, ("RUNNING", "SUCCEEDED", "PARTIAL", "FAILED"))
+
     def test_migrate_creates_required_analytics_tables_and_indexes(self) -> None:
         with temp_env() as (_td, env):
             conn = dbm.connect(env)
@@ -149,6 +177,9 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     "analytics_comparison_snapshots",
                     "analytics_prediction_snapshots",
                     "analytics_prediction_events",
+                    "analytics_recommendation_runs",
+                    "analytics_recommendation_snapshots",
+                    "analytics_recommendation_events",
                 ):
                     self.assertIn(table, tables)
 
@@ -235,6 +266,21 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_prediction_events)").fetchall()
                 }
                 self.assertIn("idx_ape_scope_time", prediction_events_indexes)
+                recommendation_run_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_recommendation_runs)").fetchall()
+                }
+                self.assertIn("idx_arr_scope_family_mode_time", recommendation_run_indexes)
+                self.assertIn("idx_arr_state_time", recommendation_run_indexes)
+                recommendation_snapshot_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_recommendation_snapshots)").fetchall()
+                }
+                self.assertIn("idx_ars_current_open_scope_issue", recommendation_snapshot_indexes)
+                self.assertIn("idx_ars_scope_family_status", recommendation_snapshot_indexes)
+                self.assertIn("idx_ars_queue_order", recommendation_snapshot_indexes)
+                recommendation_event_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_recommendation_events)").fetchall()
+                }
+                self.assertIn("idx_are_scope_time", recommendation_event_indexes)
 
                 external_snapshot_indexes = {
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_snapshots)").fetchall()
