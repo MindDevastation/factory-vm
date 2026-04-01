@@ -9,6 +9,13 @@ from services.analytics_center.literals import (
     ANALYTICS_EXTERNAL_TARGET_SCOPE_TYPES,
     ANALYTICS_ENTITY_TYPES,
     ANALYTICS_FRESHNESS_STATUSES,
+    ANALYTICS_MF4_BASELINE_FAMILIES,
+    ANALYTICS_MF4_COMPARISON_FAMILIES,
+    ANALYTICS_MF4_CONFIDENCE_CLASSES,
+    ANALYTICS_MF4_PREDICTION_FAMILIES,
+    ANALYTICS_MF4_RUN_KINDS,
+    ANALYTICS_MF4_SCOPE_TYPES,
+    ANALYTICS_MF4_VARIANCE_CLASSES,
     ANALYTICS_OPERATIONAL_KPI_FAMILIES,
     ANALYTICS_OPERATIONAL_KPI_STATUS_CLASSES,
     ANALYTICS_OPERATIONAL_RECOMPUTE_MODES,
@@ -96,6 +103,25 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
             ("FULL_RECOMPUTE", "INCREMENTAL_RECOMPUTE", "TARGETED_RECOMPUTE"),
         )
         self.assertEqual(ANALYTICS_OPERATIONAL_RUN_STATES, ("RUNNING", "SUCCEEDED", "PARTIAL", "FAILED"))
+        self.assertEqual(ANALYTICS_MF4_SCOPE_TYPES, ("CHANNEL", "RELEASE", "BATCH_MONTH", "PORTFOLIO"))
+        self.assertEqual(
+            ANALYTICS_MF4_BASELINE_FAMILIES,
+            ("CHANNEL_HISTORICAL", "RELEASE_VS_CHANNEL", "BATCH_MONTH_HISTORICAL", "PORTFOLIO_COMPARISON"),
+        )
+        self.assertEqual(
+            ANALYTICS_MF4_COMPARISON_FAMILIES,
+            ("RELEASE_VS_CHANNEL_BASELINE", "CHANNEL_VS_SELF_HISTORY", "BATCH_MONTH_VS_RECENT_CHANNEL", "CHANNEL_VS_PORTFOLIO"),
+        )
+        self.assertEqual(ANALYTICS_MF4_VARIANCE_CLASSES, ("NORMAL", "ANOMALY", "RISK"))
+        self.assertEqual(
+            ANALYTICS_MF4_PREDICTION_FAMILIES,
+            ("WEAK_RELEASE_RISK", "PUBLISH_WINDOW_QUALITY", "CHANNEL_MOMENTUM", "CADENCE_DEGRADATION_RISK", "OPERATIONAL_ANOMALY_RISK"),
+        )
+        self.assertEqual(ANALYTICS_MF4_CONFIDENCE_CLASSES, ("LOW", "MEDIUM", "HIGH"))
+        self.assertEqual(
+            ANALYTICS_MF4_RUN_KINDS,
+            ("BASELINE_RECOMPUTE", "COMPARISON_RECOMPUTE", "PREDICTION_RECOMPUTE", "FULL_STACK_RECOMPUTE"),
+        )
 
     def test_migrate_creates_required_analytics_tables_and_indexes(self) -> None:
         with temp_env() as (_td, env):
@@ -118,6 +144,10 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     "analytics_operational_kpi_runs",
                     "analytics_operational_kpi_snapshots",
                     "analytics_operational_kpi_events",
+                    "analytics_prediction_runs",
+                    "analytics_baseline_snapshots",
+                    "analytics_comparison_snapshots",
+                    "analytics_prediction_snapshots",
                 ):
                     self.assertIn(table, tables)
 
@@ -180,6 +210,26 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_operational_kpi_events)").fetchall()
                 }
                 self.assertIn("idx_aoke_scope_time", kpi_events_indexes)
+                prediction_run_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_prediction_runs)").fetchall()
+                }
+                self.assertIn("idx_apr_scope_kind_time", prediction_run_indexes)
+                self.assertIn("idx_apr_state_time", prediction_run_indexes)
+                baseline_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_baseline_snapshots)").fetchall()
+                }
+                self.assertIn("idx_abs_scope_family_current", baseline_indexes)
+                self.assertIn("idx_abs_variance_class", baseline_indexes)
+                comparison_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_comparison_snapshots)").fetchall()
+                }
+                self.assertIn("idx_acs_scope_family_current", comparison_indexes)
+                self.assertIn("idx_acs_variance_class", comparison_indexes)
+                prediction_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_prediction_snapshots)").fetchall()
+                }
+                self.assertIn("idx_aps_scope_family_current", prediction_indexes)
+                self.assertIn("idx_aps_variance_confidence", prediction_indexes)
 
                 external_snapshot_indexes = {
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_snapshots)").fetchall()

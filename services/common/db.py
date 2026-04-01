@@ -1612,6 +1612,123 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_aoke_scope_time
             ON analytics_operational_kpi_events(target_scope_type, target_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_prediction_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_kind TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            recompute_mode TEXT NOT NULL,
+            run_state TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            baseline_count INTEGER NOT NULL DEFAULT 0,
+            comparison_count INTEGER NOT NULL DEFAULT 0,
+            prediction_count INTEGER NOT NULL DEFAULT 0,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            CHECK(run_kind IN ('BASELINE_RECOMPUTE', 'COMPARISON_RECOMPUTE', 'PREDICTION_RECOMPUTE', 'FULL_STACK_RECOMPUTE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')),
+            CHECK(run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_apr_scope_kind_time
+            ON analytics_prediction_runs(target_scope_type, target_scope_ref, run_kind, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_apr_state_time
+            ON analytics_prediction_runs(run_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_baseline_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            baseline_family TEXT NOT NULL,
+            variance_class TEXT NOT NULL,
+            baseline_payload_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            comparison_basis_json TEXT NOT NULL DEFAULT '{}',
+            is_current INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(baseline_family IN ('CHANNEL_HISTORICAL', 'RELEASE_VS_CHANNEL', 'BATCH_MONTH_HISTORICAL', 'PORTFOLIO_COMPARISON')),
+            CHECK(variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_prediction_runs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_abs_scope_family_current
+            ON analytics_baseline_snapshots(scope_type, scope_ref, baseline_family, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_abs_variance_class
+            ON analytics_baseline_snapshots(variance_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_comparison_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            comparison_family TEXT NOT NULL,
+            variance_class TEXT NOT NULL,
+            baseline_snapshot_id INTEGER NULL,
+            delta_payload_json TEXT NOT NULL,
+            comparison_basis_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            is_current INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(comparison_family IN ('RELEASE_VS_CHANNEL_BASELINE', 'CHANNEL_VS_SELF_HISTORY', 'BATCH_MONTH_VS_RECENT_CHANNEL', 'CHANNEL_VS_PORTFOLIO')),
+            CHECK(variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_prediction_runs(id),
+            FOREIGN KEY(baseline_snapshot_id) REFERENCES analytics_baseline_snapshots(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_acs_scope_family_current
+            ON analytics_comparison_snapshots(scope_type, scope_ref, comparison_family, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_acs_variance_class
+            ON analytics_comparison_snapshots(variance_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_prediction_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            prediction_family TEXT NOT NULL,
+            variance_class TEXT NOT NULL,
+            confidence_class TEXT NOT NULL,
+            comparison_family TEXT NULL,
+            comparison_snapshot_id INTEGER NULL,
+            predicted_label TEXT NOT NULL,
+            predicted_value_json TEXT NOT NULL DEFAULT '{}',
+            signals_used_json TEXT NOT NULL DEFAULT '[]',
+            comparison_basis_json TEXT NOT NULL,
+            explainability_payload_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            is_current INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(prediction_family IN ('WEAK_RELEASE_RISK', 'PUBLISH_WINDOW_QUALITY', 'CHANNEL_MOMENTUM', 'CADENCE_DEGRADATION_RISK', 'OPERATIONAL_ANOMALY_RISK')),
+            CHECK(variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(confidence_class IN ('LOW', 'MEDIUM', 'HIGH')),
+            CHECK(comparison_family IS NULL OR comparison_family IN ('RELEASE_VS_CHANNEL_BASELINE', 'CHANNEL_VS_SELF_HISTORY', 'BATCH_MONTH_VS_RECENT_CHANNEL', 'CHANNEL_VS_PORTFOLIO')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_prediction_runs(id),
+            FOREIGN KEY(comparison_snapshot_id) REFERENCES analytics_comparison_snapshots(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aps_scope_family_current
+            ON analytics_prediction_snapshots(scope_type, scope_ref, prediction_family, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_aps_variance_confidence
+            ON analytics_prediction_snapshots(variance_class, confidence_class, created_at DESC);
         """
     )
 
