@@ -60,6 +60,14 @@ __all__ = [
     "Mf4BaselineOutput",
     "Mf4ComparisonOutput",
     "Mf4PredictionOutput",
+    "create_prediction_run",
+    "finalize_prediction_run",
+    "recompute_mf4",
+    "read_mf4_baselines",
+    "read_mf4_comparisons",
+    "read_mf4_predictions",
+    "normalize_problem_risk_filters",
+    "list_mf4_problems",
 ]
 
 from .errors import AnalyticsDomainError
@@ -110,4 +118,14 @@ from .mf4_derivation_core import (
     derive_predictions,
     persist_mf4_derivation,
     resolve_baseline_window,
+)
+from .mf4_runtime import (
+    create_prediction_run,
+    finalize_prediction_run,
+    list_mf4_problems,
+    normalize_problem_risk_filters,
+    read_mf4_baselines,
+    read_mf4_comparisons,
+    read_mf4_predictions,
+    recompute_mf4,
 )

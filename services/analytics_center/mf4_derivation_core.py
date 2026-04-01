@@ -307,9 +307,17 @@ def persist_mf4_derivation(
 ) -> dict[str, int]:
     baseline_ids: dict[str, int] = {}
     comparison_ids: dict[str, int] = {}
+
+    def _validate_source_refs(refs: list[str]) -> None:
+        if not isinstance(refs, list) or not refs:
+            raise AnalyticsDomainError(code=E5A_INVALID_PREDICTION_EXPLAINABILITY_PAYLOAD, message="source_snapshot_refs_json must be non-empty list")
+        if not all(isinstance(ref, str) and ref.strip() for ref in refs):
+            raise AnalyticsDomainError(code=E5A_INVALID_PREDICTION_EXPLAINABILITY_PAYLOAD, message="source_snapshot_refs_json entries must be non-empty strings")
+
     for b in baselines:
         _require_enum("baseline_family", b.baseline_family, ANALYTICS_MF4_BASELINE_FAMILIES, E5A_INVALID_BASELINE_FAMILY)
         _require_enum("variance_class", b.variance_class, ANALYTICS_MF4_VARIANCE_CLASSES, E5A_INVALID_VARIANCE_CLASS)
+        _validate_source_refs(b.source_snapshot_refs)
         now = now_ts()
         conn.execute(
             "UPDATE analytics_baseline_snapshots SET is_current = 0, updated_at = ? WHERE scope_type = ? AND scope_ref = ? AND baseline_family = ? AND is_current = 1",
@@ -328,6 +336,7 @@ def persist_mf4_derivation(
     for c in comparisons:
         _require_enum("comparison_family", c.comparison_family, ANALYTICS_MF4_COMPARISON_FAMILIES, E5A_INVALID_COMPARISON_FAMILY)
         _require_enum("variance_class", c.variance_class, ANALYTICS_MF4_VARIANCE_CLASSES, E5A_INVALID_VARIANCE_CLASS)
+        _validate_source_refs(c.source_snapshot_refs)
         now = now_ts()
         conn.execute(
             "UPDATE analytics_comparison_snapshots SET is_current = 0, updated_at = ? WHERE scope_type = ? AND scope_ref = ? AND comparison_family = ? AND is_current = 1",
@@ -348,6 +357,7 @@ def persist_mf4_derivation(
         _require_enum("prediction_family", p.prediction_family, ANALYTICS_MF4_PREDICTION_FAMILIES, E5A_INVALID_PREDICTION_FAMILY)
         _require_enum("variance_class", p.variance_class, ANALYTICS_MF4_VARIANCE_CLASSES, E5A_INVALID_VARIANCE_CLASS)
         _require_enum("confidence_class", p.confidence_class, ANALYTICS_MF4_CONFIDENCE_CLASSES, E5A_INVALID_CONFIDENCE_CLASS)
+        _validate_source_refs(p.source_snapshot_refs)
         if not p.explainability_payload or not p.comparison_basis:
             raise AnalyticsDomainError(
                 code=E5A_INVALID_PREDICTION_EXPLAINABILITY_PAYLOAD,
