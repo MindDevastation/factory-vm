@@ -5,7 +5,9 @@ import unittest
 
 from fastapi.testclient import TestClient
 
+from services.common import db as dbm
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
+from tests.analytics_ui_fixtures import seed_mf6_page_data
 
 
 class TestMf6AnalyticsPagesIntegration(unittest.TestCase):
@@ -19,11 +21,16 @@ class TestMf6AnalyticsPagesIntegration(unittest.TestCase):
             seed_minimal_db(env)
             client = self._new_client()
             h = basic_auth_header(env.basic_user, env.basic_pass)
+            conn = dbm.connect(env)
+            try:
+                seeded = seed_mf6_page_data(conn)
+            finally:
+                conn.close()
             pages = {
                 "/v1/analytics/overview": "OVERVIEW",
-                "/v1/analytics/channels": "CHANNEL",
-                "/v1/analytics/releases": "RELEASE",
-                "/v1/analytics/batches": "BATCH_MONTH",
+                f"/v1/analytics/channels/{seeded['channel_slug']}": "CHANNEL",
+                f"/v1/analytics/releases/{seeded['release_id']}": "RELEASE",
+                f"/v1/analytics/batches/{seeded['batch_month']}": "BATCH_MONTH",
                 "/v1/analytics/anomalies": "ANOMALIES",
                 "/v1/analytics/recommendations": "RECOMMENDATIONS",
                 "/v1/analytics/reports": "REPORTS_EXPORTS",
@@ -47,13 +54,20 @@ class TestMf6AnalyticsPagesIntegration(unittest.TestCase):
                     "filter_state_token",
                 ):
                     self.assertIn(req, body)
+                if scope in {"OVERVIEW", "CHANNEL", "RELEASE", "BATCH_MONTH", "ANOMALIES", "RECOMMENDATIONS"}:
+                    self.assertGreaterEqual(len(body["detail_blocks"]), 1)
 
     def test_filter_restorable_behavior(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
             client = self._new_client()
             h = basic_auth_header(env.basic_user, env.basic_pass)
-            r = client.get("/v1/analytics/channels", params={"channel": "darkwood-reverie", "severity": "WARNING"}, headers=h)
+            conn = dbm.connect(env)
+            try:
+                seeded = seed_mf6_page_data(conn)
+            finally:
+                conn.close()
+            r = client.get(f"/v1/analytics/channels/{seeded['channel_slug']}", params={"severity": "WARNING"}, headers=h)
             self.assertEqual(r.status_code, 200)
             applied = r.json()["applied_filters"]
             self.assertEqual(applied["channel"], "darkwood-reverie")

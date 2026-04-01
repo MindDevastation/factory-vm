@@ -38,9 +38,9 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
 
             paths = [
                 "/v1/analytics/overview",
-                "/v1/analytics/channels",
-                "/v1/analytics/releases",
-                "/v1/analytics/batches",
+                "/v1/analytics/channels/darkwood-reverie",
+                "/v1/analytics/releases/1",
+                "/v1/analytics/batches/2026-04",
                 "/v1/analytics/anomalies",
                 "/v1/analytics/recommendations",
                 "/v1/analytics/reports",

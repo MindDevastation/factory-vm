@@ -6788,15 +6788,20 @@ def api_analytics_filter_contract(_: bool = Depends(require_basic_auth(env))):
 
 @app.get("/v1/analytics/overview")
 def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_window: str | None = None, freshness: str | None = None):
-    summary = [{"card": "portfolio_overview", "value": 1}, {"card": "operational_health", "value": "PARTIAL"}]
-    details = [{"table": "channel_summary", "rows": []}, {"table": "risk_highlights", "rows": []}]
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_overview
+
+        aggregated = aggregate_overview(conn)
+    finally:
+        conn.close()
     page = _build_page(
         "OVERVIEW",
         {"time_window": time_window, "freshness": freshness},
-        summary_cards=summary,
-        detail_blocks=details,
-        anomaly_markers=[],
-        recommendation_summary=[],
+        summary_cards=aggregated["summary_cards"],
+        detail_blocks=aggregated["detail_blocks"],
+        anomaly_markers=aggregated["anomaly_risk_markers"],
+        recommendation_summary=aggregated["recommendation_summary"],
         available_actions=[{"action": "refresh"}, {"action": "recompute"}],
         export_actions=[{"action": "export_overview", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
     )
@@ -6804,15 +6809,22 @@ def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_wind
     return page
 
 
-@app.get("/v1/analytics/channels")
-def api_analytics_channels(_: bool = Depends(require_basic_auth(env)), channel: str | None = None, time_window: str | None = None, recommendation_family: str | None = None, severity: str | None = None, confidence: str | None = None):
+@app.get("/v1/analytics/channels/{channel_slug}")
+def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, recommendation_family: str | None = None, severity: str | None = None, confidence: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+
+        aggregated = aggregate_scope(conn, scope_type="CHANNEL", scope_ref=channel_slug)
+    finally:
+        conn.close()
     page = _build_page(
         "CHANNEL",
-        {"channel": channel, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence},
-        summary_cards=[{"card": "channel_header", "channel": channel or "all"}],
-        detail_blocks=[{"table": "recent_releases", "rows": []}, {"table": "channel_risk", "rows": []}],
-        anomaly_markers=[],
-        recommendation_summary=[],
+        {"channel": channel_slug, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence},
+        summary_cards=aggregated["summary_cards"],
+        detail_blocks=aggregated["detail_blocks"],
+        anomaly_markers=aggregated["anomaly_risk_markers"],
+        recommendation_summary=aggregated["recommendation_summary"],
         available_actions=[{"action": "refresh"}, {"action": "open_anomaly"}, {"action": "open_recommendation"}],
         export_actions=[{"action": "export_channel", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
     )
@@ -6820,15 +6832,22 @@ def api_analytics_channels(_: bool = Depends(require_basic_auth(env)), channel: 
     return page
 
 
-@app.get("/v1/analytics/releases")
-def api_analytics_releases(_: bool = Depends(require_basic_auth(env)), release_video: str | None = None, time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None, source_family: str | None = None):
+@app.get("/v1/analytics/releases/{release_id}")
+def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None, source_family: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+
+        aggregated = aggregate_scope(conn, scope_type="RELEASE", scope_ref=str(release_id))
+    finally:
+        conn.close()
     page = _build_page(
         "RELEASE",
-        {"release_video": release_video, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family},
-        summary_cards=[{"card": "release_summary", "release_video": release_video}],
-        detail_blocks=[{"panel": "performance_vs_baseline"}, {"panel": "operational_context"}],
-        anomaly_markers=[],
-        recommendation_summary=[],
+        {"release_video": str(release_id), "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family},
+        summary_cards=aggregated["summary_cards"],
+        detail_blocks=aggregated["detail_blocks"],
+        anomaly_markers=aggregated["anomaly_risk_markers"],
+        recommendation_summary=aggregated["recommendation_summary"],
         available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
         export_actions=[{"action": "export_release", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
     )
@@ -6836,15 +6855,22 @@ def api_analytics_releases(_: bool = Depends(require_basic_auth(env)), release_v
     return page
 
 
-@app.get("/v1/analytics/batches")
-def api_analytics_batches(_: bool = Depends(require_basic_auth(env)), batch_month: str | None = None, channel: str | None = None, time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None):
+@app.get("/v1/analytics/batches/{batch_month}")
+def api_analytics_batches(batch_month: str, _: bool = Depends(require_basic_auth(env)), channel: str | None = None, time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+
+        aggregated = aggregate_scope(conn, scope_type="BATCH_MONTH", scope_ref=batch_month)
+    finally:
+        conn.close()
     page = _build_page(
         "BATCH_MONTH",
         {"batch_month": batch_month, "channel": channel, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family},
-        summary_cards=[{"card": "batch_summary", "batch_month": batch_month}],
-        detail_blocks=[{"block": "readiness_cadence"}, {"block": "performance_adherence"}],
-        anomaly_markers=[],
-        recommendation_summary=[],
+        summary_cards=aggregated["summary_cards"],
+        detail_blocks=aggregated["detail_blocks"],
+        anomaly_markers=aggregated["anomaly_risk_markers"],
+        recommendation_summary=aggregated["recommendation_summary"],
         available_actions=[{"action": "refresh"}, {"action": "recompute"}],
         export_actions=[{"action": "export_batch", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
     )
@@ -6854,13 +6880,20 @@ def api_analytics_batches(_: bool = Depends(require_basic_auth(env)), batch_mont
 
 @app.get("/v1/analytics/anomalies")
 def api_analytics_anomalies(_: bool = Depends(require_basic_auth(env)), scope_type: str | None = None, severity: str | None = None, confidence: str | None = None, recommendation_family: str | None = None, target_domain: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_anomalies
+
+        aggregated = aggregate_anomalies(conn)
+    finally:
+        conn.close()
     page = _build_page(
         "ANOMALIES",
         {"scope_type": scope_type, "severity": severity, "confidence": confidence, "recommendation_family": recommendation_family, "target_domain": target_domain},
-        summary_cards=[{"card": "anomaly_summary", "count": 0}],
-        detail_blocks=[{"table": "problematic_units", "rows": []}, {"panel": "explainability_drilldown"}],
-        anomaly_markers=[],
-        recommendation_summary=[],
+        summary_cards=aggregated["summary_cards"],
+        detail_blocks=aggregated["detail_blocks"],
+        anomaly_markers=aggregated["anomaly_risk_markers"],
+        recommendation_summary=aggregated["recommendation_summary"],
         available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
         export_actions=[],
     )
@@ -6870,13 +6903,20 @@ def api_analytics_anomalies(_: bool = Depends(require_basic_auth(env)), scope_ty
 
 @app.get("/v1/analytics/recommendations")
 def api_analytics_recommendations(_: bool = Depends(require_basic_auth(env)), scope_type: str | None = None, recommendation_family: str | None = None, target_domain: str | None = None, severity: str | None = None, confidence: str | None = None, lifecycle_status: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_recommendations
+
+        aggregated = aggregate_recommendations(conn)
+    finally:
+        conn.close()
     page = _build_page(
         "RECOMMENDATIONS",
         {"scope_type": scope_type, "recommendation_family": recommendation_family, "target_domain": target_domain, "severity": severity, "confidence": confidence, "lifecycle_status": lifecycle_status},
-        summary_cards=[{"card": "recommendation_queue", "count": 0}],
-        detail_blocks=[{"table": "recommendation_list", "rows": []}, {"panel": "recommendation_detail"}],
-        anomaly_markers=[],
-        recommendation_summary=[],
+        summary_cards=aggregated["summary_cards"],
+        detail_blocks=aggregated["detail_blocks"],
+        anomaly_markers=aggregated["anomaly_risk_markers"],
+        recommendation_summary=aggregated["recommendation_summary"],
         available_actions=[{"action": "open_next_action_surface"}, {"action": "acknowledge_recommendation"}],
         export_actions=[],
     )
