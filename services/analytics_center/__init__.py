@@ -61,3 +61,10 @@ from .external_sync import (
     get_sync_run_detail,
 )
 from .youtube_provider import YouTubeAnalyticsProvider
+from .operational_kpi import (
+    KpiOutput,
+    build_explainability_payload,
+    build_source_snapshot_refs,
+    derive_operational_kpis,
+    normalize_problem_listing_filters,
+)
