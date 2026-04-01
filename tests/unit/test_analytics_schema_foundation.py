@@ -88,6 +88,7 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     "analytics_youtube_video_links",
                     "analytics_external_sync_runs",
                     "analytics_external_scope_status",
+                    "analytics_external_audit_events",
                 ):
                     self.assertIn(table, tables)
 
@@ -129,6 +130,11 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_external_scope_status)").fetchall()
                 }
                 self.assertIn("idx_analytics_external_scope_status_scope", scope_status_indexes)
+
+                audit_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_external_audit_events)").fetchall()
+                }
+                self.assertIn("idx_analytics_external_audit_events_scope_time", audit_indexes)
 
                 external_snapshot_indexes = {
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_snapshots)").fetchall()

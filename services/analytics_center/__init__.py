@@ -42,7 +42,12 @@ from .external_sync import (
     link_release_video_context,
     normalize_metric_families,
     plan_fetch_targets,
+    request_manual_refresh,
     transition_sync_run,
     run_external_youtube_ingestion,
+    get_sync_status,
+    get_coverage_report,
+    list_sync_runs,
+    get_sync_run_detail,
 )
 from .youtube_provider import YouTubeAnalyticsProvider

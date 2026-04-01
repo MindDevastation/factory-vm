@@ -1501,6 +1501,33 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_analytics_snapshots_external_scope_time
             ON analytics_snapshots(source_family, entity_type, entity_ref, captured_at DESC)
             WHERE source_family = 'EXTERNAL_YOUTUBE';
+
+        CREATE TABLE IF NOT EXISTS analytics_external_audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            provider_name TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            run_mode TEXT NOT NULL,
+            sync_state TEXT NOT NULL,
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            created_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            partial_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            failed_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            missing_metric_families_json TEXT NOT NULL DEFAULT '[]',
+            incomplete_backfill INTEGER NOT NULL DEFAULT 0,
+            freshness_status TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            CHECK(provider_name IN ('YOUTUBE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE_VIDEO')),
+            CHECK(run_mode IN ('INITIAL_BACKFILL', 'SCHEDULED_SYNC', 'MANUAL_REFRESH', 'PARTIAL_REFRESH', 'STALE_RESYNC')),
+            CHECK(sync_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')),
+            CHECK(incomplete_backfill IN (0,1))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_audit_events_scope_time
+            ON analytics_external_audit_events(provider_name, target_scope_type, target_scope_ref, created_at DESC);
         """
     )
 

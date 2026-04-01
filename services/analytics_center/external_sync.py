@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -24,6 +25,8 @@ from services.analytics_center.literals import (
 )
 from services.common.db import now_ts
 from services.analytics_center.write_service import SnapshotWriteInput, write_snapshot
+
+logger = logging.getLogger(__name__)
 
 METRIC_FAMILY_ALIASES: dict[str, str] = {
     "views": "views",
@@ -217,6 +220,17 @@ def create_sync_run(
         stale=False,
         partial=False,
     )
+    _record_external_event(
+        conn,
+        event_type=f"{mode}_STARTED",
+        provider_name=provider_name,
+        target_scope_type=scope,
+        target_scope_ref=target_scope_ref,
+        run_mode=mode,
+        sync_state="RUNNING",
+        observed_from=observed_from,
+        observed_to=observed_to,
+    )
     return int(row.lastrowid)
 
 
@@ -287,6 +301,20 @@ def transition_sync_run(
         permission_limited=permission_limited,
         stale=freshness_status.upper() == "STALE",
         partial=target_state == "PARTIAL",
+    )
+    _record_external_event(
+        conn,
+        event_type=f"{str(run['run_mode']).upper()}_COMPLETED",
+        provider_name=str(run["provider_name"]),
+        target_scope_type=str(run["target_scope_type"]),
+        target_scope_ref=str(run["target_scope_ref"]),
+        run_mode=str(run["run_mode"]),
+        sync_state=target_state,
+        observed_from=run["observed_from"],
+        observed_to=run["observed_to"],
+        missing_metric_families=tuple(metric_families_unavailable),
+        incomplete_backfill=incomplete_backfill,
+        freshness_status=freshness_status,
     )
 
 
@@ -555,6 +583,68 @@ def run_external_youtube_ingestion(
                 int(run_id),
             ),
         )
+        _record_external_event(
+            conn,
+            event_type="SNAPSHOTS_WRITTEN",
+            provider_name=str(run["provider_name"]),
+            target_scope_type=scope,
+            target_scope_ref=target_scope_ref,
+            run_mode=str(run["run_mode"]),
+            sync_state=to_state,
+            observed_from=run["observed_from"],
+            observed_to=run["observed_to"],
+            created_snapshots_count=0 if snapshot_id is None else 1,
+            partial_snapshots_count=1 if to_state == "PARTIAL" else 0,
+            failed_snapshots_count=1 if to_state == "FAILED" else 0,
+            missing_metric_families=tuple(unavailable),
+            incomplete_backfill=incomplete_backfill,
+            freshness_status=freshness,
+        )
+        if source_unavailable:
+            _record_external_event(
+                conn,
+                event_type="EXTERNAL_SOURCE_UNAVAILABLE",
+                provider_name=str(run["provider_name"]),
+                target_scope_type=scope,
+                target_scope_ref=target_scope_ref,
+                run_mode=str(run["run_mode"]),
+                sync_state=to_state,
+                observed_from=run["observed_from"],
+                observed_to=run["observed_to"],
+                missing_metric_families=tuple(unavailable),
+                incomplete_backfill=incomplete_backfill,
+                freshness_status=freshness,
+            )
+        if permission_limited and unavailable:
+            _record_external_event(
+                conn,
+                event_type="PERMISSION_LIMITED_METRICS_SKIPPED",
+                provider_name=str(run["provider_name"]),
+                target_scope_type=scope,
+                target_scope_ref=target_scope_ref,
+                run_mode=str(run["run_mode"]),
+                sync_state=to_state,
+                observed_from=run["observed_from"],
+                observed_to=run["observed_to"],
+                missing_metric_families=tuple(unavailable),
+                incomplete_backfill=incomplete_backfill,
+                freshness_status=freshness,
+            )
+        if incomplete_backfill:
+            _record_external_event(
+                conn,
+                event_type="INCOMPLETE_BACKFILL_RECORDED",
+                provider_name=str(run["provider_name"]),
+                target_scope_type=scope,
+                target_scope_ref=target_scope_ref,
+                run_mode=str(run["run_mode"]),
+                sync_state=to_state,
+                observed_from=run["observed_from"],
+                observed_to=run["observed_to"],
+                missing_metric_families=tuple(unavailable),
+                incomplete_backfill=True,
+                freshness_status=freshness,
+            )
         return snapshot_id
     except AnalyticsDomainError:
         raise
@@ -574,6 +664,23 @@ def run_external_youtube_ingestion(
         conn.execute(
             "UPDATE analytics_external_sync_runs SET failed_snapshots_count = 1, error_detail = ? WHERE id = ?",
             (str(exc), int(run_id)),
+        )
+        _record_external_event(
+            conn,
+            event_type="SYNC_RUN_FAILED",
+            provider_name=str(run["provider_name"]),
+            target_scope_type=scope,
+            target_scope_ref=target_scope_ref,
+            run_mode=str(run["run_mode"]),
+            sync_state="FAILED",
+            observed_from=run["observed_from"],
+            observed_to=run["observed_to"],
+            created_snapshots_count=0,
+            partial_snapshots_count=0,
+            failed_snapshots_count=1,
+            missing_metric_families=requested,
+            incomplete_backfill=False,
+            freshness_status="UNKNOWN",
         )
         return None
 
@@ -606,3 +713,195 @@ def _persist_external_snapshot(
         is_current=not source_unavailable,
     )
     return write_snapshot(conn, snapshot)
+
+
+def request_manual_refresh(
+    conn: sqlite3.Connection,
+    *,
+    target_scope_type: str,
+    target_scope_ref: str,
+    refresh_mode: str,
+    metrics_subset: list[str] | None = None,
+    observed_from: float | None = None,
+    observed_to: float | None = None,
+    force: bool = False,
+) -> int:
+    mode = _validate_run_mode(refresh_mode)
+    if mode not in {"MANUAL_REFRESH", "PARTIAL_REFRESH", "STALE_RESYNC", "INITIAL_BACKFILL"}:
+        raise AnalyticsDomainError(code=E5A_INVALID_REFRESH_MODE, message="unsupported manual refresh mode")
+    return create_sync_run(
+        conn,
+        provider_name="YOUTUBE",
+        target_scope_type=target_scope_type,
+        target_scope_ref=target_scope_ref,
+        run_mode=mode,
+        metric_families_requested=metrics_subset or ["views", "impressions", "ctr", "watch_time", "average_view_duration", "retention", "subscribers", "monetization"],
+        observed_from=observed_from if observed_from is not None else now_ts() - (86400.0 if not force else 259200.0),
+        observed_to=observed_to if observed_to is not None else now_ts(),
+        freshness_basis="manual_refresh_force" if force else "manual_refresh",
+    )
+
+
+def get_sync_status(conn: sqlite3.Connection, *, target_scope_type: str, target_scope_ref: str) -> dict[str, Any]:
+    scope = _validate_scope(target_scope_type)
+    row = conn.execute(
+        """
+        SELECT provider_name, target_scope_type, target_scope_ref, last_successful_sync_at, last_attempted_sync_at,
+               freshness_status, sync_state, coverage_payload_json, availability_status
+        FROM analytics_external_scope_status
+        WHERE provider_name = 'YOUTUBE' AND target_scope_type = ? AND target_scope_ref = ?
+        """,
+        (scope, target_scope_ref),
+    ).fetchone()
+    if row is None:
+        return {
+            "provider_name": "YOUTUBE",
+            "target_scope_type": scope,
+            "target_scope_ref": target_scope_ref,
+            "last_successful_sync_at": None,
+            "last_attempted_sync_at": None,
+            "freshness_status": "UNKNOWN",
+            "sync_state": "FAILED",
+            "covered_windows": None,
+            "incomplete_backfill": False,
+            "missing_metric_families": [],
+            "source_availability_status": "NOT_YET_SYNCED",
+        }
+    coverage = json.loads(str(row["coverage_payload_json"]))
+    return {
+        "provider_name": row["provider_name"],
+        "target_scope_type": row["target_scope_type"],
+        "target_scope_ref": row["target_scope_ref"],
+        "last_successful_sync_at": row["last_successful_sync_at"],
+        "last_attempted_sync_at": row["last_attempted_sync_at"],
+        "freshness_status": row["freshness_status"],
+        "sync_state": row["sync_state"],
+        "covered_windows": coverage.get("covered_window"),
+        "incomplete_backfill": bool(coverage.get("incomplete_backfill", False)),
+        "missing_metric_families": list(coverage.get("metric_families_unavailable", [])),
+        "source_availability_status": row["availability_status"],
+    }
+
+
+def get_coverage_report(conn: sqlite3.Connection, *, target_scope_type: str, target_scope_ref: str) -> dict[str, Any]:
+    status = get_sync_status(conn, target_scope_type=target_scope_type, target_scope_ref=target_scope_ref)
+    if status["source_availability_status"] == "NOT_YET_SYNCED":
+        return {
+            "scope": {"target_scope_type": target_scope_type, "target_scope_ref": target_scope_ref},
+            "metric_family_coverage": {},
+            "historical_range_coverage": None,
+            "incomplete_windows": [],
+            "unavailable_by_permission": [],
+            "not_yet_synced": True,
+        }
+    row = conn.execute(
+        """
+        SELECT coverage_payload_json
+        FROM analytics_external_scope_status
+        WHERE provider_name='YOUTUBE' AND target_scope_type = ? AND target_scope_ref = ?
+        """,
+        (_validate_scope(target_scope_type), target_scope_ref),
+    ).fetchone()
+    assert row is not None
+    coverage = json.loads(str(row["coverage_payload_json"]))
+    requested = list(coverage.get("metric_families_requested", []))
+    returned = set(coverage.get("metric_families_returned", []))
+    unavailable = list(coverage.get("metric_families_unavailable", []))
+    return {
+        "scope": {"target_scope_type": target_scope_type, "target_scope_ref": target_scope_ref},
+        "metric_family_coverage": {k: (k in returned) for k in requested},
+        "historical_range_coverage": coverage.get("covered_window"),
+        "incomplete_windows": [coverage.get("covered_window")] if coverage.get("incomplete_backfill", False) else [],
+        "unavailable_by_permission": unavailable if status["source_availability_status"] == "PERMISSION_LIMITED" else [],
+        "not_yet_synced": False,
+    }
+
+
+def list_sync_runs(conn: sqlite3.Connection, *, target_scope_type: str | None = None, target_scope_ref: str | None = None) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if target_scope_type:
+        clauses.append("target_scope_type = ?")
+        params.append(_validate_scope(target_scope_type))
+    if target_scope_ref:
+        clauses.append("target_scope_ref = ?")
+        params.append(target_scope_ref)
+    query = "SELECT * FROM analytics_external_sync_runs"
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY started_at DESC, id DESC"
+    return [dict(r) for r in conn.execute(query, tuple(params)).fetchall()]
+
+
+def get_sync_run_detail(conn: sqlite3.Connection, *, run_id: int) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM analytics_external_sync_runs WHERE id = ?", (int(run_id),)).fetchone()
+    if row is None:
+        return None
+    payload = json.loads(str(row["coverage_payload_json"]))
+    detail = dict(row)
+    detail["missing_metric_families"] = list(payload.get("metric_families_unavailable", []))
+    detail["incomplete_backfill"] = bool(payload.get("incomplete_backfill", False))
+    return detail
+
+
+def _record_external_event(
+    conn: sqlite3.Connection,
+    *,
+    event_type: str,
+    provider_name: str,
+    target_scope_type: str,
+    target_scope_ref: str,
+    run_mode: str,
+    sync_state: str,
+    observed_from: float | None,
+    observed_to: float | None,
+    created_snapshots_count: int = 0,
+    partial_snapshots_count: int = 0,
+    failed_snapshots_count: int = 0,
+    missing_metric_families: tuple[str, ...] | list[str] = (),
+    incomplete_backfill: bool = False,
+    freshness_status: str = "UNKNOWN",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO analytics_external_audit_events(
+            event_type, provider_name, target_scope_type, target_scope_ref, run_mode, sync_state,
+            observed_from, observed_to, created_snapshots_count, partial_snapshots_count,
+            failed_snapshots_count, missing_metric_families_json, incomplete_backfill, freshness_status, created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            event_type,
+            provider_name,
+            target_scope_type,
+            target_scope_ref,
+            run_mode,
+            sync_state,
+            observed_from,
+            observed_to,
+            created_snapshots_count,
+            partial_snapshots_count,
+            failed_snapshots_count,
+            validate_json_payload(list(missing_metric_families), field_name="missing_metric_families_json"),
+            1 if incomplete_backfill else 0,
+            freshness_status,
+            now_ts(),
+        ),
+    )
+    logger.info(
+        "external_sync_event=%s provider_name=%s target_scope_type=%s target_scope_ref=%s run_mode=%s sync_state=%s observed_from=%s observed_to=%s created_snapshots_count=%s partial_snapshots_count=%s failed_snapshots_count=%s missing_metric_families=%s incomplete_backfill=%s freshness_status=%s",
+        event_type,
+        provider_name,
+        target_scope_type,
+        target_scope_ref,
+        run_mode,
+        sync_state,
+        observed_from,
+        observed_to,
+        created_snapshots_count,
+        partial_snapshots_count,
+        failed_snapshots_count,
+        ",".join(missing_metric_families),
+        incomplete_backfill,
+        freshness_status,
+    )
