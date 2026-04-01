@@ -117,6 +117,7 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     "analytics_external_audit_events",
                     "analytics_operational_kpi_runs",
                     "analytics_operational_kpi_snapshots",
+                    "analytics_operational_kpi_events",
                 ):
                     self.assertIn(table, tables)
 
@@ -175,6 +176,10 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                 }
                 self.assertIn("idx_aoks_scope_family_current", kpi_snapshot_indexes)
                 self.assertIn("idx_aoks_status_class", kpi_snapshot_indexes)
+                kpi_events_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_operational_kpi_events)").fetchall()
+                }
+                self.assertIn("idx_aoke_scope_time", kpi_events_indexes)
 
                 external_snapshot_indexes = {
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_snapshots)").fetchall()
