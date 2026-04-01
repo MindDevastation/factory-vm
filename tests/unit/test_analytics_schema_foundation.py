@@ -24,6 +24,9 @@ from services.analytics_center.literals import (
     ANALYTICS_MF5_SCOPE_TYPES,
     ANALYTICS_MF5_SEVERITY_CLASSES,
     ANALYTICS_MF5_TARGET_DOMAINS,
+    ANALYTICS_MF6_ARTIFACT_TYPES,
+    ANALYTICS_MF6_GENERATION_STATUSES,
+    ANALYTICS_MF6_REPORT_SCOPE_TYPES,
     ANALYTICS_OPERATIONAL_KPI_FAMILIES,
     ANALYTICS_OPERATIONAL_KPI_STATUS_CLASSES,
     ANALYTICS_OPERATIONAL_RECOMPUTE_MODES,
@@ -150,6 +153,9 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
         self.assertEqual(ANALYTICS_MF5_LIFECYCLE_STATUSES, ("OPEN", "ACKNOWLEDGED", "DISMISSED", "SUPERSEDED"))
         self.assertEqual(ANALYTICS_MF5_RECOMPUTE_MODES, ("FULL_RECOMPUTE", "INCREMENTAL_RECOMPUTE", "TARGETED_RECOMPUTE"))
         self.assertEqual(ANALYTICS_MF5_RUN_STATES, ("RUNNING", "SUCCEEDED", "PARTIAL", "FAILED"))
+        self.assertEqual(ANALYTICS_MF6_REPORT_SCOPE_TYPES, ("OVERVIEW", "CHANNEL", "RELEASE", "BATCH_MONTH"))
+        self.assertEqual(ANALYTICS_MF6_ARTIFACT_TYPES, ("XLSX", "STRUCTURED_REPORT", "API_REPORT"))
+        self.assertEqual(ANALYTICS_MF6_GENERATION_STATUSES, ("PENDING", "READY", "FAILED"))
 
     def test_migrate_creates_required_analytics_tables_and_indexes(self) -> None:
         with temp_env() as (_td, env):
@@ -180,6 +186,8 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     "analytics_recommendation_runs",
                     "analytics_recommendation_snapshots",
                     "analytics_recommendation_events",
+                    "analytics_report_records",
+                    "analytics_ui_events",
                 ):
                     self.assertIn(table, tables)
 
@@ -281,6 +289,15 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_recommendation_events)").fetchall()
                 }
                 self.assertIn("idx_are_scope_time", recommendation_event_indexes)
+                report_record_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_report_records)").fetchall()
+                }
+                self.assertIn("idx_analytics_report_records_scope_time", report_record_indexes)
+                self.assertIn("idx_analytics_report_records_status_time", report_record_indexes)
+                ui_event_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_ui_events)").fetchall()
+                }
+                self.assertIn("idx_analytics_ui_events_scope_time", ui_event_indexes)
 
                 external_snapshot_indexes = {
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_snapshots)").fetchall()

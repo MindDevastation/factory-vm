@@ -6727,3 +6727,312 @@ async def ui_jobs_edit_submit(
 def ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
     api_ui_jobs_render_all(True)
     return RedirectResponse(url="/", status_code=303)
+
+# --- MF6 analytics center pages/contracts (Slices 1-2) ---
+
+
+def _analytics_nav_spine() -> list[dict[str, str]]:
+    return [
+        {"key": "OVERVIEW", "label": "Overview", "path": "/v1/analytics/overview"},
+        {"key": "CHANNELS", "label": "Channels", "path": "/v1/analytics/channels"},
+        {"key": "RELEASES_VIDEOS", "label": "Releases/Videos", "path": "/v1/analytics/releases"},
+        {"key": "BATCH_MONTH", "label": "Batch/Month", "path": "/v1/analytics/batches"},
+        {"key": "ANOMALIES", "label": "Anomalies", "path": "/v1/analytics/anomalies"},
+        {"key": "RECOMMENDATIONS", "label": "Recommendations", "path": "/v1/analytics/recommendations"},
+        {"key": "REPORTS_EXPORTS", "label": "Reports/Exports", "path": "/v1/analytics/reports"},
+    ]
+
+
+def _build_page(scope: str, raw_filters: dict[str, Any], *, summary_cards: list[dict[str, Any]], detail_blocks: list[dict[str, Any]], anomaly_markers: list[dict[str, Any]], recommendation_summary: list[dict[str, Any]], available_actions: list[dict[str, Any]], export_actions: list[dict[str, Any]]) -> dict[str, Any]:
+    from services.analytics_center.ui_contracts import (
+        build_analytics_page_contract,
+        build_freshness_coverage_summary,
+        normalize_analytics_filters,
+    )
+
+    applied = normalize_analytics_filters(raw_filters)
+    source_counts = {
+        "EXTERNAL_YOUTUBE": len(detail_blocks),
+        "INTERNAL_OPERATIONAL": len(summary_cards),
+        "RECOMMENDATIONS": len(recommendation_summary),
+    }
+    freshness, coverage = build_freshness_coverage_summary(source_counts=source_counts)
+    page = build_analytics_page_contract(
+        page_scope=scope,
+        applied_filters=applied,
+        freshness_summary=freshness,
+        source_coverage_summary=coverage,
+        summary_cards=summary_cards,
+        detail_blocks=detail_blocks,
+        anomaly_risk_markers=anomaly_markers,
+        recommendation_summary=recommendation_summary,
+        available_actions=available_actions,
+        export_report_actions=export_actions,
+    )
+    page["navigation"] = _analytics_nav_spine()
+    return page
+
+
+@app.get("/v1/analytics/filter-contract")
+def api_analytics_filter_contract(_: bool = Depends(require_basic_auth(env))):
+    return {
+        "shared_filters": [
+            "channel", "release_video", "batch_month", "time_window", "anomaly_risk_status",
+            "recommendation_family", "severity", "confidence", "freshness", "source_family",
+            "target_domain", "report_export_type",
+        ],
+        "navigation": _analytics_nav_spine(),
+        "restorable": True,
+    }
+
+
+@app.get("/v1/analytics/overview")
+def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_window: str | None = None, freshness: str | None = None):
+    summary = [{"card": "portfolio_overview", "value": 1}, {"card": "operational_health", "value": "PARTIAL"}]
+    details = [{"table": "channel_summary", "rows": []}, {"table": "risk_highlights", "rows": []}]
+    page = _build_page(
+        "OVERVIEW",
+        {"time_window": time_window, "freshness": freshness},
+        summary_cards=summary,
+        detail_blocks=details,
+        anomaly_markers=[],
+        recommendation_summary=[],
+        available_actions=[{"action": "refresh"}, {"action": "recompute"}],
+        export_actions=[{"action": "export_overview", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+    )
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="OVERVIEW", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/channels")
+def api_analytics_channels(_: bool = Depends(require_basic_auth(env)), channel: str | None = None, time_window: str | None = None, recommendation_family: str | None = None, severity: str | None = None, confidence: str | None = None):
+    page = _build_page(
+        "CHANNEL",
+        {"channel": channel, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence},
+        summary_cards=[{"card": "channel_header", "channel": channel or "all"}],
+        detail_blocks=[{"table": "recent_releases", "rows": []}, {"table": "channel_risk", "rows": []}],
+        anomaly_markers=[],
+        recommendation_summary=[],
+        available_actions=[{"action": "refresh"}, {"action": "open_anomaly"}, {"action": "open_recommendation"}],
+        export_actions=[{"action": "export_channel", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+    )
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="CHANNEL", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/releases")
+def api_analytics_releases(_: bool = Depends(require_basic_auth(env)), release_video: str | None = None, time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None, source_family: str | None = None):
+    page = _build_page(
+        "RELEASE",
+        {"release_video": release_video, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family},
+        summary_cards=[{"card": "release_summary", "release_video": release_video}],
+        detail_blocks=[{"panel": "performance_vs_baseline"}, {"panel": "operational_context"}],
+        anomaly_markers=[],
+        recommendation_summary=[],
+        available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
+        export_actions=[{"action": "export_release", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+    )
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="RELEASE", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/batches")
+def api_analytics_batches(_: bool = Depends(require_basic_auth(env)), batch_month: str | None = None, channel: str | None = None, time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None):
+    page = _build_page(
+        "BATCH_MONTH",
+        {"batch_month": batch_month, "channel": channel, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family},
+        summary_cards=[{"card": "batch_summary", "batch_month": batch_month}],
+        detail_blocks=[{"block": "readiness_cadence"}, {"block": "performance_adherence"}],
+        anomaly_markers=[],
+        recommendation_summary=[],
+        available_actions=[{"action": "refresh"}, {"action": "recompute"}],
+        export_actions=[{"action": "export_batch", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+    )
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="BATCH_MONTH", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/anomalies")
+def api_analytics_anomalies(_: bool = Depends(require_basic_auth(env)), scope_type: str | None = None, severity: str | None = None, confidence: str | None = None, recommendation_family: str | None = None, target_domain: str | None = None):
+    page = _build_page(
+        "ANOMALIES",
+        {"scope_type": scope_type, "severity": severity, "confidence": confidence, "recommendation_family": recommendation_family, "target_domain": target_domain},
+        summary_cards=[{"card": "anomaly_summary", "count": 0}],
+        detail_blocks=[{"table": "problematic_units", "rows": []}, {"panel": "explainability_drilldown"}],
+        anomaly_markers=[],
+        recommendation_summary=[],
+        available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
+        export_actions=[],
+    )
+    _record_analytics_ui_event(event_type="ANOMALY_INSPECTED", page_scope="ANOMALIES", action_type="INSPECT_ANOMALY", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/recommendations")
+def api_analytics_recommendations(_: bool = Depends(require_basic_auth(env)), scope_type: str | None = None, recommendation_family: str | None = None, target_domain: str | None = None, severity: str | None = None, confidence: str | None = None, lifecycle_status: str | None = None):
+    page = _build_page(
+        "RECOMMENDATIONS",
+        {"scope_type": scope_type, "recommendation_family": recommendation_family, "target_domain": target_domain, "severity": severity, "confidence": confidence, "lifecycle_status": lifecycle_status},
+        summary_cards=[{"card": "recommendation_queue", "count": 0}],
+        detail_blocks=[{"table": "recommendation_list", "rows": []}, {"panel": "recommendation_detail"}],
+        anomaly_markers=[],
+        recommendation_summary=[],
+        available_actions=[{"action": "open_next_action_surface"}, {"action": "acknowledge_recommendation"}],
+        export_actions=[],
+    )
+    _record_analytics_ui_event(event_type="RECOMMENDATION_OPENED", page_scope="RECOMMENDATIONS", action_type="OPEN_RECOMMENDATION", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/reports")
+def api_analytics_reports(_: bool = Depends(require_basic_auth(env)), report_export_type: str | None = None):
+    page = _build_page(
+        "REPORTS_EXPORTS",
+        {"report_export_type": report_export_type},
+        summary_cards=[{"card": "reports_exports"}],
+        detail_blocks=[{"table": "saved_reports", "rows": []}],
+        anomaly_markers=[],
+        recommendation_summary=[],
+        available_actions=[{"action": "export_download_report"}],
+        export_actions=[{"action": "create_report_record"}],
+    )
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="REPORTS_EXPORTS", action_type="VIEW_REPORTS", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.post("/v1/analytics/reports/request")
+def api_analytics_report_request(
+    payload: Dict[str, Any],
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.reporting import create_report_record
+
+        try:
+            report_id = create_report_record(
+                conn,
+                report_scope_type=str(payload.get("report_scope_type", "")),
+                report_scope_ref=payload.get("report_scope_ref"),
+                report_family=str(payload.get("report_family", "DEFAULT")),
+                filter_payload=dict(payload.get("filter_payload", {})),
+                artifact_type=str(payload.get("artifact_type", "")),
+                created_by=env.basic_user,
+            )
+        except Exception as exc:
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), freshness_summary={"status": "PARTIAL"})
+            raise HTTPException(422, f"report generation failed: {exc}")
+        row = conn.execute("SELECT * FROM analytics_report_records WHERE id = ?", (int(report_id),)).fetchone()
+        _record_analytics_ui_event(event_type="ANALYTICS_REPORT_REQUESTED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_REQUEST", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary={"status": "PARTIAL"})
+        _record_analytics_ui_event(event_type="ANALYTICS_REPORT_GENERATED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_GENERATED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary={"status": "PARTIAL"})
+        return {"report_record": dict(row), "deduped_or_created_id": int(report_id)}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/reports/records")
+def api_analytics_report_records(
+    _: bool = Depends(require_basic_auth(env)),
+    report_scope_type: str | None = None,
+    generation_status: str | None = None,
+):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.reporting import list_report_records
+
+        return {"items": list_report_records(conn, report_scope_type=report_scope_type, generation_status=generation_status)}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/reports/{report_record_id}/download")
+def api_analytics_report_download(report_record_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        row = conn.execute("SELECT * FROM analytics_report_records WHERE id = ?", (int(report_record_id),)).fetchone()
+        if row is None:
+            raise HTTPException(404, "report not found")
+        _record_analytics_ui_event(event_type="EXPORT_DOWNLOADED", page_scope=str(row["report_scope_type"]), action_type="DOWNLOAD", scope_ref=row["report_scope_ref"], artifact_type=str(row["artifact_type"]), report_record_id=int(report_record_id), freshness_summary={"status": "PARTIAL"})
+        return {"download": True, "report_record_id": int(report_record_id), "artifact_ref": row["artifact_ref"], "artifact_type": row["artifact_type"]}
+    finally:
+        conn.close()
+
+
+@app.post("/v1/analytics/actions/refresh")
+def api_analytics_action_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    _record_analytics_ui_event(event_type="REFRESH_TRIGGERED", page_scope=str(payload.get("scope", "OVERVIEW")), action_type="REFRESH", filter_payload=payload, freshness_summary={"status": "PARTIAL"})
+    return {"action": "refresh", "delegated": True, "scope": payload, "mutation": False}
+
+
+@app.post("/v1/analytics/actions/recompute")
+def api_analytics_action_recompute(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    _record_analytics_ui_event(event_type="RECOMPUTE_TRIGGERED", page_scope=str(payload.get("scope", "OVERVIEW")), action_type="RECOMPUTE", filter_payload=payload, freshness_summary={"status": "PARTIAL"})
+    return {"action": "recompute", "delegated": True, "scope": payload, "mutation": False}
+
+
+@app.get("/v1/analytics/actions/related-domain-jump")
+def api_analytics_related_domain_jump(
+    target_domain: str,
+    scope_ref: str,
+    next_action: str,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    from services.analytics_center.reporting import build_related_domain_jump
+
+    jump = build_related_domain_jump(target_domain=target_domain, scope_ref=scope_ref, next_action=next_action)
+    _record_analytics_ui_event(event_type="RELATED_DOMAIN_JUMP_OPENED", page_scope="RECOMMENDATIONS", action_type="RELATED_DOMAIN_JUMP", scope_ref=scope_ref, filter_payload={"target_domain": target_domain, "next_action": next_action}, freshness_summary={"status": "PARTIAL"})
+    return {"jump": jump, "mutation": False}
+
+
+@app.post("/v1/analytics/actions/recommendations/{recommendation_id}/acknowledge")
+def api_analytics_ack_recommendation(recommendation_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.recommendation_runtime import update_recommendation_lifecycle
+
+        update_recommendation_lifecycle(conn, recommendation_id=int(recommendation_id), target_status="ACKNOWLEDGED")
+        return {"recommendation_id": int(recommendation_id), "status": "ACKNOWLEDGED", "mutation": False}
+    finally:
+        conn.close()
+
+
+@app.post("/v1/analytics/actions/anomaly/inspect")
+def api_analytics_inspect_anomaly(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    _record_analytics_ui_event(event_type="ANOMALY_INSPECTED", page_scope="ANOMALIES", action_type="INSPECT_ANOMALY", scope_ref=str(payload.get("id") or ""), filter_payload=payload, freshness_summary={"status": "PARTIAL"})
+    return {"action": "inspect_anomaly", "payload": payload, "mutation": False}
+
+
+def _record_analytics_ui_event(*, event_type: str, page_scope: str, action_type: str, scope_ref: str | None = None, filter_payload: dict[str, Any] | None = None, artifact_type: str | None = None, report_record_id: int | None = None, freshness_summary: dict[str, Any] | None = None) -> None:
+    conn = dbm.connect(env)
+    try:
+        conn.execute(
+            """
+            INSERT INTO analytics_ui_events(event_type, page_scope, scope_ref, filter_payload_json, artifact_type, report_record_id, action_type, actor, freshness_summary_json, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                event_type,
+                page_scope,
+                scope_ref,
+                json.dumps(filter_payload or {}, sort_keys=True),
+                artifact_type,
+                report_record_id,
+                action_type,
+                env.basic_user,
+                json.dumps(freshness_summary or {}, sort_keys=True),
+                dbm.now_ts(),
+            ),
+        )
+        logger.info(
+            "analytics_ui_event page_scope=%s scope_ref=%s filter_payload=%s artifact_type=%s report_record_id=%s action_type=%s actor=%s upstream_freshness_summary=%s",
+            page_scope,
+            scope_ref or "-",
+            json.dumps(filter_payload or {}, sort_keys=True),
+            artifact_type or "-",
+            report_record_id if report_record_id is not None else -1,
+            action_type,
+            env.basic_user,
+            json.dumps(freshness_summary or {}, sort_keys=True),
+        )
+    finally:
+        conn.close()

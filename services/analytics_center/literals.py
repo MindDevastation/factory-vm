@@ -225,3 +225,23 @@ ANALYTICS_MF5_RUN_STATES: tuple[str, ...] = (
     "PARTIAL",
     "FAILED",
 )
+
+
+ANALYTICS_MF6_REPORT_SCOPE_TYPES: tuple[str, ...] = (
+    "OVERVIEW",
+    "CHANNEL",
+    "RELEASE",
+    "BATCH_MONTH",
+)
+
+ANALYTICS_MF6_ARTIFACT_TYPES: tuple[str, ...] = (
+    "XLSX",
+    "STRUCTURED_REPORT",
+    "API_REPORT",
+)
+
+ANALYTICS_MF6_GENERATION_STATUSES: tuple[str, ...] = (
+    "PENDING",
+    "READY",
+    "FAILED",
+)

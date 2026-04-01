@@ -1846,6 +1846,45 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_are_scope_time
             ON analytics_recommendation_events(recommendation_scope_type, recommendation_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_report_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_scope_type TEXT NOT NULL,
+            report_scope_ref TEXT NULL,
+            report_family TEXT NOT NULL,
+            filter_payload_json TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            artifact_ref TEXT NULL,
+            generation_status TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            CHECK(report_scope_type IN ('OVERVIEW', 'CHANNEL', 'RELEASE', 'BATCH_MONTH')),
+            CHECK(artifact_type IN ('XLSX', 'STRUCTURED_REPORT', 'API_REPORT')),
+            CHECK(generation_status IN ('PENDING', 'READY', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_report_records_scope_time
+            ON analytics_report_records(report_scope_type, COALESCE(report_scope_ref, ''), created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_report_records_status_time
+            ON analytics_report_records(generation_status, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_ui_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            page_scope TEXT NOT NULL,
+            scope_ref TEXT NULL,
+            filter_payload_json TEXT NOT NULL DEFAULT '{}',
+            artifact_type TEXT NULL,
+            report_record_id INTEGER NULL,
+            action_type TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            freshness_summary_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_ui_events_scope_time
+            ON analytics_ui_events(page_scope, created_at DESC);
         """
     )
 
