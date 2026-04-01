@@ -45,3 +45,39 @@ ANALYTICS_ROLLUP_RELATION_TYPES: tuple[str, ...] = (
     "RELEASE_TO_BATCH",
     "PORTFOLIO_TO_ENTITY",
 )
+
+ANALYTICS_YT_LINKAGE_CONFIDENCE: tuple[str, ...] = (
+    "EXACT",
+    "INFERRED",
+)
+
+ANALYTICS_YT_LINKAGE_SOURCE: tuple[str, ...] = (
+    "UPLOAD_ARTIFACT",
+    "RELEASE_BINDING",
+    "MANUAL_LINK",
+    "RECONCILED",
+)
+
+ANALYTICS_EXTERNAL_PROVIDER_NAMES: tuple[str, ...] = (
+    "YOUTUBE",
+)
+
+ANALYTICS_EXTERNAL_TARGET_SCOPE_TYPES: tuple[str, ...] = (
+    "CHANNEL",
+    "RELEASE_VIDEO",
+)
+
+ANALYTICS_EXTERNAL_RUN_MODES: tuple[str, ...] = (
+    "INITIAL_BACKFILL",
+    "SCHEDULED_SYNC",
+    "MANUAL_REFRESH",
+    "PARTIAL_REFRESH",
+    "STALE_RESYNC",
+)
+
+ANALYTICS_EXTERNAL_SYNC_STATES: tuple[str, ...] = (
+    "RUNNING",
+    "SUCCEEDED",
+    "PARTIAL",
+    "FAILED",
+)

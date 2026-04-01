@@ -1422,6 +1422,85 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_analytics_events_snapshot
             ON analytics_events(snapshot_id, event_type);
+
+        CREATE TABLE IF NOT EXISTS analytics_youtube_video_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_slug TEXT NOT NULL,
+            youtube_video_id TEXT NOT NULL,
+            release_id INTEGER NULL,
+            job_id INTEGER NULL,
+            youtube_channel_id TEXT NULL,
+            linkage_confidence TEXT NOT NULL,
+            linkage_source TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(linkage_confidence IN ('EXACT', 'INFERRED')),
+            CHECK(linkage_source IN ('UPLOAD_ARTIFACT', 'RELEASE_BINDING', 'MANUAL_LINK', 'RECONCILED')),
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(job_id) REFERENCES jobs(id),
+            UNIQUE(channel_slug, youtube_video_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_youtube_video_links_channel_video
+            ON analytics_youtube_video_links(channel_slug, youtube_video_id);
+
+        CREATE TABLE IF NOT EXISTS analytics_external_sync_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider_name TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            run_mode TEXT NOT NULL,
+            sync_state TEXT NOT NULL,
+            requested_metric_families_json TEXT NOT NULL DEFAULT '[]',
+            coverage_payload_json TEXT NOT NULL DEFAULT '{}',
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            created_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            partial_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            failed_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            CHECK(provider_name IN ('YOUTUBE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE_VIDEO')),
+            CHECK(run_mode IN ('INITIAL_BACKFILL', 'SCHEDULED_SYNC', 'MANUAL_REFRESH', 'PARTIAL_REFRESH', 'STALE_RESYNC')),
+            CHECK(sync_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_sync_runs_scope_time
+            ON analytics_external_sync_runs(provider_name, target_scope_type, target_scope_ref, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_sync_runs_state_time
+            ON analytics_external_sync_runs(sync_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_external_scope_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider_name TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            last_successful_sync_at REAL NULL,
+            last_attempted_sync_at REAL NULL,
+            sync_state TEXT NOT NULL,
+            freshness_status TEXT NOT NULL,
+            coverage_payload_json TEXT NOT NULL DEFAULT '{}',
+            availability_status TEXT NOT NULL DEFAULT 'NOT_YET_SYNCED',
+            updated_at REAL NOT NULL,
+            CHECK(provider_name IN ('YOUTUBE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE_VIDEO')),
+            CHECK(sync_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')),
+            CHECK(freshness_status IN ('FRESH', 'STALE', 'PARTIAL', 'UNKNOWN')),
+            UNIQUE(provider_name, target_scope_type, target_scope_ref)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_scope_status_scope
+            ON analytics_external_scope_status(provider_name, target_scope_type, target_scope_ref);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_snapshots_external_scope_time
+            ON analytics_snapshots(source_family, entity_type, entity_ref, captured_at DESC)
+            WHERE source_family = 'EXTERNAL_YOUTUBE';
         """
     )
 
