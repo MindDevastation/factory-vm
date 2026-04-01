@@ -1729,6 +1729,32 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_aps_variance_confidence
             ON analytics_prediction_snapshots(variance_class, confidence_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_prediction_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            run_kind TEXT NOT NULL,
+            prediction_family TEXT NULL,
+            comparison_family TEXT NULL,
+            variance_class TEXT NULL,
+            confidence_class TEXT NULL,
+            snapshot_id INTEGER NULL,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(run_kind IN ('BASELINE_RECOMPUTE', 'COMPARISON_RECOMPUTE', 'PREDICTION_RECOMPUTE', 'FULL_STACK_RECOMPUTE')),
+            CHECK(prediction_family IS NULL OR prediction_family IN ('WEAK_RELEASE_RISK', 'PUBLISH_WINDOW_QUALITY', 'CHANNEL_MOMENTUM', 'CADENCE_DEGRADATION_RISK', 'OPERATIONAL_ANOMALY_RISK')),
+            CHECK(comparison_family IS NULL OR comparison_family IN ('RELEASE_VS_CHANNEL_BASELINE', 'CHANNEL_VS_SELF_HISTORY', 'BATCH_MONTH_VS_RECENT_CHANNEL', 'CHANNEL_VS_PORTFOLIO')),
+            CHECK(variance_class IS NULL OR variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(confidence_class IS NULL OR confidence_class IN ('LOW', 'MEDIUM', 'HIGH'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ape_scope_time
+            ON analytics_prediction_events(target_scope_type, target_scope_ref, created_at DESC);
         """
     )
 

@@ -148,6 +148,7 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                     "analytics_baseline_snapshots",
                     "analytics_comparison_snapshots",
                     "analytics_prediction_snapshots",
+                    "analytics_prediction_events",
                 ):
                     self.assertIn(table, tables)
 
@@ -230,6 +231,10 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                 }
                 self.assertIn("idx_aps_scope_family_current", prediction_indexes)
                 self.assertIn("idx_aps_variance_confidence", prediction_indexes)
+                prediction_events_indexes = {
+                    str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_prediction_events)").fetchall()
+                }
+                self.assertIn("idx_ape_scope_time", prediction_events_indexes)
 
                 external_snapshot_indexes = {
                     str(row["name"]) for row in conn.execute("PRAGMA index_list(analytics_snapshots)").fetchall()

@@ -307,6 +307,7 @@ def persist_mf4_derivation(
 ) -> dict[str, int]:
     baseline_ids: dict[str, int] = {}
     comparison_ids: dict[str, int] = {}
+    prediction_ids: dict[str, int] = {}
 
     def _validate_source_refs(refs: list[str]) -> None:
         if not isinstance(refs, list) or not refs:
@@ -368,7 +369,7 @@ def persist_mf4_derivation(
             "UPDATE analytics_prediction_snapshots SET is_current = 0, updated_at = ? WHERE scope_type = ? AND scope_ref = ? AND prediction_family = ? AND is_current = 1",
             (now, p.scope_type, p.scope_ref, p.prediction_family),
         )
-        conn.execute(
+        row = conn.execute(
             """
             INSERT INTO analytics_prediction_snapshots(
                 run_id, scope_type, scope_ref, prediction_family, variance_class, confidence_class, comparison_family, comparison_snapshot_id,
@@ -394,5 +395,13 @@ def persist_mf4_derivation(
                 now,
             ),
         )
+        prediction_ids[p.prediction_family] = int(row.lastrowid)
         prediction_count += 1
-    return {"baseline_count": len(baselines), "comparison_count": len(comparisons), "prediction_count": prediction_count}
+    return {
+        "baseline_count": len(baselines),
+        "comparison_count": len(comparisons),
+        "prediction_count": prediction_count,
+        "baseline_ids": baseline_ids,
+        "comparison_ids": comparison_ids,
+        "prediction_ids": prediction_ids,
+    }

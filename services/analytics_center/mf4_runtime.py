@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from services.analytics_center.errors import (
@@ -27,6 +28,64 @@ from services.analytics_center.mf4_derivation_core import (
     persist_mf4_derivation,
 )
 from services.common.db import now_ts
+
+logger = logging.getLogger(__name__)
+
+
+def _emit_prediction_event(
+    conn: Any,
+    *,
+    event_type: str,
+    target_scope_type: str,
+    target_scope_ref: str,
+    run_kind: str,
+    anomaly_count: int,
+    risk_count: int,
+    prediction_family: str | None = None,
+    comparison_family: str | None = None,
+    variance_class: str | None = None,
+    confidence_class: str | None = None,
+    snapshot_id: int | None = None,
+    payload_json: dict[str, Any] | None = None,
+) -> None:
+    payload = payload_json or {}
+    conn.execute(
+        """
+        INSERT INTO analytics_prediction_events(
+            event_type, target_scope_type, target_scope_ref, run_kind, prediction_family, comparison_family,
+            variance_class, confidence_class, snapshot_id, anomaly_count, risk_count, payload_json, created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            event_type,
+            target_scope_type,
+            target_scope_ref,
+            run_kind,
+            prediction_family,
+            comparison_family,
+            variance_class,
+            confidence_class,
+            snapshot_id,
+            int(anomaly_count),
+            int(risk_count),
+            json.dumps(payload, sort_keys=True),
+            now_ts(),
+        ),
+    )
+    logger.info(
+        "mf4_event event_type=%s target_scope_type=%s target_scope_ref=%s run_kind=%s prediction_family=%s comparison_family=%s variance_class=%s confidence_class=%s snapshot_id=%s anomaly_count=%s risk_count=%s",
+        event_type,
+        target_scope_type,
+        target_scope_ref,
+        run_kind,
+        prediction_family or "-",
+        comparison_family or "-",
+        variance_class or "-",
+        confidence_class or "-",
+        snapshot_id if snapshot_id is not None else -1,
+        int(anomaly_count),
+        int(risk_count),
+    )
 
 
 def _validate_scope(scope_type: str) -> str:
@@ -171,6 +230,39 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
     try:
         kind = _validate_run_kind(run_kind)
         if kind in {"BASELINE_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
+            _emit_prediction_event(
+                conn,
+                event_type="MF4_BASELINE_RECOMPUTE_STARTED",
+                target_scope_type=target_scope_type,
+                target_scope_ref=target_scope_ref,
+                run_kind=kind,
+                anomaly_count=0,
+                risk_count=0,
+                payload_json={"run_id": run_id},
+            )
+        if kind in {"COMPARISON_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
+            _emit_prediction_event(
+                conn,
+                event_type="MF4_COMPARISON_RECOMPUTE_STARTED",
+                target_scope_type=target_scope_type,
+                target_scope_ref=target_scope_ref,
+                run_kind=kind,
+                anomaly_count=0,
+                risk_count=0,
+                payload_json={"run_id": run_id},
+            )
+        if kind in {"PREDICTION_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
+            _emit_prediction_event(
+                conn,
+                event_type="MF4_PREDICTION_RECOMPUTE_STARTED",
+                target_scope_type=target_scope_type,
+                target_scope_ref=target_scope_ref,
+                run_kind=kind,
+                anomaly_count=0,
+                risk_count=0,
+                payload_json={"run_id": run_id},
+            )
+        if kind in {"BASELINE_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
             baselines = derive_baselines(conn, scope_type=target_scope_type, scope_ref=target_scope_ref)
         else:
             baseline_rows = conn.execute(
@@ -195,9 +287,67 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
         if kind in {"BASELINE_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
             counts = persist_mf4_derivation(conn, baselines=baselines, comparisons=[], predictions=[])
             baseline_count += int(counts["baseline_count"])
+            for baseline in baselines:
+                snapshot_id = int(counts["baseline_ids"][baseline.baseline_family])
+                _emit_prediction_event(
+                    conn,
+                    event_type="MF4_BASELINE_SNAPSHOT_CREATED",
+                    target_scope_type=target_scope_type,
+                    target_scope_ref=target_scope_ref,
+                    run_kind=kind,
+                    comparison_family=None,
+                    prediction_family=None,
+                    variance_class=baseline.variance_class,
+                    confidence_class=None,
+                    snapshot_id=snapshot_id,
+                    anomaly_count=anomaly_count,
+                    risk_count=risk_count,
+                    payload_json={"baseline_family": baseline.baseline_family},
+                )
         if kind in {"COMPARISON_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
             counts = persist_mf4_derivation(conn, baselines=[], comparisons=comparisons, predictions=[])
             comparison_count += int(counts["comparison_count"])
+            for comp in comparisons:
+                snapshot_id = int(counts["comparison_ids"][comp.comparison_family])
+                _emit_prediction_event(
+                    conn,
+                    event_type="MF4_COMPARISON_SNAPSHOT_CREATED",
+                    target_scope_type=target_scope_type,
+                    target_scope_ref=target_scope_ref,
+                    run_kind=kind,
+                    comparison_family=comp.comparison_family,
+                    variance_class=comp.variance_class,
+                    snapshot_id=snapshot_id,
+                    anomaly_count=anomaly_count,
+                    risk_count=risk_count,
+                    payload_json={"delta_payload": comp.delta_payload},
+                )
+                if comp.variance_class == "ANOMALY":
+                    _emit_prediction_event(
+                        conn,
+                        event_type="MF4_ANOMALY_CLASSIFIED",
+                        target_scope_type=target_scope_type,
+                        target_scope_ref=target_scope_ref,
+                        run_kind=kind,
+                        comparison_family=comp.comparison_family,
+                        variance_class=comp.variance_class,
+                        snapshot_id=snapshot_id,
+                        anomaly_count=anomaly_count + 1,
+                        risk_count=risk_count,
+                    )
+                if comp.variance_class == "RISK":
+                    _emit_prediction_event(
+                        conn,
+                        event_type="MF4_RISK_CLASSIFIED",
+                        target_scope_type=target_scope_type,
+                        target_scope_ref=target_scope_ref,
+                        run_kind=kind,
+                        comparison_family=comp.comparison_family,
+                        variance_class=comp.variance_class,
+                        snapshot_id=snapshot_id,
+                        anomaly_count=anomaly_count,
+                        risk_count=risk_count + 1,
+                    )
         if kind in {"PREDICTION_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
             predictions = derive_predictions(conn, comparisons=comparisons)
         else:
@@ -205,6 +355,42 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
         if kind in {"PREDICTION_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
             counts = persist_mf4_derivation(conn, baselines=[], comparisons=[], predictions=predictions)
             prediction_count += int(counts["prediction_count"])
+            for pred in predictions:
+                snapshot_id = int(counts["prediction_ids"][pred.prediction_family])
+                _emit_prediction_event(
+                    conn,
+                    event_type="MF4_PREDICTION_SNAPSHOT_CREATED",
+                    target_scope_type=target_scope_type,
+                    target_scope_ref=target_scope_ref,
+                    run_kind=kind,
+                    prediction_family=pred.prediction_family,
+                    comparison_family=pred.comparison_family,
+                    variance_class=pred.variance_class,
+                    confidence_class=pred.confidence_class,
+                    snapshot_id=snapshot_id,
+                    anomaly_count=anomaly_count,
+                    risk_count=risk_count,
+                    payload_json={"predicted_value": pred.predicted_value},
+                )
+                _emit_prediction_event(
+                    conn,
+                    event_type="MF4_EXPLAINABILITY_PAYLOAD_ATTACHED",
+                    target_scope_type=target_scope_type,
+                    target_scope_ref=target_scope_ref,
+                    run_kind=kind,
+                    prediction_family=pred.prediction_family,
+                    comparison_family=pred.comparison_family,
+                    variance_class=pred.variance_class,
+                    confidence_class=pred.confidence_class,
+                    snapshot_id=snapshot_id,
+                    anomaly_count=anomaly_count,
+                    risk_count=risk_count,
+                    payload_json={
+                        "comparison_basis": pred.comparison_basis,
+                        "signals_used": pred.signals_used,
+                        "next_interpretation": pred.explainability_payload.get("remediation_hint_or_next_interpretation"),
+                    },
+                )
         for comp in comparisons:
             if comp.variance_class == "ANOMALY":
                 anomaly_count += 1
@@ -225,6 +411,39 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
             anomaly_count=anomaly_count,
             risk_count=risk_count,
         )
+        if kind in {"BASELINE_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
+            _emit_prediction_event(
+                conn,
+                event_type="MF4_BASELINE_RECOMPUTE_COMPLETED",
+                target_scope_type=target_scope_type,
+                target_scope_ref=target_scope_ref,
+                run_kind=kind,
+                anomaly_count=anomaly_count,
+                risk_count=risk_count,
+                payload_json={"run_id": run_id},
+            )
+        if kind in {"COMPARISON_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
+            _emit_prediction_event(
+                conn,
+                event_type="MF4_COMPARISON_RECOMPUTE_COMPLETED",
+                target_scope_type=target_scope_type,
+                target_scope_ref=target_scope_ref,
+                run_kind=kind,
+                anomaly_count=anomaly_count,
+                risk_count=risk_count,
+                payload_json={"run_id": run_id},
+            )
+        if kind in {"PREDICTION_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
+            _emit_prediction_event(
+                conn,
+                event_type="MF4_PREDICTION_RECOMPUTE_COMPLETED",
+                target_scope_type=target_scope_type,
+                target_scope_ref=target_scope_ref,
+                run_kind=kind,
+                anomaly_count=anomaly_count,
+                risk_count=risk_count,
+                payload_json={"run_id": run_id},
+            )
     except Exception as exc:
         final_state = "PARTIAL" if (baseline_count + comparison_count + prediction_count) > 0 else "FAILED"
         finalize_prediction_run(
@@ -238,6 +457,16 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
             risk_count=risk_count,
             error_code=getattr(exc, "code", None),
             error_detail=str(exc),
+        )
+        _emit_prediction_event(
+            conn,
+            event_type="MF4_RECOMPUTE_PARTIAL_FAILURE_RECORDED",
+            target_scope_type=target_scope_type,
+            target_scope_ref=target_scope_ref,
+            run_kind=run_kind,
+            anomaly_count=anomaly_count,
+            risk_count=risk_count,
+            payload_json={"run_id": run_id, "run_state": final_state, "error_code": getattr(exc, "code", None), "error_detail": str(exc)},
         )
         if final_state == "FAILED":
             raise
