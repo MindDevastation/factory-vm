@@ -50,6 +50,16 @@ __all__ = [
     "ANALYTICS_MF4_PREDICTION_FAMILIES",
     "ANALYTICS_MF4_CONFIDENCE_CLASSES",
     "ANALYTICS_MF4_RUN_KINDS",
+    "resolve_baseline_window",
+    "classify_variance",
+    "build_comparison_basis_and_explainability",
+    "derive_baselines",
+    "derive_comparisons",
+    "derive_predictions",
+    "persist_mf4_derivation",
+    "Mf4BaselineOutput",
+    "Mf4ComparisonOutput",
+    "Mf4PredictionOutput",
 ]
 
 from .errors import AnalyticsDomainError
@@ -88,4 +98,16 @@ from .operational_kpi_runtime import (
     list_operational_problems,
     read_operational_kpis,
     recompute_operational_kpis,
+)
+from .mf4_derivation_core import (
+    Mf4BaselineOutput,
+    Mf4ComparisonOutput,
+    Mf4PredictionOutput,
+    build_comparison_basis_and_explainability,
+    classify_variance,
+    derive_baselines,
+    derive_comparisons,
+    derive_predictions,
+    persist_mf4_derivation,
+    resolve_baseline_window,
 )
