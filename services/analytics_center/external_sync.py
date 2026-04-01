@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from services.analytics_center.errors import (
     AnalyticsDomainError,
@@ -23,6 +23,7 @@ from services.analytics_center.literals import (
     ANALYTICS_YT_LINKAGE_SOURCE,
 )
 from services.common.db import now_ts
+from services.analytics_center.write_service import SnapshotWriteInput, write_snapshot
 
 METRIC_FAMILY_ALIASES: dict[str, str] = {
     "views": "views",
@@ -46,6 +47,27 @@ class SyncTarget:
     observed_from: float | None
     observed_to: float | None
     metric_families: tuple[str, ...]
+
+
+class YouTubeMetricsProvider(Protocol):
+    def fetch_channel_metrics(
+        self,
+        *,
+        channel_slug: str,
+        metric_families: tuple[str, ...],
+        observed_from: float | None,
+        observed_to: float | None,
+    ) -> dict[str, Any]: ...
+
+    def fetch_video_metrics(
+        self,
+        *,
+        channel_slug: str,
+        youtube_video_id: str,
+        metric_families: tuple[str, ...],
+        observed_from: float | None,
+        observed_to: float | None,
+    ) -> dict[str, Any]: ...
 
 
 def normalize_metric_families(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
@@ -438,3 +460,149 @@ def plan_fetch_targets(
     targets = [SyncTarget("CHANNEL", channel_slug, mode, stale_before_ts, now_ts_value, metrics)]
     targets.extend(SyncTarget("RELEASE_VIDEO", r, mode, stale_before_ts, now_ts_value, metrics) for r in release_refs)
     return targets
+
+
+def run_external_youtube_ingestion(
+    conn: sqlite3.Connection,
+    *,
+    run_id: int,
+    provider: YouTubeMetricsProvider,
+    channel_slug: str,
+    target_scope_type: str,
+    target_scope_ref: str,
+) -> int | None:
+    run = conn.execute("SELECT * FROM analytics_external_sync_runs WHERE id = ?", (int(run_id),)).fetchone()
+    if run is None:
+        raise AnalyticsDomainError(code=E5A_INVALID_EXTERNAL_SCOPE, message="sync run not found")
+    if str(run["provider_name"]).upper() != "YOUTUBE":
+        raise AnalyticsDomainError(code=E5A_INVALID_EXTERNAL_SCOPE, message="provider must be YOUTUBE")
+    if str(run["sync_state"]).upper() != "RUNNING":
+        raise AnalyticsDomainError(code=E5A_SYNC_RUN_CONFLICT, message="sync run is not RUNNING")
+
+    requested = tuple(json.loads(str(run["requested_metric_families_json"])))
+    scope = _validate_scope(target_scope_type)
+    snapshot_id: int | None = None
+    try:
+        if scope == "CHANNEL":
+            provider_payload = provider.fetch_channel_metrics(
+                channel_slug=channel_slug,
+                metric_families=requested,
+                observed_from=run["observed_from"],
+                observed_to=run["observed_to"],
+            )
+            channel = conn.execute("SELECT id FROM channels WHERE slug = ?", (channel_slug,)).fetchone()
+            if channel is None:
+                raise AnalyticsDomainError(code=E5A_INVALID_EXTERNAL_SCOPE, message="channel not found")
+            snapshot_id = _persist_external_snapshot(
+                conn,
+                entity_type="CHANNEL",
+                entity_ref=str(channel["id"]),
+                run_mode=str(run["run_mode"]),
+                provider_payload=provider_payload,
+            )
+        else:
+            link = conn.execute(
+                """
+                SELECT * FROM analytics_youtube_video_links
+                WHERE channel_slug = ? AND youtube_video_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (channel_slug, target_scope_ref),
+            ).fetchone()
+            if link is None or link.get("release_id") is None:
+                raise AnalyticsDomainError(code=E5A_INVALID_EXTERNAL_SCOPE, message="release-linked video context missing")
+            provider_payload = provider.fetch_video_metrics(
+                channel_slug=channel_slug,
+                youtube_video_id=target_scope_ref,
+                metric_families=requested,
+                observed_from=run["observed_from"],
+                observed_to=run["observed_to"],
+            )
+            snapshot_id = _persist_external_snapshot(
+                conn,
+                entity_type="RELEASE",
+                entity_ref=str(link["release_id"]),
+                run_mode=str(run["run_mode"]),
+                provider_payload=provider_payload,
+            )
+
+        returned = provider_payload.get("metric_families_returned", [])
+        unavailable = provider_payload.get("metric_families_unavailable", [])
+        incomplete_backfill = bool(provider_payload.get("incomplete_backfill", False))
+        source_unavailable = bool(provider_payload.get("source_unavailable", False))
+        permission_limited = bool(provider_payload.get("permission_limited", False))
+        to_state = "FAILED" if source_unavailable else ("PARTIAL" if unavailable or incomplete_backfill else "SUCCEEDED")
+        freshness = str(provider_payload.get("freshness_status", "FRESH")).upper()
+        transition_sync_run(
+            conn,
+            run_id=run_id,
+            to_sync_state=to_state,
+            metric_families_returned=returned,
+            metric_families_unavailable=unavailable,
+            incomplete_backfill=incomplete_backfill,
+            freshness_status=freshness,
+            freshness_basis=str(provider_payload.get("freshness_basis", "window_end")),
+            source_unavailable=source_unavailable,
+            permission_limited=permission_limited,
+        )
+        conn.execute(
+            "UPDATE analytics_external_sync_runs SET created_snapshots_count = ?, partial_snapshots_count = ?, failed_snapshots_count = ? WHERE id = ?",
+            (
+                0 if snapshot_id is None else 1,
+                1 if to_state == "PARTIAL" else 0,
+                1 if to_state == "FAILED" else 0,
+                int(run_id),
+            ),
+        )
+        return snapshot_id
+    except AnalyticsDomainError:
+        raise
+    except Exception as exc:
+        transition_sync_run(
+            conn,
+            run_id=run_id,
+            to_sync_state="FAILED",
+            metric_families_returned=(),
+            metric_families_unavailable=requested,
+            incomplete_backfill=False,
+            freshness_status="UNKNOWN",
+            freshness_basis="runner_exception",
+            source_unavailable=True,
+            permission_limited=False,
+        )
+        conn.execute(
+            "UPDATE analytics_external_sync_runs SET failed_snapshots_count = 1, error_detail = ? WHERE id = ?",
+            (str(exc), int(run_id)),
+        )
+        return None
+
+
+def _persist_external_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    entity_type: str,
+    entity_ref: str,
+    run_mode: str,
+    provider_payload: dict[str, Any],
+) -> int:
+    unavailable = normalize_metric_families(tuple(provider_payload.get("metric_families_unavailable", ())))
+    source_unavailable = bool(provider_payload.get("source_unavailable", False))
+    incomplete_backfill = bool(provider_payload.get("incomplete_backfill", False))
+    status = "FAILED" if source_unavailable else ("PARTIAL" if unavailable or incomplete_backfill else "CURRENT")
+    freshness_status = str(provider_payload.get("freshness_status", "FRESH")).upper()
+    snapshot = SnapshotWriteInput(
+        entity_type=entity_type,
+        entity_ref=entity_ref,
+        source_family="EXTERNAL_YOUTUBE",
+        window_type="BOUNDED_WINDOW",
+        snapshot_status=status,
+        freshness_status=freshness_status if freshness_status in {"FRESH", "STALE", "PARTIAL", "UNKNOWN"} else "UNKNOWN",
+        payload_json=provider_payload.get("metrics", {}),
+        explainability_json={"provider": "YOUTUBE", "run_mode": run_mode},
+        lineage_json={"source": "youtube_analytics_provider", "channel_slug": provider_payload.get("channel_slug")},
+        anomaly_markers_json=provider_payload.get("metric_families_unavailable", []),
+        captured_at=now_ts(),
+        is_current=not source_unavailable,
+    )
+    return write_snapshot(conn, snapshot)

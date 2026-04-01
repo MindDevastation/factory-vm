@@ -38,13 +38,14 @@ def make_sync_run_payload(
     target_scope_type: str = "CHANNEL",
     target_scope_ref: str = "darkwood-reverie",
     run_mode: str = "MANUAL_REFRESH",
+    metric_families_requested: list[str] | None = None,
 ) -> dict:
     return {
         "provider_name": "YOUTUBE",
         "target_scope_type": target_scope_type,
         "target_scope_ref": target_scope_ref,
         "run_mode": run_mode,
-        "metric_families_requested": ["views", "impressions", "ctr"],
+        "metric_families_requested": metric_families_requested or ["views", "impressions", "ctr"],
         "observed_from": dbm.now_ts() - 86400.0,
         "observed_to": dbm.now_ts(),
         "freshness_basis": "window_end",

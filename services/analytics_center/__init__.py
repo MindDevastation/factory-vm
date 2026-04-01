@@ -43,4 +43,6 @@ from .external_sync import (
     normalize_metric_families,
     plan_fetch_targets,
     transition_sync_run,
+    run_external_youtube_ingestion,
 )
+from .youtube_provider import YouTubeAnalyticsProvider
