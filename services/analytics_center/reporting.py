@@ -21,6 +21,28 @@ _SCOPE_ENTITY_TYPE = {
 _ARTIFACTS_ROOT = Path(tempfile.gettempdir()) / "factory_analytics_reports"
 
 
+_SUPPORTED_SOURCE_FAMILY_SCOPES: dict[str, set[str]] = {
+    "OVERVIEW": set(),
+    "CHANNEL": set(),
+    "RELEASE": set(),
+    "BATCH_MONTH": set(),
+}
+
+_ALLOWED_SOURCE_FAMILIES = {"INTERNAL_OPERATIONAL", "EXTERNAL_YOUTUBE"}
+
+
+def validate_mf6_source_family_filter(*, context_scope: str, source_family: str | None) -> str | None:
+    raw = str(source_family or "").strip()
+    if not raw:
+        return None
+    normalized = raw.upper()
+    if normalized not in _ALLOWED_SOURCE_FAMILIES:
+        raise AnalyticsDomainError(code="E5A_INVALID_ANALYTICS_FILTER_COMBINATION", message="invalid source_family filter value")
+    if normalized not in _SUPPORTED_SOURCE_FAMILY_SCOPES.get(str(context_scope).upper(), set()):
+        raise AnalyticsDomainError(code="E5A_INVALID_ANALYTICS_FILTER_COMBINATION", message="source_family filter is not supported for this scope")
+    return normalized
+
+
 def validate_report_request(*, report_scope_type: str, artifact_type: str) -> None:
     if report_scope_type not in ANALYTICS_MF6_REPORT_SCOPE_TYPES:
         raise AnalyticsDomainError(code=E5A_INVALID_REPORT_SCOPE, message="invalid report scope")
@@ -100,6 +122,7 @@ def _apply_report_filters(dataset: dict[str, Any], *, filter_payload: dict[str, 
 
 
 def _build_report_dataset(conn: Any, *, report_scope_type: str, report_scope_ref: str | None, report_family: str, filter_payload: dict[str, Any]) -> dict[str, Any]:
+    validate_mf6_source_family_filter(context_scope=report_scope_type, source_family=filter_payload.get("source_family"))
     snap_where, snap_params = _scope_snapshot_params(conn=conn, report_scope_type=report_scope_type, report_scope_ref=report_scope_ref)
     kpi_where, kpi_params = _scope_params(conn=conn, report_scope_type=report_scope_type, report_scope_ref=report_scope_ref, scope_type_col="scope_type", scope_ref_col="scope_ref")
     cmp_where, cmp_params = _scope_params(conn=conn, report_scope_type=report_scope_type, report_scope_ref=report_scope_ref, scope_type_col="scope_type", scope_ref_col="scope_ref")

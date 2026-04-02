@@ -6776,6 +6776,11 @@ def _compute_freshness_summary(conn: Any, *, page_scope: str, scope_ref: Any | N
     return freshness
 
 
+
+
+def _analytics_filter_error(code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"error": {"code": code, "message": message}})
+
 @app.get("/v1/analytics/filter-contract")
 def api_analytics_filter_contract(_: bool = Depends(require_basic_auth(env))):
     return {
@@ -6873,6 +6878,13 @@ def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth
     conn = dbm.connect(env)
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
+        from services.analytics_center.reporting import validate_mf6_source_family_filter
+        from services.analytics_center.errors import AnalyticsDomainError
+
+        try:
+            validate_mf6_source_family_filter(context_scope="RELEASE", source_family=source_family)
+        except AnalyticsDomainError as exc:
+            return _analytics_filter_error(exc.code, exc.message)
 
         aggregated = aggregate_scope(conn, scope_type="RELEASE", scope_ref=str(release_id), filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family})
         page = _build_page(
@@ -7008,6 +7020,9 @@ def api_analytics_report_request(
             )
         except Exception as exc:
             _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), freshness_summary=_compute_freshness_summary(conn, page_scope=str(payload.get("report_scope_type", "OVERVIEW")), scope_ref=payload.get("report_scope_ref")))
+            from services.analytics_center.errors import AnalyticsDomainError
+            if isinstance(exc, AnalyticsDomainError) and exc.code == "E5A_INVALID_ANALYTICS_FILTER_COMBINATION":
+                return _analytics_filter_error(exc.code, exc.message)
             raise HTTPException(422, f"report generation failed: {exc}")
         row = conn.execute("SELECT * FROM analytics_report_records WHERE id = ?", (int(report_id),)).fetchone()
         event_freshness = _compute_freshness_summary(conn, page_scope=str(payload.get("report_scope_type", "OVERVIEW")), scope_ref=payload.get("report_scope_ref"))

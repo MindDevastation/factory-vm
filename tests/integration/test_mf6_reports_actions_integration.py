@@ -98,6 +98,12 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
             impossible_resp = client.post("/v1/analytics/reports/request", headers=h, json=impossible_filter)
             self.assertEqual(impossible_resp.status_code, 422)
             self.assertIn("missing required source data", impossible_resp.text)
+            unsupported_sf = dict(payload)
+            unsupported_sf["artifact_type"] = "STRUCTURED_REPORT"
+            unsupported_sf["filter_payload"] = {"channel": "darkwood-reverie", "source_family": "EXTERNAL_YOUTUBE"}
+            unsupported_sf_resp = client.post("/v1/analytics/reports/request", headers=h, json=unsupported_sf)
+            self.assertEqual(unsupported_sf_resp.status_code, 422)
+            self.assertEqual(unsupported_sf_resp.json()["error"]["code"], "E5A_INVALID_ANALYTICS_FILTER_COMBINATION")
             bad = dict(payload)
             bad["artifact_type"] = "BAD_ARTIFACT"
             bad_resp = client.post("/v1/analytics/reports/request", headers=h, json=bad)

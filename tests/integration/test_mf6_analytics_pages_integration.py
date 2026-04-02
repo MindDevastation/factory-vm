@@ -105,6 +105,26 @@ class TestMf6AnalyticsPagesIntegration(unittest.TestCase):
             self.assertEqual(applied["recommendation_family"], "WEAK_RELEASE_ATTENTION")
             self.assertLessEqual(len(filtered.json()["recommendation_summary"]), len(base.json()["recommendation_summary"]))
 
+    def test_release_source_family_unsupported_returns_422(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            conn = dbm.connect(env)
+            try:
+                seeded = seed_mf6_page_data(conn)
+            finally:
+                conn.close()
+            r = client.get(
+                f"/v1/analytics/releases/{seeded['release_id']}",
+                params={"source_family": "EXTERNAL_YOUTUBE"},
+                headers=h,
+            )
+            self.assertEqual(r.status_code, 422)
+            body = r.json()
+            self.assertEqual(body["error"]["code"], "E5A_INVALID_ANALYTICS_FILTER_COMBINATION")
+            self.assertIn("source_family", body["error"]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
