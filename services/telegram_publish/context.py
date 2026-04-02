@@ -22,6 +22,18 @@ def _build_web_link(job_id: int, release_id: int | None = None) -> str:
     return f"/jobs/{int(job_id)}?release_id={int(release_id)}"
 
 
+def _state_problem_explanation(*, publish_state: str, reason_code: str | None, reason_detail: str | None) -> str:
+    if reason_detail:
+        return reason_detail
+    if reason_code:
+        return reason_code
+    if publish_state.startswith("manual_handoff"):
+        return "manual handoff flow is active"
+    if publish_state == "publish_state_drift_detected":
+        return "publish state drift detected; use full context for safe next action"
+    return "no explicit blocker"
+
+
 def build_publish_context_summary(*, row: dict[str, Any]) -> dict[str, Any]:
     job_id = int(row["job_id"])
     release_id = int(row["release_id"]) if row.get("release_id") is not None else None
@@ -33,6 +45,7 @@ def build_publish_context_summary(*, row: dict[str, Any]) -> dict[str, Any]:
     blocker = reason_code or reason_detail or ("manual_handoff_required" if publish_state.startswith("manual_handoff") else None)
 
     return {
+        "context_kind": "publish_decision",
         "target": {
             "job_id": job_id,
             "release_id": release_id,
@@ -40,9 +53,16 @@ def build_publish_context_summary(*, row: dict[str, Any]) -> dict[str, Any]:
             "release_title": row.get("release_title"),
         },
         "publish_state": publish_state,
-        "reason": {"code": reason_code, "detail": reason_detail, "blocker": blocker},
+        "reason": {
+            "code": reason_code,
+            "detail": reason_detail,
+            "blocker": blocker,
+            "explanation": _state_problem_explanation(publish_state=publish_state, reason_code=reason_code, reason_detail=reason_detail),
+        },
         "available_next_actions": actions,
+        "action_surface_safety": "transition_safe",
         "web_link": _build_web_link(job_id=job_id, release_id=release_id),
+        "full_context_hint": "Open web link for full timeline, audit trail, and payload details.",
         "compact": True,
     }
 

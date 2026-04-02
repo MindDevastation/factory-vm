@@ -22,6 +22,9 @@ class TestE6AMf3Slice1PublishContextUnit(unittest.TestCase):
         self.assertIn("available_next_actions", summary)
         self.assertTrue(bool(summary["web_link"]))
         self.assertTrue(bool(summary["compact"]))
+        self.assertEqual(summary["context_kind"], "publish_decision")
+        self.assertEqual(summary["action_surface_safety"], "transition_safe")
+        self.assertIn("full_context_hint", summary)
 
     def test_allowed_next_actions_surface(self) -> None:
         handoff = build_publish_context_summary(
@@ -48,11 +51,13 @@ class TestE6AMf3Slice1PublishContextUnit(unittest.TestCase):
             }
         )
         self.assertEqual(drift["available_next_actions"], [])
+        self.assertEqual(drift["reason"]["explanation"], "changed externally")
 
     def test_manual_handoff_fixture_factory(self) -> None:
         fx = build_manual_handoff_fixture(job_id=7, release_id=8)
         self.assertEqual(fx["publish_state"], "manual_handoff_pending")
         self.assertIn("ack_manual_handoff", fx["allowed_next_actions"])
+        self.assertEqual(fx["context_kind"], "publish_decision")
 
 
 if __name__ == "__main__":

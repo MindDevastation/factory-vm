@@ -52,6 +52,9 @@ class TestE6AMf3Slice1PublishContextIntegration(unittest.TestCase):
                 self.assertEqual(ctx["reason"]["code"], "policy_requires_manual")
                 self.assertIn("ack_manual_handoff", ctx["available_next_actions"])
                 self.assertIn("/jobs/", ctx["web_link"])
+                self.assertEqual(ctx["action_surface_safety"], "transition_safe")
+                self.assertIn("full timeline", ctx["full_context_hint"])
+                self.assertIn("manual handoff", ctx["reason"]["explanation"])
             finally:
                 conn.close()
 

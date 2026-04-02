@@ -11,4 +11,6 @@ def build_manual_handoff_fixture(*, job_id: int = 1, release_id: int = 10) -> di
         "publish_reason_code": "policy_requires_manual",
         "publish_reason_detail": "manual handoff required",
         "allowed_next_actions": ["approve", "reject", "ack_manual_handoff"],
+        "context_kind": "publish_decision",
+        "action_surface_safety": "transition_safe",
     }
