@@ -5,8 +5,10 @@ import unittest
 
 from fastapi.testclient import TestClient
 
+from services.analytics_center.recommendation_runtime import recompute_recommendations
 from services.common import db as dbm
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
+from tests.recommendation_fixtures import seed_recommendation_inputs
 
 
 class TestMf6Hardening(unittest.TestCase):
@@ -18,6 +20,19 @@ class TestMf6Hardening(unittest.TestCase):
     def test_mf6_required_ui_events_emitted(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                seed_recommendation_inputs(conn, scope_type="CHANNEL", scope_ref="darkwood-reverie")
+                seed_recommendation_inputs(conn, scope_type="PORTFOLIO", scope_ref="portfolio-global")
+                recompute_recommendations(
+                    conn,
+                    recommendation_scope_type="CHANNEL",
+                    recommendation_scope_ref="darkwood-reverie",
+                    recommendation_family="WEAK_RELEASE_ATTENTION",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+            finally:
+                conn.close()
             client = self._new_client()
             h = basic_auth_header(env.basic_user, env.basic_pass)
 

@@ -6964,7 +6964,10 @@ def api_analytics_report_request(
             raise HTTPException(422, f"report generation failed: {exc}")
         row = conn.execute("SELECT * FROM analytics_report_records WHERE id = ?", (int(report_id),)).fetchone()
         _record_analytics_ui_event(event_type="ANALYTICS_REPORT_REQUESTED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_REQUEST", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary={"status": "PARTIAL"})
-        _record_analytics_ui_event(event_type="ANALYTICS_REPORT_GENERATED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_GENERATED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary={"status": "PARTIAL"})
+        if row is not None and str(row["generation_status"]) == "READY":
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_GENERATED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_GENERATED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary={"status": "PARTIAL"})
+        else:
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary={"status": "PARTIAL"})
         return {"report_record": dict(row), "deduped_or_created_id": int(report_id)}
     finally:
         conn.close()
@@ -6992,8 +6995,13 @@ def api_analytics_report_download(report_record_id: int, _: bool = Depends(requi
         row = conn.execute("SELECT * FROM analytics_report_records WHERE id = ?", (int(report_record_id),)).fetchone()
         if row is None:
             raise HTTPException(404, "report not found")
+        if str(row["generation_status"]) != "READY":
+            raise HTTPException(422, "report not ready")
+        artifact_ref = str(row["artifact_ref"] or "")
+        if not artifact_ref or not os.path.exists(artifact_ref):
+            raise HTTPException(422, "report artifact missing")
         _record_analytics_ui_event(event_type="EXPORT_DOWNLOADED", page_scope=str(row["report_scope_type"]), action_type="DOWNLOAD", scope_ref=row["report_scope_ref"], artifact_type=str(row["artifact_type"]), report_record_id=int(report_record_id), freshness_summary={"status": "PARTIAL"})
-        return {"download": True, "report_record_id": int(report_record_id), "artifact_ref": row["artifact_ref"], "artifact_type": row["artifact_type"]}
+        return {"download": True, "report_record_id": int(report_record_id), "artifact_ref": artifact_ref, "artifact_type": row["artifact_type"]}
     finally:
         conn.close()
 

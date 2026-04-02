@@ -20,6 +20,19 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
     def test_generate_list_download_and_dedupe_reports(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                seed_recommendation_inputs(conn)
+                recompute_recommendations(
+                    conn,
+                    recommendation_scope_type="CHANNEL",
+                    recommendation_scope_ref="darkwood-reverie",
+                    recommendation_family="WEAK_RELEASE_ATTENTION",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+                self.assertGreaterEqual(len(read_recommendations(conn, recommendation_family="WEAK_RELEASE_ATTENTION", current_only=True)), 1)
+            finally:
+                conn.close()
             client = self._new_client()
             h = basic_auth_header(env.basic_user, env.basic_pass)
             payload = {
@@ -35,17 +48,47 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
             b = client.post("/v1/analytics/reports/request", headers=h, json=payload)
             self.assertEqual(b.status_code, 200)
             self.assertEqual(first_id, b.json()["deduped_or_created_id"])
+            created = a.json()["report_record"]
+            self.assertEqual(created["generation_status"], "READY")
+            self.assertTrue(str(created["artifact_ref"]).endswith(".xlsx"))
             listed = client.get("/v1/analytics/reports/records", headers=h)
             self.assertEqual(listed.status_code, 200)
             self.assertGreaterEqual(len(listed.json()["items"]), 1)
             dl = client.get(f"/v1/analytics/reports/{first_id}/download", headers=h)
             self.assertEqual(dl.status_code, 200)
             self.assertTrue(dl.json()["download"])
+            self.assertTrue(str(dl.json()["artifact_ref"]).endswith(".xlsx"))
+            structured_payload = dict(payload)
+            structured_payload["artifact_type"] = "STRUCTURED_REPORT"
+            structured = client.post("/v1/analytics/reports/request", headers=h, json=structured_payload)
+            self.assertEqual(structured.status_code, 200)
+            self.assertTrue(str(structured.json()["report_record"]["artifact_ref"]).endswith("_structured.json"))
+            api_payload = dict(payload)
+            api_payload["artifact_type"] = "API_REPORT"
+            api_generated = client.post("/v1/analytics/reports/request", headers=h, json=api_payload)
+            self.assertEqual(api_generated.status_code, 200)
+            self.assertTrue(str(api_generated.json()["report_record"]["artifact_ref"]).endswith("_api_payload.json"))
             bad = dict(payload)
             bad["artifact_type"] = "BAD_ARTIFACT"
             bad_resp = client.post("/v1/analytics/reports/request", headers=h, json=bad)
             self.assertEqual(bad_resp.status_code, 422)
             self.assertIn("report generation failed", bad_resp.text)
+
+    def test_report_request_fails_when_required_source_data_missing(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            payload = {
+                "report_scope_type": "CHANNEL",
+                "report_scope_ref": "darkwood-reverie",
+                "report_family": "ANALYTICS_SUMMARY",
+                "filter_payload": {"channel": "darkwood-reverie"},
+                "artifact_type": "XLSX",
+            }
+            resp = client.post("/v1/analytics/reports/request", headers=h, json=payload)
+            self.assertEqual(resp.status_code, 422)
+            self.assertIn("missing required source data", resp.text)
 
     def test_actions_delegate_without_adjacent_domain_mutation(self) -> None:
         with temp_env() as (_, env):
