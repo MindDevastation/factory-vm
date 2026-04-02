@@ -30,7 +30,7 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 ["OVERVIEW", "CHANNELS", "RELEASES_VIDEOS", "BATCH_MONTH", "ANOMALIES", "RECOMMENDATIONS", "REPORTS_EXPORTS"],
             )
 
-    def test_page_skeletons_render_and_show_partial_completeness(self) -> None:
+    def test_page_skeletons_render_and_show_missing_or_partial_completeness(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
             client = self._new_client()
@@ -53,6 +53,8 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 self.assertIn("applied_filters", body)
                 self.assertIn("freshness_summary", body)
                 self.assertIn("source_coverage_summary", body)
+                self.assertIn(body["freshness_summary"]["status"], {"MISSING", "PARTIAL", "STALE", "FRESH"})
+                self.assertIn(body["source_coverage_summary"]["status"], {"NO_DATA", "PARTIAL", "FULL"})
                 self.assertEqual(body["data_completeness"], "PARTIAL")
 
 

@@ -17,7 +17,7 @@ class TestMf6PageContracts(unittest.TestCase):
             normalize_analytics_filters({"unknown": "x"})
 
     def test_freshness_coverage_builder(self) -> None:
-        freshness, coverage = build_freshness_coverage_summary(source_counts={"A": 1, "B": 0})
+        freshness, coverage = build_freshness_coverage_summary(source_states={"A": "FRESH", "B": "MISSING"})
         self.assertEqual(freshness["status"], "PARTIAL")
         self.assertIn("B", coverage["missing_sources"])
 

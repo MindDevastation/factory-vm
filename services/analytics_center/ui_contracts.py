@@ -33,10 +33,30 @@ def normalize_analytics_filters(raw: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in raw.items() if v not in (None, "", [])}
 
 
-def build_freshness_coverage_summary(*, source_counts: dict[str, int]) -> tuple[dict[str, Any], dict[str, Any]]:
-    missing = [k for k, v in source_counts.items() if int(v) <= 0]
-    freshness = {"status": "FRESH" if not missing else "PARTIAL", "warning": None if not missing else "some sources missing"}
-    coverage = {"status": "FULL" if not missing else "PARTIAL", "missing_sources": missing}
+def build_freshness_coverage_summary(*, source_states: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    normalized = {str(k): str(v).upper() for k, v in source_states.items()}
+    states = list(normalized.values())
+    if states and all(state == "MISSING" for state in states):
+        freshness = {"status": "MISSING", "warning": "no canonical analytics source data"}
+    elif "STALE" in states:
+        freshness = {"status": "STALE", "warning": f"stale upstream sources: {', '.join(sorted([k for k, v in normalized.items() if v == 'STALE']))}"}
+    elif "PARTIAL" in states or "MISSING" in states:
+        freshness = {"status": "PARTIAL", "warning": f"degraded upstream sources: {', '.join(sorted([k for k, v in normalized.items() if v in {'PARTIAL', 'MISSING'}]))}"}
+    else:
+        freshness = {"status": "FRESH", "warning": None}
+
+    if normalized and all(v == "MISSING" for v in normalized.values()):
+        coverage_status = "NO_DATA"
+    elif all(v == "FRESH" for v in normalized.values()):
+        coverage_status = "FULL"
+    else:
+        coverage_status = "PARTIAL"
+    coverage = {
+        "status": coverage_status,
+        "missing_sources": sorted([k for k, v in normalized.items() if v == "MISSING"]),
+        "stale_sources": sorted([k for k, v in normalized.items() if v == "STALE"]),
+        "source_states": normalized,
+    }
     return freshness, coverage
 
 

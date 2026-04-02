@@ -1,11 +1,113 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 
 def _rows(conn: Any, query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(query, params).fetchall()]
+
+
+_FRESHNESS_STALE_AFTER_SECONDS = 7 * 86400
+
+
+def _state_from_timestamp(*, count: int, latest_ts: float | None) -> str:
+    if int(count) <= 0 or latest_ts is None:
+        return "MISSING"
+    age_seconds = max(0.0, time.time() - float(latest_ts))
+    return "STALE" if age_seconds > _FRESHNESS_STALE_AFTER_SECONDS else "FRESH"
+
+
+def _overall_freshness(source_states: dict[str, str]) -> dict[str, Any]:
+    states = list(source_states.values())
+    if states and all(state == "MISSING" for state in states):
+        return {"status": "MISSING", "warning": "no canonical analytics source data"}
+    if "STALE" in states:
+        stale_sources = sorted([k for k, v in source_states.items() if v == "STALE"])
+        return {"status": "STALE", "warning": f"stale upstream sources: {', '.join(stale_sources)}"}
+    if "PARTIAL" in states or "MISSING" in states:
+        degraded_sources = sorted([k for k, v in source_states.items() if v in {"PARTIAL", "MISSING"}])
+        return {"status": "PARTIAL", "warning": f"degraded upstream sources: {', '.join(degraded_sources)}"}
+    return {"status": "FRESH", "warning": None}
+
+
+def _coverage_summary(source_states: dict[str, str]) -> dict[str, Any]:
+    missing_sources = sorted([k for k, v in source_states.items() if v == "MISSING"])
+    stale_sources = sorted([k for k, v in source_states.items() if v == "STALE"])
+    if source_states and all(v == "MISSING" for v in source_states.values()):
+        status = "NO_DATA"
+    elif not missing_sources and not stale_sources:
+        status = "FULL"
+    else:
+        status = "PARTIAL"
+    return {"status": status, "missing_sources": missing_sources, "stale_sources": stale_sources, "source_states": dict(source_states)}
+
+
+def compute_page_freshness(conn: Any, *, page_scope: str, scope_ref: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    entity_scope = {
+        "OVERVIEW": None,
+        "CHANNEL": ("CHANNEL", str(scope_ref or "")),
+        "RELEASE": ("RELEASE", str(scope_ref or "")),
+        "BATCH_MONTH": ("BATCH", str(scope_ref or "")),
+    }.get(page_scope)
+
+    if entity_scope is None:
+        snap = conn.execute(
+            """
+            SELECT COUNT(*) AS c, MAX(captured_at) AS latest_ts,
+                   SUM(CASE WHEN freshness_status='STALE' THEN 1 ELSE 0 END) AS stale_count,
+                   SUM(CASE WHEN freshness_status IN ('PARTIAL','UNKNOWN') THEN 1 ELSE 0 END) AS degraded_count
+            FROM analytics_snapshots
+            WHERE is_current = 1
+            """
+        ).fetchone()
+    else:
+        snap = conn.execute(
+            """
+            SELECT COUNT(*) AS c, MAX(captured_at) AS latest_ts,
+                   SUM(CASE WHEN freshness_status='STALE' THEN 1 ELSE 0 END) AS stale_count,
+                   SUM(CASE WHEN freshness_status IN ('PARTIAL','UNKNOWN') THEN 1 ELSE 0 END) AS degraded_count
+            FROM analytics_snapshots
+            WHERE is_current = 1 AND entity_type = ? AND entity_ref = ?
+            """,
+            (entity_scope[0], entity_scope[1]),
+        ).fetchone()
+    snapshot_state = _state_from_timestamp(count=int(snap["c"]), latest_ts=snap["latest_ts"])
+    if int(snap["c"]) > 0 and int(snap["stale_count"] or 0) > 0:
+        snapshot_state = "STALE"
+    elif int(snap["c"]) > 0 and int(snap["degraded_count"] or 0) > 0 and snapshot_state != "STALE":
+        snapshot_state = "PARTIAL"
+
+    def _scope_count_latest(table: str, scope_col: str, ref_col: str) -> tuple[int, float | None]:
+        if page_scope in {"OVERVIEW", "ANOMALIES", "RECOMMENDATIONS", "REPORTS_EXPORTS"}:
+            row = conn.execute(f"SELECT COUNT(*) AS c, MAX(created_at) AS latest_ts FROM {table} WHERE is_current = 1").fetchone()
+        else:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS c, MAX(created_at) AS latest_ts FROM {table} WHERE is_current = 1 AND {scope_col} = ? AND {ref_col} = ?",
+                (page_scope, str(scope_ref or "")),
+            ).fetchone()
+        return int(row["c"]), row["latest_ts"]
+
+    kpi_count, kpi_latest = _scope_count_latest("analytics_operational_kpi_snapshots", "scope_type", "scope_ref")
+    cmp_count, cmp_latest = _scope_count_latest("analytics_comparison_snapshots", "scope_type", "scope_ref")
+    pred_count, pred_latest = _scope_count_latest("analytics_prediction_snapshots", "scope_type", "scope_ref")
+    if page_scope in {"OVERVIEW", "ANOMALIES", "RECOMMENDATIONS", "REPORTS_EXPORTS"}:
+        rec = conn.execute("SELECT COUNT(*) AS c, MAX(created_at) AS latest_ts FROM analytics_recommendation_snapshots WHERE is_current = 1").fetchone()
+    else:
+        rec = conn.execute(
+            "SELECT COUNT(*) AS c, MAX(created_at) AS latest_ts FROM analytics_recommendation_snapshots WHERE is_current = 1 AND recommendation_scope_type = ? AND recommendation_scope_ref = ?",
+            (page_scope, str(scope_ref or "")),
+        ).fetchone()
+
+    source_states = {
+        "analytics_snapshots": snapshot_state,
+        "analytics_operational_kpi_snapshots": _state_from_timestamp(count=kpi_count, latest_ts=kpi_latest),
+        "analytics_comparison_snapshots": _state_from_timestamp(count=cmp_count, latest_ts=cmp_latest),
+        "analytics_prediction_snapshots": _state_from_timestamp(count=pred_count, latest_ts=pred_latest),
+        "analytics_recommendation_snapshots": _state_from_timestamp(count=int(rec["c"]), latest_ts=rec["latest_ts"]),
+    }
+    return _overall_freshness(source_states), _coverage_summary(source_states)
 
 
 def aggregate_overview(conn: Any) -> dict[str, Any]:

@@ -6743,20 +6743,15 @@ def _analytics_nav_spine() -> list[dict[str, str]]:
     ]
 
 
-def _build_page(scope: str, raw_filters: dict[str, Any], *, summary_cards: list[dict[str, Any]], detail_blocks: list[dict[str, Any]], anomaly_markers: list[dict[str, Any]], recommendation_summary: list[dict[str, Any]], available_actions: list[dict[str, Any]], export_actions: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_page(conn: Any, scope: str, raw_filters: dict[str, Any], *, scope_ref: str | None = None, summary_cards: list[dict[str, Any]], detail_blocks: list[dict[str, Any]], anomaly_markers: list[dict[str, Any]], recommendation_summary: list[dict[str, Any]], available_actions: list[dict[str, Any]], export_actions: list[dict[str, Any]]) -> dict[str, Any]:
     from services.analytics_center.ui_contracts import (
         build_analytics_page_contract,
-        build_freshness_coverage_summary,
         normalize_analytics_filters,
     )
+    from services.analytics_center.page_aggregations import compute_page_freshness
 
     applied = normalize_analytics_filters(raw_filters)
-    source_counts = {
-        "EXTERNAL_YOUTUBE": len(detail_blocks),
-        "INTERNAL_OPERATIONAL": len(summary_cards),
-        "RECOMMENDATIONS": len(recommendation_summary),
-    }
-    freshness, coverage = build_freshness_coverage_summary(source_counts=source_counts)
+    freshness, coverage = compute_page_freshness(conn, page_scope=scope, scope_ref=scope_ref)
     page = build_analytics_page_contract(
         page_scope=scope,
         applied_filters=applied,
@@ -6771,6 +6766,14 @@ def _build_page(scope: str, raw_filters: dict[str, Any], *, summary_cards: list[
     )
     page["navigation"] = _analytics_nav_spine()
     return page
+
+
+def _compute_freshness_summary(conn: Any, *, page_scope: str, scope_ref: Any | None = None) -> dict[str, Any]:
+    from services.analytics_center.page_aggregations import compute_page_freshness
+
+    normalized_scope = {"BATCH_MONTH": "BATCH_MONTH", "OVERVIEW": "OVERVIEW", "CHANNEL": "CHANNEL", "RELEASE": "RELEASE", "ANOMALIES": "ANOMALIES", "RECOMMENDATIONS": "RECOMMENDATIONS", "REPORTS_EXPORTS": "REPORTS_EXPORTS"}.get(str(page_scope or "").upper(), "OVERVIEW")
+    freshness, _ = compute_page_freshness(conn, page_scope=normalized_scope, scope_ref=None if scope_ref is None else str(scope_ref))
+    return freshness
 
 
 @app.get("/v1/analytics/filter-contract")
@@ -6793,18 +6796,19 @@ def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_wind
         from services.analytics_center.page_aggregations import aggregate_overview
 
         aggregated = aggregate_overview(conn)
+        page = _build_page(
+            conn,
+            "OVERVIEW",
+            {"time_window": time_window, "freshness": freshness},
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "recompute"}],
+            export_actions=[{"action": "export_overview", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
     finally:
         conn.close()
-    page = _build_page(
-        "OVERVIEW",
-        {"time_window": time_window, "freshness": freshness},
-        summary_cards=aggregated["summary_cards"],
-        detail_blocks=aggregated["detail_blocks"],
-        anomaly_markers=aggregated["anomaly_risk_markers"],
-        recommendation_summary=aggregated["recommendation_summary"],
-        available_actions=[{"action": "refresh"}, {"action": "recompute"}],
-        export_actions=[{"action": "export_overview", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
-    )
     _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="OVERVIEW", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
     return page
 
@@ -6816,18 +6820,20 @@ def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_au
         from services.analytics_center.page_aggregations import aggregate_scope
 
         aggregated = aggregate_scope(conn, scope_type="CHANNEL", scope_ref=channel_slug)
+        page = _build_page(
+            conn,
+            "CHANNEL",
+            {"channel": channel_slug, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence},
+            scope_ref=channel_slug,
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "open_anomaly"}, {"action": "open_recommendation"}],
+            export_actions=[{"action": "export_channel", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
     finally:
         conn.close()
-    page = _build_page(
-        "CHANNEL",
-        {"channel": channel_slug, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence},
-        summary_cards=aggregated["summary_cards"],
-        detail_blocks=aggregated["detail_blocks"],
-        anomaly_markers=aggregated["anomaly_risk_markers"],
-        recommendation_summary=aggregated["recommendation_summary"],
-        available_actions=[{"action": "refresh"}, {"action": "open_anomaly"}, {"action": "open_recommendation"}],
-        export_actions=[{"action": "export_channel", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
-    )
     _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="CHANNEL", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
     return page
 
@@ -6839,18 +6845,20 @@ def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth
         from services.analytics_center.page_aggregations import aggregate_scope
 
         aggregated = aggregate_scope(conn, scope_type="RELEASE", scope_ref=str(release_id))
+        page = _build_page(
+            conn,
+            "RELEASE",
+            {"release_video": str(release_id), "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family},
+            scope_ref=str(release_id),
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
+            export_actions=[{"action": "export_release", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
     finally:
         conn.close()
-    page = _build_page(
-        "RELEASE",
-        {"release_video": str(release_id), "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family},
-        summary_cards=aggregated["summary_cards"],
-        detail_blocks=aggregated["detail_blocks"],
-        anomaly_markers=aggregated["anomaly_risk_markers"],
-        recommendation_summary=aggregated["recommendation_summary"],
-        available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
-        export_actions=[{"action": "export_release", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
-    )
     _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="RELEASE", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
     return page
 
@@ -6862,18 +6870,20 @@ def api_analytics_batches(batch_month: str, _: bool = Depends(require_basic_auth
         from services.analytics_center.page_aggregations import aggregate_scope
 
         aggregated = aggregate_scope(conn, scope_type="BATCH_MONTH", scope_ref=batch_month)
+        page = _build_page(
+            conn,
+            "BATCH_MONTH",
+            {"batch_month": batch_month, "channel": channel, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family},
+            scope_ref=batch_month,
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "recompute"}],
+            export_actions=[{"action": "export_batch", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
     finally:
         conn.close()
-    page = _build_page(
-        "BATCH_MONTH",
-        {"batch_month": batch_month, "channel": channel, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family},
-        summary_cards=aggregated["summary_cards"],
-        detail_blocks=aggregated["detail_blocks"],
-        anomaly_markers=aggregated["anomaly_risk_markers"],
-        recommendation_summary=aggregated["recommendation_summary"],
-        available_actions=[{"action": "refresh"}, {"action": "recompute"}],
-        export_actions=[{"action": "export_batch", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
-    )
     _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="BATCH_MONTH", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
     return page
 
@@ -6885,18 +6895,19 @@ def api_analytics_anomalies(_: bool = Depends(require_basic_auth(env)), scope_ty
         from services.analytics_center.page_aggregations import aggregate_anomalies
 
         aggregated = aggregate_anomalies(conn)
+        page = _build_page(
+            conn,
+            "ANOMALIES",
+            {"scope_type": scope_type, "severity": severity, "confidence": confidence, "recommendation_family": recommendation_family, "target_domain": target_domain},
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
+            export_actions=[],
+        )
     finally:
         conn.close()
-    page = _build_page(
-        "ANOMALIES",
-        {"scope_type": scope_type, "severity": severity, "confidence": confidence, "recommendation_family": recommendation_family, "target_domain": target_domain},
-        summary_cards=aggregated["summary_cards"],
-        detail_blocks=aggregated["detail_blocks"],
-        anomaly_markers=aggregated["anomaly_risk_markers"],
-        recommendation_summary=aggregated["recommendation_summary"],
-        available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
-        export_actions=[],
-    )
     _record_analytics_ui_event(event_type="ANOMALY_INSPECTED", page_scope="ANOMALIES", action_type="INSPECT_ANOMALY", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
     return page
 
@@ -6908,34 +6919,40 @@ def api_analytics_recommendations(_: bool = Depends(require_basic_auth(env)), sc
         from services.analytics_center.page_aggregations import aggregate_recommendations
 
         aggregated = aggregate_recommendations(conn)
+        page = _build_page(
+            conn,
+            "RECOMMENDATIONS",
+            {"scope_type": scope_type, "recommendation_family": recommendation_family, "target_domain": target_domain, "severity": severity, "confidence": confidence, "lifecycle_status": lifecycle_status},
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "open_next_action_surface"}, {"action": "acknowledge_recommendation"}],
+            export_actions=[],
+        )
     finally:
         conn.close()
-    page = _build_page(
-        "RECOMMENDATIONS",
-        {"scope_type": scope_type, "recommendation_family": recommendation_family, "target_domain": target_domain, "severity": severity, "confidence": confidence, "lifecycle_status": lifecycle_status},
-        summary_cards=aggregated["summary_cards"],
-        detail_blocks=aggregated["detail_blocks"],
-        anomaly_markers=aggregated["anomaly_risk_markers"],
-        recommendation_summary=aggregated["recommendation_summary"],
-        available_actions=[{"action": "open_next_action_surface"}, {"action": "acknowledge_recommendation"}],
-        export_actions=[],
-    )
     _record_analytics_ui_event(event_type="RECOMMENDATION_OPENED", page_scope="RECOMMENDATIONS", action_type="OPEN_RECOMMENDATION", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
     return page
 
 
 @app.get("/v1/analytics/reports")
 def api_analytics_reports(_: bool = Depends(require_basic_auth(env)), report_export_type: str | None = None):
-    page = _build_page(
-        "REPORTS_EXPORTS",
-        {"report_export_type": report_export_type},
-        summary_cards=[{"card": "reports_exports"}],
-        detail_blocks=[{"table": "saved_reports", "rows": []}],
-        anomaly_markers=[],
-        recommendation_summary=[],
-        available_actions=[{"action": "export_download_report"}],
-        export_actions=[{"action": "create_report_record"}],
-    )
+    conn = dbm.connect(env)
+    try:
+        page = _build_page(
+            conn,
+            "REPORTS_EXPORTS",
+            {"report_export_type": report_export_type},
+            summary_cards=[{"card": "reports_exports"}],
+            detail_blocks=[{"table": "saved_reports", "rows": []}],
+            anomaly_markers=[],
+            recommendation_summary=[],
+            available_actions=[{"action": "export_download_report"}],
+            export_actions=[{"action": "create_report_record"}],
+        )
+    finally:
+        conn.close()
     _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="REPORTS_EXPORTS", action_type="VIEW_REPORTS", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
     return page
 
@@ -6960,14 +6977,15 @@ def api_analytics_report_request(
                 created_by=env.basic_user,
             )
         except Exception as exc:
-            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), freshness_summary={"status": "PARTIAL"})
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), freshness_summary=_compute_freshness_summary(conn, page_scope=str(payload.get("report_scope_type", "OVERVIEW")), scope_ref=payload.get("report_scope_ref")))
             raise HTTPException(422, f"report generation failed: {exc}")
         row = conn.execute("SELECT * FROM analytics_report_records WHERE id = ?", (int(report_id),)).fetchone()
-        _record_analytics_ui_event(event_type="ANALYTICS_REPORT_REQUESTED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_REQUEST", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary={"status": "PARTIAL"})
+        event_freshness = _compute_freshness_summary(conn, page_scope=str(payload.get("report_scope_type", "OVERVIEW")), scope_ref=payload.get("report_scope_ref"))
+        _record_analytics_ui_event(event_type="ANALYTICS_REPORT_REQUESTED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_REQUEST", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary=event_freshness)
         if row is not None and str(row["generation_status"]) == "READY":
-            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_GENERATED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_GENERATED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary={"status": "PARTIAL"})
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_GENERATED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_GENERATED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary=event_freshness)
         else:
-            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary={"status": "PARTIAL"})
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary=event_freshness)
         return {"report_record": dict(row), "deduped_or_created_id": int(report_id)}
     finally:
         conn.close()
@@ -7000,7 +7018,7 @@ def api_analytics_report_download(report_record_id: int, _: bool = Depends(requi
         artifact_ref = str(row["artifact_ref"] or "")
         if not artifact_ref or not os.path.exists(artifact_ref):
             raise HTTPException(422, "report artifact missing")
-        _record_analytics_ui_event(event_type="EXPORT_DOWNLOADED", page_scope=str(row["report_scope_type"]), action_type="DOWNLOAD", scope_ref=row["report_scope_ref"], artifact_type=str(row["artifact_type"]), report_record_id=int(report_record_id), freshness_summary={"status": "PARTIAL"})
+        _record_analytics_ui_event(event_type="EXPORT_DOWNLOADED", page_scope=str(row["report_scope_type"]), action_type="DOWNLOAD", scope_ref=row["report_scope_ref"], artifact_type=str(row["artifact_type"]), report_record_id=int(report_record_id), freshness_summary=_compute_freshness_summary(conn, page_scope=str(row["report_scope_type"]), scope_ref=row["report_scope_ref"]))
         return {"download": True, "report_record_id": int(report_record_id), "artifact_ref": artifact_ref, "artifact_type": row["artifact_type"]}
     finally:
         conn.close()
@@ -7008,13 +7026,23 @@ def api_analytics_report_download(report_record_id: int, _: bool = Depends(requi
 
 @app.post("/v1/analytics/actions/refresh")
 def api_analytics_action_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
-    _record_analytics_ui_event(event_type="REFRESH_TRIGGERED", page_scope=str(payload.get("scope", "OVERVIEW")), action_type="REFRESH", filter_payload=payload, freshness_summary={"status": "PARTIAL"})
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope=str(payload.get("scope", "OVERVIEW")), scope_ref=payload.get("scope_ref"))
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="REFRESH_TRIGGERED", page_scope=str(payload.get("scope", "OVERVIEW")), action_type="REFRESH", filter_payload=payload, freshness_summary=freshness_summary)
     return {"action": "refresh", "delegated": True, "scope": payload, "mutation": False}
 
 
 @app.post("/v1/analytics/actions/recompute")
 def api_analytics_action_recompute(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
-    _record_analytics_ui_event(event_type="RECOMPUTE_TRIGGERED", page_scope=str(payload.get("scope", "OVERVIEW")), action_type="RECOMPUTE", filter_payload=payload, freshness_summary={"status": "PARTIAL"})
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope=str(payload.get("scope", "OVERVIEW")), scope_ref=payload.get("scope_ref"))
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="RECOMPUTE_TRIGGERED", page_scope=str(payload.get("scope", "OVERVIEW")), action_type="RECOMPUTE", filter_payload=payload, freshness_summary=freshness_summary)
     return {"action": "recompute", "delegated": True, "scope": payload, "mutation": False}
 
 
@@ -7028,7 +7056,12 @@ def api_analytics_related_domain_jump(
     from services.analytics_center.reporting import build_related_domain_jump
 
     jump = build_related_domain_jump(target_domain=target_domain, scope_ref=scope_ref, next_action=next_action)
-    _record_analytics_ui_event(event_type="RELATED_DOMAIN_JUMP_OPENED", page_scope="RECOMMENDATIONS", action_type="RELATED_DOMAIN_JUMP", scope_ref=scope_ref, filter_payload={"target_domain": target_domain, "next_action": next_action}, freshness_summary={"status": "PARTIAL"})
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope="RECOMMENDATIONS", scope_ref=scope_ref)
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="RELATED_DOMAIN_JUMP_OPENED", page_scope="RECOMMENDATIONS", action_type="RELATED_DOMAIN_JUMP", scope_ref=scope_ref, filter_payload={"target_domain": target_domain, "next_action": next_action}, freshness_summary=freshness_summary)
     return {"jump": jump, "mutation": False}
 
 
@@ -7046,7 +7079,12 @@ def api_analytics_ack_recommendation(recommendation_id: int, _: bool = Depends(r
 
 @app.post("/v1/analytics/actions/anomaly/inspect")
 def api_analytics_inspect_anomaly(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
-    _record_analytics_ui_event(event_type="ANOMALY_INSPECTED", page_scope="ANOMALIES", action_type="INSPECT_ANOMALY", scope_ref=str(payload.get("id") or ""), filter_payload=payload, freshness_summary={"status": "PARTIAL"})
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope="ANOMALIES", scope_ref=None)
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANOMALY_INSPECTED", page_scope="ANOMALIES", action_type="INSPECT_ANOMALY", scope_ref=str(payload.get("id") or ""), filter_payload=payload, freshness_summary=freshness_summary)
     return {"action": "inspect_anomaly", "payload": payload, "mutation": False}
 
 

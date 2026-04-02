@@ -59,6 +59,10 @@ class TestMf6Hardening(unittest.TestCase):
             conn = dbm.connect(env)
             try:
                 events = {str(r["event_type"]) for r in conn.execute("SELECT event_type FROM analytics_ui_events").fetchall()}
+                freshness_payloads = [
+                    str(r["freshness_summary_json"])
+                    for r in conn.execute("SELECT freshness_summary_json FROM analytics_ui_events WHERE event_type IN ('ANALYTICS_REPORT_REQUESTED', 'ANALYTICS_REPORT_GENERATED')").fetchall()
+                ]
             finally:
                 conn.close()
             required = {
@@ -74,6 +78,7 @@ class TestMf6Hardening(unittest.TestCase):
                 "RELATED_DOMAIN_JUMP_OPENED",
             }
             self.assertTrue(required.issubset(events))
+            self.assertTrue(any('"status": "FRESH"' in payload for payload in freshness_payloads))
 
 
 if __name__ == "__main__":
