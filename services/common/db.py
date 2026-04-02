@@ -389,6 +389,111 @@ def migrate(conn: sqlite3.Connection) -> None:
             created_at REAL NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS telegram_operator_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_operator_id TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            telegram_access_status TEXT NOT NULL,
+            max_permission_class TEXT NOT NULL,
+            enrolled_at TEXT NOT NULL,
+            disabled_at TEXT NULL,
+            revoked_at TEXT NULL,
+            metadata_json TEXT NULL,
+            last_error_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(telegram_user_id),
+            CHECK(telegram_access_status IN ('ACTIVE','INACTIVE','REVOKED')),
+            CHECK(max_permission_class IN ('READ_ONLY','STANDARD_OPERATOR_MUTATE','GUARDED_OPERATOR_MUTATE','PRIVILEGED_OPERATOR_MUTATE'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_operator_identities_operator
+            ON telegram_operator_identities(product_operator_id);
+
+        CREATE TABLE IF NOT EXISTS telegram_chat_bindings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_operator_id TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            thread_id INTEGER NULL,
+            chat_binding_kind TEXT NOT NULL,
+            binding_status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            activated_at TEXT NULL,
+            disabled_at TEXT NULL,
+            revoked_at TEXT NULL,
+            notes_json TEXT NULL,
+            last_error_code TEXT NULL,
+            UNIQUE(product_operator_id, telegram_user_id, chat_id, thread_id),
+            CHECK(chat_binding_kind IN ('PRIVATE_CHAT','GROUP_CHAT','GROUP_THREAD')),
+            CHECK(binding_status IN ('PENDING','ACTIVE','DISABLED','REVOKED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_chat_bindings_operator_status
+            ON telegram_chat_bindings(product_operator_id, binding_status);
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_chat_bindings_chat_status
+            ON telegram_chat_bindings(chat_id, thread_id, binding_status);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_chat_bindings_context_unique
+            ON telegram_chat_bindings(product_operator_id, telegram_user_id, chat_id, COALESCE(thread_id, -1));
+
+        CREATE TABLE IF NOT EXISTS telegram_action_gateway_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_user_id INTEGER NOT NULL,
+            product_operator_id TEXT NULL,
+            binding_id INTEGER NULL,
+            action_transport_type TEXT NOT NULL,
+            action_transport_id TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            action_class TEXT NOT NULL,
+            target_entity_type TEXT NULL,
+            target_entity_ref TEXT NULL,
+            gateway_result TEXT NOT NULL,
+            gateway_error_code TEXT NULL,
+            correlation_id TEXT NOT NULL,
+            idempotency_key TEXT NULL,
+            freshness_context TEXT NULL,
+            event_time TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(action_transport_type IN ('COMMAND','CALLBACK')),
+            CHECK(action_class IN ('READ_ONLY','STANDARD_OPERATOR_MUTATE','GUARDED_OPERATOR_MUTATE','PRIVILEGED_OPERATOR_MUTATE')),
+            CHECK(gateway_result IN ('ALLOWED','DENIED','STALE','EXPIRED','INVALID')),
+            FOREIGN KEY(binding_id) REFERENCES telegram_chat_bindings(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_gateway_events_operator_time
+            ON telegram_action_gateway_events(product_operator_id, event_time);
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_gateway_events_transport
+            ON telegram_action_gateway_events(action_transport_type, action_transport_id);
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_gateway_events_correlation
+            ON telegram_action_gateway_events(correlation_id);
+
+        CREATE TABLE IF NOT EXISTS telegram_operator_audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            resolved_product_operator_id TEXT NULL,
+            chat_id INTEGER NULL,
+            thread_id INTEGER NULL,
+            binding_id INTEGER NULL,
+            action_type TEXT NULL,
+            action_class TEXT NULL,
+            target_entity_type TEXT NULL,
+            target_entity_ref TEXT NULL,
+            gateway_result TEXT NULL,
+            gateway_error_code TEXT NULL,
+            correlation_id TEXT NULL,
+            idempotency_key TEXT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_operator_audit_events_type_time
+            ON telegram_operator_audit_events(event_type, created_at);
+
         CREATE TABLE IF NOT EXISTS worker_heartbeats (
             worker_id TEXT PRIMARY KEY,
             role TEXT NOT NULL,
