@@ -1281,6 +1281,610 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_tcta_track_state
             ON track_custom_tag_assignments(track_pk, state);
+
+        CREATE TABLE IF NOT EXISTS analytics_external_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            source_family TEXT NOT NULL,
+            external_namespace TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(entity_type IN ('CHANNEL','RELEASE','BATCH','JOB_RUNTIME','PORTFOLIO')),
+            CHECK(source_family IN ('EXTERNAL_YOUTUBE','INTERNAL_OPERATIONAL','DERIVED_ROLLUP','COMPARISON_BASELINE','EXPLAINABILITY_OUTPUT')),
+            UNIQUE(entity_type, entity_ref, source_family, external_namespace, external_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aei_entity
+            ON analytics_external_identities(entity_type, entity_ref);
+
+        CREATE INDEX IF NOT EXISTS idx_aei_source_external
+            ON analytics_external_identities(source_family, external_namespace, external_id);
+
+        CREATE TABLE IF NOT EXISTS analytics_scope_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            channel_id INTEGER NULL,
+            release_id INTEGER NULL,
+            job_id INTEGER NULL,
+            batch_ref TEXT NULL,
+            portfolio_ref TEXT NULL,
+            normalized_scope_key TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(entity_type IN ('CHANNEL','RELEASE','BATCH','JOB_RUNTIME','PORTFOLIO')),
+            UNIQUE(entity_type, entity_ref),
+            FOREIGN KEY(channel_id) REFERENCES channels(id),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(job_id) REFERENCES jobs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_asl_scope_lookup
+            ON analytics_scope_links(normalized_scope_key, entity_type, entity_ref);
+
+        CREATE TABLE IF NOT EXISTS analytics_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            normalized_scope_key TEXT NOT NULL,
+            source_family TEXT NOT NULL,
+            window_type TEXT NOT NULL,
+            window_start_ts REAL NULL,
+            window_end_ts REAL NULL,
+            snapshot_status TEXT NOT NULL,
+            freshness_status TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL,
+            explainability_json TEXT NOT NULL DEFAULT '{}',
+            lineage_json TEXT NOT NULL DEFAULT '{}',
+            anomaly_markers_json TEXT NOT NULL DEFAULT '[]',
+            comparison_baseline_snapshot_id INTEGER NULL,
+            captured_at REAL NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(entity_type IN ('CHANNEL','RELEASE','BATCH','JOB_RUNTIME','PORTFOLIO')),
+            CHECK(source_family IN ('EXTERNAL_YOUTUBE','INTERNAL_OPERATIONAL','DERIVED_ROLLUP','COMPARISON_BASELINE','EXPLAINABILITY_OUTPUT')),
+            CHECK(window_type IN ('POINT_IN_TIME','BOUNDED_WINDOW','ROLLING_BASELINE','LAST_KNOWN_CURRENT','MONTHLY_BATCH')),
+            CHECK(snapshot_status IN ('CURRENT','HISTORICAL','SUPERSEDED','PARTIAL','FAILED')),
+            CHECK(freshness_status IN ('FRESH','STALE','PARTIAL','UNKNOWN')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(comparison_baseline_snapshot_id) REFERENCES analytics_snapshots(id)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_as_current_scope_unique
+            ON analytics_snapshots(normalized_scope_key)
+            WHERE is_current = 1;
+
+        CREATE INDEX IF NOT EXISTS idx_as_read_filters
+            ON analytics_snapshots(entity_type, entity_ref, source_family, window_type, captured_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_as_scope_current
+            ON analytics_snapshots(normalized_scope_key, is_current, captured_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_as_baseline
+            ON analytics_snapshots(comparison_baseline_snapshot_id)
+            WHERE comparison_baseline_snapshot_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS analytics_rollup_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_snapshot_id INTEGER NOT NULL,
+            child_snapshot_id INTEGER NOT NULL,
+            relation_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(relation_type IN ('CHANNEL_TO_RELEASE','RELEASE_TO_JOB_RUNTIME','RELEASE_TO_BATCH','PORTFOLIO_TO_ENTITY')),
+            FOREIGN KEY(parent_snapshot_id) REFERENCES analytics_snapshots(id),
+            FOREIGN KEY(child_snapshot_id) REFERENCES analytics_snapshots(id),
+            UNIQUE(parent_snapshot_id, child_snapshot_id, relation_type)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_arl_parent
+            ON analytics_rollup_links(parent_snapshot_id, relation_type);
+
+        CREATE INDEX IF NOT EXISTS idx_arl_child
+            ON analytics_rollup_links(child_snapshot_id, relation_type);
+
+        CREATE TABLE IF NOT EXISTS analytics_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            source_family TEXT NULL,
+            window_type TEXT NULL,
+            snapshot_status TEXT NULL,
+            freshness_status TEXT NULL,
+            snapshot_id INTEGER NULL,
+            comparison_baseline_snapshot_id INTEGER NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(event_type IN (
+                'SNAPSHOT_CREATED',
+                'SNAPSHOT_MARKED_CURRENT',
+                'SNAPSHOT_SUPERSEDED',
+                'LINKAGE_CREATED',
+                'LINKAGE_UPDATED',
+                'BASELINE_REFERENCE_ATTACHED',
+                'LINEAGE_PAYLOAD_PERSISTED',
+                'PARTIAL_SNAPSHOT_STORED',
+                'FAILED_SNAPSHOT_STORED'
+            )),
+            FOREIGN KEY(snapshot_id) REFERENCES analytics_snapshots(id),
+            FOREIGN KEY(comparison_baseline_snapshot_id) REFERENCES analytics_snapshots(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_events_scope
+            ON analytics_events(entity_type, entity_ref, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_events_snapshot
+            ON analytics_events(snapshot_id, event_type);
+
+        CREATE TABLE IF NOT EXISTS analytics_youtube_video_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_slug TEXT NOT NULL,
+            youtube_video_id TEXT NOT NULL,
+            release_id INTEGER NULL,
+            job_id INTEGER NULL,
+            youtube_channel_id TEXT NULL,
+            linkage_confidence TEXT NOT NULL,
+            linkage_source TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(linkage_confidence IN ('EXACT', 'INFERRED')),
+            CHECK(linkage_source IN ('UPLOAD_ARTIFACT', 'RELEASE_BINDING', 'MANUAL_LINK', 'RECONCILED')),
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(job_id) REFERENCES jobs(id),
+            UNIQUE(channel_slug, youtube_video_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_youtube_video_links_channel_video
+            ON analytics_youtube_video_links(channel_slug, youtube_video_id);
+
+        CREATE TABLE IF NOT EXISTS analytics_external_sync_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider_name TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            run_mode TEXT NOT NULL,
+            sync_state TEXT NOT NULL,
+            requested_metric_families_json TEXT NOT NULL DEFAULT '[]',
+            coverage_payload_json TEXT NOT NULL DEFAULT '{}',
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            created_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            partial_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            failed_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            CHECK(provider_name IN ('YOUTUBE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE_VIDEO')),
+            CHECK(run_mode IN ('INITIAL_BACKFILL', 'SCHEDULED_SYNC', 'MANUAL_REFRESH', 'PARTIAL_REFRESH', 'STALE_RESYNC')),
+            CHECK(sync_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_sync_runs_scope_time
+            ON analytics_external_sync_runs(provider_name, target_scope_type, target_scope_ref, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_sync_runs_state_time
+            ON analytics_external_sync_runs(sync_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_external_scope_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider_name TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            last_successful_sync_at REAL NULL,
+            last_attempted_sync_at REAL NULL,
+            sync_state TEXT NOT NULL,
+            freshness_status TEXT NOT NULL,
+            coverage_payload_json TEXT NOT NULL DEFAULT '{}',
+            availability_status TEXT NOT NULL DEFAULT 'NOT_YET_SYNCED',
+            updated_at REAL NOT NULL,
+            CHECK(provider_name IN ('YOUTUBE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE_VIDEO')),
+            CHECK(sync_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')),
+            CHECK(freshness_status IN ('FRESH', 'STALE', 'PARTIAL', 'UNKNOWN')),
+            UNIQUE(provider_name, target_scope_type, target_scope_ref)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_scope_status_scope
+            ON analytics_external_scope_status(provider_name, target_scope_type, target_scope_ref);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_snapshots_external_scope_time
+            ON analytics_snapshots(source_family, entity_type, entity_ref, captured_at DESC)
+            WHERE source_family = 'EXTERNAL_YOUTUBE';
+
+        CREATE TABLE IF NOT EXISTS analytics_external_audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            provider_name TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            run_mode TEXT NOT NULL,
+            sync_state TEXT NOT NULL,
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            created_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            partial_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            failed_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            missing_metric_families_json TEXT NOT NULL DEFAULT '[]',
+            incomplete_backfill INTEGER NOT NULL DEFAULT 0,
+            freshness_status TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            CHECK(provider_name IN ('YOUTUBE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE_VIDEO')),
+            CHECK(run_mode IN ('INITIAL_BACKFILL', 'SCHEDULED_SYNC', 'MANUAL_REFRESH', 'PARTIAL_REFRESH', 'STALE_RESYNC')),
+            CHECK(sync_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')),
+            CHECK(incomplete_backfill IN (0,1))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_audit_events_scope_time
+            ON analytics_external_audit_events(provider_name, target_scope_type, target_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_operational_kpi_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            recompute_mode TEXT NOT NULL,
+            run_state TEXT NOT NULL,
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            computed_kpi_count INTEGER NOT NULL DEFAULT 0,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')),
+            CHECK(run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aokr_scope_time
+            ON analytics_operational_kpi_runs(target_scope_type, target_scope_ref, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_aokr_state_time
+            ON analytics_operational_kpi_runs(run_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_operational_kpi_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            kpi_family TEXT NOT NULL,
+            kpi_code TEXT NOT NULL,
+            status_class TEXT NOT NULL,
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            is_current INTEGER NOT NULL DEFAULT 0,
+            value_payload_json TEXT NOT NULL,
+            explainability_payload_json TEXT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(kpi_family IN ('PIPELINE_TIMING', 'QA_STATUS', 'UPLOAD_OUTCOME', 'PUBLISH_OUTCOME', 'RETRY_BURDEN', 'READINESS', 'DRIFT_RECONCILE', 'CADENCE_ADHERENCE', 'BATCH_COMPLETENESS')),
+            CHECK(status_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_operational_kpi_runs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aoks_scope_family_current
+            ON analytics_operational_kpi_snapshots(scope_type, scope_ref, kpi_family, kpi_code, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_aoks_status_class
+            ON analytics_operational_kpi_snapshots(status_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_operational_kpi_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            kpi_family TEXT NULL,
+            kpi_code TEXT NULL,
+            status_class TEXT NULL,
+            snapshot_id INTEGER NULL,
+            recompute_mode TEXT NULL,
+            run_state TEXT NULL,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(
+                recompute_mode IS NULL
+                OR recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')
+            ),
+            CHECK(
+                run_state IS NULL
+                OR run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')
+            )
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aoke_scope_time
+            ON analytics_operational_kpi_events(target_scope_type, target_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_prediction_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_kind TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            recompute_mode TEXT NOT NULL,
+            run_state TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            baseline_count INTEGER NOT NULL DEFAULT 0,
+            comparison_count INTEGER NOT NULL DEFAULT 0,
+            prediction_count INTEGER NOT NULL DEFAULT 0,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            CHECK(run_kind IN ('BASELINE_RECOMPUTE', 'COMPARISON_RECOMPUTE', 'PREDICTION_RECOMPUTE', 'FULL_STACK_RECOMPUTE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')),
+            CHECK(run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_apr_scope_kind_time
+            ON analytics_prediction_runs(target_scope_type, target_scope_ref, run_kind, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_apr_state_time
+            ON analytics_prediction_runs(run_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_baseline_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            baseline_family TEXT NOT NULL,
+            variance_class TEXT NOT NULL,
+            baseline_payload_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            comparison_basis_json TEXT NOT NULL DEFAULT '{}',
+            is_current INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(baseline_family IN ('CHANNEL_HISTORICAL', 'RELEASE_VS_CHANNEL', 'BATCH_MONTH_HISTORICAL', 'PORTFOLIO_COMPARISON')),
+            CHECK(variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_prediction_runs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_abs_scope_family_current
+            ON analytics_baseline_snapshots(scope_type, scope_ref, baseline_family, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_abs_variance_class
+            ON analytics_baseline_snapshots(variance_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_comparison_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            comparison_family TEXT NOT NULL,
+            variance_class TEXT NOT NULL,
+            baseline_snapshot_id INTEGER NULL,
+            delta_payload_json TEXT NOT NULL,
+            comparison_basis_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            is_current INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(comparison_family IN ('RELEASE_VS_CHANNEL_BASELINE', 'CHANNEL_VS_SELF_HISTORY', 'BATCH_MONTH_VS_RECENT_CHANNEL', 'CHANNEL_VS_PORTFOLIO')),
+            CHECK(variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_prediction_runs(id),
+            FOREIGN KEY(baseline_snapshot_id) REFERENCES analytics_baseline_snapshots(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_acs_scope_family_current
+            ON analytics_comparison_snapshots(scope_type, scope_ref, comparison_family, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_acs_variance_class
+            ON analytics_comparison_snapshots(variance_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_prediction_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            prediction_family TEXT NOT NULL,
+            variance_class TEXT NOT NULL,
+            confidence_class TEXT NOT NULL,
+            comparison_family TEXT NULL,
+            comparison_snapshot_id INTEGER NULL,
+            predicted_label TEXT NOT NULL,
+            predicted_value_json TEXT NOT NULL DEFAULT '{}',
+            signals_used_json TEXT NOT NULL DEFAULT '[]',
+            comparison_basis_json TEXT NOT NULL,
+            explainability_payload_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            is_current INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(prediction_family IN ('WEAK_RELEASE_RISK', 'PUBLISH_WINDOW_QUALITY', 'CHANNEL_MOMENTUM', 'CADENCE_DEGRADATION_RISK', 'OPERATIONAL_ANOMALY_RISK')),
+            CHECK(variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(confidence_class IN ('LOW', 'MEDIUM', 'HIGH')),
+            CHECK(comparison_family IS NULL OR comparison_family IN ('RELEASE_VS_CHANNEL_BASELINE', 'CHANNEL_VS_SELF_HISTORY', 'BATCH_MONTH_VS_RECENT_CHANNEL', 'CHANNEL_VS_PORTFOLIO')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_prediction_runs(id),
+            FOREIGN KEY(comparison_snapshot_id) REFERENCES analytics_comparison_snapshots(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aps_scope_family_current
+            ON analytics_prediction_snapshots(scope_type, scope_ref, prediction_family, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_aps_variance_confidence
+            ON analytics_prediction_snapshots(variance_class, confidence_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_prediction_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            run_kind TEXT NOT NULL,
+            prediction_family TEXT NULL,
+            comparison_family TEXT NULL,
+            variance_class TEXT NULL,
+            confidence_class TEXT NULL,
+            snapshot_id INTEGER NULL,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(run_kind IN ('BASELINE_RECOMPUTE', 'COMPARISON_RECOMPUTE', 'PREDICTION_RECOMPUTE', 'FULL_STACK_RECOMPUTE')),
+            CHECK(prediction_family IS NULL OR prediction_family IN ('WEAK_RELEASE_RISK', 'PUBLISH_WINDOW_QUALITY', 'CHANNEL_MOMENTUM', 'CADENCE_DEGRADATION_RISK', 'OPERATIONAL_ANOMALY_RISK')),
+            CHECK(comparison_family IS NULL OR comparison_family IN ('RELEASE_VS_CHANNEL_BASELINE', 'CHANNEL_VS_SELF_HISTORY', 'BATCH_MONTH_VS_RECENT_CHANNEL', 'CHANNEL_VS_PORTFOLIO')),
+            CHECK(variance_class IS NULL OR variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(confidence_class IS NULL OR confidence_class IN ('LOW', 'MEDIUM', 'HIGH'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ape_scope_time
+            ON analytics_prediction_events(target_scope_type, target_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_recommendation_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recommendation_scope_type TEXT NOT NULL,
+            recommendation_scope_ref TEXT NOT NULL,
+            recommendation_family TEXT NOT NULL,
+            recompute_mode TEXT NOT NULL,
+            run_state TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            recommendation_count INTEGER NOT NULL DEFAULT 0,
+            open_count INTEGER NOT NULL DEFAULT 0,
+            warning_count INTEGER NOT NULL DEFAULT 0,
+            critical_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            created_at REAL NOT NULL,
+            CHECK(recommendation_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recommendation_family IN ('PUBLISH_TIMING_SUGGESTION', 'CADENCE_BATCH_HEALTH_SUGGESTION', 'WEAK_RELEASE_ATTENTION', 'OPERATIONAL_REMEDIATION', 'CHANNEL_OPTIMIZATION', 'ANOMALY_RISK_ALERT', 'CONTENT_PACKAGING_SUGGESTION')),
+            CHECK(recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')),
+            CHECK(run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_arr_scope_family_mode_time
+            ON analytics_recommendation_runs(recommendation_scope_type, recommendation_scope_ref, recommendation_family, recompute_mode, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_arr_state_time
+            ON analytics_recommendation_runs(run_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_recommendation_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL REFERENCES analytics_recommendation_runs(id) ON DELETE SET NULL,
+            recommendation_scope_type TEXT NOT NULL,
+            recommendation_scope_ref TEXT NOT NULL,
+            recommendation_family TEXT NOT NULL,
+            issue_key TEXT NOT NULL,
+            title_text TEXT NOT NULL,
+            summary_text TEXT NOT NULL,
+            severity_class TEXT NOT NULL,
+            confidence_class TEXT NOT NULL,
+            lifecycle_status TEXT NOT NULL DEFAULT 'OPEN',
+            target_domain TEXT NOT NULL,
+            target_pointer_payload_json TEXT NOT NULL,
+            explainability_payload_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(recommendation_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recommendation_family IN ('PUBLISH_TIMING_SUGGESTION', 'CADENCE_BATCH_HEALTH_SUGGESTION', 'WEAK_RELEASE_ATTENTION', 'OPERATIONAL_REMEDIATION', 'CHANNEL_OPTIMIZATION', 'ANOMALY_RISK_ALERT', 'CONTENT_PACKAGING_SUGGESTION')),
+            CHECK(severity_class IN ('INFO', 'WARNING', 'CRITICAL')),
+            CHECK(confidence_class IN ('LOW', 'MEDIUM', 'HIGH')),
+            CHECK(lifecycle_status IN ('OPEN', 'ACKNOWLEDGED', 'DISMISSED', 'SUPERSEDED')),
+            CHECK(target_domain IN ('PUBLISH', 'METADATA', 'VISUALS', 'PLANNER', 'OPERATIONAL_TROUBLESHOOTING'))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ars_current_open_scope_issue
+            ON analytics_recommendation_snapshots(recommendation_scope_type, recommendation_scope_ref, recommendation_family, issue_key)
+            WHERE is_current = 1 AND lifecycle_status = 'OPEN';
+
+        CREATE INDEX IF NOT EXISTS idx_ars_scope_family_status
+            ON analytics_recommendation_snapshots(recommendation_scope_type, recommendation_scope_ref, recommendation_family, lifecycle_status, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_ars_queue_order
+            ON analytics_recommendation_snapshots(is_current, lifecycle_status, severity_class, confidence_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_recommendation_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            recommendation_scope_type TEXT NOT NULL,
+            recommendation_scope_ref TEXT NOT NULL,
+            recommendation_family TEXT NULL,
+            target_domain TEXT NULL,
+            severity_class TEXT NULL,
+            confidence_class TEXT NULL,
+            lifecycle_status TEXT NULL,
+            recommendation_id INTEGER NULL,
+            run_state TEXT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(recommendation_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recommendation_family IS NULL OR recommendation_family IN ('PUBLISH_TIMING_SUGGESTION', 'CADENCE_BATCH_HEALTH_SUGGESTION', 'WEAK_RELEASE_ATTENTION', 'OPERATIONAL_REMEDIATION', 'CHANNEL_OPTIMIZATION', 'ANOMALY_RISK_ALERT', 'CONTENT_PACKAGING_SUGGESTION')),
+            CHECK(target_domain IS NULL OR target_domain IN ('PUBLISH', 'METADATA', 'VISUALS', 'PLANNER', 'OPERATIONAL_TROUBLESHOOTING')),
+            CHECK(severity_class IS NULL OR severity_class IN ('INFO', 'WARNING', 'CRITICAL')),
+            CHECK(confidence_class IS NULL OR confidence_class IN ('LOW', 'MEDIUM', 'HIGH')),
+            CHECK(lifecycle_status IS NULL OR lifecycle_status IN ('OPEN', 'ACKNOWLEDGED', 'DISMISSED', 'SUPERSEDED')),
+            CHECK(run_state IS NULL OR run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_are_scope_time
+            ON analytics_recommendation_events(recommendation_scope_type, recommendation_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_report_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_scope_type TEXT NOT NULL,
+            report_scope_ref TEXT NULL,
+            report_family TEXT NOT NULL,
+            filter_payload_json TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            artifact_ref TEXT NULL,
+            generation_status TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            CHECK(report_scope_type IN ('OVERVIEW', 'CHANNEL', 'RELEASE', 'BATCH_MONTH')),
+            CHECK(artifact_type IN ('XLSX', 'STRUCTURED_REPORT', 'API_REPORT')),
+            CHECK(generation_status IN ('PENDING', 'READY', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_report_records_scope_time
+            ON analytics_report_records(report_scope_type, COALESCE(report_scope_ref, ''), created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_report_records_status_time
+            ON analytics_report_records(generation_status, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_ui_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            page_scope TEXT NOT NULL,
+            scope_ref TEXT NULL,
+            filter_payload_json TEXT NOT NULL DEFAULT '{}',
+            artifact_type TEXT NULL,
+            report_record_id INTEGER NULL,
+            action_type TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            freshness_summary_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_ui_events_scope_time
+            ON analytics_ui_events(page_scope, created_at DESC);
         """
     )
 

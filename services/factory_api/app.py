@@ -6727,3 +6727,534 @@ async def ui_jobs_edit_submit(
 def ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
     api_ui_jobs_render_all(True)
     return RedirectResponse(url="/", status_code=303)
+
+# --- MF6 analytics center pages/contracts (Slices 1-2) ---
+
+
+def _analytics_nav_spine() -> list[dict[str, str]]:
+    return [
+        {"key": "OVERVIEW", "label": "Overview", "path": "/v1/analytics/overview"},
+        {"key": "CHANNELS", "label": "Channels", "path": "/v1/analytics/channels"},
+        {"key": "RELEASES_VIDEOS", "label": "Releases/Videos", "path": "/v1/analytics/releases"},
+        {"key": "BATCH_MONTH", "label": "Batch/Month", "path": "/v1/analytics/batches"},
+        {"key": "ANOMALIES", "label": "Anomalies", "path": "/v1/analytics/anomalies"},
+        {"key": "RECOMMENDATIONS", "label": "Recommendations", "path": "/v1/analytics/recommendations"},
+        {"key": "REPORTS_EXPORTS", "label": "Reports/Exports", "path": "/v1/analytics/reports"},
+    ]
+
+
+def _build_page(conn: Any, scope: str, raw_filters: dict[str, Any], *, scope_ref: str | None = None, summary_cards: list[dict[str, Any]], detail_blocks: list[dict[str, Any]], anomaly_markers: list[dict[str, Any]], recommendation_summary: list[dict[str, Any]], available_actions: list[dict[str, Any]], export_actions: list[dict[str, Any]]) -> dict[str, Any]:
+    from services.analytics_center.ui_contracts import (
+        build_analytics_page_contract,
+        normalize_analytics_filters,
+    )
+    from services.analytics_center.page_aggregations import compute_page_freshness
+
+    applied = normalize_analytics_filters(raw_filters)
+    freshness, coverage = compute_page_freshness(conn, page_scope=scope, scope_ref=scope_ref)
+    page = build_analytics_page_contract(
+        page_scope=scope,
+        applied_filters=applied,
+        freshness_summary=freshness,
+        source_coverage_summary=coverage,
+        summary_cards=summary_cards,
+        detail_blocks=detail_blocks,
+        anomaly_risk_markers=anomaly_markers,
+        recommendation_summary=recommendation_summary,
+        available_actions=available_actions,
+        export_report_actions=export_actions,
+    )
+    page["navigation"] = _analytics_nav_spine()
+    return page
+
+
+def _compute_freshness_summary(conn: Any, *, page_scope: str, scope_ref: Any | None = None) -> dict[str, Any]:
+    from services.analytics_center.page_aggregations import compute_page_freshness
+
+    normalized_scope = {"BATCH_MONTH": "BATCH_MONTH", "OVERVIEW": "OVERVIEW", "CHANNEL": "CHANNEL", "RELEASE": "RELEASE", "ANOMALIES": "ANOMALIES", "RECOMMENDATIONS": "RECOMMENDATIONS", "REPORTS_EXPORTS": "REPORTS_EXPORTS"}.get(str(page_scope or "").upper(), "OVERVIEW")
+    freshness, _ = compute_page_freshness(conn, page_scope=normalized_scope, scope_ref=None if scope_ref is None else str(scope_ref))
+    return freshness
+
+
+
+
+def _analytics_filter_error(code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"error": {"code": code, "message": message}})
+
+@app.get("/v1/analytics/filter-contract")
+def api_analytics_filter_contract(_: bool = Depends(require_basic_auth(env))):
+    return {
+        "shared_filters": [
+            "channel", "release_video", "batch_month", "time_window", "anomaly_risk_status",
+            "recommendation_family", "severity", "confidence", "freshness", "source_family",
+            "target_domain", "report_export_type",
+        ],
+        "navigation": _analytics_nav_spine(),
+        "restorable": True,
+    }
+
+
+@app.get("/v1/analytics/channels")
+def api_analytics_channels_index(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute("SELECT slug FROM channels ORDER BY slug").fetchall()
+        return {"items": [str(r["slug"]) for r in rows], "path_template": "/v1/analytics/channels/{channel_slug}"}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/releases")
+def api_analytics_releases_index(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute("SELECT id FROM releases ORDER BY id DESC LIMIT 50").fetchall()
+        return {"items": [int(r["id"]) for r in rows], "path_template": "/v1/analytics/releases/{release_id}"}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/batches")
+def api_analytics_batches_index(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute("SELECT DISTINCT strftime('%Y-%m', COALESCE(planned_at, '')) AS batch_month FROM releases WHERE planned_at IS NOT NULL ORDER BY batch_month DESC LIMIT 24").fetchall()
+        return {"items": [str(r["batch_month"]) for r in rows if str(r["batch_month"] or "")], "path_template": "/v1/analytics/batches/{batch_month}"}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/overview")
+def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_window: str | None = None, freshness: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_overview
+
+        aggregated = aggregate_overview(conn, time_window=time_window, freshness=freshness)
+        page = _build_page(
+            conn,
+            "OVERVIEW",
+            {"time_window": time_window, "freshness": freshness},
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "recompute"}],
+            export_actions=[{"action": "export_overview", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="OVERVIEW", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/channels/{channel_slug}")
+def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, recommendation_family: str | None = None, severity: str | None = None, confidence: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+
+        aggregated = aggregate_scope(conn, scope_type="CHANNEL", scope_ref=channel_slug, filters={"time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence})
+        page = _build_page(
+            conn,
+            "CHANNEL",
+            {"channel": channel_slug, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence},
+            scope_ref=channel_slug,
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "open_anomaly"}, {"action": "open_recommendation"}],
+            export_actions=[{"action": "export_channel", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="CHANNEL", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/releases/{release_id}")
+def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None, source_family: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+        from services.analytics_center.reporting import validate_mf6_source_family_filter
+        from services.analytics_center.errors import AnalyticsDomainError
+
+        try:
+            validate_mf6_source_family_filter(context_scope="RELEASE", source_family=source_family)
+        except AnalyticsDomainError as exc:
+            return _analytics_filter_error(exc.code, exc.message)
+
+        aggregated = aggregate_scope(conn, scope_type="RELEASE", scope_ref=str(release_id), filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family})
+        page = _build_page(
+            conn,
+            "RELEASE",
+            {"release_video": str(release_id), "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family},
+            scope_ref=str(release_id),
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
+            export_actions=[{"action": "export_release", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="RELEASE", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/batches/{batch_month}")
+def api_analytics_batches(batch_month: str, _: bool = Depends(require_basic_auth(env)), channel: str | None = None, time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+
+        aggregated = aggregate_scope(conn, scope_type="BATCH_MONTH", scope_ref=batch_month, filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "channel": channel})
+        page = _build_page(
+            conn,
+            "BATCH_MONTH",
+            {"batch_month": batch_month, "channel": channel, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family},
+            scope_ref=batch_month,
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "recompute"}],
+            export_actions=[{"action": "export_batch", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="BATCH_MONTH", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/anomalies")
+def api_analytics_anomalies(_: bool = Depends(require_basic_auth(env)), scope_type: str | None = None, severity: str | None = None, confidence: str | None = None, recommendation_family: str | None = None, target_domain: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_anomalies
+
+        aggregated = aggregate_anomalies(conn, filters={"scope_type": scope_type, "severity": severity, "confidence": confidence, "recommendation_family": recommendation_family, "target_domain": target_domain})
+        page = _build_page(
+            conn,
+            "ANOMALIES",
+            {"scope_type": scope_type, "severity": severity, "confidence": confidence, "recommendation_family": recommendation_family, "target_domain": target_domain},
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
+            export_actions=[],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANOMALY_INSPECTED", page_scope="ANOMALIES", action_type="INSPECT_ANOMALY", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/recommendations")
+def api_analytics_recommendations(_: bool = Depends(require_basic_auth(env)), scope_type: str | None = None, recommendation_family: str | None = None, target_domain: str | None = None, severity: str | None = None, confidence: str | None = None, lifecycle_status: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_recommendations
+
+        aggregated = aggregate_recommendations(conn, filters={"scope_type": scope_type, "recommendation_family": recommendation_family, "target_domain": target_domain, "severity": severity, "confidence": confidence, "lifecycle_status": lifecycle_status})
+        page = _build_page(
+            conn,
+            "RECOMMENDATIONS",
+            {"scope_type": scope_type, "recommendation_family": recommendation_family, "target_domain": target_domain, "severity": severity, "confidence": confidence, "lifecycle_status": lifecycle_status},
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "open_next_action_surface"}, {"action": "acknowledge_recommendation"}],
+            export_actions=[],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="RECOMMENDATION_OPENED", page_scope="RECOMMENDATIONS", action_type="OPEN_RECOMMENDATION", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/reports")
+def api_analytics_reports(_: bool = Depends(require_basic_auth(env)), report_export_type: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        page = _build_page(
+            conn,
+            "REPORTS_EXPORTS",
+            {"report_export_type": report_export_type},
+            summary_cards=[{"card": "reports_exports"}],
+            detail_blocks=[{"table": "saved_reports", "rows": []}],
+            anomaly_markers=[],
+            recommendation_summary=[],
+            available_actions=[{"action": "export_download_report"}],
+            export_actions=[{"action": "create_report_record"}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="REPORTS_EXPORTS", action_type="VIEW_REPORTS", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.post("/v1/analytics/reports/request")
+def api_analytics_report_request(
+    payload: Dict[str, Any],
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.reporting import create_report_record
+
+        try:
+            report_id = create_report_record(
+                conn,
+                report_scope_type=str(payload.get("report_scope_type", "")),
+                report_scope_ref=payload.get("report_scope_ref"),
+                report_family=str(payload.get("report_family", "DEFAULT")),
+                filter_payload=dict(payload.get("filter_payload", {})),
+                artifact_type=str(payload.get("artifact_type", "")),
+                created_by=env.basic_user,
+            )
+        except Exception as exc:
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), freshness_summary=_compute_freshness_summary(conn, page_scope=str(payload.get("report_scope_type", "OVERVIEW")), scope_ref=payload.get("report_scope_ref")))
+            from services.analytics_center.errors import AnalyticsDomainError
+            if isinstance(exc, AnalyticsDomainError) and exc.code == "E5A_INVALID_ANALYTICS_FILTER_COMBINATION":
+                return _analytics_filter_error(exc.code, exc.message)
+            raise HTTPException(422, f"report generation failed: {exc}")
+        row = conn.execute("SELECT * FROM analytics_report_records WHERE id = ?", (int(report_id),)).fetchone()
+        event_freshness = _compute_freshness_summary(conn, page_scope=str(payload.get("report_scope_type", "OVERVIEW")), scope_ref=payload.get("report_scope_ref"))
+        _record_analytics_ui_event(event_type="ANALYTICS_REPORT_REQUESTED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_REQUEST", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary=event_freshness)
+        if row is not None and str(row["generation_status"]) == "READY":
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_GENERATED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_GENERATED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary=event_freshness)
+        else:
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary=event_freshness)
+        return {"report_record": dict(row), "deduped_or_created_id": int(report_id)}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/reports/records")
+def api_analytics_report_records(
+    _: bool = Depends(require_basic_auth(env)),
+    report_scope_type: str | None = None,
+    generation_status: str | None = None,
+):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.reporting import list_report_records
+
+        return {"items": list_report_records(conn, report_scope_type=report_scope_type, generation_status=generation_status)}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/reports/{report_record_id}/download")
+def api_analytics_report_download(report_record_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        row = conn.execute("SELECT * FROM analytics_report_records WHERE id = ?", (int(report_record_id),)).fetchone()
+        if row is None:
+            raise HTTPException(404, "report not found")
+        if str(row["generation_status"]) != "READY":
+            raise HTTPException(422, "report not ready")
+        artifact_ref = str(row["artifact_ref"] or "")
+        if not artifact_ref or not os.path.exists(artifact_ref):
+            raise HTTPException(422, "report artifact missing")
+        _record_analytics_ui_event(event_type="EXPORT_DOWNLOADED", page_scope=str(row["report_scope_type"]), action_type="DOWNLOAD", scope_ref=row["report_scope_ref"], artifact_type=str(row["artifact_type"]), report_record_id=int(report_record_id), freshness_summary=_compute_freshness_summary(conn, page_scope=str(row["report_scope_type"]), scope_ref=row["report_scope_ref"]))
+        return {"download": True, "report_record_id": int(report_record_id), "artifact_ref": artifact_ref, "artifact_type": row["artifact_type"]}
+    finally:
+        conn.close()
+
+
+
+
+def _external_sync_http_status(code: str) -> int:
+    if code in {"E5A_INVALID_EXTERNAL_SCOPE", "E5A_INVALID_REFRESH_MODE"}:
+        return 422
+    if code in {"E5A_SYNC_RUN_CONFLICT"}:
+        return 409
+    return 500
+
+
+@app.post("/v1/analytics/external/manual-refresh")
+def api_analytics_external_manual_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import request_manual_refresh
+        from services.analytics_center.errors import AnalyticsDomainError
+
+        provider_name = "YOUTUBE"
+        target_scope_type = str(payload.get("target_scope_type") or "CHANNEL")
+        target_scope_ref = str(payload.get("target_scope_ref") or "")
+        refresh_mode = str(payload.get("refresh_mode") or "MANUAL_REFRESH")
+        force = bool(payload.get("force", False))
+        metrics_subset = payload.get("metrics_subset")
+        run_id = request_manual_refresh(
+            conn,
+            target_scope_type=target_scope_type,
+            target_scope_ref=target_scope_ref,
+            refresh_mode=refresh_mode,
+            force=force,
+            metrics_subset=metrics_subset if isinstance(metrics_subset, list) else None,
+        )
+        row = conn.execute("SELECT * FROM analytics_external_sync_runs WHERE id = ?", (int(run_id),)).fetchone()
+        return {
+            "run_id": int(run_id),
+            "provider_name": provider_name,
+            "target_scope_type": target_scope_type,
+            "target_scope_ref": target_scope_ref,
+            "run_mode": str(row["run_mode"]),
+            "sync_state": str(row["sync_state"]),
+        }
+    except Exception as exc:
+        from services.analytics_center.errors import AnalyticsDomainError
+        if isinstance(exc, AnalyticsDomainError):
+            raise HTTPException(status_code=_external_sync_http_status(exc.code), detail={"code": exc.code, "message": exc.message})
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/status")
+def api_analytics_external_status(target_scope_type: str, target_scope_ref: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import get_sync_status
+        return get_sync_status(conn, target_scope_type=target_scope_type, target_scope_ref=target_scope_ref)
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/coverage")
+def api_analytics_external_coverage(target_scope_type: str, target_scope_ref: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import get_coverage_report
+        return get_coverage_report(conn, target_scope_type=target_scope_type, target_scope_ref=target_scope_ref)
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/runs")
+def api_analytics_external_runs(target_scope_type: str | None = None, target_scope_ref: str | None = None, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import list_sync_runs
+        return {"items": list_sync_runs(conn, target_scope_type=target_scope_type, target_scope_ref=target_scope_ref)}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/runs/{run_id}")
+def api_analytics_external_run_detail(run_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import get_sync_run_detail
+        row = get_sync_run_detail(conn, run_id=int(run_id))
+        if row is None:
+            raise HTTPException(status_code=404, detail={"code": "E5A_INVALID_EXTERNAL_SCOPE", "message": "sync run not found"})
+        return row
+    finally:
+        conn.close()
+
+@app.post("/v1/analytics/actions/refresh")
+def api_analytics_action_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope=str(payload.get("scope", "OVERVIEW")), scope_ref=payload.get("scope_ref"))
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="REFRESH_TRIGGERED", page_scope=str(payload.get("scope", "OVERVIEW")), action_type="REFRESH", filter_payload=payload, freshness_summary=freshness_summary)
+    return {"action": "refresh", "delegated": True, "scope": payload, "mutation": False}
+
+
+@app.post("/v1/analytics/actions/recompute")
+def api_analytics_action_recompute(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope=str(payload.get("scope", "OVERVIEW")), scope_ref=payload.get("scope_ref"))
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="RECOMPUTE_TRIGGERED", page_scope=str(payload.get("scope", "OVERVIEW")), action_type="RECOMPUTE", filter_payload=payload, freshness_summary=freshness_summary)
+    return {"action": "recompute", "delegated": True, "scope": payload, "mutation": False}
+
+
+@app.get("/v1/analytics/actions/related-domain-jump")
+def api_analytics_related_domain_jump(
+    target_domain: str,
+    scope_ref: str,
+    next_action: str,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    from services.analytics_center.reporting import build_related_domain_jump
+
+    jump = build_related_domain_jump(target_domain=target_domain, scope_ref=scope_ref, next_action=next_action)
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope="RECOMMENDATIONS", scope_ref=scope_ref)
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="RELATED_DOMAIN_JUMP_OPENED", page_scope="RECOMMENDATIONS", action_type="RELATED_DOMAIN_JUMP", scope_ref=scope_ref, filter_payload={"target_domain": target_domain, "next_action": next_action}, freshness_summary=freshness_summary)
+    return {"jump": jump, "mutation": False}
+
+
+@app.post("/v1/analytics/actions/recommendations/{recommendation_id}/acknowledge")
+def api_analytics_ack_recommendation(recommendation_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.recommendation_runtime import update_recommendation_lifecycle
+
+        update_recommendation_lifecycle(conn, recommendation_id=int(recommendation_id), target_status="ACKNOWLEDGED")
+        return {"recommendation_id": int(recommendation_id), "status": "ACKNOWLEDGED", "mutation": False}
+    finally:
+        conn.close()
+
+
+@app.post("/v1/analytics/actions/anomaly/inspect")
+def api_analytics_inspect_anomaly(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope="ANOMALIES", scope_ref=None)
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANOMALY_INSPECTED", page_scope="ANOMALIES", action_type="INSPECT_ANOMALY", scope_ref=str(payload.get("id") or ""), filter_payload=payload, freshness_summary=freshness_summary)
+    return {"action": "inspect_anomaly", "payload": payload, "mutation": False}
+
+
+def _record_analytics_ui_event(*, event_type: str, page_scope: str, action_type: str, scope_ref: str | None = None, filter_payload: dict[str, Any] | None = None, artifact_type: str | None = None, report_record_id: int | None = None, freshness_summary: dict[str, Any] | None = None) -> None:
+    conn = dbm.connect(env)
+    try:
+        conn.execute(
+            """
+            INSERT INTO analytics_ui_events(event_type, page_scope, scope_ref, filter_payload_json, artifact_type, report_record_id, action_type, actor, freshness_summary_json, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                event_type,
+                page_scope,
+                scope_ref,
+                json.dumps(filter_payload or {}, sort_keys=True),
+                artifact_type,
+                report_record_id,
+                action_type,
+                env.basic_user,
+                json.dumps(freshness_summary or {}, sort_keys=True),
+                dbm.now_ts(),
+            ),
+        )
+        logger.info(
+            "analytics_ui_event page_scope=%s scope_ref=%s filter_payload=%s artifact_type=%s report_record_id=%s action_type=%s actor=%s upstream_freshness_summary=%s",
+            page_scope,
+            scope_ref or "-",
+            json.dumps(filter_payload or {}, sort_keys=True),
+            artifact_type or "-",
+            report_record_id if report_record_id is not None else -1,
+            action_type,
+            env.basic_user,
+            json.dumps(freshness_summary or {}, sort_keys=True),
+        )
+    finally:
+        conn.close()
