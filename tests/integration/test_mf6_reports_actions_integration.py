@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import unittest
 from pathlib import Path
 
@@ -76,12 +77,27 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
             structured_payload["artifact_type"] = "STRUCTURED_REPORT"
             structured = client.post("/v1/analytics/reports/request", headers=h, json=structured_payload)
             self.assertEqual(structured.status_code, 200)
-            self.assertTrue(str(structured.json()["report_record"]["artifact_ref"]).endswith("_structured.json"))
+            structured_ref = str(structured.json()["report_record"]["artifact_ref"])
+            self.assertTrue(structured_ref.endswith("_structured.json"))
+            structured_body = json.loads(Path(structured_ref).read_text(encoding="utf-8"))
+            self.assertGreaterEqual(int(structured_body["dataset_counts"]["operational_kpis"]), 1)
+            self.assertGreaterEqual(int(structured_body["dataset_counts"]["recommendations"]), 1)
+            self.assertIn("dataset", structured_body)
             api_payload = dict(payload)
             api_payload["artifact_type"] = "API_REPORT"
             api_generated = client.post("/v1/analytics/reports/request", headers=h, json=api_payload)
             self.assertEqual(api_generated.status_code, 200)
-            self.assertTrue(str(api_generated.json()["report_record"]["artifact_ref"]).endswith("_api_payload.json"))
+            api_ref = str(api_generated.json()["report_record"]["artifact_ref"])
+            self.assertTrue(api_ref.endswith("_api_payload.json"))
+            api_body = json.loads(Path(api_ref).read_text(encoding="utf-8"))
+            self.assertIn("report_payload", api_body)
+            self.assertIn("dataset_counts", api_body["report_payload"])
+            impossible_filter = dict(payload)
+            impossible_filter["artifact_type"] = "STRUCTURED_REPORT"
+            impossible_filter["filter_payload"] = {"channel": "darkwood-reverie", "target_domain": "NON_EXISTENT"}
+            impossible_resp = client.post("/v1/analytics/reports/request", headers=h, json=impossible_filter)
+            self.assertEqual(impossible_resp.status_code, 422)
+            self.assertIn("missing required source data", impossible_resp.text)
             bad = dict(payload)
             bad["artifact_type"] = "BAD_ARTIFACT"
             bad_resp = client.post("/v1/analytics/reports/request", headers=h, json=bad)

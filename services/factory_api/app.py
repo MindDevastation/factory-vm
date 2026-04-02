@@ -6789,13 +6789,43 @@ def api_analytics_filter_contract(_: bool = Depends(require_basic_auth(env))):
     }
 
 
+@app.get("/v1/analytics/channels")
+def api_analytics_channels_index(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute("SELECT slug FROM channels ORDER BY slug").fetchall()
+        return {"items": [str(r["slug"]) for r in rows], "path_template": "/v1/analytics/channels/{channel_slug}"}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/releases")
+def api_analytics_releases_index(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute("SELECT id FROM releases ORDER BY id DESC LIMIT 50").fetchall()
+        return {"items": [int(r["id"]) for r in rows], "path_template": "/v1/analytics/releases/{release_id}"}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/batches")
+def api_analytics_batches_index(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute("SELECT DISTINCT strftime('%Y-%m', COALESCE(planned_at, '')) AS batch_month FROM releases WHERE planned_at IS NOT NULL ORDER BY batch_month DESC LIMIT 24").fetchall()
+        return {"items": [str(r["batch_month"]) for r in rows if str(r["batch_month"] or "")], "path_template": "/v1/analytics/batches/{batch_month}"}
+    finally:
+        conn.close()
+
+
 @app.get("/v1/analytics/overview")
 def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_window: str | None = None, freshness: str | None = None):
     conn = dbm.connect(env)
     try:
         from services.analytics_center.page_aggregations import aggregate_overview
 
-        aggregated = aggregate_overview(conn)
+        aggregated = aggregate_overview(conn, time_window=time_window, freshness=freshness)
         page = _build_page(
             conn,
             "OVERVIEW",
@@ -6819,7 +6849,7 @@ def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_au
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
 
-        aggregated = aggregate_scope(conn, scope_type="CHANNEL", scope_ref=channel_slug)
+        aggregated = aggregate_scope(conn, scope_type="CHANNEL", scope_ref=channel_slug, filters={"time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence})
         page = _build_page(
             conn,
             "CHANNEL",
@@ -6844,7 +6874,7 @@ def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
 
-        aggregated = aggregate_scope(conn, scope_type="RELEASE", scope_ref=str(release_id))
+        aggregated = aggregate_scope(conn, scope_type="RELEASE", scope_ref=str(release_id), filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family})
         page = _build_page(
             conn,
             "RELEASE",
@@ -6869,7 +6899,7 @@ def api_analytics_batches(batch_month: str, _: bool = Depends(require_basic_auth
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
 
-        aggregated = aggregate_scope(conn, scope_type="BATCH_MONTH", scope_ref=batch_month)
+        aggregated = aggregate_scope(conn, scope_type="BATCH_MONTH", scope_ref=batch_month, filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "channel": channel})
         page = _build_page(
             conn,
             "BATCH_MONTH",
@@ -6894,7 +6924,7 @@ def api_analytics_anomalies(_: bool = Depends(require_basic_auth(env)), scope_ty
     try:
         from services.analytics_center.page_aggregations import aggregate_anomalies
 
-        aggregated = aggregate_anomalies(conn)
+        aggregated = aggregate_anomalies(conn, filters={"scope_type": scope_type, "severity": severity, "confidence": confidence, "recommendation_family": recommendation_family, "target_domain": target_domain})
         page = _build_page(
             conn,
             "ANOMALIES",
@@ -6918,7 +6948,7 @@ def api_analytics_recommendations(_: bool = Depends(require_basic_auth(env)), sc
     try:
         from services.analytics_center.page_aggregations import aggregate_recommendations
 
-        aggregated = aggregate_recommendations(conn)
+        aggregated = aggregate_recommendations(conn, filters={"scope_type": scope_type, "recommendation_family": recommendation_family, "target_domain": target_domain, "severity": severity, "confidence": confidence, "lifecycle_status": lifecycle_status})
         page = _build_page(
             conn,
             "RECOMMENDATIONS",
@@ -7023,6 +7053,97 @@ def api_analytics_report_download(report_record_id: int, _: bool = Depends(requi
     finally:
         conn.close()
 
+
+
+
+def _external_sync_http_status(code: str) -> int:
+    if code in {"E5A_INVALID_EXTERNAL_SCOPE", "E5A_INVALID_REFRESH_MODE"}:
+        return 422
+    if code in {"E5A_SYNC_RUN_CONFLICT"}:
+        return 409
+    return 500
+
+
+@app.post("/v1/analytics/external/manual-refresh")
+def api_analytics_external_manual_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import request_manual_refresh
+        from services.analytics_center.errors import AnalyticsDomainError
+
+        provider_name = "YOUTUBE"
+        target_scope_type = str(payload.get("target_scope_type") or "CHANNEL")
+        target_scope_ref = str(payload.get("target_scope_ref") or "")
+        refresh_mode = str(payload.get("refresh_mode") or "MANUAL_REFRESH")
+        force = bool(payload.get("force", False))
+        metrics_subset = payload.get("metrics_subset")
+        run_id = request_manual_refresh(
+            conn,
+            target_scope_type=target_scope_type,
+            target_scope_ref=target_scope_ref,
+            refresh_mode=refresh_mode,
+            force=force,
+            metrics_subset=metrics_subset if isinstance(metrics_subset, list) else None,
+        )
+        row = conn.execute("SELECT * FROM analytics_external_sync_runs WHERE id = ?", (int(run_id),)).fetchone()
+        return {
+            "run_id": int(run_id),
+            "provider_name": provider_name,
+            "target_scope_type": target_scope_type,
+            "target_scope_ref": target_scope_ref,
+            "run_mode": str(row["run_mode"]),
+            "sync_state": str(row["sync_state"]),
+        }
+    except Exception as exc:
+        from services.analytics_center.errors import AnalyticsDomainError
+        if isinstance(exc, AnalyticsDomainError):
+            raise HTTPException(status_code=_external_sync_http_status(exc.code), detail={"code": exc.code, "message": exc.message})
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/status")
+def api_analytics_external_status(target_scope_type: str, target_scope_ref: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import get_sync_status
+        return get_sync_status(conn, target_scope_type=target_scope_type, target_scope_ref=target_scope_ref)
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/coverage")
+def api_analytics_external_coverage(target_scope_type: str, target_scope_ref: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import get_coverage_report
+        return get_coverage_report(conn, target_scope_type=target_scope_type, target_scope_ref=target_scope_ref)
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/runs")
+def api_analytics_external_runs(target_scope_type: str | None = None, target_scope_ref: str | None = None, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import list_sync_runs
+        return {"items": list_sync_runs(conn, target_scope_type=target_scope_type, target_scope_ref=target_scope_ref)}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/runs/{run_id}")
+def api_analytics_external_run_detail(run_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import get_sync_run_detail
+        row = get_sync_run_detail(conn, run_id=int(run_id))
+        if row is None:
+            raise HTTPException(status_code=404, detail={"code": "E5A_INVALID_EXTERNAL_SCOPE", "message": "sync run not found"})
+        return row
+    finally:
+        conn.close()
 
 @app.post("/v1/analytics/actions/refresh")
 def api_analytics_action_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):

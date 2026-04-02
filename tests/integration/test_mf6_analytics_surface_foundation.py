@@ -29,6 +29,9 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 nav_keys,
                 ["OVERVIEW", "CHANNELS", "RELEASES_VIDEOS", "BATCH_MONTH", "ANOMALIES", "RECOMMENDATIONS", "REPORTS_EXPORTS"],
             )
+            for item in body["navigation"]:
+                r = client.get(item["path"], headers=headers)
+                self.assertEqual(r.status_code, 200)
 
     def test_page_skeletons_render_and_show_missing_or_partial_completeness(self) -> None:
         with temp_env() as (_, env):

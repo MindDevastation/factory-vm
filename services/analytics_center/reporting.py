@@ -5,17 +5,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from services.analytics_center.errors import (
-    AnalyticsDomainError,
-    E5A_INVALID_REPORT_ARTIFACT_TYPE,
-    E5A_INVALID_REPORT_SCOPE,
-)
+from services.analytics_center.errors import AnalyticsDomainError, E5A_INVALID_REPORT_ARTIFACT_TYPE, E5A_INVALID_REPORT_SCOPE
 from services.analytics_center.helpers import canonicalize_scope_ref
-from services.analytics_center.literals import (
-    ANALYTICS_MF6_ARTIFACT_TYPES,
-    ANALYTICS_MF6_GENERATION_STATUSES,
-    ANALYTICS_MF6_REPORT_SCOPE_TYPES,
-)
+from services.analytics_center.literals import ANALYTICS_MF6_ARTIFACT_TYPES, ANALYTICS_MF6_GENERATION_STATUSES, ANALYTICS_MF6_REPORT_SCOPE_TYPES
 from services.common.db import now_ts
 from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes
 
@@ -51,92 +43,92 @@ def find_duplicate_report_request(conn: Any, *, report_scope_type: str, report_s
     return None if row is None else dict(row)
 
 
-def _load_latest_snapshot(conn: Any, *, report_scope_type: str, report_scope_ref: str | None) -> dict[str, Any] | None:
+def _scope_params(*, conn: Any, report_scope_type: str, report_scope_ref: str | None, scope_type_col: str, scope_ref_col: str) -> tuple[str, tuple[Any, ...]]:
+    if report_scope_type == "OVERVIEW":
+        return "", ()
     canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=report_scope_type, scope_ref=str(report_scope_ref or ""))
+    return f"WHERE {scope_type_col} = ? AND {scope_ref_col} = ?", (report_scope_type, canonical_scope_ref)
+
+
+def _scope_snapshot_params(*, conn: Any, report_scope_type: str, report_scope_ref: str | None) -> tuple[str, tuple[Any, ...]]:
     entity_type = _SCOPE_ENTITY_TYPE[report_scope_type]
     if entity_type is None:
-        row = conn.execute("SELECT * FROM analytics_snapshots ORDER BY captured_at DESC, id DESC LIMIT 1").fetchone()
-    else:
-        row = conn.execute(
-            """
-            SELECT * FROM analytics_snapshots
-            WHERE entity_type = ? AND entity_ref = ?
-            ORDER BY captured_at DESC, id DESC LIMIT 1
-            """,
-            (entity_type, canonical_scope_ref),
-        ).fetchone()
-    return None if row is None else dict(row)
-
-
-def _load_latest_by_scope(conn: Any, *, table: str, scope_type_col: str, scope_ref_col: str, report_scope_type: str, report_scope_ref: str | None) -> dict[str, Any] | None:
+        return "", ()
     canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=report_scope_type, scope_ref=str(report_scope_ref or ""))
-    if report_scope_type == "OVERVIEW":
-        row = conn.execute(f"SELECT * FROM {table} ORDER BY created_at DESC, id DESC LIMIT 1").fetchone()
-    else:
-        row = conn.execute(
-            f"SELECT * FROM {table} WHERE {scope_type_col} = ? AND {scope_ref_col} = ? ORDER BY created_at DESC, id DESC LIMIT 1",
-            (report_scope_type, canonical_scope_ref),
-        ).fetchone()
-    return None if row is None else dict(row)
+    return "WHERE entity_type = ? AND entity_ref = ?", (entity_type, canonical_scope_ref)
+
+
+def _load_current_rows(conn: Any, *, table: str, where_sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+    rows = conn.execute(f"SELECT * FROM {table} {where_sql} {'AND' if where_sql else 'WHERE'} is_current = 1 ORDER BY created_at DESC, id DESC", params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _load_current_snapshot_rows(conn: Any, *, where_sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+    rows = conn.execute(f"SELECT * FROM analytics_snapshots {where_sql} {'AND' if where_sql else 'WHERE'} is_current = 1 ORDER BY captured_at DESC, id DESC", params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _apply_report_filters(dataset: dict[str, Any], *, filter_payload: dict[str, Any]) -> dict[str, Any]:
+    filtered = dict(dataset)
+    recs = list(filtered["recommendations"])
+    predictions = list(filtered["predictions"])
+    comparisons = list(filtered["comparisons"])
+
+    severity = str(filter_payload.get("severity") or "").upper()
+    confidence = str(filter_payload.get("confidence") or "").upper()
+    recommendation_family = str(filter_payload.get("recommendation_family") or "")
+    target_domain = str(filter_payload.get("target_domain") or "")
+
+    if severity:
+        recs = [r for r in recs if str(r.get("severity_class") or "").upper() == severity]
+    if confidence:
+        recs = [r for r in recs if str(r.get("confidence_class") or "").upper() == confidence]
+        predictions = [r for r in predictions if str(r.get("confidence_class") or "").upper() == confidence]
+    if recommendation_family:
+        recs = [r for r in recs if str(r.get("recommendation_family") or "") == recommendation_family]
+    if target_domain:
+        recs = [r for r in recs if str(r.get("target_domain") or "") == target_domain]
+
+    source_family = str(filter_payload.get("source_family") or "")
+    if source_family:
+        comparisons = [r for r in comparisons if str(r.get("source_family") or "") == source_family]
+
+    filtered["recommendations"] = recs
+    filtered["predictions"] = predictions
+    filtered["comparisons"] = comparisons
+    return filtered
 
 
 def _build_report_dataset(conn: Any, *, report_scope_type: str, report_scope_ref: str | None, report_family: str, filter_payload: dict[str, Any]) -> dict[str, Any]:
-    latest_snapshot = _load_latest_snapshot(conn, report_scope_type=report_scope_type, report_scope_ref=report_scope_ref)
-    latest_kpi = _load_latest_by_scope(
-        conn,
-        table="analytics_operational_kpi_snapshots",
-        scope_type_col="scope_type",
-        scope_ref_col="scope_ref",
-        report_scope_type=report_scope_type,
-        report_scope_ref=report_scope_ref,
-    )
-    latest_comparison = _load_latest_by_scope(
-        conn,
-        table="analytics_comparison_snapshots",
-        scope_type_col="scope_type",
-        scope_ref_col="scope_ref",
-        report_scope_type=report_scope_type,
-        report_scope_ref=report_scope_ref,
-    )
-    latest_prediction = _load_latest_by_scope(
-        conn,
-        table="analytics_prediction_snapshots",
-        scope_type_col="scope_type",
-        scope_ref_col="scope_ref",
-        report_scope_type=report_scope_type,
-        report_scope_ref=report_scope_ref,
-    )
-    latest_recommendation = _load_latest_by_scope(
-        conn,
-        table="analytics_recommendation_snapshots",
-        scope_type_col="recommendation_scope_type",
-        scope_ref_col="recommendation_scope_ref",
-        report_scope_type=report_scope_type,
-        report_scope_ref=report_scope_ref,
-    )
-    required_sources = {
-        "analytics_snapshots": latest_snapshot,
-        "analytics_operational_kpi_snapshots": latest_kpi,
-        "analytics_comparison_snapshots": latest_comparison,
-        "analytics_prediction_snapshots": latest_prediction,
-        "analytics_recommendation_snapshots": latest_recommendation,
+    snap_where, snap_params = _scope_snapshot_params(conn=conn, report_scope_type=report_scope_type, report_scope_ref=report_scope_ref)
+    kpi_where, kpi_params = _scope_params(conn=conn, report_scope_type=report_scope_type, report_scope_ref=report_scope_ref, scope_type_col="scope_type", scope_ref_col="scope_ref")
+    cmp_where, cmp_params = _scope_params(conn=conn, report_scope_type=report_scope_type, report_scope_ref=report_scope_ref, scope_type_col="scope_type", scope_ref_col="scope_ref")
+    pred_where, pred_params = _scope_params(conn=conn, report_scope_type=report_scope_type, report_scope_ref=report_scope_ref, scope_type_col="scope_type", scope_ref_col="scope_ref")
+    rec_where, rec_params = _scope_params(conn=conn, report_scope_type=report_scope_type, report_scope_ref=report_scope_ref, scope_type_col="recommendation_scope_type", scope_ref_col="recommendation_scope_ref")
+
+    dataset = {
+        "snapshots": _load_current_snapshot_rows(conn, where_sql=snap_where, params=snap_params),
+        "operational_kpis": _load_current_rows(conn, table="analytics_operational_kpi_snapshots", where_sql=kpi_where, params=kpi_params),
+        "comparisons": _load_current_rows(conn, table="analytics_comparison_snapshots", where_sql=cmp_where, params=cmp_params),
+        "predictions": _load_current_rows(conn, table="analytics_prediction_snapshots", where_sql=pred_where, params=pred_params),
+        "recommendations": _load_current_rows(conn, table="analytics_recommendation_snapshots", where_sql=rec_where, params=rec_params),
     }
-    missing = sorted([name for name, value in required_sources.items() if value is None])
+    missing = sorted([name for name, rows in dataset.items() if len(rows) == 0])
     if missing:
-        raise AnalyticsDomainError(
-            code=E5A_INVALID_REPORT_SCOPE,
-            message=f"missing required source data: {', '.join(missing)}",
-        )
+        raise AnalyticsDomainError(code=E5A_INVALID_REPORT_SCOPE, message=f"missing required source data: {', '.join(missing)}")
+
+    filtered = _apply_report_filters(dataset, filter_payload=filter_payload)
+    for key in ("comparisons", "predictions", "recommendations"):
+        if len(filtered[key]) == 0:
+            raise AnalyticsDomainError(code=E5A_INVALID_REPORT_SCOPE, message=f"missing required source data: {key}")
+
     return {
         "report_scope_type": report_scope_type,
         "report_scope_ref": report_scope_ref,
         "report_family": report_family,
         "filter_payload": dict(filter_payload),
-        "latest_snapshot": latest_snapshot,
-        "latest_operational_kpi": latest_kpi,
-        "latest_comparison": latest_comparison,
-        "latest_prediction": latest_prediction,
-        "latest_recommendation": latest_recommendation,
+        "dataset": filtered,
+        "dataset_counts": {k: len(v) for k, v in filtered.items()},
     }
 
 
@@ -156,24 +148,27 @@ def _generate_artifact(*, record_id: int, artifact_type: str, dataset: dict[str,
         path = root / f"report_{record_id}_api_payload.json"
         path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         return str(path)
+
     columns = [
         {"group": "REPORT", "key": "report_scope_type"},
         {"group": "REPORT", "key": "report_scope_ref"},
-        {"group": "SNAPSHOT", "key": "snapshot_id"},
-        {"group": "KPI", "key": "kpi_code"},
-        {"group": "PREDICTION", "key": "predicted_label"},
-        {"group": "RECOMMENDATION", "key": "recommendation_issue_key"},
+        {"group": "SOURCE", "key": "source_table"},
+        {"group": "SOURCE", "key": "source_row_id"},
+        {"group": "SIGNAL", "key": "signal_family"},
+        {"group": "SIGNAL", "key": "status_or_class"},
     ]
-    row = {
-        "report_scope_type": dataset["report_scope_type"],
-        "report_scope_ref": dataset["report_scope_ref"],
-        "snapshot_id": dataset["latest_snapshot"]["id"],
-        "kpi_code": dataset["latest_operational_kpi"]["kpi_code"],
-        "predicted_label": dataset["latest_prediction"]["predicted_label"],
-        "recommendation_issue_key": dataset["latest_recommendation"]["issue_key"],
-    }
+    rows: list[dict[str, Any]] = []
+    for row in dataset["dataset"]["operational_kpis"]:
+        rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_operational_kpi_snapshots", "source_row_id": row.get("id"), "signal_family": row.get("kpi_family"), "status_or_class": row.get("status_class")})
+    for row in dataset["dataset"]["comparisons"]:
+        rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_comparison_snapshots", "source_row_id": row.get("id"), "signal_family": row.get("comparison_family"), "status_or_class": row.get("variance_class")})
+    for row in dataset["dataset"]["predictions"]:
+        rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_prediction_snapshots", "source_row_id": row.get("id"), "signal_family": row.get("prediction_family"), "status_or_class": row.get("variance_class")})
+    for row in dataset["dataset"]["recommendations"]:
+        rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_recommendation_snapshots", "source_row_id": row.get("id"), "signal_family": row.get("recommendation_family"), "status_or_class": row.get("severity_class")})
+
     path = root / f"report_{record_id}.xlsx"
-    content = export_report_to_xlsx_bytes({"columns": columns, "rows": [row]}, sheet_title=f"analytics_{dataset['report_scope_type'].lower()}")
+    content = export_report_to_xlsx_bytes({"columns": columns, "rows": rows}, sheet_title=f"analytics_{dataset['report_scope_type'].lower()}")
     path.write_bytes(content)
     return str(path)
 
@@ -212,23 +207,11 @@ def create_report_record(conn: Any, *, report_scope_type: str, report_scope_ref:
     )
     report_id = int(row.lastrowid)
     try:
-        dataset = _build_report_dataset(
-            conn,
-            report_scope_type=report_scope_type,
-            report_scope_ref=report_scope_ref,
-            report_family=report_family,
-            filter_payload=filter_payload,
-        )
+        dataset = _build_report_dataset(conn, report_scope_type=report_scope_type, report_scope_ref=report_scope_ref, report_family=report_family, filter_payload=filter_payload)
         artifact_ref = _generate_artifact(record_id=report_id, artifact_type=artifact_type, dataset=dataset)
-        conn.execute(
-            "UPDATE analytics_report_records SET artifact_ref = ?, generation_status = 'READY' WHERE id = ?",
-            (artifact_ref, report_id),
-        )
+        conn.execute("UPDATE analytics_report_records SET artifact_ref = ?, generation_status = 'READY' WHERE id = ?", (artifact_ref, report_id))
     except Exception:
-        conn.execute(
-            "UPDATE analytics_report_records SET generation_status = 'FAILED' WHERE id = ?",
-            (report_id,),
-        )
+        conn.execute("UPDATE analytics_report_records SET generation_status = 'FAILED' WHERE id = ?", (report_id,))
         raise
     return report_id
 

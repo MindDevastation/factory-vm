@@ -91,11 +91,19 @@ class TestMf6AnalyticsPagesIntegration(unittest.TestCase):
                 seeded = seed_mf6_page_data(conn)
             finally:
                 conn.close()
-            r = client.get(f"/v1/analytics/channels/{seeded['channel_slug']}", params={"severity": "WARNING"}, headers=h)
-            self.assertEqual(r.status_code, 200)
-            applied = r.json()["applied_filters"]
+            base = client.get(f"/v1/analytics/channels/{seeded['channel_slug']}", headers=h)
+            filtered = client.get(
+                f"/v1/analytics/channels/{seeded['channel_slug']}",
+                params={"severity": "WARNING", "recommendation_family": "WEAK_RELEASE_ATTENTION"},
+                headers=h,
+            )
+            self.assertEqual(base.status_code, 200)
+            self.assertEqual(filtered.status_code, 200)
+            applied = filtered.json()["applied_filters"]
             self.assertEqual(applied["channel"], "darkwood-reverie")
             self.assertEqual(applied["severity"], "WARNING")
+            self.assertEqual(applied["recommendation_family"], "WEAK_RELEASE_ATTENTION")
+            self.assertLessEqual(len(filtered.json()["recommendation_summary"]), len(base.json()["recommendation_summary"]))
 
 
 if __name__ == "__main__":

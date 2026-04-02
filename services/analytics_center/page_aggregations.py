@@ -6,6 +6,7 @@ from typing import Any
 
 from services.analytics_center.helpers import canonicalize_scope_ref
 
+
 def _rows(conn: Any, query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(query, params).fetchall()]
 
@@ -43,6 +44,35 @@ def _coverage_summary(source_states: dict[str, str]) -> dict[str, Any]:
     else:
         status = "PARTIAL"
     return {"status": status, "missing_sources": missing_sources, "stale_sources": stale_sources, "source_states": dict(source_states)}
+
+
+def _time_window_cutoff(time_window: str | None) -> float | None:
+    value = str(time_window or "").strip().lower()
+    if value in {"", "all", "latest"}:
+        return None
+    mapping = {"24h": 1, "7d": 7, "30d": 30, "90d": 90}
+    days = mapping.get(value)
+    if days is None:
+        return None
+    return time.time() - float(days * 86400)
+
+
+def _apply_time_window(rows: list[dict[str, Any]], *, time_window: str | None) -> list[dict[str, Any]]:
+    cutoff = _time_window_cutoff(time_window)
+    if cutoff is None:
+        return rows
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        ts = row.get("created_at")
+        if ts is None:
+            filtered.append(row)
+            continue
+        try:
+            if float(ts) >= cutoff:
+                filtered.append(row)
+        except Exception:
+            filtered.append(row)
+    return filtered
 
 
 def compute_page_freshness(conn: Any, *, page_scope: str, scope_ref: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -112,7 +142,7 @@ def compute_page_freshness(conn: Any, *, page_scope: str, scope_ref: str | None 
     return _overall_freshness(source_states), _coverage_summary(source_states)
 
 
-def aggregate_overview(conn: Any) -> dict[str, Any]:
+def aggregate_overview(conn: Any, *, time_window: str | None = None, freshness: str | None = None) -> dict[str, Any]:
     channel_rows = _rows(
         conn,
         """
@@ -125,12 +155,19 @@ def aggregate_overview(conn: Any) -> dict[str, Any]:
     )
     anomaly_rows = _rows(
         conn,
-        "SELECT scope_ref, comparison_family AS family, variance_class FROM analytics_comparison_snapshots WHERE is_current = 1 AND variance_class IN ('ANOMALY','RISK') ORDER BY created_at DESC LIMIT 20"
+        "SELECT scope_ref, comparison_family AS family, variance_class, created_at FROM analytics_comparison_snapshots WHERE is_current = 1 AND variance_class IN ('ANOMALY','RISK') ORDER BY created_at DESC LIMIT 100"
     )
     rec_rows = _rows(
         conn,
-        "SELECT recommendation_scope_ref, recommendation_family, severity_class, confidence_class FROM analytics_recommendation_snapshots WHERE is_current = 1 AND lifecycle_status = 'OPEN' ORDER BY created_at DESC LIMIT 20",
+        "SELECT recommendation_scope_ref, recommendation_family, severity_class, confidence_class, lifecycle_status, created_at FROM analytics_recommendation_snapshots WHERE is_current = 1 AND lifecycle_status = 'OPEN' ORDER BY created_at DESC LIMIT 100",
     )
+    anomaly_rows = _apply_time_window(anomaly_rows, time_window=time_window)
+    rec_rows = _apply_time_window(rec_rows, time_window=time_window)
+    if freshness:
+        fresh = str(freshness).upper()
+        if fresh in {"FRESH", "STALE", "PARTIAL", "MISSING"}:
+            anomaly_rows = [r for r in anomaly_rows if str(r.get("variance_class") or "").upper() == fresh or fresh in {"FRESH", "PARTIAL", "MISSING"}]
+
     summary_cards = [
         {"card": "channels_with_snapshots", "value": len(channel_rows)},
         {"card": "open_recommendations", "value": len(rec_rows)},
@@ -143,28 +180,53 @@ def aggregate_overview(conn: Any) -> dict[str, Any]:
     return {"summary_cards": summary_cards, "detail_blocks": detail_blocks, "anomaly_risk_markers": anomaly_rows, "recommendation_summary": rec_rows}
 
 
-def aggregate_scope(conn: Any, *, scope_type: str, scope_ref: str) -> dict[str, Any]:
+def aggregate_scope(conn: Any, *, scope_type: str, scope_ref: str, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+    filters = dict(filters or {})
     canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=scope_type, scope_ref=scope_ref)
     predictions = _rows(
         conn,
-        "SELECT prediction_family, variance_class, confidence_class, predicted_label FROM analytics_prediction_snapshots WHERE scope_type=? AND scope_ref=? AND is_current=1 ORDER BY created_at DESC",
+        "SELECT prediction_family, variance_class, confidence_class, predicted_label, created_at FROM analytics_prediction_snapshots WHERE scope_type=? AND scope_ref=? AND is_current=1 ORDER BY created_at DESC",
         (scope_type, canonical_scope_ref),
     )
     comparisons = _rows(
         conn,
-        "SELECT comparison_family, variance_class, delta_payload_json FROM analytics_comparison_snapshots WHERE scope_type=? AND scope_ref=? AND is_current=1 ORDER BY created_at DESC",
+        "SELECT comparison_family, variance_class, delta_payload_json, created_at FROM analytics_comparison_snapshots WHERE scope_type=? AND scope_ref=? AND is_current=1 ORDER BY created_at DESC",
         (scope_type, canonical_scope_ref),
     )
     kpis = _rows(
         conn,
-        "SELECT kpi_family, kpi_code, status_class FROM analytics_operational_kpi_snapshots WHERE scope_type=? AND scope_ref=? AND is_current=1 ORDER BY created_at DESC",
+        "SELECT kpi_family, kpi_code, status_class, created_at FROM analytics_operational_kpi_snapshots WHERE scope_type=? AND scope_ref=? AND is_current=1 ORDER BY created_at DESC",
         (scope_type, canonical_scope_ref),
     )
     recs = _rows(
         conn,
-        "SELECT id, recommendation_family, severity_class, confidence_class, target_domain, explainability_payload_json FROM analytics_recommendation_snapshots WHERE recommendation_scope_type=? AND recommendation_scope_ref=? AND is_current=1 ORDER BY created_at DESC",
+        "SELECT id, recommendation_family, severity_class, confidence_class, target_domain, lifecycle_status, explainability_payload_json, created_at FROM analytics_recommendation_snapshots WHERE recommendation_scope_type=? AND recommendation_scope_ref=? AND is_current=1 ORDER BY created_at DESC",
         (scope_type, canonical_scope_ref),
     )
+
+    severity = str(filters.get("severity") or "").upper()
+    confidence = str(filters.get("confidence") or "").upper()
+    rec_family = str(filters.get("recommendation_family") or "")
+    anomaly_status = str(filters.get("anomaly_risk_status") or "").upper()
+    time_window = filters.get("time_window")
+
+    predictions = _apply_time_window(predictions, time_window=time_window)
+    comparisons = _apply_time_window(comparisons, time_window=time_window)
+    kpis = _apply_time_window(kpis, time_window=time_window)
+    recs = _apply_time_window(recs, time_window=time_window)
+
+    if confidence:
+        predictions = [r for r in predictions if str(r.get("confidence_class") or "").upper() == confidence]
+        recs = [r for r in recs if str(r.get("confidence_class") or "").upper() == confidence]
+    if severity:
+        recs = [r for r in recs if str(r.get("severity_class") or "").upper() == severity]
+    if rec_family:
+        recs = [r for r in recs if str(r.get("recommendation_family") or "") == rec_family]
+    if anomaly_status in {"ANOMALY", "RISK", "NORMAL"}:
+        predictions = [r for r in predictions if str(r.get("variance_class") or "").upper() == anomaly_status]
+        comparisons = [r for r in comparisons if str(r.get("variance_class") or "").upper() == anomaly_status]
+        kpis = [r for r in kpis if str(r.get("status_class") or "").upper() == anomaly_status]
+
     anomalies = [r for r in comparisons if str(r.get("variance_class")) in {"ANOMALY", "RISK"}] + [r for r in predictions if str(r.get("variance_class")) in {"ANOMALY", "RISK"}] + [r for r in kpis if str(r.get("status_class")) in {"ANOMALY", "RISK"}]
     return {
         "summary_cards": [
@@ -183,16 +245,72 @@ def aggregate_scope(conn: Any, *, scope_type: str, scope_ref: str) -> dict[str, 
     }
 
 
-def aggregate_anomalies(conn: Any) -> dict[str, Any]:
-    kpi = _rows(conn, "SELECT scope_type, scope_ref, kpi_family, kpi_code, status_class FROM analytics_operational_kpi_snapshots WHERE is_current=1 AND status_class IN ('ANOMALY','RISK')")
-    cmp = _rows(conn, "SELECT scope_type, scope_ref, comparison_family, variance_class FROM analytics_comparison_snapshots WHERE is_current=1 AND variance_class IN ('ANOMALY','RISK')")
-    pred = _rows(conn, "SELECT scope_type, scope_ref, prediction_family, variance_class, confidence_class FROM analytics_prediction_snapshots WHERE is_current=1 AND variance_class IN ('ANOMALY','RISK')")
+def aggregate_anomalies(conn: Any, *, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+    filters = dict(filters or {})
+    scope_type = str(filters.get("scope_type") or "").upper()
+    severity = str(filters.get("severity") or "").upper()
+    confidence = str(filters.get("confidence") or "").upper()
+    recommendation_family = str(filters.get("recommendation_family") or "")
+    target_domain = str(filters.get("target_domain") or "")
+
+    kpi = _rows(conn, "SELECT scope_type, scope_ref, kpi_family, kpi_code, status_class, created_at FROM analytics_operational_kpi_snapshots WHERE is_current=1 AND status_class IN ('ANOMALY','RISK')")
+    cmp = _rows(conn, "SELECT scope_type, scope_ref, comparison_family, variance_class, created_at FROM analytics_comparison_snapshots WHERE is_current=1 AND variance_class IN ('ANOMALY','RISK')")
+    pred = _rows(conn, "SELECT scope_type, scope_ref, prediction_family, variance_class, confidence_class, created_at FROM analytics_prediction_snapshots WHERE is_current=1 AND variance_class IN ('ANOMALY','RISK')")
+    recs = _rows(conn, "SELECT recommendation_scope_type, recommendation_scope_ref, recommendation_family, target_domain, severity_class FROM analytics_recommendation_snapshots WHERE is_current = 1")
+
+    allow_refs: set[tuple[str, str]] | None = None
+    if recommendation_family or target_domain or severity:
+        allow = [r for r in recs if (not recommendation_family or str(r.get("recommendation_family") or "") == recommendation_family) and (not target_domain or str(r.get("target_domain") or "") == target_domain) and (not severity or str(r.get("severity_class") or "").upper() == severity)]
+        allow_refs = {(str(r["recommendation_scope_type"]), str(r["recommendation_scope_ref"])) for r in allow}
+
     rows = [{**r, "source": "KPI"} for r in kpi] + [{**r, "source": "COMPARISON"} for r in cmp] + [{**r, "source": "PREDICTION"} for r in pred]
+    if scope_type:
+        rows = [r for r in rows if str(r.get("scope_type") or "").upper() == scope_type]
+    if confidence:
+        rows = [r for r in rows if r.get("source") != "PREDICTION" or str(r.get("confidence_class") or "").upper() == confidence]
+    if allow_refs is not None:
+        rows = [r for r in rows if (str(r.get("scope_type") or ""), str(r.get("scope_ref") or "")) in allow_refs]
+
     return {"summary_cards": [{"card": "anomaly_items", "value": len(rows)}], "detail_blocks": [{"table": "problematic_units", "rows": rows}], "anomaly_risk_markers": rows, "recommendation_summary": []}
 
 
-def aggregate_recommendations(conn: Any) -> dict[str, Any]:
-    recs = _rows(conn, "SELECT id, recommendation_scope_type, recommendation_scope_ref, recommendation_family, severity_class, confidence_class, lifecycle_status, target_domain, explainability_payload_json FROM analytics_recommendation_snapshots ORDER BY created_at DESC")
+def aggregate_recommendations(conn: Any, *, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+    filters = dict(filters or {})
+    scope_type = str(filters.get("scope_type") or "").upper()
+    recommendation_family = str(filters.get("recommendation_family") or "")
+    target_domain = str(filters.get("target_domain") or "")
+    severity = str(filters.get("severity") or "").upper()
+    confidence = str(filters.get("confidence") or "").upper()
+    lifecycle_status = str(filters.get("lifecycle_status") or "").upper()
+
+    clauses = ["1=1"]
+    params: list[Any] = []
+    if scope_type:
+        clauses.append("recommendation_scope_type = ?")
+        params.append(scope_type)
+    if recommendation_family:
+        clauses.append("recommendation_family = ?")
+        params.append(recommendation_family)
+    if target_domain:
+        clauses.append("target_domain = ?")
+        params.append(target_domain)
+    if severity:
+        clauses.append("severity_class = ?")
+        params.append(severity)
+    if confidence:
+        clauses.append("confidence_class = ?")
+        params.append(confidence)
+    if lifecycle_status:
+        clauses.append("lifecycle_status = ?")
+        params.append(lifecycle_status)
+
+    recs = _rows(
+        conn,
+        "SELECT id, recommendation_scope_type, recommendation_scope_ref, recommendation_family, severity_class, confidence_class, lifecycle_status, target_domain, explainability_payload_json, created_at FROM analytics_recommendation_snapshots WHERE "
+        + " AND ".join(clauses)
+        + " ORDER BY created_at DESC",
+        tuple(params),
+    )
     for r in recs:
         try:
             r["explainability_payload_json"] = json.loads(str(r["explainability_payload_json"]))
