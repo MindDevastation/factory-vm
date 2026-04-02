@@ -10,6 +10,7 @@ from services.analytics_center.errors import (
     E5A_INVALID_REPORT_ARTIFACT_TYPE,
     E5A_INVALID_REPORT_SCOPE,
 )
+from services.analytics_center.helpers import canonicalize_scope_ref
 from services.analytics_center.literals import (
     ANALYTICS_MF6_ARTIFACT_TYPES,
     ANALYTICS_MF6_GENERATION_STATUSES,
@@ -51,6 +52,7 @@ def find_duplicate_report_request(conn: Any, *, report_scope_type: str, report_s
 
 
 def _load_latest_snapshot(conn: Any, *, report_scope_type: str, report_scope_ref: str | None) -> dict[str, Any] | None:
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=report_scope_type, scope_ref=str(report_scope_ref or ""))
     entity_type = _SCOPE_ENTITY_TYPE[report_scope_type]
     if entity_type is None:
         row = conn.execute("SELECT * FROM analytics_snapshots ORDER BY captured_at DESC, id DESC LIMIT 1").fetchone()
@@ -61,18 +63,19 @@ def _load_latest_snapshot(conn: Any, *, report_scope_type: str, report_scope_ref
             WHERE entity_type = ? AND entity_ref = ?
             ORDER BY captured_at DESC, id DESC LIMIT 1
             """,
-            (entity_type, str(report_scope_ref or "")),
+            (entity_type, canonical_scope_ref),
         ).fetchone()
     return None if row is None else dict(row)
 
 
 def _load_latest_by_scope(conn: Any, *, table: str, scope_type_col: str, scope_ref_col: str, report_scope_type: str, report_scope_ref: str | None) -> dict[str, Any] | None:
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=report_scope_type, scope_ref=str(report_scope_ref or ""))
     if report_scope_type == "OVERVIEW":
         row = conn.execute(f"SELECT * FROM {table} ORDER BY created_at DESC, id DESC LIMIT 1").fetchone()
     else:
         row = conn.execute(
             f"SELECT * FROM {table} WHERE {scope_type_col} = ? AND {scope_ref_col} = ? ORDER BY created_at DESC, id DESC LIMIT 1",
-            (report_scope_type, str(report_scope_ref or "")),
+            (report_scope_type, canonical_scope_ref),
         ).fetchone()
     return None if row is None else dict(row)
 

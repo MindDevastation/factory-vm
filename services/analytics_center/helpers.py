@@ -10,6 +10,19 @@ def normalized_scope_identity(*, entity_type: str, entity_ref: str, source_famil
     return f"{entity_type.strip().upper()}::{entity_ref.strip()}::{source_family.strip().upper()}::{window_type.strip().upper()}"
 
 
+def canonicalize_scope_ref(conn: Any, *, scope_type: str, scope_ref: str) -> str:
+    normalized_scope = str(scope_type or "").strip().upper()
+    ref = str(scope_ref or "").strip()
+    if normalized_scope != "CHANNEL":
+        return ref
+    if ref.isdigit():
+        return ref
+    row = conn.execute("SELECT id FROM channels WHERE slug = ? LIMIT 1", (ref,)).fetchone()
+    if row is not None:
+        return str(int(row["id"]))
+    return ref
+
+
 def validate_json_payload(value: Any, *, field_name: str) -> str:
     if isinstance(value, str):
         candidate = value.strip()

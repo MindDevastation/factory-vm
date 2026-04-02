@@ -24,6 +24,7 @@ from services.analytics_center.literals import (
     ANALYTICS_MF4_SCOPE_TYPES,
     ANALYTICS_MF4_VARIANCE_CLASSES,
 )
+from services.analytics_center.helpers import canonicalize_scope_ref
 from services.common.db import now_ts
 
 
@@ -190,8 +191,9 @@ def _value_score(rows: list[dict[str, Any]]) -> float:
 
 def derive_baselines(conn: Any, *, scope_type: str, scope_ref: str, observed_to: float | None = None) -> list[Mf4BaselineOutput]:
     scope = _validate_scope(scope_type)
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=scope, scope_ref=scope_ref)
     at = float(observed_to or now_ts())
-    sig = _collect_persisted_signals(conn, scope_type=scope, scope_ref=scope_ref, observed_to=at)
+    sig = _collect_persisted_signals(conn, scope_type=scope, scope_ref=canonical_scope_ref, observed_to=at)
     score_external = _value_score(sig["external_rows"])
     score_internal = _value_score(sig["internal_rows"])
     score_operational = mean(
@@ -210,7 +212,7 @@ def derive_baselines(conn: Any, *, scope_type: str, scope_ref: str, observed_to:
         output.append(
             Mf4BaselineOutput(
                 scope_type=scope,
-                scope_ref=scope_ref,
+                scope_ref=canonical_scope_ref,
                 baseline_family=family,
                 variance_class=variance,
                 baseline_payload={"aggregate_score": combined, "external_score": score_external, "internal_score": score_internal, "operational_score": score_operational},

@@ -27,6 +27,7 @@ class TestMf4RuntimeIntegration(unittest.TestCase):
             conn = dbm.connect(env)
             try:
                 self._seed_channel_scope(conn)
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug='darkwood-reverie'").fetchone()["id"])
                 recompute_mf4(
                     conn,
                     run_kind="FULL_STACK_RECOMPUTE",
@@ -42,7 +43,7 @@ class TestMf4RuntimeIntegration(unittest.TestCase):
                     recompute_mode="INCREMENTAL_RECOMPUTE",
                 )
                 for table in ("analytics_baseline_snapshots", "analytics_comparison_snapshots", "analytics_prediction_snapshots"):
-                    old = conn.execute(f"SELECT COUNT(*) AS c FROM {table} WHERE scope_type='CHANNEL' AND scope_ref='darkwood-reverie' AND is_current = 0").fetchone()
+                    old = conn.execute(f"SELECT COUNT(*) AS c FROM {table} WHERE scope_type='CHANNEL' AND scope_ref=? AND is_current = 0", (str(channel_id),)).fetchone()
                     self.assertGreater(int(old["c"]), 0)
             finally:
                 conn.close()

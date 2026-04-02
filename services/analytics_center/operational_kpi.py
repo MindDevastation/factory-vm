@@ -18,6 +18,7 @@ from services.analytics_center.literals import (
     ANALYTICS_OPERATIONAL_KPI_STATUS_CLASSES,
     ANALYTICS_OPERATIONAL_SCOPE_TYPES,
 )
+from services.analytics_center.helpers import canonicalize_scope_ref
 
 
 @dataclass(frozen=True)
@@ -103,19 +104,20 @@ def derive_operational_kpis(conn: Any, *, scope_type: str, scope_ref: str) -> li
     scope = scope_type.strip().upper()
     if scope not in ANALYTICS_OPERATIONAL_SCOPE_TYPES:
         raise AnalyticsDomainError(code=E5A_INVALID_OPERATIONAL_SCOPE, message="invalid operational scope")
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=scope, scope_ref=scope_ref)
 
-    signals = _collect_signals(conn, scope_type=scope, scope_ref=scope_ref)
+    signals = _collect_signals(conn, scope_type=scope, scope_ref=canonical_scope_ref)
     outputs: list[KpiOutput] = []
     formula_registry: dict[str, Callable[[dict[str, Any]], KpiOutput]] = {
-        "PIPELINE_TIMING": lambda s: _compute_pipeline_timing(scope, scope_ref, s),
-        "QA_STATUS": lambda s: _compute_qa_status(scope, scope_ref, s),
-        "UPLOAD_OUTCOME": lambda s: _compute_upload_outcome(scope, scope_ref, s),
-        "PUBLISH_OUTCOME": lambda s: _compute_publish_outcome(scope, scope_ref, s),
-        "RETRY_BURDEN": lambda s: _compute_retry_burden(scope, scope_ref, s),
-        "READINESS": lambda s: _compute_readiness(scope, scope_ref, s),
-        "DRIFT_RECONCILE": lambda s: _compute_drift_reconcile(scope, scope_ref, s),
-        "CADENCE_ADHERENCE": lambda s: _compute_cadence(scope, scope_ref, s),
-        "BATCH_COMPLETENESS": lambda s: _compute_batch_completeness(scope, scope_ref, s),
+        "PIPELINE_TIMING": lambda s: _compute_pipeline_timing(scope, canonical_scope_ref, s),
+        "QA_STATUS": lambda s: _compute_qa_status(scope, canonical_scope_ref, s),
+        "UPLOAD_OUTCOME": lambda s: _compute_upload_outcome(scope, canonical_scope_ref, s),
+        "PUBLISH_OUTCOME": lambda s: _compute_publish_outcome(scope, canonical_scope_ref, s),
+        "RETRY_BURDEN": lambda s: _compute_retry_burden(scope, canonical_scope_ref, s),
+        "READINESS": lambda s: _compute_readiness(scope, canonical_scope_ref, s),
+        "DRIFT_RECONCILE": lambda s: _compute_drift_reconcile(scope, canonical_scope_ref, s),
+        "CADENCE_ADHERENCE": lambda s: _compute_cadence(scope, canonical_scope_ref, s),
+        "BATCH_COMPLETENESS": lambda s: _compute_batch_completeness(scope, canonical_scope_ref, s),
     }
     for family in ANALYTICS_OPERATIONAL_KPI_FAMILIES:
         out = formula_registry[family](signals)

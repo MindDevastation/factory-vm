@@ -51,6 +51,7 @@ class TestOperationalKpiRuntimeIntegration(unittest.TestCase):
             conn = dbm.connect(env)
             try:
                 release_id = self._seed_release_job(conn)
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug='darkwood-reverie'").fetchone()["id"])
                 recompute_operational_kpis(conn, target_scope_type="CHANNEL", target_scope_ref="darkwood-reverie", recompute_mode="FULL_RECOMPUTE")
                 recompute_operational_kpis(conn, target_scope_type="RELEASE", target_scope_ref=str(release_id), recompute_mode="FULL_RECOMPUTE")
                 recompute_operational_kpis(conn, target_scope_type="BATCH_MONTH", target_scope_ref="2026-04", recompute_mode="INCREMENTAL_RECOMPUTE")
@@ -60,7 +61,8 @@ class TestOperationalKpiRuntimeIntegration(unittest.TestCase):
                 rows = read_operational_kpis(conn, scope_type="CHANNEL", scope_ref="darkwood-reverie", current_only=True)
                 self.assertEqual(len(rows), 9)
                 superseded = conn.execute(
-                    "SELECT COUNT(*) AS c FROM analytics_operational_kpi_snapshots WHERE scope_type='CHANNEL' AND scope_ref='darkwood-reverie' AND is_current = 0"
+                    "SELECT COUNT(*) AS c FROM analytics_operational_kpi_snapshots WHERE scope_type='CHANNEL' AND scope_ref=? AND is_current = 0",
+                    (str(channel_id),),
                 ).fetchone()
                 self.assertGreater(int(superseded["c"]), 0)
             finally:

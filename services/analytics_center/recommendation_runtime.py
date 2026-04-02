@@ -15,6 +15,7 @@ from services.analytics_center.literals import (
     ANALYTICS_MF5_RUN_STATES,
     ANALYTICS_MF5_SCOPE_TYPES,
 )
+from services.analytics_center.helpers import canonicalize_scope_ref
 from services.analytics_center.recommendation_core import RecommendationOutput, persist_recommendation_snapshot, synthesize_recommendations
 from services.common.db import now_ts
 
@@ -192,16 +193,21 @@ def _supersede_open_for_issue(conn: Any, *, recommendation: RecommendationOutput
 
 
 def recompute_recommendations(conn: Any, *, recommendation_scope_type: str, recommendation_scope_ref: str, recommendation_family: str, recompute_mode: str) -> int:
+    canonical_scope_ref = canonicalize_scope_ref(
+        conn,
+        scope_type=recommendation_scope_type,
+        scope_ref=recommendation_scope_ref,
+    )
     run_id = create_recommendation_run(
         conn,
         recommendation_scope_type=recommendation_scope_type,
-        recommendation_scope_ref=recommendation_scope_ref,
+        recommendation_scope_ref=canonical_scope_ref,
         recommendation_family=recommendation_family,
         recompute_mode=recompute_mode,
     )
     count = warning = critical = 0
     try:
-        recs = [r for r in synthesize_recommendations(conn, scope_type=recommendation_scope_type, scope_ref=recommendation_scope_ref) if r.recommendation_family == recommendation_family]
+        recs = [r for r in synthesize_recommendations(conn, scope_type=recommendation_scope_type, scope_ref=canonical_scope_ref) if r.recommendation_family == recommendation_family]
         for rec in recs:
             _supersede_open_for_issue(conn, recommendation=rec)
             rec_id = persist_recommendation_snapshot(conn, recommendation=rec, run_id=run_id)

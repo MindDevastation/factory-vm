@@ -11,6 +11,7 @@ from services.analytics_center.external_sync import (
     transition_sync_run,
     run_external_youtube_ingestion,
 )
+from services.analytics_center.mf4_runtime import read_mf4_baselines, recompute_mf4
 from services.analytics_center.write_service import write_external_identity
 from services.common import db as dbm
 from tests._helpers import seed_minimal_db, temp_env
@@ -160,9 +161,50 @@ class TestAnalyticsExternalSyncService(unittest.TestCase):
                     target_scope_ref="darkwood-reverie",
                 )
                 self.assertIsNotNone(snapshot_id)
-                snap = conn.execute("SELECT source_family, snapshot_status FROM analytics_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
+                snap = conn.execute("SELECT source_family, snapshot_status, entity_ref FROM analytics_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
                 self.assertEqual(snap["source_family"], "EXTERNAL_YOUTUBE")
                 self.assertEqual(snap["snapshot_status"], "CURRENT")
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                self.assertEqual(str(snap["entity_ref"]), str(channel_id))
+            finally:
+                conn.close()
+
+    def test_mf2_written_channel_snapshot_feeds_mf4_channel_recompute(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                run_id = create_sync_run(conn, **make_sync_run_payload(run_mode="INITIAL_BACKFILL"))
+                provider = self._FakeProvider(
+                    {
+                        "channel_slug": "darkwood-reverie",
+                        "metrics": {"views": 42, "impressions": 4200},
+                        "metric_families_returned": ["views", "impressions"],
+                        "metric_families_unavailable": [],
+                        "freshness_status": "FRESH",
+                        "freshness_basis": "window_end",
+                        "incomplete_backfill": False,
+                    }
+                )
+                run_external_youtube_ingestion(
+                    conn,
+                    run_id=run_id,
+                    provider=provider,
+                    channel_slug="darkwood-reverie",
+                    target_scope_type="CHANNEL",
+                    target_scope_ref="darkwood-reverie",
+                )
+                recompute_mf4(
+                    conn,
+                    run_kind="FULL_STACK_RECOMPUTE",
+                    target_scope_type="CHANNEL",
+                    target_scope_ref="darkwood-reverie",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+                baselines = read_mf4_baselines(conn, scope_type="CHANNEL", scope_ref="darkwood-reverie", current_only=True)
+                self.assertGreaterEqual(len(baselines), 1)
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                self.assertTrue(all(str(row["scope_ref"]) == str(channel_id) for row in baselines))
             finally:
                 conn.close()
 

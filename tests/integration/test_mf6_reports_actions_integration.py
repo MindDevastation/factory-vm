@@ -8,11 +8,24 @@ from fastapi.testclient import TestClient
 
 from services.common import db as dbm
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
+from tests.analytics_fixtures import make_snapshot_input
+from services.analytics_center.write_service import write_snapshot
 from tests.recommendation_fixtures import seed_recommendation_inputs
 from services.analytics_center.recommendation_runtime import recompute_recommendations, read_recommendations
+from services.analytics_center.mf4_runtime import recompute_mf4
+from services.analytics_center.external_sync import create_sync_run, run_external_youtube_ingestion
+from tests.analytics_fixtures import make_sync_run_payload
+from tests.prediction_fixtures import seed_mf4_operational_kpi_snapshot
 
 
 class TestMf6ReportsActionsIntegration(unittest.TestCase):
+    class _FakeProvider:
+        def __init__(self, payload: dict):
+            self.payload = payload
+
+        def fetch_channel_metrics(self, **_: object) -> dict:
+            return dict(self.payload)
+
     def _new_client(self) -> TestClient:
         mod = importlib.import_module("services.factory_api.app")
         importlib.reload(mod)
@@ -134,6 +147,80 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
             dl = client.get(f"/v1/analytics/reports/{record['id']}/download", headers=h)
             self.assertEqual(dl.status_code, 422)
             self.assertIn("report artifact missing", dl.text)
+
+    def test_mf1_mf2_channel_writes_are_visible_to_mf6_channel_page_and_report(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                channel_id = int(conn.execute("SELECT id FROM channels WHERE slug='darkwood-reverie'").fetchone()["id"])
+                write_snapshot(
+                    conn,
+                    make_snapshot_input(
+                        entity_type="CHANNEL",
+                        entity_ref=str(channel_id),
+                        source_family="INTERNAL_OPERATIONAL",
+                        window_type="LAST_KNOWN_CURRENT",
+                        payload_json={"queue_depth": 2, "retry_ratio": 0.1},
+                    ),
+                )
+                run_id = create_sync_run(conn, **make_sync_run_payload(run_mode="INITIAL_BACKFILL"))
+                provider = self._FakeProvider(
+                    {
+                        "channel_slug": "darkwood-reverie",
+                        "metrics": {"views": 100, "impressions": 2000},
+                        "metric_families_returned": ["views", "impressions"],
+                        "metric_families_unavailable": [],
+                        "freshness_status": "FRESH",
+                        "freshness_basis": "window_end",
+                        "incomplete_backfill": False,
+                    }
+                )
+                run_external_youtube_ingestion(
+                    conn,
+                    run_id=run_id,
+                    provider=provider,
+                    channel_slug="darkwood-reverie",
+                    target_scope_type="CHANNEL",
+                    target_scope_ref="darkwood-reverie",
+                )
+                seed_mf4_operational_kpi_snapshot(conn, scope_type="CHANNEL", scope_ref="darkwood-reverie")
+                recompute_mf4(
+                    conn,
+                    run_kind="FULL_STACK_RECOMPUTE",
+                    target_scope_type="CHANNEL",
+                    target_scope_ref="darkwood-reverie",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+                recompute_recommendations(
+                    conn,
+                    recommendation_scope_type="CHANNEL",
+                    recommendation_scope_ref="darkwood-reverie",
+                    recommendation_family="WEAK_RELEASE_ATTENTION",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            page = client.get("/v1/analytics/channels/darkwood-reverie", headers=h)
+            self.assertEqual(page.status_code, 200)
+            self.assertEqual(page.json()["freshness_summary"]["status"], "FRESH")
+
+            report_req = client.post(
+                "/v1/analytics/reports/request",
+                headers=h,
+                json={
+                    "report_scope_type": "CHANNEL",
+                    "report_scope_ref": "darkwood-reverie",
+                    "report_family": "ANALYTICS_SUMMARY",
+                    "filter_payload": {"channel": "darkwood-reverie"},
+                    "artifact_type": "XLSX",
+                },
+            )
+            self.assertEqual(report_req.status_code, 200)
+            self.assertEqual(report_req.json()["report_record"]["generation_status"], "READY")
 
     def test_actions_delegate_without_adjacent_domain_mutation(self) -> None:
         with temp_env() as (_, env):

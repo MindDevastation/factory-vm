@@ -23,6 +23,7 @@ from services.analytics_center.literals import (
     ANALYTICS_MF5_SEVERITY_CLASSES,
     ANALYTICS_MF5_TARGET_DOMAINS,
 )
+from services.analytics_center.helpers import canonicalize_scope_ref
 from services.common.db import now_ts
 
 
@@ -264,19 +265,20 @@ def synthesis_registry() -> dict[str, SynthesisBuilder]:
 
 def synthesize_recommendations(conn: Any, *, scope_type: str, scope_ref: str) -> list[RecommendationOutput]:
     _require_enum("recommendation_scope_type", scope_type, ANALYTICS_MF5_SCOPE_TYPES, E5A_INVALID_RECOMMENDATION_SCOPE)
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=scope_type, scope_ref=scope_ref)
     reg = synthesis_registry()
     out: list[RecommendationOutput] = []
     predictions = conn.execute(
         "SELECT * FROM analytics_prediction_snapshots WHERE scope_type = ? AND scope_ref = ? AND is_current = 1",
-        (scope_type, scope_ref),
+        (scope_type, canonical_scope_ref),
     ).fetchall()
     comparisons = conn.execute(
         "SELECT * FROM analytics_comparison_snapshots WHERE scope_type = ? AND scope_ref = ? AND is_current = 1 AND variance_class IN ('ANOMALY', 'RISK')",
-        (scope_type, scope_ref),
+        (scope_type, canonical_scope_ref),
     ).fetchall()
     kpis = conn.execute(
         "SELECT * FROM analytics_operational_kpi_snapshots WHERE scope_type = ? AND scope_ref = ? AND is_current = 1 AND status_class IN ('ANOMALY', 'RISK')",
-        (scope_type, scope_ref),
+        (scope_type, canonical_scope_ref),
     ).fetchall()
     for row in predictions:
         out.append(reg["prediction"](dict(row)))

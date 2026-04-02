@@ -16,6 +16,7 @@ from services.analytics_center.literals import (
     ANALYTICS_OPERATIONAL_RUN_STATES,
 )
 from services.analytics_center.operational_kpi import derive_operational_kpis, normalize_problem_listing_filters
+from services.analytics_center.helpers import canonicalize_scope_ref
 from services.analytics_center.write_service import SnapshotWriteInput, write_snapshot
 from services.common.db import now_ts
 
@@ -163,11 +164,12 @@ def recompute_operational_kpis(
     observed_to: float | None = None,
 ) -> int:
     scope_type = str(target_scope_type or "").strip().upper()
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=scope_type, scope_ref=target_scope_ref)
     mode = _validate_recompute_mode(recompute_mode)
     run_id = create_recompute_run(
         conn,
         target_scope_type=scope_type,
-        target_scope_ref=target_scope_ref,
+        target_scope_ref=canonical_scope_ref,
         recompute_mode=mode,
         observed_from=observed_from,
         observed_to=observed_to,
@@ -176,7 +178,7 @@ def recompute_operational_kpis(
         conn,
         event_type="OPERATIONAL_KPI_RECOMPUTE_STARTED",
         target_scope_type=scope_type,
-        target_scope_ref=target_scope_ref,
+        target_scope_ref=canonical_scope_ref,
         recompute_mode=mode,
         run_state="RUNNING",
         anomaly_count=0,
@@ -187,7 +189,7 @@ def recompute_operational_kpis(
     anomalies = 0
     risks = 0
     try:
-        kpis = derive_operational_kpis(conn, scope_type=scope_type, scope_ref=target_scope_ref)
+        kpis = derive_operational_kpis(conn, scope_type=scope_type, scope_ref=canonical_scope_ref)
         for kpi in kpis:
             if kpi.status_class in {"ANOMALY", "RISK"} and not kpi.explainability_payload:
                 raise AnalyticsDomainError(code=E5A_OPERATIONAL_KPI_SUPERSESSION_CONFLICT, message="explainability required")
@@ -202,7 +204,7 @@ def recompute_operational_kpis(
                 conn,
                 event_type="OPERATIONAL_KPI_SNAPSHOT_CREATED",
                 target_scope_type=scope_type,
-                target_scope_ref=target_scope_ref,
+                target_scope_ref=canonical_scope_ref,
                 kpi_family=kpi.kpi_family,
                 kpi_code=kpi.kpi_code,
                 status_class=kpi.status_class,
@@ -218,7 +220,7 @@ def recompute_operational_kpis(
                     conn,
                     event_type="OPERATIONAL_KPI_SNAPSHOT_SUPERSEDED",
                     target_scope_type=scope_type,
-                    target_scope_ref=target_scope_ref,
+                    target_scope_ref=canonical_scope_ref,
                     kpi_family=kpi.kpi_family,
                     kpi_code=kpi.kpi_code,
                     status_class=kpi.status_class,
@@ -236,7 +238,7 @@ def recompute_operational_kpis(
                     conn,
                     event_type="OPERATIONAL_KPI_ANOMALY_DETECTED",
                     target_scope_type=scope_type,
-                    target_scope_ref=target_scope_ref,
+                    target_scope_ref=canonical_scope_ref,
                     kpi_family=kpi.kpi_family,
                     kpi_code=kpi.kpi_code,
                     status_class=kpi.status_class,
@@ -253,7 +255,7 @@ def recompute_operational_kpis(
                     conn,
                     event_type="OPERATIONAL_KPI_RISK_DETECTED",
                     target_scope_type=scope_type,
-                    target_scope_ref=target_scope_ref,
+                    target_scope_ref=canonical_scope_ref,
                     kpi_family=kpi.kpi_family,
                     kpi_code=kpi.kpi_code,
                     status_class=kpi.status_class,
@@ -269,7 +271,7 @@ def recompute_operational_kpis(
                     conn,
                     event_type="OPERATIONAL_KPI_EXPLAINABILITY_PAYLOAD_ATTACHED",
                     target_scope_type=scope_type,
-                    target_scope_ref=target_scope_ref,
+                    target_scope_ref=canonical_scope_ref,
                     kpi_family=kpi.kpi_family,
                     kpi_code=kpi.kpi_code,
                     status_class=kpi.status_class,
@@ -292,7 +294,7 @@ def recompute_operational_kpis(
             conn,
             event_type="OPERATIONAL_KPI_RECOMPUTE_COMPLETED",
             target_scope_type=scope_type,
-            target_scope_ref=target_scope_ref,
+            target_scope_ref=canonical_scope_ref,
             recompute_mode=mode,
             run_state="SUCCEEDED",
             anomaly_count=anomalies,
@@ -319,7 +321,7 @@ def recompute_operational_kpis(
                 else "OPERATIONAL_KPI_RECOMPUTE_FAILURE_RECORDED"
             ),
             target_scope_type=scope_type,
-            target_scope_ref=target_scope_ref,
+            target_scope_ref=canonical_scope_ref,
             recompute_mode=mode,
             run_state=state,
             anomaly_count=anomalies,
@@ -418,8 +420,9 @@ def read_operational_kpis(
     current_only: bool = True,
 ) -> list[dict[str, Any]]:
     filters = normalize_problem_listing_filters(scope_type=scope_type, kpi_family=kpi_family, status_class=status_class)
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=str(filters["scope_type"] or ""), scope_ref=scope_ref)
     clauses = ["scope_type = ?", "scope_ref = ?"]
-    params: list[Any] = [filters["scope_type"], scope_ref]
+    params: list[Any] = [filters["scope_type"], canonical_scope_ref]
     if filters["kpi_family"]:
         clauses.append("kpi_family = ?")
         params.append(filters["kpi_family"])

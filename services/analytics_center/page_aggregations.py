@@ -4,6 +4,7 @@ import json
 import time
 from typing import Any
 
+from services.analytics_center.helpers import canonicalize_scope_ref
 
 def _rows(conn: Any, query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(query, params).fetchall()]
@@ -45,9 +46,10 @@ def _coverage_summary(source_states: dict[str, str]) -> dict[str, Any]:
 
 
 def compute_page_freshness(conn: Any, *, page_scope: str, scope_ref: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=page_scope, scope_ref=str(scope_ref or ""))
     entity_scope = {
         "OVERVIEW": None,
-        "CHANNEL": ("CHANNEL", str(scope_ref or "")),
+        "CHANNEL": ("CHANNEL", canonical_scope_ref),
         "RELEASE": ("RELEASE", str(scope_ref or "")),
         "BATCH_MONTH": ("BATCH", str(scope_ref or "")),
     }.get(page_scope)
@@ -85,7 +87,7 @@ def compute_page_freshness(conn: Any, *, page_scope: str, scope_ref: str | None 
         else:
             row = conn.execute(
                 f"SELECT COUNT(*) AS c, MAX(created_at) AS latest_ts FROM {table} WHERE is_current = 1 AND {scope_col} = ? AND {ref_col} = ?",
-                (page_scope, str(scope_ref or "")),
+                (page_scope, canonical_scope_ref if page_scope == "CHANNEL" else str(scope_ref or "")),
             ).fetchone()
         return int(row["c"]), row["latest_ts"]
 
@@ -97,7 +99,7 @@ def compute_page_freshness(conn: Any, *, page_scope: str, scope_ref: str | None 
     else:
         rec = conn.execute(
             "SELECT COUNT(*) AS c, MAX(created_at) AS latest_ts FROM analytics_recommendation_snapshots WHERE is_current = 1 AND recommendation_scope_type = ? AND recommendation_scope_ref = ?",
-            (page_scope, str(scope_ref or "")),
+            (page_scope, canonical_scope_ref if page_scope == "CHANNEL" else str(scope_ref or "")),
         ).fetchone()
 
     source_states = {
@@ -142,25 +144,26 @@ def aggregate_overview(conn: Any) -> dict[str, Any]:
 
 
 def aggregate_scope(conn: Any, *, scope_type: str, scope_ref: str) -> dict[str, Any]:
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=scope_type, scope_ref=scope_ref)
     predictions = _rows(
         conn,
         "SELECT prediction_family, variance_class, confidence_class, predicted_label FROM analytics_prediction_snapshots WHERE scope_type=? AND scope_ref=? AND is_current=1 ORDER BY created_at DESC",
-        (scope_type, scope_ref),
+        (scope_type, canonical_scope_ref),
     )
     comparisons = _rows(
         conn,
         "SELECT comparison_family, variance_class, delta_payload_json FROM analytics_comparison_snapshots WHERE scope_type=? AND scope_ref=? AND is_current=1 ORDER BY created_at DESC",
-        (scope_type, scope_ref),
+        (scope_type, canonical_scope_ref),
     )
     kpis = _rows(
         conn,
         "SELECT kpi_family, kpi_code, status_class FROM analytics_operational_kpi_snapshots WHERE scope_type=? AND scope_ref=? AND is_current=1 ORDER BY created_at DESC",
-        (scope_type, scope_ref),
+        (scope_type, canonical_scope_ref),
     )
     recs = _rows(
         conn,
         "SELECT id, recommendation_family, severity_class, confidence_class, target_domain, explainability_payload_json FROM analytics_recommendation_snapshots WHERE recommendation_scope_type=? AND recommendation_scope_ref=? AND is_current=1 ORDER BY created_at DESC",
-        (scope_type, scope_ref),
+        (scope_type, canonical_scope_ref),
     )
     anomalies = [r for r in comparisons if str(r.get("variance_class")) in {"ANOMALY", "RISK"}] + [r for r in predictions if str(r.get("variance_class")) in {"ANOMALY", "RISK"}] + [r for r in kpis if str(r.get("status_class")) in {"ANOMALY", "RISK"}]
     return {

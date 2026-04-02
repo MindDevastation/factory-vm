@@ -19,6 +19,7 @@ from services.analytics_center.literals import (
     ANALYTICS_OPERATIONAL_RECOMPUTE_MODES,
     ANALYTICS_OPERATIONAL_RUN_STATES,
 )
+from services.analytics_center.helpers import canonicalize_scope_ref
 from services.analytics_center.mf4_derivation_core import (
     Mf4BaselineOutput,
     Mf4ComparisonOutput,
@@ -215,11 +216,12 @@ def _rows_to_comparisons(rows: list[dict[str, Any]]) -> list[Mf4ComparisonOutput
 
 
 def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_scope_ref: str, recompute_mode: str) -> int:
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=target_scope_type, scope_ref=target_scope_ref)
     run_id = create_prediction_run(
         conn,
         run_kind=run_kind,
         target_scope_type=target_scope_type,
-        target_scope_ref=target_scope_ref,
+        target_scope_ref=canonical_scope_ref,
         recompute_mode=recompute_mode,
     )
     baseline_count = 0
@@ -234,7 +236,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                 conn,
                 event_type="MF4_BASELINE_RECOMPUTE_STARTED",
                 target_scope_type=target_scope_type,
-                target_scope_ref=target_scope_ref,
+                target_scope_ref=canonical_scope_ref,
                 run_kind=kind,
                 anomaly_count=0,
                 risk_count=0,
@@ -245,7 +247,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                 conn,
                 event_type="MF4_COMPARISON_RECOMPUTE_STARTED",
                 target_scope_type=target_scope_type,
-                target_scope_ref=target_scope_ref,
+                target_scope_ref=canonical_scope_ref,
                 run_kind=kind,
                 anomaly_count=0,
                 risk_count=0,
@@ -256,18 +258,18 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                 conn,
                 event_type="MF4_PREDICTION_RECOMPUTE_STARTED",
                 target_scope_type=target_scope_type,
-                target_scope_ref=target_scope_ref,
+                target_scope_ref=canonical_scope_ref,
                 run_kind=kind,
                 anomaly_count=0,
                 risk_count=0,
                 payload_json={"run_id": run_id},
             )
         if kind in {"BASELINE_RECOMPUTE", "FULL_STACK_RECOMPUTE"}:
-            baselines = derive_baselines(conn, scope_type=target_scope_type, scope_ref=target_scope_ref)
+            baselines = derive_baselines(conn, scope_type=target_scope_type, scope_ref=canonical_scope_ref)
         else:
             baseline_rows = conn.execute(
                 "SELECT * FROM analytics_baseline_snapshots WHERE scope_type = ? AND scope_ref = ? AND is_current = 1",
-                (target_scope_type, target_scope_ref),
+                (target_scope_type, canonical_scope_ref),
             ).fetchall()
             if not baseline_rows:
                 raise AnalyticsDomainError(code=E5A_BASELINE_REFERENCE_MISSING, message="baseline reference missing")
@@ -278,7 +280,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
         else:
             comparison_rows = conn.execute(
                 "SELECT * FROM analytics_comparison_snapshots WHERE scope_type = ? AND scope_ref = ? AND is_current = 1",
-                (target_scope_type, target_scope_ref),
+                (target_scope_type, canonical_scope_ref),
             ).fetchall()
             if not comparison_rows:
                 raise AnalyticsDomainError(code=E5A_BASELINE_REFERENCE_MISSING, message="comparison baseline missing")
@@ -293,7 +295,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                     conn,
                     event_type="MF4_BASELINE_SNAPSHOT_CREATED",
                     target_scope_type=target_scope_type,
-                    target_scope_ref=target_scope_ref,
+                    target_scope_ref=canonical_scope_ref,
                     run_kind=kind,
                     comparison_family=None,
                     prediction_family=None,
@@ -313,7 +315,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                     conn,
                     event_type="MF4_COMPARISON_SNAPSHOT_CREATED",
                     target_scope_type=target_scope_type,
-                    target_scope_ref=target_scope_ref,
+                    target_scope_ref=canonical_scope_ref,
                     run_kind=kind,
                     comparison_family=comp.comparison_family,
                     variance_class=comp.variance_class,
@@ -327,7 +329,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                         conn,
                         event_type="MF4_ANOMALY_CLASSIFIED",
                         target_scope_type=target_scope_type,
-                        target_scope_ref=target_scope_ref,
+                        target_scope_ref=canonical_scope_ref,
                         run_kind=kind,
                         comparison_family=comp.comparison_family,
                         variance_class=comp.variance_class,
@@ -340,7 +342,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                         conn,
                         event_type="MF4_RISK_CLASSIFIED",
                         target_scope_type=target_scope_type,
-                        target_scope_ref=target_scope_ref,
+                        target_scope_ref=canonical_scope_ref,
                         run_kind=kind,
                         comparison_family=comp.comparison_family,
                         variance_class=comp.variance_class,
@@ -361,7 +363,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                     conn,
                     event_type="MF4_PREDICTION_SNAPSHOT_CREATED",
                     target_scope_type=target_scope_type,
-                    target_scope_ref=target_scope_ref,
+                    target_scope_ref=canonical_scope_ref,
                     run_kind=kind,
                     prediction_family=pred.prediction_family,
                     comparison_family=pred.comparison_family,
@@ -376,7 +378,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                     conn,
                     event_type="MF4_EXPLAINABILITY_PAYLOAD_ATTACHED",
                     target_scope_type=target_scope_type,
-                    target_scope_ref=target_scope_ref,
+                    target_scope_ref=canonical_scope_ref,
                     run_kind=kind,
                     prediction_family=pred.prediction_family,
                     comparison_family=pred.comparison_family,
@@ -416,7 +418,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                 conn,
                 event_type="MF4_BASELINE_RECOMPUTE_COMPLETED",
                 target_scope_type=target_scope_type,
-                target_scope_ref=target_scope_ref,
+                target_scope_ref=canonical_scope_ref,
                 run_kind=kind,
                 anomaly_count=anomaly_count,
                 risk_count=risk_count,
@@ -427,7 +429,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                 conn,
                 event_type="MF4_COMPARISON_RECOMPUTE_COMPLETED",
                 target_scope_type=target_scope_type,
-                target_scope_ref=target_scope_ref,
+                target_scope_ref=canonical_scope_ref,
                 run_kind=kind,
                 anomaly_count=anomaly_count,
                 risk_count=risk_count,
@@ -438,7 +440,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
                 conn,
                 event_type="MF4_PREDICTION_RECOMPUTE_COMPLETED",
                 target_scope_type=target_scope_type,
-                target_scope_ref=target_scope_ref,
+                target_scope_ref=canonical_scope_ref,
                 run_kind=kind,
                 anomaly_count=anomaly_count,
                 risk_count=risk_count,
@@ -462,7 +464,7 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
             conn,
             event_type="MF4_RECOMPUTE_PARTIAL_FAILURE_RECORDED",
             target_scope_type=target_scope_type,
-            target_scope_ref=target_scope_ref,
+            target_scope_ref=canonical_scope_ref,
             run_kind=run_kind,
             anomaly_count=anomaly_count,
             risk_count=risk_count,
@@ -474,8 +476,9 @@ def recompute_mf4(conn: Any, *, run_kind: str, target_scope_type: str, target_sc
 
 
 def read_mf4_baselines(conn: Any, *, scope_type: str, scope_ref: str, baseline_family: str | None = None, current_only: bool = True) -> list[dict[str, Any]]:
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=scope_type, scope_ref=scope_ref)
     clauses = ["scope_type = ?", "scope_ref = ?"]
-    params: list[Any] = [scope_type, scope_ref]
+    params: list[Any] = [scope_type, canonical_scope_ref]
     if baseline_family:
         clauses.append("baseline_family = ?")
         params.append(baseline_family)
@@ -486,8 +489,9 @@ def read_mf4_baselines(conn: Any, *, scope_type: str, scope_ref: str, baseline_f
 
 
 def read_mf4_comparisons(conn: Any, *, scope_type: str, scope_ref: str, comparison_family: str | None = None, current_only: bool = True) -> list[dict[str, Any]]:
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=scope_type, scope_ref=scope_ref)
     clauses = ["scope_type = ?", "scope_ref = ?"]
-    params: list[Any] = [scope_type, scope_ref]
+    params: list[Any] = [scope_type, canonical_scope_ref]
     if comparison_family:
         if comparison_family not in ANALYTICS_MF4_COMPARISON_FAMILIES:
             raise AnalyticsDomainError(code=E5A_INVALID_RUN_STATE, message="invalid comparison family")
@@ -500,8 +504,9 @@ def read_mf4_comparisons(conn: Any, *, scope_type: str, scope_ref: str, comparis
 
 
 def read_mf4_predictions(conn: Any, *, scope_type: str, scope_ref: str, prediction_family: str | None = None, current_only: bool = True) -> list[dict[str, Any]]:
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=scope_type, scope_ref=scope_ref)
     clauses = ["scope_type = ?", "scope_ref = ?"]
-    params: list[Any] = [scope_type, scope_ref]
+    params: list[Any] = [scope_type, canonical_scope_ref]
     if prediction_family:
         if prediction_family not in ANALYTICS_MF4_PREDICTION_FAMILIES:
             raise AnalyticsDomainError(code=E5A_INVALID_RUN_STATE, message="invalid prediction family")
