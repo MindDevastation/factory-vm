@@ -494,6 +494,126 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_telegram_operator_audit_events_type_time
             ON telegram_operator_audit_events(event_type, created_at);
 
+        CREATE TABLE IF NOT EXISTS telegram_inbox_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_family TEXT NOT NULL,
+            category TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            actionability_class TEXT NOT NULL,
+            lifecycle_state TEXT NOT NULL,
+            stale_behavior TEXT NOT NULL,
+            delivery_behavior TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            product_operator_id TEXT NULL,
+            chat_id INTEGER NULL,
+            thread_id INTEGER NULL,
+            binding_id INTEGER NULL,
+            target_entity_type TEXT NOT NULL,
+            target_entity_ref TEXT NOT NULL,
+            target_context_json TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            dedupe_key TEXT NOT NULL,
+            followup_key TEXT NULL,
+            related_message_id INTEGER NULL,
+            upstream_event_family TEXT NOT NULL,
+            upstream_event_ref TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NULL,
+            resolved_at TEXT NULL,
+            superseded_by_message_id INTEGER NULL,
+            CHECK(message_family IN ('CRITICAL_ALERT','ACTIONABLE_ALERT','SUMMARY_DIGEST','UNRESOLVED_FOLLOW_UP','RESOLUTION_UPDATE')),
+            CHECK(category IN ('PUBLISH','READINESS','RECOVERY','HEALTH','FOLLOW_UP','DIGEST','SYSTEM')),
+            CHECK(severity IN ('CRITICAL','HIGH','MEDIUM','LOW','INFO')),
+            CHECK(actionability_class IN ('INFO_ONLY','ACTIONABLE','ACK_REQUIRED','ESCALATE_ONLY')),
+            CHECK(lifecycle_state IN ('ACTIVE','SUPERSEDED','RESOLVED','EXPIRED','INFO_ONLY')),
+            CHECK(stale_behavior IN ('SUPERSEDE','RESOLVE','EXPIRE','KEEP_ACTIVE')),
+            CHECK(delivery_behavior IN ('IMMEDIATE','DIGEST','FOLLOW_UP_ONLY','SUPPRESSED')),
+            UNIQUE(dedupe_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_messages_operator_state
+            ON telegram_inbox_messages(product_operator_id, lifecycle_state, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_messages_route_state
+            ON telegram_inbox_messages(telegram_user_id, chat_id, thread_id, lifecycle_state);
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_messages_family_severity
+            ON telegram_inbox_messages(message_family, severity, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_inbox_deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            thread_id INTEGER NULL,
+            delivery_status TEXT NOT NULL,
+            delivery_reason_code TEXT NULL,
+            delivered_message_id INTEGER NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(delivery_status IN ('QUEUED','DELIVERED','FAILED','SUPPRESSED','DENIED')),
+            UNIQUE(message_id, telegram_user_id, chat_id, thread_id),
+            FOREIGN KEY(message_id) REFERENCES telegram_inbox_messages(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_deliveries_status
+            ON telegram_inbox_deliveries(delivery_status, updated_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_inbox_lifecycle_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            from_state TEXT NULL,
+            to_state TEXT NOT NULL,
+            reason_code TEXT NULL,
+            actor_type TEXT NOT NULL,
+            actor_ref TEXT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(to_state IN ('ACTIVE','SUPERSEDED','RESOLVED','EXPIRED','INFO_ONLY')),
+            FOREIGN KEY(message_id) REFERENCES telegram_inbox_messages(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_lifecycle_events_message_time
+            ON telegram_inbox_lifecycle_events(message_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_inbox_acknowledgments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            acknowledged_at TEXT NOT NULL,
+            ack_note TEXT NULL,
+            open_context_ref TEXT NULL,
+            escalation_ref TEXT NULL,
+            UNIQUE(message_id, telegram_user_id),
+            FOREIGN KEY(message_id) REFERENCES telegram_inbox_messages(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_acknowledgments_user_time
+            ON telegram_inbox_acknowledgments(telegram_user_id, acknowledged_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_inbox_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            message_id INTEGER NULL,
+            telegram_user_id INTEGER NULL,
+            product_operator_id TEXT NULL,
+            chat_id INTEGER NULL,
+            thread_id INTEGER NULL,
+            message_family TEXT NULL,
+            category TEXT NULL,
+            severity TEXT NULL,
+            target_context_json TEXT NULL,
+            lifecycle_state TEXT NULL,
+            routing_result TEXT NULL,
+            reason_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            FOREIGN KEY(message_id) REFERENCES telegram_inbox_messages(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_events_type_time
+            ON telegram_inbox_events(event_type, created_at);
+
         CREATE TABLE IF NOT EXISTS worker_heartbeats (
             worker_id TEXT PRIMARY KEY,
             role TEXT NOT NULL,
