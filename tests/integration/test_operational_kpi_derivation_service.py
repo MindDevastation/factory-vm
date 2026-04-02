@@ -6,6 +6,7 @@ from services.analytics_center.errors import AnalyticsDomainError
 from services.analytics_center.operational_kpi import derive_operational_kpis
 from services.common import db as dbm
 from tests._helpers import seed_minimal_db, temp_env
+from tests.operational_kpi_fixtures import seed_scope_isolation_jobs
 
 
 class TestOperationalKpiDerivationService(unittest.TestCase):
@@ -67,6 +68,30 @@ class TestOperationalKpiDerivationService(unittest.TestCase):
             try:
                 with self.assertRaises(AnalyticsDomainError):
                     derive_operational_kpis(conn, scope_type="RELEASE", scope_ref="999999")
+            finally:
+                conn.close()
+
+    def test_channel_and_batch_scope_isolation(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                seeded = seed_scope_isolation_jobs(conn)
+                out_a = derive_operational_kpis(conn, scope_type="CHANNEL", scope_ref=seeded["channel_a_slug"])
+                out_b = derive_operational_kpis(conn, scope_type="CHANNEL", scope_ref=seeded["channel_b_slug"])
+                batch_a = derive_operational_kpis(conn, scope_type="BATCH_MONTH", scope_ref="2026-04")
+                batch_b = derive_operational_kpis(conn, scope_type="BATCH_MONTH", scope_ref="2026-05")
+
+                readiness_a = next(k for k in out_a if k.kpi_family == "READINESS")
+                readiness_b = next(k for k in out_b if k.kpi_family == "READINESS")
+                qa_a = next(k for k in out_a if k.kpi_family == "QA_STATUS")
+                qa_b = next(k for k in out_b if k.kpi_family == "QA_STATUS")
+                batch_comp_a = next(k for k in batch_a if k.kpi_family == "BATCH_COMPLETENESS")
+                batch_comp_b = next(k for k in batch_b if k.kpi_family == "BATCH_COMPLETENESS")
+
+                self.assertNotEqual(readiness_a.value_payload["readiness_health_ratio"], readiness_b.value_payload["readiness_health_ratio"])
+                self.assertNotEqual(qa_a.value_payload["qa_failure_ratio"], qa_b.value_payload["qa_failure_ratio"])
+                self.assertNotEqual(batch_comp_a.value_payload["batch_completeness_ratio"], batch_comp_b.value_payload["batch_completeness_ratio"])
             finally:
                 conn.close()
 

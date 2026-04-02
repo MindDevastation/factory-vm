@@ -129,9 +129,32 @@ def derive_operational_kpis(conn: Any, *, scope_type: str, scope_ref: str) -> li
 def _collect_signals(conn: Any, *, scope_type: str, scope_ref: str) -> dict[str, Any]:
     where = ""
     params: tuple[Any, ...] = ()
+    planned_where = ""
+    planned_params: tuple[Any, ...] = ()
+    canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=scope_type, scope_ref=scope_ref)
+
     if scope_type == "RELEASE":
         where = "WHERE j.release_id = ?"
-        params = (int(scope_ref),)
+        params = (int(canonical_scope_ref),)
+        release = conn.execute("SELECT channel_id, planned_at FROM releases WHERE id = ?", (int(canonical_scope_ref),)).fetchone()
+        if release is not None:
+            channel_row = conn.execute("SELECT slug FROM channels WHERE id = ?", (int(release["channel_id"]),)).fetchone()
+            if channel_row is not None:
+                planned_where = "WHERE channel_slug = ?"
+                planned_params = (str(channel_row["slug"]),)
+    elif scope_type == "CHANNEL":
+        where = "WHERE r.channel_id = ?"
+        params = (int(canonical_scope_ref),)
+        channel_row = conn.execute("SELECT slug FROM channels WHERE id = ?", (int(canonical_scope_ref),)).fetchone()
+        if channel_row is not None:
+            planned_where = "WHERE channel_slug = ?"
+            planned_params = (str(channel_row["slug"]),)
+    elif scope_type == "BATCH_MONTH":
+        where = "WHERE strftime('%Y-%m', COALESCE(r.planned_at, '')) = ?"
+        params = (canonical_scope_ref,)
+        planned_where = "WHERE strftime('%Y-%m', COALESCE(publish_at, '')) = ?"
+        planned_params = (canonical_scope_ref,)
+
     jobs = conn.execute(
         f"""
         SELECT j.id, j.state, j.created_at, j.updated_at, j.retry_of_job_id,
@@ -146,9 +169,21 @@ def _collect_signals(conn: Any, *, scope_type: str, scope_ref: str) -> dict[str,
     if not jobs and scope_type in {"RELEASE", "CHANNEL"}:
         raise AnalyticsDomainError(code=E5A_OPERATIONAL_SOURCE_SNAPSHOTS_MISSING, message="operational source snapshots missing")
 
-    qa = conn.execute("SELECT COUNT(*) AS c, SUM(CASE WHEN hard_ok = 1 THEN 1 ELSE 0 END) AS pass_count FROM qa_reports").fetchone()
+    qa = conn.execute(
+        f"""
+        SELECT COUNT(*) AS c, SUM(CASE WHEN q.hard_ok = 1 THEN 1 ELSE 0 END) AS pass_count
+        FROM qa_reports q
+        JOIN jobs j ON j.id = q.job_id
+        JOIN releases r ON r.id = j.release_id
+        {where}
+        """,
+        params,
+    ).fetchone()
     worker = conn.execute("SELECT COUNT(*) AS c FROM worker_heartbeats").fetchone()
-    planned = conn.execute("SELECT COUNT(*) AS c, SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END) AS failed_count FROM planned_releases").fetchone()
+    planned = conn.execute(
+        f"SELECT COUNT(*) AS c, SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END) AS failed_count FROM planned_releases {planned_where}",
+        planned_params,
+    ).fetchone()
     return {
         "jobs": [dict(j) for j in jobs],
         "qa_count": int(qa["c"] or 0),
