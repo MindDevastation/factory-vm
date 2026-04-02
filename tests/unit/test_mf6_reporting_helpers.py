@@ -62,6 +62,7 @@ class TestMf6ReportingHelpers(unittest.TestCase):
             seed_minimal_db(env)
             conn = dbm.connect(env)
             try:
+                before = int(conn.execute("SELECT COUNT(*) AS c FROM analytics_report_records").fetchone()["c"])
                 with self.assertRaises(AnalyticsDomainError):
                     create_report_record(
                         conn,
@@ -72,6 +73,11 @@ class TestMf6ReportingHelpers(unittest.TestCase):
                         artifact_type="XLSX",
                         created_by="test",
                     )
+                after = int(conn.execute("SELECT COUNT(*) AS c FROM analytics_report_records").fetchone()["c"])
+                self.assertEqual(after, before + 1)
+                latest = conn.execute("SELECT generation_status, artifact_ref FROM analytics_report_records ORDER BY id DESC LIMIT 1").fetchone()
+                self.assertEqual(str(latest["generation_status"]), "FAILED")
+                self.assertIsNone(latest["artifact_ref"])
             finally:
                 conn.close()
 

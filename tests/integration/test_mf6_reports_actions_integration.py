@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import unittest
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -89,6 +90,50 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
             resp = client.post("/v1/analytics/reports/request", headers=h, json=payload)
             self.assertEqual(resp.status_code, 422)
             self.assertIn("missing required source data", resp.text)
+            listed = client.get("/v1/analytics/reports/records", headers=h)
+            self.assertEqual(listed.status_code, 200)
+            self.assertEqual(len(listed.json()["items"]), 1)
+            failed = listed.json()["items"][0]
+            self.assertEqual(failed["generation_status"], "FAILED")
+            self.assertIsNone(failed["artifact_ref"])
+            dl = client.get(f"/v1/analytics/reports/{failed['id']}/download", headers=h)
+            self.assertEqual(dl.status_code, 422)
+            self.assertIn("report not ready", dl.text)
+
+    def test_download_rejects_ready_record_when_artifact_file_is_missing(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                seed_recommendation_inputs(conn)
+                recompute_recommendations(
+                    conn,
+                    recommendation_scope_type="CHANNEL",
+                    recommendation_scope_ref="darkwood-reverie",
+                    recommendation_family="WEAK_RELEASE_ATTENTION",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            payload = {
+                "report_scope_type": "CHANNEL",
+                "report_scope_ref": "darkwood-reverie",
+                "report_family": "ANALYTICS_SUMMARY",
+                "filter_payload": {"channel": "darkwood-reverie"},
+                "artifact_type": "XLSX",
+            }
+            created = client.post("/v1/analytics/reports/request", headers=h, json=payload)
+            self.assertEqual(created.status_code, 200)
+            record = created.json()["report_record"]
+            artifact_path = str(record["artifact_ref"])
+            self.assertTrue(Path(artifact_path).exists())
+            Path(artifact_path).unlink()
+            dl = client.get(f"/v1/analytics/reports/{record['id']}/download", headers=h)
+            self.assertEqual(dl.status_code, 422)
+            self.assertIn("report artifact missing", dl.text)
 
     def test_actions_delegate_without_adjacent_domain_mutation(self) -> None:
         with temp_env() as (_, env):

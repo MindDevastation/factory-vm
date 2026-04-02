@@ -187,13 +187,6 @@ def create_report_record(conn: Any, *, report_scope_type: str, report_scope_ref:
     )
     if dedupe is not None:
         return int(dedupe["id"])
-    dataset = _build_report_dataset(
-        conn,
-        report_scope_type=report_scope_type,
-        report_scope_ref=report_scope_ref,
-        report_family=report_family,
-        filter_payload=filter_payload,
-    )
     now = now_ts()
     row = conn.execute(
         """
@@ -216,6 +209,13 @@ def create_report_record(conn: Any, *, report_scope_type: str, report_scope_ref:
     )
     report_id = int(row.lastrowid)
     try:
+        dataset = _build_report_dataset(
+            conn,
+            report_scope_type=report_scope_type,
+            report_scope_ref=report_scope_ref,
+            report_family=report_family,
+            filter_payload=filter_payload,
+        )
         artifact_ref = _generate_artifact(record_id=report_id, artifact_type=artifact_type, dataset=dataset)
         conn.execute(
             "UPDATE analytics_report_records SET artifact_ref = ?, generation_status = 'READY' WHERE id = ?",
