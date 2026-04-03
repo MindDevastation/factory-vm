@@ -2,13 +2,19 @@
 
 ## Scope
 Final audit of Epic 6A implementation in PR/workstream continuation branch (`work`) with evidence from repository code, tests, and commit history.
+Current-head reference for this audit refresh: commit `03671bc`.
 
 ## Raw evidence commands
 - `git status --short --branch`
 - `git log --oneline -n 5`
 - `rg -n` scans over `services/telegram_operator`, `services/telegram_inbox`, `services/telegram_publish`, and `tests/*e6a*`
 - `python -m unittest tests.unit.test_e6a_bot_runtime_wiring tests.integration.test_e6a_runtime_persistence_usage_integration -v`
-- `python -m unittest discover -s tests -v` (latest observed full run: `Ran 1482 tests ... OK`)
+- `python -m unittest tests.unit.test_e6a_mf2_slice1_schema_foundation tests.unit.test_e6a_mf2_slice2_routing_unit tests.unit.test_e6a_mf2_slice3_lifecycle_unit tests.unit.test_e6a_mf2_slice4_hardening tests.integration.test_e6a_mf2_slice2_routing_integration tests.integration.test_e6a_mf2_slice3_runtime_integration -v`
+- `python -m unittest discover -s tests -v`
+
+## Raw current-head test summaries
+- Targeted MF2 suite: `Ran 16 tests in 0.628s` / `OK`
+- Full suite: `Ran 1482 tests in 380.861s` / `OK`
 
 ## Verdict
 - Epic 6A runtime wiring moved from helper-only closure to bot-facing command/callback surface integration.

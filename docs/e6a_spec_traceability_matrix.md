@@ -5,6 +5,7 @@
 - Code surfaces: `services/telegram_operator/*`, `services/telegram_inbox/*`, `services/telegram_publish/*`
 - E6A test surfaces: `tests/unit/test_e6a_*`, `tests/integration/test_e6a_*`
 - Prior audit artifact: `docs/E6A_FINAL_EVIDENCE_AUDIT_2026-04-03.md`
+- Current-head checkpoint commit: `03671bc`
 
 > Rule: if a mapping is not directly provable from repo artifacts, it is marked **NOT VERIFIED**.
 
@@ -25,7 +26,10 @@
 - Persistence usage (not only schema) is now provable through integration flow writes:
   - `tests/integration/test_e6a_runtime_persistence_usage_integration.py`.
 - Observed full-suite evidence after additive closure:
-  - `python -m unittest discover -s tests -v` → `Ran 1482 tests ... OK`.
+  - `python -m unittest discover -s tests -v` → `Ran 1482 tests in 380.861s` / `OK`.
+- Targeted MF2 evidence for frozen-contract delta:
+  - `python -m unittest tests.unit.test_e6a_mf2_slice1_schema_foundation tests.unit.test_e6a_mf2_slice2_routing_unit tests.unit.test_e6a_mf2_slice3_lifecycle_unit tests.unit.test_e6a_mf2_slice4_hardening tests.integration.test_e6a_mf2_slice2_routing_integration tests.integration.test_e6a_mf2_slice3_runtime_integration -v`
+  - summary: `Ran 16 tests in 0.628s` / `OK`.
 - MF2 frozen-contract delta closure (informational taxonomy):
   - canonical literals now include `INFORMATIONAL` across message families/categories/severities/actionability/lifecycle with legacy alias normalization at input boundaries.
 

@@ -27,6 +27,8 @@ Reconstruction from local git history + in-repo artifacts only.
   - `INFORMATIONAL` taxonomy normalization introduced across literals/router/runtime/lifecycle,
   - DB check constraints updated additively to accept canonical + legacy alias values,
   - MF2 unit/integration tests updated to assert canonical informational contract.
+- Current audit-refresh head:
+  - `03671bc` — latest verified workstream head used for evidence docs refresh and test-summary reconciliation.
 
 ## MF-by-MF mapping confidence
 
