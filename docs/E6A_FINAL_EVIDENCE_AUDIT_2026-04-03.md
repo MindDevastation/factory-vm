@@ -19,6 +19,7 @@ Current-head reference for this audit refresh: commit `03671bc`.
 ## Verdict
 - Epic 6A runtime wiring moved from helper-only closure to bot-facing command/callback surface integration.
 - Persistence contracts are now exercised through publish/read-view/ops flows and validated by integration tests.
+- QA handoff posture: **PASS_WITH_RISKS** (traceability caveat only).
 - Section-level traceability to off-repo SPEC bundle remains partially NOT VERIFIED (bundle text not in repo path set).
 
 ## MF evidence summary (current head)
