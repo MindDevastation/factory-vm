@@ -614,6 +614,145 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_telegram_inbox_events_type_time
             ON telegram_inbox_events(event_type, created_at);
 
+        CREATE TABLE IF NOT EXISTS telegram_publish_action_contexts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL UNIQUE,
+            action_type TEXT NOT NULL,
+            action_transport_type TEXT NOT NULL,
+            actor_ref TEXT NOT NULL,
+            target_entity_type TEXT NOT NULL,
+            target_entity_ref TEXT NOT NULL,
+            context_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(action_transport_type IN ('COMMAND','CALLBACK'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_publish_action_contexts_target
+            ON telegram_publish_action_contexts(target_entity_type, target_entity_ref, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_publish_action_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            result_status TEXT NOT NULL,
+            error_code TEXT NULL,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(result_status IN ('OK','FAILED','STALE','EXPIRED','INVALID')),
+            FOREIGN KEY(request_id) REFERENCES telegram_publish_action_contexts(request_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_publish_action_results_request
+            ON telegram_publish_action_results(request_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_read_view_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_operator_id TEXT NOT NULL,
+            view_name TEXT NOT NULL,
+            view_params_json TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_read_view_snapshots_operator_view
+            ON telegram_read_view_snapshots(product_operator_id, view_name, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_read_view_access_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_operator_id TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            view_name TEXT NOT NULL,
+            access_result TEXT NOT NULL,
+            reason_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(access_result IN ('ALLOWED','DENIED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_read_view_access_events_operator_time
+            ON telegram_read_view_access_events(product_operator_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_ops_action_contexts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_ref TEXT NOT NULL UNIQUE,
+            action_type TEXT NOT NULL,
+            product_operator_id TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            target_entity_type TEXT NOT NULL,
+            target_entity_ref TEXT NOT NULL,
+            context_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_ops_action_contexts_operator_type
+            ON telegram_ops_action_contexts(product_operator_id, action_type, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_ops_action_confirmations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_ref TEXT NOT NULL,
+            confirmation_token TEXT NOT NULL UNIQUE,
+            confirmation_status TEXT NOT NULL,
+            confirmed_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(confirmation_status IN ('PENDING','CONFIRMED','EXPIRED','CANCELLED')),
+            FOREIGN KEY(action_ref) REFERENCES telegram_ops_action_contexts(action_ref)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_ops_action_confirmations_action
+            ON telegram_ops_action_confirmations(action_ref, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_ops_action_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_ref TEXT NOT NULL,
+            result_status TEXT NOT NULL,
+            error_code TEXT NULL,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(result_status IN ('OK','FAILED','STALE','EXPIRED','INVALID')),
+            FOREIGN KEY(action_ref) REFERENCES telegram_ops_action_contexts(action_ref)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_ops_action_results_action
+            ON telegram_ops_action_results(action_ref, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_action_audit_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            record_type TEXT NOT NULL,
+            action_ref TEXT NULL,
+            request_id TEXT NULL,
+            correlation_id TEXT NULL,
+            actor_ref TEXT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_audit_records_record_time
+            ON telegram_action_audit_records(record_type, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_action_idempotency_records (
+            idempotency_key TEXT PRIMARY KEY,
+            action_ref TEXT NULL,
+            request_id TEXT NULL,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            response_fingerprint TEXT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_idempotency_records_last_seen
+            ON telegram_action_idempotency_records(last_seen_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_action_safety_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            safety_event_type TEXT NOT NULL,
+            action_ref TEXT NULL,
+            request_id TEXT NULL,
+            reason_code TEXT NULL,
+            details_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_safety_events_type_time
+            ON telegram_action_safety_events(safety_event_type, created_at);
+
         CREATE TABLE IF NOT EXISTS worker_heartbeats (
             worker_id TEXT PRIMARY KEY,
             role TEXT NOT NULL,
