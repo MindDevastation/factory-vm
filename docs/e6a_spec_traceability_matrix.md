@@ -1,0 +1,37 @@
+# Epic 6A SPEC Traceability Matrix (evidence-first)
+
+## Evidence sources used
+- Git history (local): `git log --oneline --decorate -n 40`
+- Code surfaces: `services/telegram_operator/*`, `services/telegram_inbox/*`, `services/telegram_publish/*`
+- E6A test surfaces: `tests/unit/test_e6a_*`, `tests/integration/test_e6a_*`
+- Prior audit artifact: `docs/E6A_FINAL_EVIDENCE_AUDIT_2026-04-03.md`
+- Current-head checkpoint commit: `03671bc`
+
+> Rule: if a mapping is not directly provable from repo artifacts, it is marked **NOT VERIFIED**.
+
+## Matrix
+
+| MF | SPEC requirement (bundle-aligned) | Repo evidence (files) | Test evidence | Commands / run evidence | Commit evidence |
+|---|---|---|---|---|---|
+| MF1 | Identity model, trusted binding, gateway, fail-closed, permissions, stale/idempotency hooks, diagnostics | `services/telegram_operator/core.py`, `gateway.py`, `envelope.py`, `permissions.py`, `audit.py`, `hardening.py` | `tests/unit/test_e6a_slice1_schema_foundation.py`, `tests/unit/test_e6a_slice2_enrollment_core.py`, `tests/unit/test_e6a_slice3_gateway_unit.py`, `tests/unit/test_e6a_slice4_hardening.py`, `tests/integration/test_e6a_slice2_enrollment_diagnostics_integration.py`, `tests/integration/test_e6a_slice3_gateway_integration.py` | `rg -n "TelegramOperatorRegistry|TelegramActionGateway|build_action_envelope|whoami|binding_health" ...` | Attributable aggregate commit: `d13a623`; per-slice commit mapping **NOT VERIFIED** |
+| MF2 | Inbox taxonomy, classification, routing/delivery, dedupe, digest, lifecycle, ack/follow-up, fail-closed routing | `services/telegram_inbox/router.py`, `runtime.py`, `helpers.py`, `lifecycle.py`, `literals.py`, `digest.py`, `observability.py` | `tests/unit/test_e6a_mf2_slice1_schema_foundation.py`, `tests/unit/test_e6a_mf2_slice2_routing_unit.py`, `tests/unit/test_e6a_mf2_slice3_lifecycle_unit.py`, `tests/unit/test_e6a_mf2_slice4_hardening.py`, `tests/integration/test_e6a_mf2_slice2_routing_integration.py`, `tests/integration/test_e6a_mf2_slice3_runtime_integration.py` | `rg -n "TelegramInboxRouter|TelegramInboxRuntime|assemble_digest|acknowledge|transition_message|dedupe|delivery_behavior" ...` | Attributable aggregate commit: `d13a623`; per-slice mapping **NOT VERIFIED** |
+| MF3 | Publish decision contexts, approve/reject/manual-handoff, stale/confirmation-aware routing via MF1 gateway, operator-readable outcomes | `services/telegram_publish/context.py`, `actions.py`, `results.py`, `fixtures.py` | `tests/unit/test_e6a_mf3_slice1_publish_context_unit.py`, `tests/unit/test_e6a_mf3_slice2_publish_routing_unit.py`, `tests/unit/test_e6a_mf3_slice3_manual_handoff_results_unit.py`, `tests/unit/test_e6a_mf3_slice4_hardening.py`, `tests/integration/test_e6a_mf3_slice1_publish_context_integration.py`, `tests/integration/test_e6a_mf3_slice2_publish_routing_integration.py`, `tests/integration/test_e6a_mf3_slice3_manual_handoff_integration.py` | `rg -n "route_publish_action_via_gateway|build_publish_context_summary|manual_handoff|confirm_manual_completion|build_publish_confirmation_payload" ...` | Attributable aggregate commit: `d13a623`; per-slice mapping **NOT VERIFIED** |
+| MF4 | Compact read-first status/readiness/queue views, freshness, triage ordering, drilldowns, deep-links | `services/telegram_inbox/read_views.py` | `tests/unit/test_e6a_mf4_slice1_read_view_foundation_unit.py`, `tests/unit/test_e6a_mf4_slice4_hardening.py`, `tests/integration/test_e6a_mf4_slice1_read_view_foundation_integration.py`, `tests/integration/test_e6a_mf4_slice2_overview_queue_integration.py`, `tests/integration/test_e6a_mf4_slice3_drilldown_deeplink_integration.py` | `rg -n "build_factory_overview|build_readiness_overview|build_entity_drilldown|build_problem_list|freshness|triage" ...` | Attributable aggregate commit: `d13a623`; per-slice mapping **NOT VERIFIED** |
+| MF5 | Safe ops taxonomy, confirmation envelope, bounded target sets, single-item safe ops, bounded batch preview/confirm/result | `services/telegram_inbox/ops_controls.py` | `tests/unit/test_e6a_mf5_slice1_ops_taxonomy_unit.py`, `tests/unit/test_e6a_mf5_slice4_hardening.py`, `tests/integration/test_e6a_mf5_slice1_ops_taxonomy_integration.py`, `tests/integration/test_e6a_mf5_slice2_single_ops_integration.py`, `tests/integration/test_e6a_mf5_slice3_batch_ops_integration.py` | `rg -n "ops_action_policy|build_confirmation_envelope|execute_single_ops_action|build_batch_preview|execute_batch_ops_action|resolve_bounded_targets" ...` | Attributable aggregate commit: `d13a623`; per-slice mapping **NOT VERIFIED** |
+| MF6 | Idempotency, audit correlation, expiry/stale/conflict classification, safe result rendering, cross-flow hardening | `services/telegram_operator/hardening.py` (+ gateway/operator usage) | `tests/unit/test_e6a_mf6_slice1_audit_idempotency_unit.py`, `tests/unit/test_e6a_mf6_slice2_stale_expired_unit.py`, `tests/unit/test_e6a_mf6_slice4_final_hardening.py`, `tests/integration/test_e6a_mf6_slice1_audit_idempotency_integration.py`, `tests/integration/test_e6a_mf6_slice2_stale_expired_integration.py`, `tests/integration/test_e6a_mf6_slice3_hardening_integration.py` | `rg -n "build_idempotency_fingerprint|build_audit_correlation|is_callback_expired|classify_stale_conflict|render_operator_safe_result" ...` | Attributable aggregate commit: `d13a623`; per-slice mapping **NOT VERIFIED** |
+
+## Additive closure evidence (current workstream head)
+- Bot runtime E6A handler wiring is now explicitly provable by router handler registration tests:
+  - `tests/unit/test_e6a_bot_runtime_wiring.py`.
+- Persistence usage (not only schema) is now provable through integration flow writes:
+  - `tests/integration/test_e6a_runtime_persistence_usage_integration.py`.
+- Observed full-suite evidence after additive closure:
+  - `python -m unittest discover -s tests -v` → `Ran 1482 tests in 380.861s` / `OK`.
+- Targeted MF2 evidence for frozen-contract delta:
+  - `python -m unittest tests.unit.test_e6a_mf2_slice1_schema_foundation tests.unit.test_e6a_mf2_slice2_routing_unit tests.unit.test_e6a_mf2_slice3_lifecycle_unit tests.unit.test_e6a_mf2_slice4_hardening tests.integration.test_e6a_mf2_slice2_routing_integration tests.integration.test_e6a_mf2_slice3_runtime_integration -v`
+  - summary: `Ran 16 tests in 0.628s` / `OK`.
+- MF2 frozen-contract delta closure (informational taxonomy):
+  - canonical literals now include `INFORMATIONAL` across message families/categories/severities/actionability/lifecycle with legacy alias normalization at input boundaries.
+
+## SPEC section-ID mapping status
+- Direct section-by-section IDs from `EPIC_6A_SPEC_BUNDLE_v1.0.txt` are **NOT VERIFIED** in repo filesystem (bundle file path not discoverable from this worktree evidence set).
