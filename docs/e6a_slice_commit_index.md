@@ -23,6 +23,10 @@ Reconstruction from local git history + in-repo artifacts only.
   - bot handlers wired with E6A command/callback surfaces,
   - publish/read-view/ops flows writing newly-added persistence tables,
   - targeted runtime wiring + persistence usage tests added.
+- Current head (latest) — MF2 frozen-contract alignment follow-up:
+  - `INFORMATIONAL` taxonomy normalization introduced across literals/router/runtime/lifecycle,
+  - DB check constraints updated additively to accept canonical + legacy alias values,
+  - MF2 unit/integration tests updated to assert canonical informational contract.
 
 ## MF-by-MF mapping confidence
 

@@ -19,8 +19,8 @@ _UPSTREAM_TO_CLASSIFICATION = {
     "readiness/blocker": ("ACTIONABLE_ALERT", "READINESS", "HIGH", "ACK_REQUIRED"),
     "recovery/ops": ("CRITICAL_ALERT", "RECOVERY", "CRITICAL", "ESCALATE_ONLY"),
     "worker/health": ("CRITICAL_ALERT", "HEALTH", "CRITICAL", "ESCALATE_ONLY"),
-    "stale/follow_up": ("UNRESOLVED_FOLLOW_UP", "FOLLOW_UP", "MEDIUM", "ACTIONABLE"),
-    "digest/summary": ("SUMMARY_DIGEST", "DIGEST", "INFO", "INFO_ONLY"),
+    "stale/follow_up": ("UNRESOLVED_FOLLOW_UP", "FOLLOW_UP", "MEDIUM", "ACTION_REQUIRED"),
+    "digest/summary": ("SUMMARY_DIGEST", "DIGEST", "INFORMATIONAL", "INFORMATIONAL"),
 }
 
 
@@ -68,7 +68,7 @@ class TelegramInboxRouter:
             emit_inbox_event(self._conn, event_type="MESSAGE_DELIVERY_DENIED", message_id=None, telegram_user_id=int(telegram_user_id), product_operator_id=str(product_operator_id), chat_id=int(chat_id), thread_id=thread_id, message_family=None, category=None, severity=None, target_context=None, lifecycle_state=None, routing_result="DENIED", reason_code=_code, payload={"upstream_event_family": upstream_event_family})
             return {"delivery_result": "DENIED", "reason_code": _code}
 
-        mapped = _UPSTREAM_TO_CLASSIFICATION.get(str(upstream_event_family), ("ACTIONABLE_ALERT", "SYSTEM", "LOW", "INFO_ONLY"))
+        mapped = _UPSTREAM_TO_CLASSIFICATION.get(str(upstream_event_family), ("INFORMATIONAL", "INFORMATIONAL", "LOW", "INFORMATIONAL"))
         message_family, category, severity, actionability = mapped
         delivery_behavior = classify_quiet_noisy(message_family=message_family, severity=severity)
         classification = validate_classification(
@@ -122,7 +122,7 @@ class TelegramInboxRouter:
                 classification["category"],
                 classification["severity"],
                 classification["actionability_class"],
-                "INFO_ONLY" if classification["actionability_class"] == "INFO_ONLY" else "ACTIVE",
+                "INFORMATIONAL" if classification["actionability_class"] == "INFORMATIONAL" else "ACTIVE",
                 "SUPERSEDE",
                 classification["delivery_behavior"],
                 int(telegram_user_id),
@@ -163,8 +163,8 @@ class TelegramInboxRouter:
                 now,
             ),
         )
-        emit_inbox_event(self._conn, event_type="MESSAGE_CREATED", message_id=message_id, telegram_user_id=int(telegram_user_id), product_operator_id=str(product_operator_id), chat_id=int(chat_id), thread_id=thread_id, message_family=classification["message_family"], category=classification["category"], severity=classification["severity"], target_context=target_context, lifecycle_state=("INFO_ONLY" if classification["actionability_class"] == "INFO_ONLY" else "ACTIVE"), routing_result=None, reason_code=None, payload={"delivery_behavior": classification["delivery_behavior"]})
-        emit_inbox_event(self._conn, event_type="MESSAGE_ROUTED", message_id=message_id, telegram_user_id=int(telegram_user_id), product_operator_id=str(product_operator_id), chat_id=int(chat_id), thread_id=thread_id, message_family=classification["message_family"], category=classification["category"], severity=classification["severity"], target_context=target_context, lifecycle_state=("INFO_ONLY" if classification["actionability_class"] == "INFO_ONLY" else "ACTIVE"), routing_result=delivery_status, reason_code=None if delivery_status == "DELIVERED" else "SUPPRESSED_BY_POLICY", payload={})
+        emit_inbox_event(self._conn, event_type="MESSAGE_CREATED", message_id=message_id, telegram_user_id=int(telegram_user_id), product_operator_id=str(product_operator_id), chat_id=int(chat_id), thread_id=thread_id, message_family=classification["message_family"], category=classification["category"], severity=classification["severity"], target_context=target_context, lifecycle_state=("INFORMATIONAL" if classification["actionability_class"] == "INFORMATIONAL" else "ACTIVE"), routing_result=None, reason_code=None, payload={"delivery_behavior": classification["delivery_behavior"]})
+        emit_inbox_event(self._conn, event_type="MESSAGE_ROUTED", message_id=message_id, telegram_user_id=int(telegram_user_id), product_operator_id=str(product_operator_id), chat_id=int(chat_id), thread_id=thread_id, message_family=classification["message_family"], category=classification["category"], severity=classification["severity"], target_context=target_context, lifecycle_state=("INFORMATIONAL" if classification["actionability_class"] == "INFORMATIONAL" else "ACTIVE"), routing_result=delivery_status, reason_code=None if delivery_status == "DELIVERED" else "SUPPRESSED_BY_POLICY", payload={})
         return {
             "delivery_result": delivery_status,
             "message_id": message_id,

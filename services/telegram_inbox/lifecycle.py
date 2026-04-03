@@ -3,11 +3,11 @@ from __future__ import annotations
 from .literals import INBOX_LIFECYCLE_STATES, ensure_lifecycle_state
 
 _ALLOWED = {
-    "ACTIVE": {"SUPERSEDED", "RESOLVED", "EXPIRED", "INFO_ONLY", "ACTIVE"},
+    "ACTIVE": {"SUPERSEDED", "RESOLVED", "EXPIRED", "INFORMATIONAL", "ACTIVE"},
     "SUPERSEDED": {"RESOLVED", "EXPIRED", "SUPERSEDED"},
     "RESOLVED": {"RESOLVED"},
     "EXPIRED": {"EXPIRED"},
-    "INFO_ONLY": {"RESOLVED", "EXPIRED", "INFO_ONLY"},
+    "INFORMATIONAL": {"RESOLVED", "EXPIRED", "INFORMATIONAL"},
 }
 
 

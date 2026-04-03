@@ -50,19 +50,21 @@ class TestE6AMf2Slice1SchemaFoundation(unittest.TestCase):
                 conn.close()
 
     def test_literal_contracts(self) -> None:
-        self.assertEqual(INBOX_MESSAGE_FAMILIES, ("CRITICAL_ALERT", "ACTIONABLE_ALERT", "SUMMARY_DIGEST", "UNRESOLVED_FOLLOW_UP", "RESOLUTION_UPDATE"))
-        self.assertEqual(INBOX_LIFECYCLE_STATES, ("ACTIVE", "SUPERSEDED", "RESOLVED", "EXPIRED", "INFO_ONLY"))
-        self.assertEqual(INBOX_SEVERITIES, ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"))
-        self.assertEqual(INBOX_CATEGORIES, ("PUBLISH", "READINESS", "RECOVERY", "HEALTH", "FOLLOW_UP", "DIGEST", "SYSTEM"))
-        self.assertEqual(INBOX_ACTIONABILITY_CLASSES, ("INFO_ONLY", "ACTIONABLE", "ACK_REQUIRED", "ESCALATE_ONLY"))
+        self.assertEqual(INBOX_MESSAGE_FAMILIES, ("CRITICAL_ALERT", "ACTIONABLE_ALERT", "INFORMATIONAL", "SUMMARY_DIGEST", "UNRESOLVED_FOLLOW_UP", "RESOLUTION_UPDATE"))
+        self.assertEqual(INBOX_LIFECYCLE_STATES, ("ACTIVE", "SUPERSEDED", "RESOLVED", "EXPIRED", "INFORMATIONAL"))
+        self.assertEqual(INBOX_SEVERITIES, ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL"))
+        self.assertEqual(INBOX_CATEGORIES, ("PUBLISH", "READINESS", "RECOVERY", "HEALTH", "FOLLOW_UP", "DIGEST", "INFORMATIONAL"))
+        self.assertEqual(INBOX_ACTIONABILITY_CLASSES, ("INFORMATIONAL", "ACTION_REQUIRED", "ACK_REQUIRED", "ESCALATE_ONLY"))
         self.assertEqual(DELIVERY_BEHAVIORS, ("IMMEDIATE", "DIGEST", "FOLLOW_UP_ONLY", "SUPPRESSED"))
 
         self.assertEqual(ensure_message_family("critical_alert"), "CRITICAL_ALERT")
         self.assertEqual(ensure_lifecycle_state("resolved"), "RESOLVED")
-        self.assertEqual(ensure_severity("info"), "INFO")
+        self.assertEqual(ensure_severity("info"), "INFORMATIONAL")
         self.assertEqual(ensure_category("health"), "HEALTH")
         self.assertEqual(ensure_actionability_class("ack_required"), "ACK_REQUIRED")
         self.assertEqual(ensure_delivery_behavior("digest"), "DIGEST")
+        self.assertEqual(ensure_category("system"), "INFORMATIONAL")
+        self.assertEqual(ensure_actionability_class("actionable"), "ACTION_REQUIRED")
 
     def test_smoke_no_domain_mutation_introduced(self) -> None:
         with temp_env() as (_td, env):

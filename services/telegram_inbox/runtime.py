@@ -20,7 +20,7 @@ class TelegramInboxRuntime:
         rows = self._conn.execute(
             """
             SELECT * FROM telegram_inbox_messages
-            WHERE telegram_user_id = ? AND lifecycle_state IN ('ACTIVE','INFO_ONLY')
+            WHERE telegram_user_id = ? AND lifecycle_state IN ('ACTIVE','INFORMATIONAL','INFO_ONLY')
             ORDER BY created_at DESC, id DESC
             """,
             (int(telegram_user_id),),

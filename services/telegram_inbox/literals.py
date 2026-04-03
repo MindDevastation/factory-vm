@@ -5,19 +5,40 @@ from typing import Final
 INBOX_MESSAGE_FAMILIES: Final[tuple[str, ...]] = (
     "CRITICAL_ALERT",
     "ACTIONABLE_ALERT",
+    "INFORMATIONAL",
     "SUMMARY_DIGEST",
     "UNRESOLVED_FOLLOW_UP",
     "RESOLUTION_UPDATE",
 )
-INBOX_LIFECYCLE_STATES: Final[tuple[str, ...]] = ("ACTIVE", "SUPERSEDED", "RESOLVED", "EXPIRED", "INFO_ONLY")
-INBOX_SEVERITIES: Final[tuple[str, ...]] = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
-INBOX_CATEGORIES: Final[tuple[str, ...]] = ("PUBLISH", "READINESS", "RECOVERY", "HEALTH", "FOLLOW_UP", "DIGEST", "SYSTEM")
-INBOX_ACTIONABILITY_CLASSES: Final[tuple[str, ...]] = ("INFO_ONLY", "ACTIONABLE", "ACK_REQUIRED", "ESCALATE_ONLY")
+INBOX_LIFECYCLE_STATES: Final[tuple[str, ...]] = ("ACTIVE", "SUPERSEDED", "RESOLVED", "EXPIRED", "INFORMATIONAL")
+INBOX_SEVERITIES: Final[tuple[str, ...]] = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL")
+INBOX_CATEGORIES: Final[tuple[str, ...]] = ("PUBLISH", "READINESS", "RECOVERY", "HEALTH", "FOLLOW_UP", "DIGEST", "INFORMATIONAL")
+INBOX_ACTIONABILITY_CLASSES: Final[tuple[str, ...]] = ("INFORMATIONAL", "ACTION_REQUIRED", "ACK_REQUIRED", "ESCALATE_ONLY")
 DELIVERY_BEHAVIORS: Final[tuple[str, ...]] = ("IMMEDIATE", "DIGEST", "FOLLOW_UP_ONLY", "SUPPRESSED")
+
+_ALIASES: Final[dict[str, dict[str, str]]] = {
+    "message_family": {
+        "INFO_ONLY": "INFORMATIONAL",
+    },
+    "lifecycle_state": {
+        "INFO_ONLY": "INFORMATIONAL",
+    },
+    "severity": {
+        "INFO": "INFORMATIONAL",
+    },
+    "category": {
+        "SYSTEM": "INFORMATIONAL",
+    },
+    "actionability_class": {
+        "INFO_ONLY": "INFORMATIONAL",
+        "ACTIONABLE": "ACTION_REQUIRED",
+    },
+}
 
 
 def _ensure(value: str, *, field: str, allowed: tuple[str, ...]) -> str:
     normalized = str(value or "").strip().upper()
+    normalized = _ALIASES.get(field, {}).get(normalized, normalized)
     if normalized not in allowed:
         raise ValueError(f"{field} must be one of {', '.join(allowed)}")
     return normalized

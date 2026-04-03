@@ -18,6 +18,8 @@ def classify_quiet_noisy(*, message_family: str, severity: str) -> str:
     sev = ensure_severity(severity)
     if sev == "CRITICAL" or family == "CRITICAL_ALERT":
         return "IMMEDIATE"
+    if family == "INFORMATIONAL" or sev == "INFORMATIONAL":
+        return "DIGEST"
     if family == "SUMMARY_DIGEST":
         return "DIGEST"
     if family == "UNRESOLVED_FOLLOW_UP":

@@ -8,7 +8,7 @@ from services.telegram_inbox import assemble_digest, can_transition, require_tra
 class TestE6AMf2Slice3LifecycleUnit(unittest.TestCase):
     def test_lifecycle_transition_validation(self) -> None:
         self.assertTrue(can_transition(from_state="ACTIVE", to_state="SUPERSEDED"))
-        self.assertTrue(can_transition(from_state="INFO_ONLY", to_state="RESOLVED"))
+        self.assertTrue(can_transition(from_state="INFORMATIONAL", to_state="RESOLVED"))
         self.assertFalse(can_transition(from_state="RESOLVED", to_state="ACTIVE"))
         self.assertEqual(require_transition(from_state="ACTIVE", to_state="RESOLVED"), "RESOLVED")
         with self.assertRaises(ValueError):

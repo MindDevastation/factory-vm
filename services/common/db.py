@@ -522,11 +522,11 @@ def migrate(conn: sqlite3.Connection) -> None:
             expires_at TEXT NULL,
             resolved_at TEXT NULL,
             superseded_by_message_id INTEGER NULL,
-            CHECK(message_family IN ('CRITICAL_ALERT','ACTIONABLE_ALERT','SUMMARY_DIGEST','UNRESOLVED_FOLLOW_UP','RESOLUTION_UPDATE')),
-            CHECK(category IN ('PUBLISH','READINESS','RECOVERY','HEALTH','FOLLOW_UP','DIGEST','SYSTEM')),
-            CHECK(severity IN ('CRITICAL','HIGH','MEDIUM','LOW','INFO')),
-            CHECK(actionability_class IN ('INFO_ONLY','ACTIONABLE','ACK_REQUIRED','ESCALATE_ONLY')),
-            CHECK(lifecycle_state IN ('ACTIVE','SUPERSEDED','RESOLVED','EXPIRED','INFO_ONLY')),
+            CHECK(message_family IN ('CRITICAL_ALERT','ACTIONABLE_ALERT','INFORMATIONAL','SUMMARY_DIGEST','UNRESOLVED_FOLLOW_UP','RESOLUTION_UPDATE')),
+            CHECK(category IN ('PUBLISH','READINESS','RECOVERY','HEALTH','FOLLOW_UP','DIGEST','INFORMATIONAL','SYSTEM')),
+            CHECK(severity IN ('CRITICAL','HIGH','MEDIUM','LOW','INFORMATIONAL','INFO')),
+            CHECK(actionability_class IN ('INFORMATIONAL','ACTION_REQUIRED','ACK_REQUIRED','ESCALATE_ONLY','INFO_ONLY','ACTIONABLE')),
+            CHECK(lifecycle_state IN ('ACTIVE','SUPERSEDED','RESOLVED','EXPIRED','INFORMATIONAL','INFO_ONLY')),
             CHECK(stale_behavior IN ('SUPERSEDE','RESOLVE','EXPIRE','KEEP_ACTIVE')),
             CHECK(delivery_behavior IN ('IMMEDIATE','DIGEST','FOLLOW_UP_ONLY','SUPPRESSED')),
             UNIQUE(dedupe_key)
@@ -569,7 +569,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             actor_type TEXT NOT NULL,
             actor_ref TEXT NULL,
             created_at TEXT NOT NULL,
-            CHECK(to_state IN ('ACTIVE','SUPERSEDED','RESOLVED','EXPIRED','INFO_ONLY')),
+            CHECK(to_state IN ('ACTIVE','SUPERSEDED','RESOLVED','EXPIRED','INFORMATIONAL','INFO_ONLY')),
             FOREIGN KEY(message_id) REFERENCES telegram_inbox_messages(id)
         );
 

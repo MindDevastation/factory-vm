@@ -13,7 +13,7 @@ from services.telegram_inbox import (
 class TestE6AMf2Slice2RoutingUnit(unittest.TestCase):
     def test_quiet_noisy_classifier(self) -> None:
         self.assertEqual(classify_quiet_noisy(message_family="CRITICAL_ALERT", severity="CRITICAL"), "IMMEDIATE")
-        self.assertEqual(classify_quiet_noisy(message_family="SUMMARY_DIGEST", severity="INFO"), "DIGEST")
+        self.assertEqual(classify_quiet_noisy(message_family="SUMMARY_DIGEST", severity="INFORMATIONAL"), "DIGEST")
         self.assertEqual(classify_quiet_noisy(message_family="UNRESOLVED_FOLLOW_UP", severity="MEDIUM"), "FOLLOW_UP_ONLY")
 
     def test_dedupe_key_builder_deterministic(self) -> None:

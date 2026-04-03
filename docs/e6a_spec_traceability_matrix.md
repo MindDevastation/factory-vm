@@ -26,6 +26,8 @@
   - `tests/integration/test_e6a_runtime_persistence_usage_integration.py`.
 - Observed full-suite evidence after additive closure:
   - `python -m unittest discover -s tests -v` → `Ran 1482 tests ... OK`.
+- MF2 frozen-contract delta closure (informational taxonomy):
+  - canonical literals now include `INFORMATIONAL` across message families/categories/severities/actionability/lifecycle with legacy alias normalization at input boundaries.
 
 ## SPEC section-ID mapping status
 - Direct section-by-section IDs from `EPIC_6A_SPEC_BUNDLE_v1.0.txt` are **NOT VERIFIED** in repo filesystem (bundle file path not discoverable from this worktree evidence set).

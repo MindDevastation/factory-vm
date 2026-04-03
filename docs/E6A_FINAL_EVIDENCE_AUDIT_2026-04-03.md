@@ -17,7 +17,8 @@ Final audit of Epic 6A implementation in PR/workstream continuation branch (`wor
 
 ## MF evidence summary (current head)
 - MF1 foundation: identity, binding, gateway, fail-closed and audit hooks present.
-- MF2 inbox lifecycle/routing/dedupe/digest/ack present; bot runtime now exposes E6A operator commands (`/whoami`, `/overview`) and E6A callback routes.
+- MF2 inbox literals/contracts aligned to frozen informational taxonomy (`INFORMATIONAL` family/category/severity/actionability/lifecycle) with compatibility aliases for prior values to keep additive behavior safe.
+- MF2 inbox lifecycle/routing/dedupe/digest/ack present; bot runtime exposes E6A operator commands (`/whoami`, `/overview`) and E6A callback routes.
 - MF3 publish context + gateway-routed actions + stale/confirmation/result rendering present and persisted (`telegram_publish_action_contexts/results`).
 - MF4 compact read views, freshness, queue/readiness overviews, drilldowns, deep links present and persisted (`telegram_read_view_snapshots/access_events`).
 - MF5 safe ops taxonomy, confirmation envelope, bounded batch preview/confirm present and persisted (`telegram_ops_action_contexts/confirmations/results`).
