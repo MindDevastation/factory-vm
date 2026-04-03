@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -20,6 +21,10 @@ from services.factory_api.approval_actions import approve_job, reject_job, mark_
 from services.factory_api.publish_job_actions import execute_publish_job_action
 from services.factory_api.publish_bulk_actions import create_bulk_preview_session, execute_bulk_preview_session, PublishBulkActionError
 from services.bot.telegram_publish_notifications import send_critical_publish_notifications
+from services.telegram_inbox.ops_controls import execute_single_ops_action
+from services.telegram_inbox.read_views import build_and_persist_read_view
+from services.telegram_operator import TelegramOperatorRegistry
+from services.telegram_publish.actions import route_publish_action_via_gateway
 
 
 router = Router()
@@ -91,6 +96,53 @@ def _ensure_admin(msg_or_cb, env: Env) -> bool:
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     await message.answer("Factory bot online.")
+
+
+@router.message(Command("whoami"))
+async def cmd_whoami(message: Message):
+    env = Env.load()
+    if not _ensure_admin(message, env):
+        await message.answer("Not allowed")
+        return
+    conn = dbm.connect(env)
+    try:
+        registry = TelegramOperatorRegistry(conn)
+        identity = registry.get_identity(telegram_user_id=int(message.from_user.id))
+        if not identity:
+            await message.answer("E6A identity not enrolled.")
+            return
+        await message.answer(
+            f"E6A identity: operator={identity.get('product_operator_id')} status={identity.get('telegram_access_status')} class={identity.get('max_permission_class')}"
+        )
+    finally:
+        conn.close()
+
+
+@router.message(Command("overview"))
+async def cmd_overview(message: Message):
+    env = Env.load()
+    if not _ensure_admin(message, env):
+        await message.answer("Not allowed")
+        return
+    conn = dbm.connect(env)
+    try:
+        rows = [
+            {"job_id": int(r["id"]), "publish_state": str(r.get("publish_state") or "")}
+            for r in conn.execute("SELECT id, publish_state FROM jobs ORDER BY id DESC LIMIT 100").fetchall()
+        ]
+        payload = build_and_persist_read_view(
+            conn,
+            product_operator_id=f"tg:{int(message.from_user.id)}",
+            telegram_user_id=int(message.from_user.id),
+            view_name="factory_overview",
+            rows=rows,
+            generated_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        )
+    finally:
+        conn.close()
+    await message.answer(
+        f"Overview: {payload['summary']}\nQueue groups: {json.dumps(payload.get('queue_groups', {}), ensure_ascii=False)}"
+    )
 
 
 @router.callback_query(F.data.startswith("qa:"))
@@ -252,6 +304,61 @@ async def cb_publish_action(call: CallbackQuery):
                 error_code=None,
             )
         )
+    await call.answer(action)
+
+
+@router.callback_query(F.data.startswith("e6a:pub:"))
+async def cb_e6a_publish_action(call: CallbackQuery):
+    env = Env.load()
+    if not _ensure_admin(call, env):
+        await call.answer("Not allowed", show_alert=True)
+        return
+    _, _, action, raw_job_id, expected_state = str(call.data or "").split(":", 4)
+    request_id = f"tg-e6a-{action}-{raw_job_id}-{int(dbm.now_ts())}"
+    correlation_id = f"corr-{request_id}"
+    conn = dbm.connect(env)
+    try:
+        result = route_publish_action_via_gateway(
+            conn,
+            telegram_user_id=int(call.from_user.id),
+            chat_id=int(call.message.chat.id),
+            thread_id=None,
+            telegram_action=action,
+            job_id=int(raw_job_id),
+            expected_publish_state=(expected_state if expected_state != "_" else None),
+            confirm=True,
+            reason=f"telegram e6a callback {action}",
+            request_id=request_id,
+            correlation_id=correlation_id,
+        )
+    finally:
+        conn.close()
+    await call.message.answer(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    await call.answer(action)
+
+
+@router.callback_query(F.data.startswith("e6a:ops:"))
+async def cb_e6a_ops_action(call: CallbackQuery):
+    env = Env.load()
+    if not _ensure_admin(call, env):
+        await call.answer("Not allowed", show_alert=True)
+        return
+    _, _, action, raw_job_id = str(call.data or "").split(":", 3)
+    request_id = f"tg-e6a-ops-{action}-{raw_job_id}-{int(dbm.now_ts())}"
+    conn = dbm.connect(env)
+    try:
+        result = execute_single_ops_action(
+            conn,
+            job_id=int(raw_job_id),
+            action=action,
+            actor=f"telegram:{int(call.from_user.id)}",
+            confirm=True,
+            reason=f"telegram e6a ops {action}",
+            request_id=request_id,
+        )
+    finally:
+        conn.close()
+    await call.message.answer(json.dumps(result, ensure_ascii=False, sort_keys=True))
     await call.answer(action)
 
 

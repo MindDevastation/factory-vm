@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from services.telegram_operator.persistence import persist_read_view_access_event, persist_read_view_snapshot
+
 
 def build_freshness_summary(*, generated_at: str | None, stale_after_seconds: int = 300, now: datetime | None = None) -> dict[str, Any]:
     ref = now or datetime.now(timezone.utc)
@@ -125,3 +127,39 @@ def build_problem_list(*, rows: list[dict[str, Any]], generated_at: str | None) 
     ) | {
         "items": [{"job_id": int(r.get("job_id") or 0), "state": str(r.get("publish_state") or "unknown")} for r in items],
     }
+
+
+def build_and_persist_read_view(
+    conn: Any,
+    *,
+    product_operator_id: str,
+    telegram_user_id: int,
+    view_name: str,
+    rows: list[dict[str, Any]],
+    generated_at: str | None,
+) -> dict[str, Any]:
+    if view_name == "factory_overview":
+        payload = build_factory_overview(rows=rows, generated_at=generated_at)
+    elif view_name == "readiness_overview":
+        payload = build_readiness_overview(blockers=rows, generated_at=generated_at)
+    elif view_name == "problem_list":
+        payload = build_problem_list(rows=rows, generated_at=generated_at)
+    else:
+        payload = build_status_fixture(kind=view_name)
+
+    persist_read_view_access_event(
+        conn,
+        product_operator_id=product_operator_id,
+        telegram_user_id=int(telegram_user_id),
+        view_name=view_name,
+        access_result="ALLOWED",
+        reason_code=None,
+    )
+    persist_read_view_snapshot(
+        conn,
+        product_operator_id=product_operator_id,
+        view_name=view_name,
+        view_params={"row_count": len(rows)},
+        snapshot=payload,
+    )
+    return payload

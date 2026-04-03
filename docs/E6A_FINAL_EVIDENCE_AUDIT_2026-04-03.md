@@ -7,19 +7,21 @@ Final audit of Epic 6A implementation in PR/workstream continuation branch (`wor
 - `git status --short --branch`
 - `git log --oneline -n 5`
 - `rg -n` scans over `services/telegram_operator`, `services/telegram_inbox`, `services/telegram_publish`, and `tests/*e6a*`
-- `python -m unittest discover -s tests -v` (latest observed full run: `Ran 1478 tests ... OK`)
+- `python -m unittest tests.unit.test_e6a_bot_runtime_wiring tests.integration.test_e6a_runtime_persistence_usage_integration -v`
+- `python -m unittest discover -s tests -v` (latest observed full run: `Ran 1482 tests ... OK`)
 
 ## Verdict
-- Epic 6A is functionally closed at code/test surface level.
-- One process artifact gap was fixed separately (`fa6ea7e`) by deleting obsolete speculative blocker doc.
+- Epic 6A runtime wiring moved from helper-only closure to bot-facing command/callback surface integration.
+- Persistence contracts are now exercised through publish/read-view/ops flows and validated by integration tests.
+- Section-level traceability to off-repo SPEC bundle remains partially NOT VERIFIED (bundle text not in repo path set).
 
-## MF evidence summary
+## MF evidence summary (current head)
 - MF1 foundation: identity, binding, gateway, fail-closed and audit hooks present.
-- MF2 inbox lifecycle/routing/dedupe/digest/ack present.
-- MF3 publish context + gateway-routed actions + stale/confirmation/result rendering present.
-- MF4 compact read views, freshness, queue/readiness overviews, drilldowns, deep links present.
-- MF5 safe ops taxonomy, confirmation envelope, bounded batch preview/confirm present.
-- MF6 idempotency fingerprint, audit correlation, expiry/stale classifier, safe result renderer present.
+- MF2 inbox lifecycle/routing/dedupe/digest/ack present; bot runtime now exposes E6A operator commands (`/whoami`, `/overview`) and E6A callback routes.
+- MF3 publish context + gateway-routed actions + stale/confirmation/result rendering present and persisted (`telegram_publish_action_contexts/results`).
+- MF4 compact read views, freshness, queue/readiness overviews, drilldowns, deep links present and persisted (`telegram_read_view_snapshots/access_events`).
+- MF5 safe ops taxonomy, confirmation envelope, bounded batch preview/confirm present and persisted (`telegram_ops_action_contexts/confirmations/results`).
+- MF6 idempotency/audit/safety persistence now written in mutating Telegram flows (`telegram_action_audit_records`, `telegram_action_idempotency_records`, `telegram_action_safety_events`).
 
 ## Traceability note
 Direct section-ID traceability to SPEC bundle sections remains NOT VERIFIED if the bundle file is not available in repo filesystem.

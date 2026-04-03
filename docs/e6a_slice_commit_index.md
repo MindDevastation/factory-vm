@@ -18,8 +18,11 @@ Reconstruction from local git history + in-repo artifacts only.
    - Message: `docs(audit): add final evidence-first Epic 6A audit summary`
 
 ### Follow-up fix commits (provable)
-- None visible in current local history after `d13a623` for runtime code.
-- Historical note about deleting obsolete blocker doc (`fa6ea7e`) is referenced in prior handoff context but is **NOT VERIFIED** in current local commit graph.
+- `e222873` — Additive migration-only closure for missing persistence-table presence test.
+- Current head (post-`e222873`) — runtime/persistence wiring follow-up:
+  - bot handlers wired with E6A command/callback surfaces,
+  - publish/read-view/ops flows writing newly-added persistence tables,
+  - targeted runtime wiring + persistence usage tests added.
 
 ## MF-by-MF mapping confidence
 
@@ -35,3 +38,4 @@ Reconstruction from local git history + in-repo artifacts only.
 ## one-slice = one-commit traceability status
 - Strict one-slice↔one-commit proof is **NOT VERIFIED** from current local history because Epic 6A appears squashed/aggregated into `d13a623`.
 - This is a traceability limitation, not automatic product bug.
+- Additional post-aggregate commits are additive fix slices and should be interpreted as QA-closure deltas, not original slice decomposition.

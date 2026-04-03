@@ -19,5 +19,13 @@
 | MF5 | Safe ops taxonomy, confirmation envelope, bounded target sets, single-item safe ops, bounded batch preview/confirm/result | `services/telegram_inbox/ops_controls.py` | `tests/unit/test_e6a_mf5_slice1_ops_taxonomy_unit.py`, `tests/unit/test_e6a_mf5_slice4_hardening.py`, `tests/integration/test_e6a_mf5_slice1_ops_taxonomy_integration.py`, `tests/integration/test_e6a_mf5_slice2_single_ops_integration.py`, `tests/integration/test_e6a_mf5_slice3_batch_ops_integration.py` | `rg -n "ops_action_policy|build_confirmation_envelope|execute_single_ops_action|build_batch_preview|execute_batch_ops_action|resolve_bounded_targets" ...` | Attributable aggregate commit: `d13a623`; per-slice mapping **NOT VERIFIED** |
 | MF6 | Idempotency, audit correlation, expiry/stale/conflict classification, safe result rendering, cross-flow hardening | `services/telegram_operator/hardening.py` (+ gateway/operator usage) | `tests/unit/test_e6a_mf6_slice1_audit_idempotency_unit.py`, `tests/unit/test_e6a_mf6_slice2_stale_expired_unit.py`, `tests/unit/test_e6a_mf6_slice4_final_hardening.py`, `tests/integration/test_e6a_mf6_slice1_audit_idempotency_integration.py`, `tests/integration/test_e6a_mf6_slice2_stale_expired_integration.py`, `tests/integration/test_e6a_mf6_slice3_hardening_integration.py` | `rg -n "build_idempotency_fingerprint|build_audit_correlation|is_callback_expired|classify_stale_conflict|render_operator_safe_result" ...` | Attributable aggregate commit: `d13a623`; per-slice mapping **NOT VERIFIED** |
 
+## Additive closure evidence (current workstream head)
+- Bot runtime E6A handler wiring is now explicitly provable by router handler registration tests:
+  - `tests/unit/test_e6a_bot_runtime_wiring.py`.
+- Persistence usage (not only schema) is now provable through integration flow writes:
+  - `tests/integration/test_e6a_runtime_persistence_usage_integration.py`.
+- Observed full-suite evidence after additive closure:
+  - `python -m unittest discover -s tests -v` → `Ran 1482 tests ... OK`.
+
 ## SPEC section-ID mapping status
 - Direct section-by-section IDs from `EPIC_6A_SPEC_BUNDLE_v1.0.txt` are **NOT VERIFIED** in repo filesystem (bundle file path not discoverable from this worktree evidence set).

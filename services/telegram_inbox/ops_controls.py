@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
+
+from services.telegram_operator.persistence import (
+    persist_action_audit_record,
+    persist_action_safety_event,
+    persist_ops_action_confirmation,
+    persist_ops_action_context,
+    persist_ops_action_result,
+)
 
 
 _OPS_POLICY: dict[str, dict[str, Any]] = {
@@ -47,6 +57,26 @@ def execute_single_ops_action(
 ) -> dict[str, Any]:
     envelope = build_confirmation_envelope(action=action, confirm=confirm, reason=reason, request_id=request_id)
     policy = ops_action_policy(action)
+    action_ref = f"ops:{action}:{job_id}:{request_id}"
+    actor_ref = str(actor)
+    operator_id = actor_ref.split(":", 1)[1] if ":" in actor_ref else actor_ref
+    persist_ops_action_context(
+        conn,
+        action_ref=action_ref,
+        action_type=action,
+        product_operator_id=operator_id,
+        telegram_user_id=int(operator_id) if operator_id.isdigit() else 0,
+        target_entity_type="publish_job",
+        target_entity_ref=str(int(job_id)),
+        context={"request_id": request_id, "reason": reason},
+    )
+    token = hashlib.sha256(json.dumps(envelope, sort_keys=True).encode("utf-8")).hexdigest()
+    persist_ops_action_confirmation(
+        conn,
+        action_ref=action_ref,
+        confirmation_token=token,
+        confirmation_status="CONFIRMED" if confirm else "PENDING",
+    )
     out = execute_publish_job_action(
         conn,
         job_id=int(job_id),
@@ -57,15 +87,36 @@ def execute_single_ops_action(
         extra_payload=extra_payload,
     )
     if isinstance(out, JSONResponse):
-        return {"status": "FAILED", "action": action, "job_id": int(job_id), "changed": None, "error": "E3_ACTION_NOT_ALLOWED"}
+        result = {"status": "FAILED", "action": action, "job_id": int(job_id), "changed": None, "error": "E3_ACTION_NOT_ALLOWED"}
+        persist_ops_action_result(conn, action_ref=action_ref, result_status="FAILED", error_code="E3_ACTION_NOT_ALLOWED", result_payload=result)
+        persist_action_safety_event(
+            conn,
+            safety_event_type="OPS_ACTION_FAILED",
+            action_ref=action_ref,
+            request_id=request_id,
+            reason_code="E3_ACTION_NOT_ALLOWED",
+            details=result,
+        )
+        return result
     result = out.get("result", {}) if isinstance(out, dict) else {}
-    return {
+    response = {
         "status": "SUCCESS",
         "action": action,
         "job_id": int(job_id),
         "changed": result.get("publish_state_after"),
         "error": None,
     }
+    persist_ops_action_result(conn, action_ref=action_ref, result_status="OK", error_code=None, result_payload=response)
+    persist_action_audit_record(
+        conn,
+        record_type="OPS_ACTION_APPLIED",
+        action_ref=action_ref,
+        request_id=request_id,
+        correlation_id=None,
+        actor_ref=actor_ref,
+        payload=response,
+    )
+    return response
 
 
 def resolve_bounded_targets(*, selected_job_ids: list[int], max_targets: int = 20) -> list[int]:
