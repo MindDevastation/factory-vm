@@ -1,0 +1,2638 @@
+EPIC_6A_SPEC_BUNDLE_v1.0
+Epic 6A — Telegram Operator Layer
+Bundle status: all currently defined SPECs for E6A-MF1..E6A-MF6
+Format: copy-friendly plain text
+
+Source basis:
+- REQ_EPIC6A_TELEGRAM_OPERATOR_LAYER_v1.0
+- REQ_E6A_MF1_TELEGRAM_IDENTITY_CHAT_BINDING_AND_ACTION_GATEWAY_FOUNDATION_v1.0
+- REQ_E6A_MF2_TELEGRAM_NOTIFICATIONS_INBOX_AND_MESSAGE_LIFECYCLE_v1.0
+- REQ_E6A_MF3_TELEGRAM_PUBLISH_APPROVALS_AND_MANUAL_HANDOFF_CONTROLS_v1.0
+- REQ_E6A_MF4_TELEGRAM_STATUS_READINESS_AND_QUEUE_VIEWS_v1.0
+- REQ_E6A_MF5_TELEGRAM_OPS_RECOVERY_AND_SAFE_BATCH_CONTROLS_v1.0
+- REQ_E6A_MF6_TELEGRAM_AUDIT_SAFETY_IDEMPOTENCY_AND_OPERATOR_HARDENING_v1.0
+
+====================================================================
+SPEC_E6A_MF1_TELEGRAM_IDENTITY_CHAT_BINDING_AND_ACTION_GATEWAY_FOUNDATION_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6A-MF1 introduces the canonical foundation for Epic 6A Telegram Operator Layer.
+
+Its purpose is to provide one reusable security/control foundation for all later Telegram microfeatures by defining:
+- Telegram identity to product operator identity mapping;
+- trusted chat/thread binding model;
+- permission-aware action gateway;
+- canonical action envelope;
+- stale/idempotency/audit hooks;
+- operator bootstrap and diagnostic surfaces.
+
+MF1 must ensure that all downstream Telegram mutating flows naturally pass through one canonical gateway rather than implementing ad hoc bot handlers or domain-specific callback semantics.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- Telegram operator identity model;
+- trusted private chat binding;
+- trusted group/thread binding where allowed;
+- binding revoke/disable model;
+- binding state visibility;
+- reusable action gateway contract;
+- canonical action envelope;
+- callback/command routing contract;
+- target context resolution;
+- permission precheck contract;
+- stale-state precheck hook;
+- idempotency hook foundation;
+- coarse-grained permission classes;
+- enrollment/registration flow;
+- whoami/health-style diagnostic surface;
+- misbinding/error visibility.
+
+2.2. Out of scope
+- rich domain read views;
+- notifications/inbox lifecycle;
+- publish approvals;
+- ops/recovery actions;
+- batch actions;
+- deep audit hardening beyond the required foundation.
+
+2.3. Boundary rules
+- MF1 must not implement domain-specific Telegram semantics for publish/readiness/ops/batch flows.
+- MF1 must not turn Telegram into a second source of truth.
+- MF1 must not allow mutating Telegram flows outside the canonical action gateway.
+- MF1 must not mix identity model and chat model into one implicit concept.
+- MF1 must fail closed on invalid/revoked/mismatched identity or binding state.
+
+3. Terms and definitions
+
+3.1. Product operator identity
+The canonical operator identity in the product. It is the sole source of truth for authority.
+
+3.2. Telegram identity
+A Telegram-side user identity that may be bound to a product operator identity.
+
+3.3. Chat binding
+A trusted association between a product operator identity and a Telegram chat/thread context.
+
+3.4. Thread context
+A specific trusted discussion context inside a Telegram group/supergroup/chat where actions may be allowed if explicitly bound.
+
+3.5. Action gateway
+The reusable foundation that receives Telegram command/callback intents, resolves operator and chat context, performs permission/binding checks, exposes stale/idempotency hooks, and returns canonical allow/deny/error results.
+
+3.6. Action class
+A coarse-grained permission/access class that categorizes what type of Telegram action is being attempted.
+
+3.7. Binding revocation
+Explicit disabling or invalidation of a previously trusted binding such that future actions fail closed.
+
+3.8. Stale precheck
+A gateway hook that allows downstream action flows to reject actions when target state is no longer current.
+
+3.9. Idempotency hook
+A gateway hook that allows downstream action flows to attach dedupe/correlation behavior without reimplementing transport semantics in each domain flow.
+
+4. Architectural context
+
+4.1. Epic alignment
+Epic 6A requires Telegram to be a structured, secondary, permissioned remote operator console and explicitly forbids magical or uncontrolled semantics. MF1 is the foundation that makes later Telegram features safe and reusable.
+
+4.2. Canonical ownership model
+- product operator identity = canonical owner of permissions;
+- Telegram identity = bound remote-surface identity;
+- chat/thread binding = trusted context authorization layer only;
+- Telegram does not create rights by itself.
+
+4.3. Downstream dependency rule
+All future Telegram mutating flows in E6A-MF2..MF6 must pass through MF1 gateway foundation. Direct ad hoc callback mutation outside MF1 is forbidden.
+
+5. Canonical data model
+
+5.1. Telegram operator identity binding model
+MF1 must persist a canonical mapping from Telegram identity to product operator identity.
+
+Required fields:
+- telegram_user_id
+- telegram_username nullable
+- telegram_display_name nullable
+- product_operator_id
+- telegram_access_status
+- permission_profile
+- bound_at
+- updated_at
+- revoked_at nullable
+- revoked_reason nullable
+
+Frozen telegram_access_status literals:
+- ACTIVE
+- INACTIVE
+- REVOKED
+
+Rules:
+- product_operator_id remains source of truth for authority;
+- Telegram identity may be inactive or revoked without changing product operator existence;
+- revoked identities must fail closed.
+
+5.2. Trusted chat/thread binding model
+MF1 must persist trusted binding records for Telegram chat/thread contexts.
+
+Required fields:
+- binding_id
+- product_operator_id
+- telegram_user_id
+- chat_id
+- thread_id nullable
+- chat_binding_kind
+- binding_status
+- allowed_action_class_max
+- bound_at
+- updated_at
+- revoked_at nullable
+- revoked_reason nullable
+
+Frozen chat_binding_kind literals:
+- PRIVATE_CHAT
+- GROUP_CHAT
+- GROUP_THREAD
+
+Frozen binding_status literals:
+- PENDING
+- ACTIVE
+- DISABLED
+- REVOKED
+
+Rules:
+- one operator may have multiple allowed bindings only if explicitly created;
+- one chat/thread context does not grant rights by itself;
+- binding is evaluated together with operator identity and action class;
+- revoked or disabled bindings must fail closed;
+- operator identity mismatch must not silently proceed.
+
+5.3. Action envelope model
+MF1 must define one canonical Telegram action envelope.
+
+Required fields:
+- action_transport_type
+- action_transport_id
+- telegram_user_id
+- product_operator_id resolved or null on failure
+- chat_id
+- thread_id nullable
+- binding_id resolved or null on failure
+- action_type
+- action_class
+- target_entity_type
+- target_entity_ref
+- freshness_context
+- correlation_id
+- idempotency_key nullable
+- created_at
+- expires_at nullable
+
+Frozen action_transport_type literals:
+- COMMAND
+- CALLBACK
+
+6. Permission model
+
+6.1. Frozen access classes
+MF1 freezes the following permission classes:
+- READ_ONLY
+- STANDARD_OPERATOR_MUTATE
+- GUARDED_OPERATOR_MUTATE
+- PRIVILEGED_OPERATOR_MUTATE
+
+These are the canonical coarse-grained action classes for Epic 6A v1.
+
+6.2. Semantics
+READ_ONLY
+- read/inspect/diagnostic only
+- no state-changing downstream actions
+
+STANDARD_OPERATOR_MUTATE
+- ordinary allowed mutations that do not require elevated privilege class by policy
+
+GUARDED_OPERATOR_MUTATE
+- state-changing actions that require extra confirmation and stricter stale handling
+
+PRIVILEGED_OPERATOR_MUTATE
+- highest-risk or elevated-trust action class allowed only for privileged operator identities/bindings
+
+6.3. Permission evaluation rule
+Authority must be determined from:
+- product operator identity;
+- operator permission scope/profile;
+- binding status;
+- action class;
+- target entity/state context;
+- confirmation/idempotency constraints where applicable.
+
+7. Gateway contract
+
+7.1. Canonical gateway responsibilities
+MF1 gateway must provide:
+- operator identity resolution;
+- chat/thread binding resolution;
+- permission check result;
+- target context resolution;
+- stale target precheck hook;
+- idempotency/correlation hook;
+- user-readable error classification;
+- canonical allow/deny result surface.
+
+7.2. Canonical gateway input
+Every downstream Telegram action intent must include:
+- operator identity context or resolvable Telegram user context;
+- chat/binding context;
+- target entity reference;
+- action type;
+- action freshness/expiry context;
+- correlation/audit context.
+
+7.3. Canonical gateway result
+Gateway result must expose at minimum:
+- resolved_operator_status
+- resolved_binding_status
+- permission_result
+- action_class
+- target_resolution_result
+- stale_precheck_hook_ref or callable contract
+- idempotency_hook_ref or callable contract
+- operator-readable error classification if denied
+
+7.4. Fail-closed rule
+If any of the following is unresolved or invalid, gateway must deny:
+- Telegram identity not bound
+- operator inactive/revoked
+- binding missing/disabled/revoked
+- operator identity mismatch
+- action class not allowed
+- context mismatch
+- expired transport/action envelope
+
+8. Bootstrap / enrollment model
+
+8.1. Enrollment purpose
+MF1 must provide a trusted operator bootstrap surface so Telegram can be enrolled as a remote operator surface without becoming its own identity authority.
+
+8.2. Required bootstrap capabilities
+- registration/enrollment initiation
+- identity check
+- current binding visibility
+- diagnostic whoami surface
+- misbinding visibility
+- disabled/revoked state visibility
+
+8.3. Whoami/diagnostic contract
+Whoami/diagnostic must show at minimum:
+- Telegram identity summary
+- resolved product operator identity or unbound status
+- current access status
+- current binding summary
+- effective maximum allowed action class
+- error/help message if misbound or inactive
+
+8.4. Enrollment completion rule
+Enrollment must not become effective until explicit trusted binding is created and marked active.
+
+9. API / interface families
+
+9.1. Interface boundary
+MF1 is a foundation slice. It defines identity, binding, and gateway interfaces, but not downstream domain surfaces.
+
+9.2. Required interface families
+
+9.2.1. Telegram identity enrollment interface
+Must support:
+- start enrollment
+- complete enrollment
+- view enrollment state
+- revoke or disable access
+
+9.2.2. Chat binding management interface
+Must support:
+- create trusted binding
+- read binding state
+- disable binding
+- revoke binding
+- list bindings for operator
+- list bindings for Telegram identity where authorized
+
+9.2.3. Gateway evaluation interface
+Must support:
+- resolve Telegram action envelope
+- evaluate permission class
+- resolve target context
+- return gateway decision
+- expose stale/idempotency hook contracts
+
+9.2.4. Diagnostic interface
+Must support:
+- whoami
+- binding health
+- gateway health-style response
+- last error / current denial reason where safe
+
+10. DB / schema / tables / indexes / migrations
+
+10.1. Required new tables
+
+10.1.1. telegram_operator_identities
+Purpose:
+Canonical Telegram identity to product operator identity mapping.
+
+Required columns:
+- id
+- telegram_user_id
+- telegram_username nullable
+- telegram_display_name nullable
+- product_operator_id
+- telegram_access_status
+- permission_profile
+- bound_at
+- updated_at
+- revoked_at nullable
+- revoked_reason nullable
+
+Constraints:
+- UNIQUE(telegram_user_id)
+
+10.1.2. telegram_chat_bindings
+Purpose:
+Trusted chat/thread binding records.
+
+Required columns:
+- id
+- product_operator_id
+- telegram_user_id
+- chat_id
+- thread_id nullable
+- chat_binding_kind
+- binding_status
+- allowed_action_class_max
+- bound_at
+- updated_at
+- revoked_at nullable
+- revoked_reason nullable
+
+Constraints:
+- UNIQUE(product_operator_id, telegram_user_id, chat_id, thread_id)
+- thread_id may be null only for PRIVATE_CHAT or whole-chat binding semantics
+
+10.1.3. telegram_action_gateway_events
+Purpose:
+Foundation audit/correlation record for Telegram transport/gateway evaluation.
+
+Required columns:
+- id
+- action_transport_type
+- action_transport_id
+- telegram_user_id
+- resolved_product_operator_id nullable
+- binding_id nullable
+- action_type
+- action_class
+- target_entity_type
+- target_entity_ref
+- correlation_id
+- idempotency_key nullable
+- gateway_result
+- gateway_error_code nullable
+- created_at
+- expires_at nullable
+
+Frozen gateway_result literals:
+- ALLOWED
+- DENIED
+- STALE
+- EXPIRED
+- INVALID
+
+10.2. Index requirements
+- idx_telegram_operator_identities_operator on (product_operator_id, telegram_access_status)
+- idx_telegram_chat_bindings_operator_status on (product_operator_id, binding_status, allowed_action_class_max)
+- idx_telegram_chat_bindings_chat_status on (chat_id, thread_id, binding_status)
+- idx_telegram_action_gateway_events_operator_time on (resolved_product_operator_id, created_at)
+- idx_telegram_action_gateway_events_transport on (action_transport_type, action_transport_id)
+- idx_telegram_action_gateway_events_correlation on (correlation_id)
+
+10.3. Migration rules
+- additive only
+- SQLite only
+- no redesign of existing operator identity source-of-truth
+- no mutation of downstream domain tables required in MF1
+- no Telegram-specific domain semantics added to publish/ops/readiness domains in this slice
+
+11. Error catalog
+
+11.1. Required error families
+- Telegram identity not bound
+- product operator inactive
+- product operator revoked
+- trusted binding missing
+- trusted binding disabled
+- trusted binding revoked
+- operator identity mismatch
+- permission denied
+- action expired
+- stale target
+- target not found
+- gateway context invalid
+- idempotency conflict
+- underlying system unavailable
+
+11.2. Canonical error code prefix
+E6A_
+
+11.3. Minimum frozen error codes
+- E6A_TELEGRAM_IDENTITY_UNBOUND
+- E6A_OPERATOR_INACTIVE
+- E6A_OPERATOR_REVOKED
+- E6A_CHAT_BINDING_MISSING
+- E6A_CHAT_BINDING_DISABLED
+- E6A_CHAT_BINDING_REVOKED
+- E6A_OPERATOR_IDENTITY_MISMATCH
+- E6A_PERMISSION_DENIED
+- E6A_ACTION_EXPIRED
+- E6A_TARGET_STALE
+- E6A_TARGET_NOT_FOUND
+- E6A_GATEWAY_CONTEXT_INVALID
+- E6A_IDEMPOTENCY_CONFLICT
+- E6A_SYSTEM_UNAVAILABLE
+
+11.4. Operator-readable error rule
+All gateway denials/errors must be convertible into operator-readable Telegram-safe messages.
+At minimum the user-readable classes must cover:
+- permission denied
+- state changed
+- action expired
+- entity not found
+- already completed
+- currently forbidden by policy
+- underlying system unavailable
+
+12. Idempotency / retries / locks / concurrency rules
+
+12.1. Gateway evaluation atomicity
+Each gateway evaluation event must be recorded atomically with its decision result.
+
+12.2. Mutating-flow rule
+Any downstream Telegram mutating flow must pass through gateway evaluation first.
+
+12.3. Idempotency hook foundation
+MF1 must persist enough correlation/idempotency context so downstream flows can dedupe repeated callback/command executions.
+
+12.4. Expiry rule
+Any callback/action token or envelope that carries expiry and is already expired must be denied with EXPIRED result and must not proceed further.
+
+12.5. Stale hook rule
+Gateway must expose a standard stale-precheck hook contract, but MF1 does not implement domain-specific stale logic itself.
+
+12.6. Revocation rule
+If identity or binding is revoked/disabled after a message or callback was issued, subsequent action attempts must fail closed.
+
+13. Validation rules
+
+13.1. Identity validation
+- telegram_user_id must be unique per Telegram identity mapping
+- Telegram identity may not silently bind to multiple conflicting product operators
+- product_operator_id must exist in canonical product operator source
+
+13.2. Binding validation
+- binding must reference a valid Telegram identity mapping
+- binding_status must be one of PENDING / ACTIVE / DISABLED / REVOKED
+- chat_binding_kind must be one of PRIVATE_CHAT / GROUP_CHAT / GROUP_THREAD
+- allowed_action_class_max must be one of READ_ONLY / STANDARD_OPERATOR_MUTATE / GUARDED_OPERATOR_MUTATE / PRIVILEGED_OPERATOR_MUTATE
+
+13.3. Gateway validation
+- action_transport_type must be COMMAND or CALLBACK
+- action_class must be one of the frozen access classes
+- gateway_result must be one of ALLOWED / DENIED / STALE / EXPIRED / INVALID
+- correlation_id is mandatory
+- target_entity_type and target_entity_ref are mandatory for actionable downstream intents
+- expires_at may be null only for non-expiring transport intents where allowed by design
+
+14. Events / logging / observability
+
+14.1. Mandatory auditable events
+- Telegram identity enrolled
+- Telegram identity revoked/disabled
+- trusted chat binding created
+- trusted chat binding disabled/revoked
+- gateway evaluation executed
+- gateway denied action
+- expired action rejected
+- stale action rejected
+- diagnostic whoami requested
+- identity mismatch detected
+
+14.2. Minimum log fields
+- telegram_user_id
+- resolved_product_operator_id nullable
+- chat_id
+- thread_id nullable
+- binding_id nullable
+- action_type
+- action_class
+- target_entity_type
+- target_entity_ref
+- gateway_result
+- gateway_error_code nullable
+- correlation_id
+- idempotency_key nullable
+
+14.3. Observability requirement
+MF1 must make it possible to answer:
+- who is this Telegram user in product terms
+- which chats/threads are trusted
+- what maximum action class is allowed in this context
+- why an action was denied
+- whether a callback/action was stale or expired
+- whether a Telegram binding is misconfigured or revoked
+
+15. Security constraints
+
+15.1. Source-of-truth rule
+Product operator identity remains canonical.
+Telegram identity and chat binding never become independent authority sources.
+
+15.2. Binding non-authority rule
+Chat/thread context alone cannot grant permissions.
+
+15.3. Fail-closed rule
+On uncertainty, missing context, mismatch, revocation, expiry, or invalid gateway state, MF1 must deny rather than allow.
+
+15.4. No ad hoc mutation rule
+No downstream Telegram mutating flow may bypass MF1 gateway.
+
+16. Acceptance criteria
+
+MF1 is accepted if all of the following are true:
+- a canonical Telegram identity -> product operator identity model exists;
+- a canonical trusted chat/thread binding model exists;
+- a reusable action gateway foundation exists;
+- frozen permission classes exist for downstream flows;
+- any future Telegram mutating flow naturally depends on MF1 rather than bypassing it;
+- revoked/invalid/mismatched bindings fail closed;
+- diagnostic bootstrap/whoami surface exists.
+
+17. Test plan
+
+17.1. Unit
+- telegram_access_status validation
+- binding_status validation
+- chat_binding_kind validation
+- action class validation
+- gateway_result validation
+- identity uniqueness validation
+- operator mismatch detection
+- expired action rejection
+- revoked binding rejection
+
+17.2. Integration
+- enroll Telegram identity to operator identity
+- create trusted private chat binding
+- create trusted group/thread binding
+- disabled binding denies gateway
+- revoked identity denies gateway
+- permission class denial path
+- gateway event persisted for allowed action
+- gateway event persisted for denied action
+- whoami/diagnostic returns expected binding/operator status
+- downstream mutating action stub cannot proceed without gateway pass
+
+17.3. Smoke
+- migrations create identity/binding/gateway tables and indexes
+- no downstream domain behavior is introduced in MF1
+- Telegram foundation remains usable without MF2-MF6 features
+
+18. Rollback / migration considerations
+
+18.1. Rollout posture
+MF1 must be additive and foundation-only.
+
+18.2. Safe fallback
+If no Telegram identity is enrolled or no trusted binding exists:
+- product continues working normally via existing primary surfaces;
+- Telegram mutating actions remain unavailable and fail closed.
+
+18.3. No scope drift rule
+MF1 must not expand into read views, notifications, publish controls, ops actions, or batch actions.
+
+19. Open questions / ambiguities
+
+19.1. Exact operator enrollment UX wording and step order are implementation-level details and are not blockers as long as canonical identity binding, trusted context binding, and fail-closed behavior are preserved.
+
+19.2. Exact downstream stale-precheck and idempotency implementations are intentionally deferred to later microfeatures, provided MF1 exposes stable reusable hooks.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6A and MF1 are aligned on Telegram as a structured, secondary, permissioned remote operator surface and on product operator identity as the sole source of truth for authority.
+- MF1 cleanly establishes the reusable identity, binding, permission, and action-gateway foundation required by all later Telegram microfeatures.
+- Remaining open items are downstream implementation details, not product blockers.
+
+[BLOCKER]
+- none
+
+[RISK]
+- silent drift into ad hoc domain-specific callback semantics;
+- accidental conflation of operator identity authority with chat/thread binding;
+- accidental bypass of the canonical gateway by later mutating flows.
+
+====================================================================
+SPEC_E6A_MF2_TELEGRAM_NOTIFICATIONS_INBOX_AND_MESSAGE_LIFECYCLE_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6A-MF2 introduces the canonical Telegram notifications, inbox, and message lifecycle layer for Epic 6A.
+
+Its purpose is to transform Telegram from a set of one-shot notifications into a usable operator inbox that supports:
+- critical alerts;
+- actionable event messages;
+- summaries and digests;
+- unresolved follow-ups;
+- meaningful resolved/closure updates;
+- clear stateful message lifecycle.
+
+MF2 must reduce operator confusion and notification noise while preserving actionable continuity for remote operator workflows.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- canonical message family taxonomy;
+- message classification model;
+- inbox lifecycle states;
+- routing/delivery rules;
+- dedupe expectations;
+- quiet/noisy distinction;
+- summary vs immediate alert behavior;
+- acknowledgment semantics;
+- message stale/replaced/resolved behavior;
+- actionability metadata foundation.
+
+2.2. Out of scope
+- full domain action surfaces beyond light acknowledgment/open;
+- publish-specific action semantics in full detail;
+- ops/recovery mutation flows;
+- analytics-specific notification domain;
+- general chat history/search product.
+
+2.3. Boundary rules
+- MF2 must not become a spam channel.
+- MF2 must preserve stateful lifecycle and must not treat every message as fire-and-forget.
+- MF2 acknowledgment must not be conflated with real domain mutation.
+- MF2 may prepare actionability metadata, but domain mutations remain outside this microfeature.
+
+3. Terms and definitions
+
+3.1. Inbox message
+A persisted Telegram operator message record with category, severity, target context, lifecycle status, and delivery state.
+
+3.2. Message family
+A canonical taxonomy bucket describing the role of the message.
+
+3.3. Actionable message
+A message that carries permitted next actions or next-step links.
+
+3.4. Non-actionable informational message
+A message that informs the operator but does not expose domain action flow.
+
+3.5. Follow-up message
+A message generated because the underlying issue remains unresolved or requires renewed operator attention.
+
+3.6. Superseded message
+A message that has been replaced by a newer message for the same normalized context and should no longer appear as the current source of truth.
+
+4. Canonical message model
+
+4.1. Required message families
+MF2 freezes the following message family literals:
+- CRITICAL_ALERT
+- ACTIONABLE_ALERT
+- SUMMARY_DIGEST
+- UNRESOLVED_FOLLOW_UP
+- RESOLUTION_UPDATE
+- INFORMATIONAL
+
+4.2. Required category model
+MF2 freezes the following category literals:
+- PUBLISH
+- MANUAL_HANDOFF
+- READINESS
+- RECOVERY
+- OPS_HEALTH
+- FACTORY_HEALTH
+- DIGEST
+
+4.3. Required severity model
+MF2 freezes the following severity literals:
+- INFO
+- WARNING
+- CRITICAL
+
+4.4. Required actionability class model
+MF2 freezes the following actionability class literals:
+- NON_ACTIONABLE
+- ACK_ONLY
+- OPEN_CONTEXT
+- GATEWAY_ACTIONABLE
+
+4.5. Required lifecycle statuses
+MF2 freezes the following lifecycle status literals:
+- ACTIVE
+- SUPERSEDED
+- RESOLVED
+- EXPIRED
+- INFORMATIONAL_ONLY
+
+5. Event families in scope
+
+MF2 must support at minimum:
+- publish/manual handoff events
+- readiness/blocker events
+- recovery/ops alerts
+- worker/factory health alerts
+- stale/problem follow-up notifications
+- digest summaries
+
+6. Routing and delivery model
+
+6.1. Routing rule
+All message delivery must route through trusted operator/chat binding context from MF1.
+No message may be treated as implicitly deliverable without identity/binding resolution.
+
+6.2. Delivery targets
+MF2 must support delivery to:
+- trusted private chats
+- trusted group/chat contexts where explicitly allowed
+- trusted thread contexts where explicitly allowed
+
+6.3. Quiet/noisy distinction
+- CRITICAL_ALERT and selected ACTIONABLE_ALERT messages may be immediate
+- SUMMARY_DIGEST and some follow-up classes may be deferred into digest-oriented flow
+- routing must distinguish urgency instead of treating all events as immediate alerts
+
+6.4. Dedupe expectation
+MF2 must dedupe or collapse repeated equivalent notifications sufficiently to avoid operator spam while preserving current actionable state.
+
+6.5. Follow-up rule
+If issue remains unresolved, MF2 may generate follow-up messages, but older messages must not continue to masquerade as the still-current action source when they have been superseded or resolved.
+
+7. Inbox lifecycle model
+
+7.1. ACTIVE
+Current live operator message.
+
+7.2. SUPERSEDED
+Replaced by a newer message for the same normalized context.
+
+7.3. RESOLVED
+Issue or action context has been meaningfully resolved.
+
+7.4. EXPIRED
+Message or actionability window has expired and must no longer be presented as current action source.
+
+7.5. INFORMATIONAL_ONLY
+Message remains non-actionable informational output.
+
+7.6. Lifecycle invariants
+- stale or replaced messages must not look still-current;
+- actionable messages must have stale/replaced/resolved behavior;
+- resolution update may close or contextualize a previously active message.
+
+8. Operator acknowledgment model
+
+8.1. Allowed lightweight operator actions in MF2
+- acknowledge message
+- open related context
+- escalate to deeper flow
+- leave unresolved if action not taken
+
+8.2. Acknowledgment semantics
+Acknowledgment marks operator awareness of the inbox item.
+It does not execute underlying domain mutation.
+
+8.3. Escalation semantics
+Escalation may hand the operator into:
+- a deeper Telegram action flow from a later MF
+- a related web UI context
+but MF2 itself does not implement those domain actions.
+
+9. Compact message contract
+
+9.1. Every operator-facing inbox message must carry:
+- message family
+- category
+- severity
+- target context
+- actionability class
+- lifecycle status
+- summary text
+- why it matters / risk text
+- current allowed next-step options
+- stale/replaced/resolved metadata where applicable
+
+9.2. Actionable continuity rule
+Every actionable message must know:
+- which entity/context it refers to
+- which action set is permitted
+- whether the message has gone stale
+This is mandatory for Epic 6A inbox trustworthiness.
+
+10. API / interface families
+
+10.1. Interface boundary
+MF2 provides canonical message/inbox contracts. It does not provide full publish/ops mutation semantics.
+
+10.2. Required interface families
+
+10.2.1. Message emission interface
+Must support creation of:
+- immediate critical alerts
+- actionable alerts
+- summaries/digests
+- unresolved follow-ups
+- resolution/closure updates
+
+10.2.2. Inbox read/list interface
+Must support:
+- current inbox list
+- filter by category
+- filter by severity
+- filter by lifecycle status
+- filter by actionability
+- filter by target context
+
+10.2.3. Message lifecycle interface
+Must support:
+- acknowledge
+- mark superseded
+- mark resolved
+- mark expired
+- inspect current message state
+
+10.2.4. Digest interface
+Must support:
+- grouped summary/digest generation
+- bounded set of included items
+- link back to current underlying contexts
+
+11. DB / schema / tables / indexes / migrations
+
+11.1. Required new tables
+
+11.1.1. telegram_inbox_messages
+Purpose:
+Canonical persisted message/inbox record.
+
+Required columns:
+- id
+- telegram_user_id nullable
+- product_operator_id nullable
+- binding_id nullable
+- message_family
+- category
+- severity
+- actionability_class
+- lifecycle_status
+- target_entity_type nullable
+- target_entity_ref nullable
+- summary_text
+- detail_text nullable
+- current_action_set_json
+- stale_context_json
+- superseded_by_message_id nullable
+- resolved_at nullable
+- expired_at nullable
+- created_at
+- delivered_at nullable
+
+11.1.2. telegram_inbox_delivery_events
+Purpose:
+Track message delivery attempts and results.
+
+Required columns:
+- id
+- inbox_message_id
+- binding_id
+- delivery_kind
+- delivery_result
+- telegram_message_id nullable
+- created_at
+
+Frozen delivery_kind literals:
+- IMMEDIATE
+- DIGEST
+- FOLLOW_UP
+- RESOLUTION_UPDATE
+
+Frozen delivery_result literals:
+- DELIVERED
+- SKIPPED
+- FAILED
+- DEDUPED
+
+11.1.3. telegram_inbox_ack_events
+Purpose:
+Track acknowledgment and inspect/open actions.
+
+Required columns:
+- id
+- inbox_message_id
+- product_operator_id
+- ack_action
+- created_at
+
+Frozen ack_action literals:
+- ACKNOWLEDGED
+- OPENED_CONTEXT
+- ESCALATED
+
+11.2. Index requirements
+- idx_telegram_inbox_messages_operator_state on (product_operator_id, lifecycle_status, severity, created_at)
+- idx_telegram_inbox_messages_target on (target_entity_type, target_entity_ref, lifecycle_status)
+- idx_telegram_inbox_messages_family_category on (message_family, category, lifecycle_status)
+- idx_telegram_inbox_delivery_events_message_time on (inbox_message_id, created_at)
+- idx_telegram_inbox_ack_events_message_time on (inbox_message_id, created_at)
+
+11.3. Migration rules
+- additive only
+- SQLite only
+- no domain-specific mutation semantics in MF2
+- no redesign of downstream Telegram action flows in this slice
+
+12. Error catalog
+
+12.1. Required error families
+- inbox target missing
+- delivery binding unavailable
+- delivery denied by binding
+- message already resolved
+- message already superseded
+- message expired
+- invalid inbox lifecycle transition
+- invalid message family
+- invalid category
+- invalid severity
+- invalid actionability class
+
+12.2. Canonical error code prefix
+E6A_
+
+12.3. Minimum frozen error codes
+- E6A_INBOX_TARGET_MISSING
+- E6A_INBOX_BINDING_UNAVAILABLE
+- E6A_INBOX_DELIVERY_DENIED
+- E6A_INBOX_MESSAGE_RESOLVED
+- E6A_INBOX_MESSAGE_SUPERSEDED
+- E6A_INBOX_MESSAGE_EXPIRED
+- E6A_INBOX_LIFECYCLE_INVALID
+- E6A_INBOX_MESSAGE_FAMILY_INVALID
+- E6A_INBOX_CATEGORY_INVALID
+- E6A_INBOX_SEVERITY_INVALID
+- E6A_INBOX_ACTIONABILITY_INVALID
+
+13. Idempotency / concurrency rules
+
+13.1. Message creation rule
+Equivalent immediate alerts for the same normalized active context may be deduped instead of creating duplicate ACTIVE inbox records.
+
+13.2. Current message rule
+For the same normalized context + family + binding target, at most one current ACTIVE actionable message may exist unless the design explicitly requires distinct messages.
+
+13.3. Supersession rule
+When a new message supersedes an old one for the same normalized context, the old one must become SUPERSEDED and must not remain the apparent current source.
+
+13.4. Resolution rule
+Resolved or expired messages must not reappear as ACTIVE without creation of a new message record.
+
+13.5. Acknowledgment rule
+Acknowledgment events are idempotent at message + operator + ack_action level.
+
+14. Validation rules
+
+14.1. Message validation
+- message_family must be one of the frozen message families
+- category must be one of the frozen categories
+- severity must be one of INFO / WARNING / CRITICAL
+- actionability_class must be one of NON_ACTIONABLE / ACK_ONLY / OPEN_CONTEXT / GATEWAY_ACTIONABLE
+- lifecycle_status must be one of ACTIVE / SUPERSEDED / RESOLVED / EXPIRED / INFORMATIONAL_ONLY
+
+14.2. Actionability validation
+- NON_ACTIONABLE messages must not expose mutation-oriented actions
+- ACK_ONLY messages may expose acknowledgment only
+- OPEN_CONTEXT messages may expose navigation/open-context actions
+- GATEWAY_ACTIONABLE messages may expose downstream gateway-backed actions where later MFs define them
+
+14.3. Target validation
+Actionable or context-linked messages must carry target_entity_type and target_entity_ref.
+
+15. Events / logging / observability
+
+15.1. Mandatory auditable events
+- inbox message created
+- delivery attempted
+- delivery deduped/skipped
+- message acknowledged
+- message superseded
+- message resolved
+- message expired
+- follow-up emitted
+- digest emitted
+
+15.2. Minimum log fields
+- inbox_message_id
+- product_operator_id nullable
+- binding_id nullable
+- message_family
+- category
+- severity
+- lifecycle_status
+- target_entity_type nullable
+- target_entity_ref nullable
+- delivery_result where applicable
+
+15.3. Observability requirement
+MF2 must make it possible to answer:
+- what current inbox items are active
+- which messages are stale/superseded/resolved
+- why a message was delivered immediately vs via digest
+- whether operator acknowledgment occurred
+- whether a message is still a valid current action source
+
+16. Acceptance criteria
+
+MF2 is accepted if all of the following are true:
+- a canonical notification/inbox taxonomy exists;
+- message lifecycle states exist;
+- routing/delivery rules exist;
+- acknowledgment/follow-up model exists;
+- stale messages do not pretend to be still-current operator sources.
+
+17. Test plan
+
+17.1. Unit
+- message_family validation
+- category validation
+- severity validation
+- actionability_class validation
+- lifecycle_status validation
+- dedupe decision logic
+- lifecycle transition validation
+- acknowledgment idempotency validation
+
+17.2. Integration
+- create critical alert
+- create actionable alert
+- create summary/digest message
+- create unresolved follow-up
+- route message to trusted binding
+- dedupe repeated equivalent alert
+- supersede message with newer current message
+- resolve message
+- expire message
+- acknowledge message without domain mutation
+
+17.3. Smoke
+- migrations create inbox tables/indexes
+- inbox layer functions without MF3-MF6
+- stale/superseded messages are not returned as current action source
+
+18. Rollback / migration considerations
+
+18.1. Rollout posture
+MF2 must be additive and inbox-focused.
+
+18.2. Safe fallback
+If no inbox messages exist yet:
+- Telegram foundation remains usable;
+- downstream Telegram features may still operate independently later;
+- absence of inbox data must not break bot transport.
+
+18.3. No scope drift rule
+MF2 must not expand into publish controls, ops mutations, analytics notifications beyond generic foundations, or chat-history product scope.
+
+19. Open questions / ambiguities
+
+19.1. Exact digest cadence and batching heuristics are implementation-level details and are not blockers as long as quiet/noisy distinction, message taxonomy, lifecycle, and stale-awareness are preserved.
+
+19.2. Exact rendering/formatting of Telegram messages is implementation-level detail and not a blocker.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6A and MF2 are aligned on Telegram inbox as a stateful notification layer rather than fire-and-forget alerts.
+- MF2 cleanly establishes message taxonomy, lifecycle, delivery rules, and acknowledgment semantics without drifting into downstream domain mutation.
+- Remaining uncertainty is delivery-policy tuning detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- quiet drift into spam-channel behavior;
+- loss of lifecycle statefulness;
+- accidental mixing of acknowledgment with real domain mutation.
+
+====================================================================
+SPEC_E6A_MF3_TELEGRAM_PUBLISH_APPROVALS_AND_MANUAL_HANDOFF_CONTROLS_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6A-MF3 introduces the canonical Telegram remote surface for publish-domain operator flows.
+
+Its purpose is to let the operator remotely:
+- inspect publish decision contexts;
+- approve or reject where domain semantics allow;
+- work with manual handoff;
+- acknowledge manual handoff;
+- confirm manual completion where allowed;
+- receive operator-readable conflict/error outcomes.
+
+MF3 must not invent new publish semantics. It must only surface already canonical publish-domain actions and states through Telegram in a compact, stale-safe, auditable way.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- publish decision surfaces in Telegram;
+- approval/reject decision contexts;
+- manual handoff pending contexts;
+- publish state/problem explanation in compact Telegram form;
+- remote manual handoff support;
+- publish action safeguards;
+- compact target context compression;
+- operator-readable publish conflict/error outcomes.
+
+2.2. Out of scope
+- redesign of publish domain itself;
+- full publish executor logic;
+- analytics/prediction decisions;
+- general queue browsing across all domains;
+- ops/recovery actions outside publish-adjacent flows.
+
+2.3. Boundary rules
+- MF3 must not add new publish transitions outside canonical Epic 3 publish-domain actions.
+- MF3 must not reduce the feature to notifications plus one button.
+- MF3 must treat manual handoff as a first-class remote workflow.
+- MF3 must remain state-safe and stale-safe.
+
+3. Publish-domain dependency model
+
+3.1. Canonical domain source
+MF3 is a Telegram surface over already canonical publish-domain actions and states.
+
+3.2. Upstream dependency
+MF3 depends on:
+- MF1 for identity/binding/gateway foundation;
+- MF2 for notifications/inbox continuity;
+- Epic 3 publish domain contracts for the canonical action set and state model.
+
+3.3. Authority rule
+Telegram approve/reject/manual-handoff actions must map to canonical publish-domain actions only and must not create an alternative publish logic layer.
+
+4. Required Telegram publish flows
+
+MF3 must support at minimum:
+- approve
+- reject
+- acknowledge manual handoff
+- mark manual completion where policy/domain allows
+- related publish-status/problem inspection
+- operator-readable conflict/error outcomes
+
+5. Compact publish context contract
+
+5.1. Every Telegram publish message/view in MF3 must carry:
+- target release/job context
+- current publish state
+- reason/blocker
+- available next actions
+- web UI link when deeper context is needed
+
+5.2. Context compression rule
+Telegram publish surface must be compact and operator-first.
+It must not attempt to replicate the full web UI.
+
+6. Manual handoff model
+
+6.1. Manual handoff as first-class scenario
+Manual handoff is not fallback afterthought in MF3.
+It must be explicitly supported as a real remote operator workflow.
+
+6.2. Required manual handoff capabilities
+- show manual handoff pending context
+- allow acknowledge manual handoff
+- allow confirm manual completion where domain permits
+- carry minimal necessary context for operator follow-through
+
+6.3. Minimal completion payload
+Where manual completion is allowed, Telegram flow must be able to transport the minimum domain-required completion payload, or redirect the operator to the web UI if the payload cannot be safely completed in Telegram.
+
+7. Action safety model
+
+7.1. Permission-aware action exposure
+Telegram must show only actions permitted by gateway evaluation, operator class, and current publish context.
+
+7.2. Stale-state protection
+If underlying publish state changed:
+- action must not silently succeed;
+- operator must receive explicit stale/conflict result;
+- message/action must not overwrite newer domain state assumptions.
+
+7.3. Explicit confirmation
+Risky publish transitions must require confirmation before execution.
+
+7.4. State-safe presentation
+Available actions must reflect current known publish state and must not expose obviously forbidden actions as active options.
+
+8. Action classes in MF3
+
+8.1. READ_ONLY
+Used for publish inspection only.
+
+8.2. STANDARD_OPERATOR_MUTATE
+May be used for lower-risk publish actions if Epic 3 semantics allow.
+
+8.3. GUARDED_OPERATOR_MUTATE
+Must be used for approval/reject/manual completion actions that require confirmation/stale protection.
+
+8.4. PRIVILEGED_OPERATOR_MUTATE
+Only where publish-domain policy and operator privilege require it.
+
+9. API / interface families
+
+9.1. Interface boundary
+MF3 provides Telegram publish-domain surface only. It does not redesign publish executor logic.
+
+9.2. Required interface families
+
+9.2.1. Publish decision view interface
+Must support:
+- load approval/reject context
+- load manual handoff context
+- load publish state/problem summary
+- render available next actions
+
+9.2.2. Publish action interface
+Must support:
+- approve
+- reject
+- acknowledge manual handoff
+- mark manual completion where allowed
+
+9.2.3. Publish status/problem inspection interface
+Must support:
+- compact publish state summary
+- blocker/reason explanation
+- conflict/error explanation
+- web-link escape hatch
+
+10. DB / schema / tables / indexes / migrations
+
+10.1. Reuse rule
+MF3 must reuse:
+- MF1 gateway transport/audit foundation
+- MF2 inbox/message continuity
+- Epic 3 publish-domain state/action semantics
+
+10.2. Required new tables
+
+10.2.1. telegram_publish_action_contexts
+Purpose:
+Persist compact current Telegram publish action/view context.
+
+Required columns:
+- id
+- product_operator_id
+- binding_id
+- release_id nullable
+- job_id nullable
+- publish_state
+- action_family
+- reason_code nullable
+- summary_payload_json
+- available_actions_json
+- source_publish_context_ref
+- created_at
+- expires_at nullable
+
+Frozen action_family literals:
+- APPROVAL_CONTEXT
+- MANUAL_HANDOFF_CONTEXT
+- STATUS_PROBLEM_CONTEXT
+
+10.2.2. telegram_publish_action_results
+Purpose:
+Persist operator-visible result records for Telegram publish actions.
+
+Required columns:
+- id
+- gateway_event_id
+- release_id nullable
+- job_id nullable
+- publish_action_type
+- result_class
+- result_payload_json
+- created_at
+
+Frozen publish_action_type literals:
+- APPROVE
+- REJECT
+- ACK_MANUAL_HANDOFF
+- MARK_MANUAL_COMPLETION
+- INSPECT_STATUS
+
+Frozen result_class literals:
+- SUCCEEDED
+- DENIED
+- STALE
+- EXPIRED
+- CONFLICT
+- FAILED
+
+10.3. Index requirements
+- idx_telegram_publish_action_contexts_job_time on (job_id, created_at)
+- idx_telegram_publish_action_contexts_operator_time on (product_operator_id, created_at)
+- idx_telegram_publish_action_results_job_time on (job_id, created_at)
+- idx_telegram_publish_action_results_gateway on (gateway_event_id)
+
+10.4. Migration rules
+- additive only
+- SQLite only
+- no new publish-domain semantics
+- no second publish logic layer
+- no mutation of core publish domain ownership model
+
+11. Error catalog
+
+11.1. Required error families
+- publish target missing
+- publish target stale
+- publish action expired
+- publish action already completed
+- publish action forbidden by policy
+- manual completion not allowed in current state
+- publish action conflict
+- publish context unavailable
+- system unavailable
+
+11.2. Canonical error code prefix
+E6A_
+
+11.3. Minimum frozen error codes
+- E6A_PUBLISH_TARGET_MISSING
+- E6A_PUBLISH_TARGET_STALE
+- E6A_PUBLISH_ACTION_EXPIRED
+- E6A_PUBLISH_ACTION_ALREADY_COMPLETED
+- E6A_PUBLISH_ACTION_FORBIDDEN
+- E6A_MANUAL_COMPLETION_NOT_ALLOWED
+- E6A_PUBLISH_ACTION_CONFLICT
+- E6A_PUBLISH_CONTEXT_UNAVAILABLE
+- E6A_SYSTEM_UNAVAILABLE
+
+12. Idempotency / concurrency rules
+
+12.1. Gateway-first rule
+Every Telegram publish mutation must pass MF1 gateway before domain execution.
+
+12.2. Action idempotency
+Repeated click/command on the same logical publish action must not create duplicate state mutations.
+
+12.3. Stale conflict rule
+If web UI or worker flow changed the publish state after the Telegram context was created, Telegram action must return STALE or CONFLICT and must not silently overwrite.
+
+12.4. Current-context rule
+Only non-expired current publish action contexts may be used for guarded mutation.
+
+13. Validation rules
+
+13.1. Context validation
+- at least one of release_id or job_id must be present
+- publish_state must be a valid canonical publish-domain state
+- available_actions_json must be valid JSON
+- summary_payload_json must be valid JSON
+
+13.2. Action validation
+- publish_action_type must be one of APPROVE / REJECT / ACK_MANUAL_HANDOFF / MARK_MANUAL_COMPLETION / INSPECT_STATUS
+- result_class must be one of SUCCEEDED / DENIED / STALE / EXPIRED / CONFLICT / FAILED
+
+13.3. Manual completion validation
+If manual completion is not allowed by current publish-domain semantics, action must be denied explicitly.
+
+14. Events / logging / observability
+
+14.1. Mandatory auditable events
+- publish action context opened
+- publish approve attempted
+- publish reject attempted
+- manual handoff acknowledged
+- manual completion attempted
+- stale publish action rejected
+- publish action conflict shown
+- publish result persisted
+
+14.2. Minimum log fields
+- product_operator_id
+- binding_id
+- release_id nullable
+- job_id nullable
+- publish_state
+- publish_action_type
+- result_class
+- gateway_event_id
+- reason_code nullable
+
+14.3. Observability requirement
+MF3 must make it possible to answer:
+- what publish context the operator saw
+- which publish action was attempted
+- whether action succeeded, failed, expired, or went stale
+- why the action was not allowed
+- whether manual handoff was actually acknowledged/completed
+
+15. Acceptance criteria
+
+MF3 is accepted if all of the following are true:
+- Telegram publish approval/reject flows exist;
+- Telegram manual handoff support exists;
+- all actions are auditable, permission-checked, and stale-safe;
+- Telegram publish controls do not create a second publish logic outside the canonical domain model.
+
+16. Test plan
+
+16.1. Unit
+- action_family validation
+- publish_action_type validation
+- result_class validation
+- manual completion allowed/not-allowed validation
+- stale context rejection
+- compact context rendering validation
+
+16.2. Integration
+- open approval context
+- approve publish context
+- reject publish context
+- open manual handoff context
+- acknowledge manual handoff
+- mark manual completion where allowed
+- stale publish action returns stale/conflict result
+- repeated click does not duplicate mutation
+- result record persisted
+
+16.3. Smoke
+- migrations create publish Telegram support tables/indexes
+- publish Telegram flow does not introduce new publish semantics
+- manual handoff remains first-class remote workflow
+
+17. Rollback / migration considerations
+
+17.1. Rollout posture
+MF3 must be additive and surface-only over canonical publish domain.
+
+17.2. Safe fallback
+If Telegram publish contexts are unavailable:
+- publish domain continues via web UI and existing surfaces;
+- Telegram may still show informational or stale-safe failure results.
+
+17.3. No scope drift rule
+MF3 must not expand into general queue browsing, analytics, or non-publish ops actions.
+
+18. Open questions / ambiguities
+
+18.1. Exact compact message wording is implementation-level detail and not a blocker.
+
+18.2. Exact minimal payload for manual completion depends on canonical Epic 3 domain contract and must remain aligned with it.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6A and MF3 are aligned on Telegram as a real publish-domain remote surface, not merely a notification bot or approve button.
+- MF3 preserves canonical publish semantics and manual handoff as a first-class remote scenario.
+- Remaining uncertainty is rendering/payload detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- quiet addition of new publish transitions via Telegram;
+- reduction of MF3 to notification plus one button;
+- loss of manual handoff as a full remote workflow.
+
+====================================================================
+SPEC_E6A_MF4_TELEGRAM_STATUS_READINESS_AND_QUEUE_VIEWS_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6A-MF4 introduces compact read-first Telegram operator surfaces for situational awareness.
+
+Its purpose is to let the operator remotely understand:
+- overall factory state;
+- what is broken or blocked;
+- which publish/manual items need attention;
+- which release/job contexts are problematic;
+- which queues/channels need operator attention.
+
+MF4 is a read-first triage layer. It must provide enough compact current-context information for remote triage without trying to reproduce the full web UI.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- factory overview summaries;
+- publish/manual queue views;
+- readiness/blocker views;
+- compact release/job drilldowns;
+- problem/attention-needed lists;
+- freshness/currentness indication;
+- web UI deep-link support.
+
+2.2. Out of scope
+- full mutating ops actions;
+- analytics center replacement;
+- rich visual dashboards;
+- Telegram-first navigation for every domain entity.
+
+2.3. Boundary rules
+- MF4 must remain read-first.
+- MF4 must not become an overloaded mini-UI.
+- MF4 must preserve freshness/stale-awareness.
+- MF4 must not replace Epic 5A analytics center.
+- MF4 must remain compact and triage-oriented.
+
+3. Required read surface families
+
+MF4 must support at minimum:
+- factory overview
+- publish/manual queue overview
+- readiness/blockers overview
+- release/job compact detail
+- problem list / attention-needed list
+
+4. Read surface contracts
+
+4.1. Factory overview summary
+Must provide:
+- high-level status
+- critical counts
+- problem concentrations
+- operator attention summary
+
+4.2. Queue views
+Must provide:
+- publish queue summary
+- manual handoff queue
+- blocked/problem queue
+- retry/attention-needed queue where relevant
+
+4.3. Readiness views
+Must provide:
+- readiness blockers
+- pre-publish readiness summaries
+- per-channel or per-batch problem emphasis where relevant
+
+4.4. Entity drilldowns
+Must provide:
+- compact release/job summary
+- why-this-is-blocked/problematic
+- next actionable direction
+- deep-link/open-web-context support
+
+5. Compact triage model
+
+5.1. Compactness rule
+Telegram read views must be compact and decision-friendly, not overloaded copies of web UI.
+
+5.2. Triage sufficiency rule
+Read views must be enough for triage, not necessarily enough for full administration.
+
+5.3. Complexity escape-hatch rule
+If context is too complex for safe compact presentation, Telegram must provide:
+- short summary
+- why it matters
+- link into full web context
+
+6. Freshness/currentness model
+
+6.1. Read views must indicate:
+- that the state is a current snapshot or not
+- how fresh the state is
+- whether the message/view is stale
+
+6.2. Frozen freshness status literals
+- CURRENT
+- STALE
+- PARTIAL
+- UNKNOWN
+
+6.3. Stale-awareness rule
+A stale read surface must not present itself as guaranteed current operator truth.
+
+7. API / interface families
+
+7.1. Interface boundary
+MF4 provides read surfaces only. It must not introduce broad mutating ops behavior.
+
+7.2. Required interface families
+
+7.2.1. Factory overview interface
+Must support:
+- load overall summary
+- load critical counts
+- load problem concentrations
+- load operator attention summary
+
+7.2.2. Queue overview interface
+Must support:
+- publish queue summary
+- manual handoff queue
+- blocked/problem queue
+- retry/attention-needed queue
+
+7.2.3. Readiness/blocker interface
+Must support:
+- readiness blockers list
+- per-channel readiness summary
+- per-batch readiness summary where relevant
+
+7.2.4. Entity detail interface
+Must support:
+- compact release detail
+- compact job detail
+- reason/problem summary
+- next-action direction
+- web-link escape hatch
+
+7.2.5. Problem list interface
+Must support:
+- attention-needed list
+- grouped problem units
+- severity/currentness metadata
+
+8. DB / schema / tables / indexes / migrations
+
+8.1. Reuse rule
+MF4 must reuse existing operational/readiness/publish contexts and summarize them for Telegram.
+It must not introduce a second analytics or control model.
+
+8.2. Required new tables
+
+8.2.1. telegram_read_view_snapshots
+Purpose:
+Persist compact Telegram-ready read snapshots where needed for freshness/stale-aware delivery.
+
+Required columns:
+- id
+- view_family
+- scope_type
+- scope_ref nullable
+- freshness_status
+- snapshot_payload_json
+- source_context_refs_json
+- created_at
+- expires_at nullable
+
+Frozen view_family literals:
+- FACTORY_OVERVIEW
+- QUEUE_OVERVIEW
+- READINESS_OVERVIEW
+- ENTITY_DETAIL
+- PROBLEM_LIST
+
+Frozen scope_type literals:
+- FACTORY
+- CHANNEL
+- RELEASE
+- JOB
+- BATCH_MONTH
+- QUEUE
+
+8.2.2. telegram_read_view_access_events
+Purpose:
+Track Telegram read-view access and freshness/result state.
+
+Required columns:
+- id
+- product_operator_id
+- binding_id
+- view_snapshot_id
+- access_result
+- created_at
+
+Frozen access_result literals:
+- SHOWN
+- STALE
+- EXPIRED
+- DENIED
+- FAILED
+
+8.3. Index requirements
+- idx_telegram_read_view_snapshots_family_scope on (view_family, scope_type, scope_ref, created_at)
+- idx_telegram_read_view_snapshots_freshness on (freshness_status, created_at)
+- idx_telegram_read_view_access_events_operator_time on (product_operator_id, created_at)
+
+8.4. Migration rules
+- additive only
+- SQLite only
+- no rich dashboard redesign assumptions
+- no mutation semantics added in MF4
+
+9. Error catalog
+
+9.1. Required error families
+- view scope invalid
+- target context missing
+- stale snapshot
+- snapshot expired
+- source context unavailable
+- unsupported view family
+- permission denied
+
+9.2. Canonical error code prefix
+E6A_
+
+9.3. Minimum frozen error codes
+- E6A_READ_VIEW_SCOPE_INVALID
+- E6A_READ_VIEW_TARGET_MISSING
+- E6A_READ_VIEW_STALE
+- E6A_READ_VIEW_EXPIRED
+- E6A_READ_VIEW_SOURCE_UNAVAILABLE
+- E6A_READ_VIEW_UNSUPPORTED
+- E6A_PERMISSION_DENIED
+
+10. Idempotency / concurrency rules
+
+10.1. Read-only default rule
+All MF4 interactions are read-only by default.
+
+10.2. Snapshot freshness rule
+If a read snapshot is known stale or expired, operator must be told explicitly.
+
+10.3. Currentness rule
+A newer snapshot for the same view/scope may supersede older snapshots for freshness purposes.
+
+11. Validation rules
+
+11.1. View validation
+- view_family must be one of FACTORY_OVERVIEW / QUEUE_OVERVIEW / READINESS_OVERVIEW / ENTITY_DETAIL / PROBLEM_LIST
+- scope_type must be one of FACTORY / CHANNEL / RELEASE / JOB / BATCH_MONTH / QUEUE
+- freshness_status must be one of CURRENT / STALE / PARTIAL / UNKNOWN
+- snapshot_payload_json must be valid JSON
+- source_context_refs_json must be valid JSON
+
+11.2. Compactness validation
+Rendered payload must remain compact and summary-oriented.
+Full-detail-only fields belong to web UI escape hatches, not Telegram primary payload.
+
+12. Events / logging / observability
+
+12.1. Mandatory auditable events
+- read view requested
+- read snapshot shown
+- stale read snapshot shown
+- expired read snapshot denied
+- web context opened from Telegram read view
+
+12.2. Minimum log fields
+- product_operator_id
+- binding_id
+- view_family
+- scope_type
+- scope_ref nullable
+- freshness_status
+- access_result
+
+12.3. Observability requirement
+MF4 must make it possible to answer:
+- what compact read view the operator saw
+- whether it was current or stale
+- what scope it covered
+- what next direction was suggested
+- whether web context escape hatch was used
+
+13. Acceptance criteria
+
+MF4 is accepted if all of the following are true:
+- compact Telegram read surfaces exist for main remote operator scenarios;
+- operator can triage without opening web UI every time;
+- views remain compact, current-context aware, and not misleading when stale;
+- MF4 does not replace analytics center and does not become redesign layer.
+
+14. Test plan
+
+14.1. Unit
+- view_family validation
+- scope_type validation
+- freshness_status validation
+- compact payload validation
+- stale-state rendering validation
+
+14.2. Integration
+- show factory overview
+- show publish/manual queue overview
+- show readiness/blockers overview
+- show release compact detail
+- show job compact detail
+- show problem list
+- stale snapshot returns stale-aware output
+- web-link escape hatch included when context is complex
+
+14.3. Smoke
+- migrations create read-view tables/indexes
+- read surfaces remain usable without MF5/MF6
+- no overloaded mini-UI drift in rendered contracts
+
+15. Rollback / migration considerations
+
+15.1. Rollout posture
+MF4 must be additive and read-first.
+
+15.2. Safe fallback
+If read snapshots are unavailable:
+- Telegram surface may still return compact direct current reads if safe;
+- otherwise it must fail clearly and direct operator to web UI.
+
+15.3. No scope drift rule
+MF4 must not expand into analytics center replacement or broad mutating action scope.
+
+16. Open questions / ambiguities
+
+16.1. Exact message layout and truncation strategy are implementation details and are not blockers as long as compactness and freshness-awareness are preserved.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6A and MF4 are aligned on Telegram as a compact triage/read surface, not a rich dashboard or redesign layer.
+- MF4 provides the necessary situational awareness surfaces for remote operator use.
+- Remaining uncertainty is presentation detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- quiet drift into overloaded mini-UI behavior;
+- loss of freshness/stale awareness;
+- confusion with Epic 5A analytics surfaces.
+
+====================================================================
+SPEC_E6A_MF5_TELEGRAM_OPS_RECOVERY_AND_SAFE_BATCH_CONTROLS_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6A-MF5 introduces the safe remote intervention layer for Telegram operator console.
+
+Its purpose is to let the operator remotely perform a bounded, guardrailed subset of ops, recovery, queue, and batch actions without turning Telegram into a full admin shell.
+
+MF5 must support:
+- safe retry/ack-style actions;
+- safe recovery actions;
+- safe bounded batch actions;
+- confirmation flow where required;
+- explicit result reporting with partial/block/stale visibility.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- safe ops actions;
+- safe recovery actions;
+- safe retry/resume-like controls where already canonical;
+- problem follow-up actions with guardrails;
+- limited batch controls over bounded target sets;
+- explicit preview/summary-before-confirm model;
+- result reporting.
+
+2.2. Out of scope
+- unrestricted admin control surface;
+- destructive maintenance actions without heavy safeguards;
+- broad config editing via Telegram;
+- anything that bypasses canonical domain validation;
+- rich planner authoring;
+- metadata editing.
+
+2.3. Boundary rules
+- MF5 is a safe remote intervention layer, not a full admin shell.
+- Dangerous actions either require stronger guardrails or remain web-only outside v1.
+- Batch mutation without explicit preview/confirm is forbidden.
+- Telegram ops behavior must not silently diverge from web/admin behavior.
+
+3. Action classes in scope
+
+MF5 must support at minimum:
+- safe retry/ack style actions
+- safe recovery actions
+- safe bounded batch actions
+- operator-readable result/partial-failure reporting
+
+4. Safety model
+
+4.1. Confirmation requirement
+Guarded and batch actions require explicit confirmation.
+
+4.2. Bounded target-set rule
+Batch actions are allowed only where:
+- target set is bounded;
+- semantics are canonical;
+- risk is manageable;
+- operator sees scope before confirm.
+
+4.3. Non-destructive default rule
+Destructive/admin-heavy actions are not in v1 scope unless already explicitly canonical and heavily guarded.
+
+4.4. Canonical-domain rule
+Every action must map to an already accepted canonical domain action. MF5 must not invent new domain semantics.
+
+5. Result reporting contract
+
+5.1. Every executed action must return:
+- what happened
+- what changed
+- what failed
+- whether action was partial, blocked, stale, or denied
+
+5.2. Frozen result_class literals
+- SUCCEEDED
+- PARTIAL
+- BLOCKED
+- STALE
+- DENIED
+- FAILED
+
+5.3. Partial result rule
+If some elements of a bounded batch succeed and others fail, result must be PARTIAL and must surface per-target outcome summary.
+
+6. API / interface families
+
+6.1. Interface boundary
+MF5 provides safe remote action surface only. It does not provide unrestricted administration.
+
+6.2. Required interface families
+
+6.2.1. Safe single-action interface
+Must support:
+- retry-like action where canonical
+- acknowledge/clear operator attention where canonical
+- safe recovery action where canonical
+
+6.2.2. Safe batch preview interface
+Must support:
+- bounded target-set preview
+- scope summary
+- per-target eligibility summary
+- risk/guardrail summary
+
+6.2.3. Safe batch execute interface
+Must support:
+- execute only after preview/confirm
+- return aggregate result
+- return partial/stale/blocked detail summary
+
+6.2.4. Action result interface
+Must support:
+- final result record
+- partial failure details
+- stale/conflict explanation
+- next operator direction
+
+7. DB / schema / tables / indexes / migrations
+
+7.1. Reuse rule
+MF5 must reuse MF1 gateway, MF2 inbox continuity, and canonical existing ops/recovery/queue action semantics.
+
+7.2. Required new tables
+
+7.2.1. telegram_ops_action_contexts
+Purpose:
+Persist compact safe remote action contexts.
+
+Required columns:
+- id
+- product_operator_id
+- binding_id
+- action_family
+- target_scope_type
+- target_scope_ref
+- preview_payload_json
+- eligibility_payload_json
+- created_at
+- expires_at nullable
+
+Frozen action_family literals:
+- SAFE_RETRY
+- SAFE_ACK
+- SAFE_RECOVERY
+- SAFE_BATCH
+
+7.2.2. telegram_ops_action_confirmations
+Purpose:
+Persist confirmation records for guarded/batch actions.
+
+Required columns:
+- id
+- action_context_id
+- confirmation_state
+- confirmed_at nullable
+- created_at
+- expires_at nullable
+
+Frozen confirmation_state literals:
+- PENDING
+- CONFIRMED
+- EXPIRED
+- CANCELLED
+
+7.2.3. telegram_ops_action_results
+Purpose:
+Persist operator-visible action result records.
+
+Required columns:
+- id
+- gateway_event_id
+- action_context_id
+- result_class
+- result_payload_json
+- created_at
+
+7.3. Index requirements
+- idx_telegram_ops_action_contexts_operator_time on (product_operator_id, created_at)
+- idx_telegram_ops_action_contexts_scope on (target_scope_type, target_scope_ref, created_at)
+- idx_telegram_ops_action_confirmations_state_time on (confirmation_state, created_at)
+- idx_telegram_ops_action_results_gateway on (gateway_event_id)
+
+7.4. Migration rules
+- additive only
+- SQLite only
+- no unrestricted admin shell semantics
+- no new destructive semantics
+- no bypass of canonical domain validation
+
+8. Error catalog
+
+8.1. Required error families
+- action context missing
+- action context stale
+- batch target set invalid
+- action confirmation missing
+- action confirmation expired
+- action forbidden in current state
+- action partially blocked
+- action already applied
+- system unavailable
+
+8.2. Canonical error code prefix
+E6A_
+
+8.3. Minimum frozen error codes
+- E6A_OPS_ACTION_CONTEXT_MISSING
+- E6A_OPS_ACTION_CONTEXT_STALE
+- E6A_BATCH_TARGET_SET_INVALID
+- E6A_ACTION_CONFIRMATION_MISSING
+- E6A_ACTION_CONFIRMATION_EXPIRED
+- E6A_ACTION_FORBIDDEN
+- E6A_ACTION_PARTIALLY_BLOCKED
+- E6A_ACTION_ALREADY_APPLIED
+- E6A_SYSTEM_UNAVAILABLE
+
+9. Idempotency / concurrency rules
+
+9.1. Gateway-first rule
+All MF5 mutating actions must pass through MF1 gateway.
+
+9.2. Confirmation rule
+Guarded and batch actions must not execute without a valid confirmation record.
+
+9.3. Batch preview/execute rule
+Execution may act only on the previewed bounded target set and must fail or partial-fail clearly if target state changed.
+
+9.4. Idempotency rule
+Repeated command/callback execution for the same action context must not create unsafe duplicate mutations.
+
+10. Validation rules
+
+10.1. Action family validation
+- SAFE_RETRY
+- SAFE_ACK
+- SAFE_RECOVERY
+- SAFE_BATCH
+
+10.2. Confirmation validation
+- confirmation_state must be one of PENDING / CONFIRMED / EXPIRED / CANCELLED
+- guarded/batch execution requires CONFIRMED state
+- expired confirmation must deny execution
+
+10.3. Payload validation
+- preview_payload_json must be valid JSON
+- eligibility_payload_json must be valid JSON
+- result_payload_json must be valid JSON
+
+11. Events / logging / observability
+
+11.1. Mandatory auditable events
+- safe ops action preview created
+- safe ops action confirmed
+- safe ops action executed
+- safe ops action partially blocked
+- safe ops action stale/denied
+- safe batch preview created
+- safe batch action executed
+- safe batch action partial result reported
+
+11.2. Minimum log fields
+- product_operator_id
+- binding_id
+- action_family
+- target_scope_type
+- target_scope_ref
+- confirmation_state where applicable
+- result_class
+- gateway_event_id
+
+11.3. Observability requirement
+MF5 must make it possible to answer:
+- what the operator tried to do
+- what scope was targeted
+- whether confirmation existed
+- what changed
+- what failed or was blocked
+- whether the result was partial
+
+12. Acceptance criteria
+
+MF5 is accepted if all of the following are true:
+- useful remote ops/recovery controls exist;
+- limited safe batch controls exist;
+- all such actions pass confirmation where required;
+- all actions are auditable and stale-safe;
+- MF5 does not turn Telegram into an unrestricted admin console.
+
+13. Test plan
+
+13.1. Unit
+- action_family validation
+- confirmation_state validation
+- preview payload validation
+- result class validation
+- confirmation-required enforcement
+
+13.2. Integration
+- create safe retry preview
+- confirm safe retry
+- execute safe retry
+- create safe batch preview
+- confirm safe batch action
+- execute safe batch action
+- stale target set returns stale/partial result
+- repeated callback does not duplicate execution
+- partial result reporting persisted
+
+13.3. Smoke
+- migrations create ops/recovery Telegram tables/indexes
+- safe batch controls remain bounded and preview-driven
+- no unrestricted admin actions are introduced
+
+14. Rollback / migration considerations
+
+14.1. Rollout posture
+MF5 must be additive and safe-control-only.
+
+14.2. Safe fallback
+If Telegram safe control contexts are unavailable:
+- existing web/admin surfaces remain canonical;
+- Telegram may deny with clear explanation.
+
+14.3. No scope drift rule
+MF5 must not expand into destructive admin flows or full backend admin shell.
+
+15. Open questions / ambiguities
+
+15.1. Exact bounded target-set sizing thresholds are implementation-level details and are not blockers as long as bounded preview/confirm and manageable risk are preserved.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6A and MF5 are aligned on safe remote intervention rather than unrestricted admin control.
+- MF5 preserves confirmation, bounded batch scope, auditability, and operator-readable results.
+- Remaining uncertainty is threshold/detail tuning, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- quiet inclusion of destructive admin flows in v1;
+- silent batch mutation without preview/confirm;
+- confusion between safe remote control and full admin shell.
+
+====================================================================
+SPEC_E6A_MF6_TELEGRAM_AUDIT_SAFETY_IDEMPOTENCY_AND_OPERATOR_HARDENING_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6A-MF6 introduces the cross-cutting hardening layer for the entire Epic 6A Telegram operator console.
+
+Its purpose is to make Telegram operator console:
+- auditable;
+- idempotent;
+- stale-safe;
+- permission-safe;
+- operator-readable in failures;
+- production-grade and trustworthy.
+
+MF6 is not optional polish. It is the explicit hardening microfeature that turns useful Telegram flows into production-safe operator tooling.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- Telegram action audit model;
+- idempotency model for repeated callbacks/commands;
+- stale/conflict handling;
+- user-visible safety/error/result classes;
+- callback expiry;
+- fail-closed semantics;
+- restricted action windows where needed;
+- stronger confirmation support for risky actions;
+- safe degradation behavior.
+
+2.2. Out of scope
+- redesign of domain audit systems outside Telegram context;
+- general enterprise IAM product;
+- new domain semantics for publish/ops/planner;
+- generic chat moderation features.
+
+2.3. Boundary rules
+- hardening is mandatory, not optional polish;
+- no mutating Telegram action may exist without strong audit/idempotency guarantees;
+- on stale or uncertain conditions, system must fail closed.
+
+3. Core hardening principles
+
+3.1. Auditability rule
+Telegram action without audit is not acceptable.
+
+3.2. Idempotency rule
+Telegram action without idempotency is not acceptable.
+
+3.3. Stale-safety rule
+Telegram action on stale state must fail safely and clearly.
+
+3.4. Operator-readable failure rule
+Failure results must be practical operator outcomes, not raw technical garbage.
+
+3.5. Fail-closed rule
+If there is uncertainty, Telegram layer fails closed.
+
+4. Canonical safety result classes
+
+MF6 freezes the following user-visible result classes:
+- SUCCEEDED
+- DENIED
+- EXPIRED
+- STALE
+- ALREADY_APPLIED
+- FORBIDDEN
+- NOT_FOUND
+- SYSTEM_UNAVAILABLE
+- FAILED
+
+These classes are presentation-safe outcome categories for Telegram mutating behavior.
+
+5. API / interface families
+
+5.1. Interface boundary
+MF6 provides cross-cutting audit/safety/idempotency/hardening interfaces and hooks for all Telegram mutating flows.
+
+5.2. Required interface families
+
+5.2.1. Telegram action audit interface
+Must support:
+- audit record creation for all mutating actions
+- linkage to operator identity
+- linkage to chat/binding context
+- linkage to target entity
+- linkage to result class
+
+5.2.2. Telegram idempotency interface
+Must support:
+- dedupe repeated commands/callbacks
+- deterministic repeated-outcome replay
+- safe re-entry rules
+
+5.2.3. Stale/conflict evaluation interface
+Must support:
+- expired message detection
+- outdated target state detection
+- already completed detection
+- cross-surface conflict result mapping
+
+5.2.4. Safe result rendering interface
+Must support user-visible operator-readable outcomes for:
+- permission denied
+- expired action
+- stale state
+- entity missing
+- action already applied
+- unsafe in current state
+- system unavailable / degraded
+
+6. Audit model
+
+6.1. Required audit scope
+All Telegram mutating actions must generate audit records.
+
+6.2. Audit payload minimum
+Every audit record must capture:
+- operator identity
+- Telegram identity
+- chat/thread/binding context
+- action type
+- action class
+- target entity
+- target state snapshot summary if available
+- result class
+- correlation/idempotency identifiers
+- timestamps
+
+6.3. Read-vs-mutate distinction
+Audit records should distinguish read access vs mutating access where meaningful, but mutating access coverage is mandatory.
+
+7. Idempotency model
+
+7.1. Repeated interaction scope
+MF6 must handle:
+- repeated callbacks
+- repeated commands
+- duplicate delivery behavior
+- user double-click behavior
+- safe re-entry behavior
+
+7.2. Deterministic replay rule
+Repeated user interaction for the same logical action must not create unsafe duplicates and must produce deterministic user-visible outcomes.
+
+7.3. Idempotency context minimum
+At minimum, idempotency must consider:
+- gateway event or action correlation id
+- action type
+- target entity
+- operator identity
+- binding context
+
+8. Stale/conflict handling
+
+8.1. Required stale/conflict classes
+MF6 must handle:
+- expired messages
+- outdated target state
+- already completed actions
+- cross-surface conflicts where web UI or worker flows changed state first
+
+8.2. Safety rule
+Stale/conflict cases must:
+- fail safely
+- not mutate state unsafely
+- return operator-readable result
+
+8.3. Cross-surface rule
+If the underlying state changed through web UI or another worker/operator path, Telegram action must not silently overwrite it.
+
+9. Callback expiry and restricted action windows
+
+9.1. Callback expiry rule
+Telegram callback/action contexts must support expiry.
+
+9.2. Restricted-window rule
+For risky actions, stronger confirmation and limited action windows may be required.
+
+9.3. Expired-context rule
+Expired contexts must return EXPIRED and must not proceed.
+
+10. DB / schema / tables / indexes / migrations
+
+10.1. Reuse rule
+MF6 must build on MF1 gateway and on the mutating Telegram surfaces of MF3 and MF5.
+
+10.2. Required new tables
+
+10.2.1. telegram_action_audit_records
+Purpose:
+Canonical audit trail for Telegram-triggered actions.
+
+Required columns:
+- id
+- gateway_event_id
+- telegram_user_id
+- product_operator_id nullable
+- binding_id nullable
+- action_type
+- action_class
+- target_entity_type
+- target_entity_ref
+- result_class
+- audit_payload_json
+- created_at
+
+10.2.2. telegram_action_idempotency_records
+Purpose:
+Canonical dedupe/replay records for Telegram actions.
+
+Required columns:
+- id
+- idempotency_key
+- action_type
+- target_entity_type
+- target_entity_ref
+- product_operator_id nullable
+- result_class
+- result_payload_json
+- created_at
+
+Constraints:
+- UNIQUE(idempotency_key)
+
+10.2.3. telegram_action_safety_events
+Purpose:
+Persist stale/expiry/conflict safety decisions.
+
+Required columns:
+- id
+- gateway_event_id
+- safety_event_type
+- target_entity_type nullable
+- target_entity_ref nullable
+- result_class
+- detail_payload_json
+- created_at
+
+Frozen safety_event_type literals:
+- EXPIRED_MESSAGE
+- STALE_TARGET
+- ALREADY_COMPLETED
+- CROSS_SURFACE_CONFLICT
+- FAIL_CLOSED_DENIAL
+
+10.3. Index requirements
+- idx_telegram_action_audit_records_operator_time on (product_operator_id, created_at)
+- idx_telegram_action_audit_records_target_time on (target_entity_type, target_entity_ref, created_at)
+- idx_telegram_action_idempotency_records_key on (idempotency_key)
+- idx_telegram_action_safety_events_gateway on (gateway_event_id)
+- idx_telegram_action_safety_events_type_time on (safety_event_type, created_at)
+
+10.4. Migration rules
+- additive only
+- SQLite only
+- no redesign of non-Telegram audit systems required
+- no new domain semantics introduced
+- no fail-open fallback behaviors
+
+11. Error catalog
+
+11.1. Required error families
+- audit record creation failed
+- idempotency conflict
+- expired action
+- stale target
+- already completed
+- forbidden in current state
+- entity missing
+- system unavailable
+- fail-closed denial
+
+11.2. Canonical error code prefix
+E6A_
+
+11.3. Minimum frozen error codes
+- E6A_AUDIT_RECORD_FAILED
+- E6A_IDEMPOTENCY_CONFLICT
+- E6A_ACTION_EXPIRED
+- E6A_TARGET_STALE
+- E6A_ACTION_ALREADY_APPLIED
+- E6A_ACTION_FORBIDDEN
+- E6A_TARGET_NOT_FOUND
+- E6A_SYSTEM_UNAVAILABLE
+- E6A_FAIL_CLOSED_DENIAL
+
+12. Idempotency / concurrency rules
+
+12.1. Audit-before-visible-success rule
+No Telegram mutating action may be presented as final success without audit persistence.
+
+12.2. Idempotent replay rule
+If a repeated action matches an existing idempotency record, the system must replay deterministic user-visible outcome instead of executing mutation again.
+
+12.3. Stale-action rule
+If the target state changed or action is no longer safe, return STALE / ALREADY_APPLIED / FORBIDDEN instead of mutating.
+
+12.4. Fail-closed rule
+If safety evaluation cannot confidently authorize progression, the action must be denied.
+
+13. Validation rules
+
+13.1. Audit validation
+- audit_payload_json must be valid JSON
+- result_class must be a frozen user-visible result class
+- action_type and target references must be present for mutating actions
+
+13.2. Idempotency validation
+- idempotency_key must be unique
+- result_payload_json must be valid JSON
+
+13.3. Safety event validation
+- safety_event_type must be one of EXPIRED_MESSAGE / STALE_TARGET / ALREADY_COMPLETED / CROSS_SURFACE_CONFLICT / FAIL_CLOSED_DENIAL
+- detail_payload_json must be valid JSON
+
+14. Events / logging / observability
+
+14.1. Mandatory auditable events
+- Telegram mutating action audited
+- duplicate callback deduped
+- expired action rejected
+- stale action rejected
+- already-applied action blocked
+- fail-closed denial issued
+- safety event persisted
+
+14.2. Minimum log fields
+- telegram_user_id
+- product_operator_id nullable
+- binding_id nullable
+- action_type
+- action_class
+- target_entity_type
+- target_entity_ref
+- result_class
+- idempotency_key nullable
+- safety_event_type nullable
+
+14.3. Observability requirement
+MF6 must make it possible to answer:
+- whether every Telegram mutating action was audited
+- whether an action was deduped
+- why an action was rejected
+- whether rejection came from stale/expired/conflict/fail-closed logic
+- what user-visible result was shown
+
+15. Acceptance criteria
+
+MF6 is accepted if all of the following are true:
+- all Telegram mutating actions are auditable;
+- all Telegram mutating actions are idempotent;
+- expired/stale/cross-surface conflict cases are handled safely;
+- operator receives clear action result/error semantics;
+- Epic 6A becomes production-grade and trustworthy.
+
+16. Test plan
+
+16.1. Unit
+- result_class validation
+- safety_event_type validation
+- audit payload validation
+- idempotency key uniqueness validation
+- deterministic replay validation
+- fail-closed decision validation
+
+16.2. Integration
+- audit mutating action
+- replay repeated callback via idempotency record
+- expired action returns expired result
+- stale action returns stale result
+- already-applied action returns already-applied result
+- fail-closed uncertainty returns denial
+- safety event persisted for cross-surface conflict
+
+16.3. Smoke
+- migrations create audit/safety/idempotency tables/indexes
+- mutating Telegram flows remain blocked without hardening integration
+- Telegram error outputs are operator-readable
+
+17. Rollback / migration considerations
+
+17.1. Rollout posture
+MF6 must be additive and hardening-first.
+
+17.2. Safe fallback
+If hardening dependencies are unavailable:
+- Telegram mutating actions must deny rather than degrade into unsafe behavior.
+
+17.3. No scope drift rule
+MF6 must not be treated as optional polish and must not redesign non-Telegram audit domains.
+
+18. Open questions / ambiguities
+
+18.1. Exact wording of user-visible Telegram errors is implementation-level detail and is not a blocker as long as practical operator-readable result classes remain preserved.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6A and MF6 are aligned on auditability, idempotency, stale-safety, fail-closed semantics, and operator-readable failures as mandatory production-grade requirements.
+- MF6 completes the hardening layer needed to make the entire Telegram operator console trustworthy.
+- Remaining uncertainty is wording/detail tuning, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- treating hardening as optional polish;
+- allowing mutating actions without strong audit/idempotency guarantees;
+- fail-open behavior under stale or uncertain conditions.
