@@ -19,6 +19,7 @@ from .errors import *
 from .permissions import permission_rank, permission_allows
 from .envelope import build_action_envelope, is_envelope_expired
 from .gateway import TelegramActionGateway, build_gateway_decision, downstream_mutation_stub
+from .hardening import build_idempotency_fingerprint, build_audit_correlation, is_callback_expired, classify_stale_conflict, render_operator_safe_result
 from .error_mapper import to_telegram_safe_error
 
 __all__ = [
@@ -47,5 +48,10 @@ __all__ = [
     "TelegramActionGateway",
     "build_gateway_decision",
     "downstream_mutation_stub",
+    "build_idempotency_fingerprint",
+    "build_audit_correlation",
+    "is_callback_expired",
+    "classify_stale_conflict",
+    "render_operator_safe_result",
     "to_telegram_safe_error",
 ]
