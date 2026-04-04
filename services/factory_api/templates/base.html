@@ -51,7 +51,8 @@
     {% set __ctx = factory_context_token_for_request(request) if request is defined else '' %}
     {% set __incoming_ctx = factory_incoming_context_for_request(request) if request is defined else none %}
     {% set __template_contract = factory_page_template_contract(current_path=__path) %}
-    <div class="shell-meta" data-route-ownership='{{ factory_route_ownership_map|tojson }}' data-context-token='{{ __ctx }}' data-incoming-context='{{ __incoming_ctx|tojson if __incoming_ctx is not none else "" }}' data-page-template='{{ __template_contract.template }}' data-page-template-contract='{{ __template_contract|tojson }}'></div>
+    {% set __semantic_contract = factory_semantic_contract_catalog() %}
+    <div class="shell-meta" data-route-ownership='{{ factory_route_ownership_map|tojson }}' data-context-token='{{ __ctx }}' data-incoming-context='{{ __incoming_ctx|tojson if __incoming_ctx is not none else "" }}' data-page-template='{{ __template_contract.template }}' data-page-template-contract='{{ __template_contract|tojson }}' data-semantic-contract='{{ __semantic_contract|tojson }}'></div>
     {% set __breadcrumb = factory_breadcrumb_context(current_path=__path) %}
     <div class="shell-breadcrumb" aria-label="Context trail">
       {% for crumb in __breadcrumb %}

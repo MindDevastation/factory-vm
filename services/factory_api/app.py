@@ -44,6 +44,7 @@ from services.factory_api.approval_actions import approve_job, reject_job, mark_
 from services.factory_api.ux_registry import breadcrumb_context, control_center_entry, primary_nav_items, route_ownership_map
 from services.factory_api.page_templates import page_template_contract
 from services.factory_api.context_continuity import build_context_envelope, encode_context_token, resolve_incoming_context
+from services.factory_api.ux_semantics import action_bar_semantics, filter_control_semantics, inline_message_semantics, readiness_indicator_semantics, severity_indicator_semantics, status_badge_semantics, table_list_semantics
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
@@ -143,6 +144,21 @@ def _incoming_context_for_request(request: Request) -> dict[str, Any] | None:
 
 templates.env.globals["factory_context_token_for_request"] = _context_token_for_request
 templates.env.globals["factory_incoming_context_for_request"] = _incoming_context_for_request
+
+
+def _semantic_contract_catalog() -> dict[str, Any]:
+    return {
+        "status_badge": status_badge_semantics(status="DRAFT"),
+        "severity_indicator": severity_indicator_semantics(severity="HIGH"),
+        "readiness_indicator": readiness_indicator_semantics(readiness="NOT_READY"),
+        "inline_message": inline_message_semantics(level="WARNING", text="sample"),
+        "action_bar": action_bar_semantics(actions=[{"action": "refresh", "kind": "PRIMARY"}]),
+        "filter_controls": filter_control_semantics(filters=["status", "channel", "time_window"]),
+        "table_list_pattern": table_list_semantics(variant="TABLE"),
+    }
+
+
+templates.env.globals["factory_semantic_contract_catalog"] = _semantic_contract_catalog
 
 # FastAPI/Starlette TemplateResponse expects (request, name, context, ...).
 # Keep compatibility with existing call sites that pass (name, context, ...).
