@@ -1,0 +1,668 @@
+REQ_EPIC7_DOCUMENTATION_AND_RUNBOOK_CONSOLIDATION_v1.0
+
+1. Название
+
+Epic 7 — Documentation / Runbook Consolidation
+
+2. Цель
+
+Завершить factory-vm как production-like систему на уровне документации и операторского знания:
+- свести code/doc/workflow drift;
+- собрать канонический SSOT по продукту и эксплуатации;
+- убрать конкурирующие и устаревшие описания;
+- сформировать законченный комплект runbook/operator/developer/reference docs;
+- ввести правила дальнейшего контроля drift.
+
+3. Зачем делаем
+
+После Epic 2–6A продукт уже содержит:
+- доменные правила и state-модели;
+- planner/publish/visual/analytics/Telegram operator flows;
+- operator and ops surfaces;
+- recovery/readiness/reporting behavior.
+
+Но без финальной консолидации документации проект остается уязвим к:
+- расхождению code vs docs;
+- конфликтующим источникам правды;
+- устаревшим runbook-инструкциям;
+- слабой onboarding/use/ops поддержке;
+- сложностям QA/review/spec handoff.
+
+Epic 7 нужен как финальный SSOT/consolidation слой после продуктовых и operator эпиков.
+
+4. Зафиксированный архитектурный контекст
+
+4.1. Epic 7 — финальный эпик текущего roadmap.
+
+4.2. Epic 7 не перепроектирует домены продукта. Он закрепляет их в canonical documentation layer.
+
+4.3. Epic 7 не является “docs polish only”. Это эпик про:
+- SSOT boundaries
+- runbook completeness
+- workflow alignment
+- doc/code drift control
+- operator/dev/reference consolidation
+
+4.4. Epic 7 не заменяет Epic 1 runtime verification. Если позже появятся VPS/runtime проблемы, это отдельный follow-up/fix path.
+
+4.5. Epic 7 должен опираться на уже принятые REQ/epic decisions, а не переоткрывать их.
+
+5. Блокеры / freeze-решение
+
+5.1. Hard repo-blockers отсутствуют.
+
+5.2. Главные риски Epic 7:
+- scope explosion в “переписать всю документацию”;
+- смешивание normative docs и explanatory docs;
+- отсутствие канонического ownership по типам документации;
+- попытка молча изменить продуктовые semantics через docs.
+
+5.3. Freeze-решение:
+- Epic 7 не меняет product semantics;
+- Epic 7 фиксирует канонические doc classes;
+- Epic 7 вводит SSOT map;
+- Epic 7 вводит archive/deprecate rules для устаревших материалов;
+- Epic 7 завершает проект документационным governance layer.
+
+6. Scope v1
+
+В Epic 7 v1 входит:
+
+6.1. Documentation inventory and taxonomy
+- инвентаризация существующих docs;
+- классификация документов;
+- определение doc classes и owners;
+- фиксация SSOT map.
+
+6.2. Workflow consolidation
+- единое описание product workflow;
+- единое описание dev/review/QA handoff workflow;
+- единое описание operator workflow;
+- устранение противоречий между workflow documents.
+
+6.3. Domain/reference consolidation
+- API/domain/reference docs;
+- state/lifecycle/reference materials;
+- canonical entity ownership/reference;
+- adjacency/boundary docs between epics.
+
+6.4. Runbook consolidation
+- deploy/start/stop/update;
+- incident/recovery;
+- operational checks;
+- publish/manual handoff/operator actions;
+- troubleshooting flows.
+
+6.5. Operator guides
+- web operator guides;
+- Telegram operator guides;
+- analytics/publish/planner/visual usage guides;
+- problem triage and next-action guidance.
+
+6.6. Drift control
+- deprecation/archive rules;
+- doc validation expectations;
+- evidence-backed update rules;
+- how future epics/fixes must update docs.
+
+7. Non-goals v1
+
+В Epic 7 v1 не входит:
+- redesign интерфейса;
+- новые продуктовые функции;
+- новый ops/runtime functionality;
+- перепридумывание уже frozen REQ;
+- скрытое изменение policy/domain behavior через документацию;
+- general marketing docs / public site docs.
+
+8. Канонические doc classes
+
+8.1. Normative product docs
+- канонические product/domain rules;
+- state models;
+- entity ownership;
+- API/domain contracts at doc level.
+
+8.2. Runbooks
+- operator/ops action instructions;
+- incident and recovery procedures;
+- deployment/runtime procedures.
+
+8.3. Workflow docs
+- discovery/REQ/SPEC/Dev/Review/QA workflow;
+- release/operator lifecycle workflow;
+- cross-team handoff workflow.
+
+8.4. Reference docs
+- endpoints
+- schemas
+- tables
+- field meanings
+- integration/reference maps
+
+8.5. Guides
+- operator usage guides;
+- developer onboarding/navigation guides;
+- how-to docs.
+
+8.6. Archive/deprecated docs
+- explicitly marked non-canonical materials;
+- legacy docs retained only for traceability.
+
+9. Ключевые product-решения
+
+9.1. Epic 7 вводит explicit SSOT map.
+
+9.2. Каждый значимый doc artifact должен иметь:
+- doc class
+- owner
+- canonical/non-canonical status
+- deprecation/archive status where applicable
+
+9.3. Если несколько документов описывают один и тот же предмет, один из них должен быть canonical, остальные — subordinate or deprecated.
+
+9.4. Epic 7 не должен silently “исправлять” продуктовую логику в docs. Если в docs обнаружен конфликт с кодом или frozen REQ, фиксируется drift и выбирается канонический source according to project rules.
+
+9.5. Final SSOT must cover:
+- product semantics
+- operator workflows
+- runbooks
+- deployment/ops
+- dev/review/QA process
+- glossary/ownership/boundaries
+
+10. Acceptance criteria на уровне эпика
+
+Epic 7 считается успешно закрытым на уровне REQ/продукта, если:
+
+10.1. Есть полный documentation inventory и SSOT map.
+
+10.2. Есть canonical taxonomy и ownership rules.
+
+10.3. Есть consolidated workflow docs без конкурирующих версий.
+
+10.4. Есть consolidated operator and ops runbooks.
+
+10.5. Есть consolidated reference/domain/API docs.
+
+10.6. Есть archive/deprecation strategy для старых материалов.
+
+10.7. Есть drift-control governance rule set.
+
+10.8. После Epic 7 оператор/разработчик/ревьюер может найти каноническую информацию без угадывания “какой документ сейчас главный”.
+
+11. Предлагаемая декомпозиция на микрофичи
+
+E7-MF1 — Documentation Inventory, Taxonomy & SSOT Map
+ветка: feature/e7-mf1-doc-inventory-ssot-map
+
+E7-MF2 — Workflow Consolidation (Product / Dev / Review / QA)
+ветка: feature/e7-mf2-workflow-consolidation
+
+E7-MF3 — Domain, API & State Reference Consolidation
+ветка: feature/e7-mf3-domain-api-reference
+
+E7-MF4 — Operator Guides & Product Usage Runbooks
+ветка: feature/e7-mf4-operator-guides-runbooks
+
+E7-MF5 — Operations, Deployment & Recovery Runbook Consolidation
+ветка: feature/e7-mf5-ops-deploy-recovery-docs
+
+E7-MF6 — Drift Control, Deprecation & Documentation Governance
+ветка: feature/e7-mf6-drift-governance
+
+12. Что готово
+
+12.1. Зафиксирована рамка Epic 7 как финального documentation/SSOT эпика.
+12.2. Зафиксированы blockers и freeze-решение.
+12.3. Зафиксирована decomposition на 6 микрофич.
+
+13. Чего не хватает
+
+13.1. Для REQ уровня эпика критических пробелов не осталось.
+13.2. Следующий шаг — SPEC или первая микрофича E7-MF1.
+
+14. Риски двусмысленности
+
+14.1. Нельзя quietly использовать Epic 7 для product redesign by documentation.
+14.2. Нельзя смешивать canonical docs и explanatory/legacy docs без статуса.
+14.3. Нельзя оставлять несколько конкурирующих sources of truth после закрытия эпика.
+
+READY FOR SPEC: YES
+
+
+REQ_E7_MF1_DOCUMENTATION_INVENTORY_TAXONOMY_AND_SSOT_MAP_v1.0
+
+1. Название
+
+E7-MF1 — Documentation Inventory, Taxonomy & SSOT Map
+ветка: feature/e7-mf1-doc-inventory-ssot-map
+
+2. Цель
+
+Построить полный inventory существующей документации и зафиксировать каноническую SSOT map, чтобы для каждого типа знания было понятно:
+- где его искать;
+- какой документ канонический;
+- кто owner;
+- какие документы устарели или subordinate.
+
+3. Зачем делаем
+
+Без MF1 вся остальная консолидация остается хаотичной: непонятно, что считать главным, что архивировать и на что ориентироваться при дальнейшем обновлении.
+
+4. Scope v1
+
+В MF1 входит:
+- inventory всех documentation artifacts проекта;
+- классификация по doc classes;
+- canonical/non-canonical marking;
+- doc ownership model;
+- SSOT map by topic/domain/workflow;
+- explicit list of deprecated/legacy docs candidates.
+
+5. Non-goals v1
+
+В MF1 не входит:
+- полная перепись всех документов;
+- глубокая перередактура содержания;
+- финальная deprecation enforcement;
+- workflow rewrite itself.
+
+6. Ключевые решения
+
+6.1. Каждый документ должен быть отнесен к одной основной doc class.
+6.2. Для каждого предмета должен быть один canonical source.
+6.3. Legacy documents не удаляются silently; они должны быть либо archived, либо reclassified, либо linked as subordinate.
+
+7. Acceptance criteria
+
+7.1. Есть полный inventory документации.
+7.2. Есть taxonomy по doc classes.
+7.3. Есть SSOT map.
+7.4. Есть ownership map.
+7.5. Есть список legacy/deprecated candidates.
+
+8. Зависимости
+
+Это foundation-микрофича для всего Epic 7.
+От нее зависят MF2–MF6.
+
+9. Что готово
+
+9.1. На уровне эпика уже заморожена doc taxonomy и роль SSOT map.
+
+10. Чего не хватает
+
+10.1. Только SPEC и implementation detail для inventory format/output.
+
+11. Риски двусмысленности
+
+11.1. Нельзя inventory заменить “списком нескольких папок”.
+11.2. Нельзя оставить topics without canonical source.
+
+READY FOR SPEC: YES
+
+
+REQ_E7_MF2_WORKFLOW_CONSOLIDATION_PRODUCT_DEV_REVIEW_QA_v1.0
+
+1. Название
+
+E7-MF2 — Workflow Consolidation (Product / Dev / Review / QA)
+ветка: feature/e7-mf2-workflow-consolidation
+
+2. Цель
+
+Свести в единый канонический workflow layer все основные process documents проекта:
+- Discovery → REQ → SPEC → Dev → Review → QA;
+- operator workflow;
+- release/publish workflow;
+- handoff workflow between stages.
+
+3. Зачем делаем
+
+Сейчас знания о workflow легко расползаются по разным чатам, handoff texts, instructions и context blocks. MF2 нужен, чтобы в проекте существовал единый канон процесса, а не набор “как будто понятных” привычек.
+
+4. Scope v1
+
+В MF2 входит:
+- canonical end-to-end project workflow;
+- role-based handoff descriptions;
+- stage entry/exit conditions;
+- artifacts expected at each stage;
+- QA/review gating descriptions;
+- operator-facing workflow links where needed.
+
+5. Non-goals v1
+
+В MF2 не входит:
+- изменение самих product domains;
+- rewriting all runbooks;
+- implementation of workflow automation.
+
+6. Ключевые решения
+
+6.1. Workflow docs должны быть normative.
+6.2. У каждой стадии должен быть понятный input/output contract.
+6.3. Если practice and doc conflict — MF2 должен закрепить канон, а не оставить “оба варианта возможны”.
+
+7. Acceptance criteria
+
+7.1. Есть единый canonical workflow doc set.
+7.2. Есть clear stage boundaries.
+7.3. Есть handoff rules between product/spec/dev/review/qa.
+7.4. Нет конкурирующих “основных” workflow docs.
+
+8. Зависимости
+
+Зависит от MF1.
+Связан с MF3–MF5.
+
+9. Что готово
+
+9.1. На уровне канона уже зафиксирован stage-based project workflow.
+
+10. Чего не хватает
+
+10.1. SPEC-level structure and exact doc outputs.
+
+11. Риски двусмысленности
+
+11.1. Нельзя quietly оставить несколько разных process-canons.
+11.2. Нельзя потерять operator and QA pathways.
+
+READY FOR SPEC: YES
+
+
+REQ_E7_MF3_DOMAIN_API_AND_STATE_REFERENCE_CONSOLIDATION_v1.0
+
+1. Название
+
+E7-MF3 — Domain, API & State Reference Consolidation
+ветка: feature/e7-mf3-domain-api-reference
+
+2. Цель
+
+Собрать canonical reference-layer для доменов проекта:
+- core entities and ownership;
+- state machines and lifecycle references;
+- API surfaces and contracts;
+- adjacency/boundary rules between epics/domains.
+
+3. Зачем делаем
+
+После Epic 2–6A проект содержит много domain-level решений. Без MF3 эти знания остаются размазанными между REQ, chats, code conventions, API docs и фрагментарными notes. MF3 делает reference-layer, пригодный для разработки, ревью, QA и операторского понимания.
+
+4. Scope v1
+
+В MF3 входит:
+- entity ownership reference;
+- state/lifecycle reference docs;
+- API/reference consolidation;
+- glossary / naming / canonical literal references where relevant;
+- domain boundary maps.
+
+5. Non-goals v1
+
+В MF3 не входит:
+- перепридумывание доменных контрактов;
+- exhaustive autogenerated technical reference for every line of code;
+- runtime ops runbooks.
+
+6. Ключевые решения
+
+6.1. MF3 фиксирует docs against already accepted product canon.
+6.2. API/domain/state references должны быть canonical reference docs, а не narrative guides.
+6.3. Domain boundary conflicts должны быть разрешены явно.
+
+7. Acceptance criteria
+
+7.1. Есть consolidated entity ownership reference.
+7.2. Есть consolidated lifecycle/state references.
+7.3. Есть consolidated API/reference layer.
+7.4. Есть boundary maps between major domains/epics.
+
+8. Зависимости
+
+Зависит от MF1.
+Связан с MF2, MF4, MF5.
+
+9. Что готово
+
+9.1. На уровне предыдущих эпиков уже заморожены ключевые owner/state decisions.
+
+10. Чего не хватает
+
+10.1. SPEC-level structure and reference format.
+
+11. Риски двусмысленности
+
+11.1. Нельзя использовать MF3 для скрытого изменения frozen domain decisions.
+11.2. Нельзя смешивать reference docs и operator how-to guides.
+
+READY FOR SPEC: YES
+
+
+REQ_E7_MF4_OPERATOR_GUIDES_AND_PRODUCT_USAGE_RUNBOOKS_v1.0
+
+1. Название
+
+E7-MF4 — Operator Guides & Product Usage Runbooks
+ветка: feature/e7-mf4-operator-guides-runbooks
+
+2. Цель
+
+Собрать единый комплект operator-facing guides и usage runbooks для основных продуктовых сценариев:
+- planner/monthly production;
+- publish/manual handoff;
+- visual workflows;
+- analytics center;
+- Telegram operator layer;
+- problem triage and next-action guidance.
+
+3. Зачем делаем
+
+После Epic 3–6A операторский слой проекта становится богатым, но без MF4 знания об использовании продукта останутся распределены по UI hints, разным страницам и отдельным обсуждениям. MF4 делает единый operator knowledge layer.
+
+4. Scope v1
+
+В MF4 входит:
+- operator guides by domain;
+- role/task-based usage runbooks;
+- problem/triage guidance;
+- "what to do next" linking between operator scenarios;
+- web UI and Telegram operator usage docs where applicable.
+
+5. Non-goals v1
+
+В MF4 не входит:
+- redesign operator UI;
+- replacing domain reference docs;
+- ops/deploy/recovery docs in depth.
+
+6. Ключевые решения
+
+6.1. Operator docs должны быть task-oriented.
+6.2. Operator docs должны clearly distinguish read vs action vs risky action.
+6.3. If Telegram and web UI both support a flow, docs must explain role split between them.
+
+7. Acceptance criteria
+
+7.1. Есть operator guides for major domains.
+7.2. Есть task-oriented runbooks.
+7.3. Есть problem triage guidance.
+7.4. Есть explicit guidance for web-vs-Telegram operator usage where relevant.
+
+8. Зависимости
+
+Зависит от MF1.
+Связан с MF2, MF3, MF5.
+
+9. Что готово
+
+9.1. Предыдущие эпики уже зафиксировали основные operator surfaces и flows.
+
+10. Чего не хватает
+
+10.1. SPEC-level structure and output formats.
+
+11. Риски двусмысленности
+
+11.1. Нельзя смешивать operator guide с low-level API/reference doc.
+11.2. Нельзя оставлять Telegram flows undocumented after Epic 6A.
+
+READY FOR SPEC: YES
+
+
+REQ_E7_MF5_OPERATIONS_DEPLOYMENT_AND_RECOVERY_RUNBOOK_CONSOLIDATION_v1.0
+
+1. Название
+
+E7-MF5 — Operations, Deployment & Recovery Runbook Consolidation
+ветка: feature/e7-mf5-ops-deploy-recovery-docs
+
+2. Цель
+
+Свести в канонический комплект ops/runbook docs все runtime-oriented knowledge:
+- deployment;
+- service lifecycle;
+- monitoring/checks;
+- recovery procedures;
+- incident handling;
+- environment/config guidance;
+- production-smoke and verification pathways.
+
+3. Зачем делаем
+
+Epic 1 оставил проект почти закрытым кодово, но runtime verification хвост не является blocker для Epic 7. Это делает особенно важным понятный и canonical ops/runbook layer, чтобы дальнейшие VPS/runtime follow-up fixes имели нормальную документную основу.
+
+4. Scope v1
+
+В MF5 входит:
+- deploy/update/start/stop runbooks;
+- environment/config reference at ops-use level;
+- monitoring/check/checklist docs;
+- incident/recovery procedures;
+- production smoke / verification guidance;
+- log/audit/troubleshooting pathways.
+
+5. Non-goals v1
+
+В MF5 не входит:
+- выполнение самой runtime verification;
+- новый ops functionality;
+- full infrastructure-as-code rewrite.
+
+6. Ключевые решения
+
+6.1. MF5 консолидирует ops knowledge, но не pretending that unresolved runtime follow-ups are already done.
+6.2. Runbooks должны distinguish:
+- routine operation
+- verification
+- incident response
+- recovery
+
+6.3. Ops docs должны быть actionable and ordered, not just descriptive.
+
+7. Acceptance criteria
+
+7.1. Есть canonical deploy/update/start/stop docs.
+7.2. Есть canonical recovery/incident docs.
+7.3. Есть production-smoke/verification guidance.
+7.4. Есть consolidated ops/runbook layer without competing alternatives.
+
+8. Зависимости
+
+Зависит от MF1.
+Связан с MF2 and MF6.
+
+9. Что готово
+
+9.1. Уже есть ops/recovery/deploy foundations in project context.
+
+10. Чего не хватает
+
+10.1. SPEC-level doc structure and exact outputs.
+
+11. Риски двусмысленности
+
+11.1. Нельзя silently mark Epic 1 runtime tail as closed through docs.
+11.2. Нельзя смешивать operator usage docs and ops incident docs.
+
+READY FOR SPEC: YES
+
+
+REQ_E7_MF6_DRIFT_CONTROL_DEPRECATION_AND_DOCUMENTATION_GOVERNANCE_v1.0
+
+1. Название
+
+E7-MF6 — Drift Control, Deprecation & Documentation Governance
+ветка: feature/e7-mf6-drift-governance
+
+2. Цель
+
+Ввести governance layer, который после Epic 7 удерживает документацию проекта в canonical state:
+- правила обновления docs;
+- rules for drift detection and resolution;
+- deprecation/archive lifecycle;
+- ownership and review expectations;
+- evidence requirements for doc changes.
+
+3. Зачем делаем
+
+Без MF6 любая качественная консолидация быстро снова расползется. MF6 делает Epic 7 устойчивым, а не одноразовой уборкой.
+
+4. Scope v1
+
+В MF6 входит:
+- drift-control rules;
+- doc update policy;
+- deprecation/archive policy;
+- review/approval expectations for doc changes;
+- ownership/governance model;
+- future-epic/fix doc-update obligations.
+
+5. Non-goals v1
+
+В MF6 не входит:
+- automated doc generation as mandatory requirement;
+- heavy compliance program;
+- enterprise document management platform.
+
+6. Ключевые решения
+
+6.1. Documentation governance — обязательная часть Epic 7, а не optional polish.
+
+6.2. Любой future product change, affecting canonical docs, должен иметь explicit doc-update expectation.
+
+6.3. Deprecated docs должны явно маркироваться, а не quietly оставаться рядом с canonical ones.
+
+6.4. Если возникает drift между code, frozen REQ и docs, должен быть explicit resolution path.
+
+7. Acceptance criteria
+
+7.1. Есть canonical documentation governance rules.
+7.2. Есть deprecation/archive rules.
+7.3. Есть drift-resolution rules.
+7.4. Есть ownership/update obligations for future changes.
+7.5. После Epic 7 документация не должна снова становиться unmanaged set of files.
+
+8. Зависимости
+
+Зависит от MF1.
+Связан со всеми остальными MF Epic 7.
+
+9. Что готово
+
+9.1. На уровне эпика уже зафиксировано, что Epic 7 должен завершаться final SSOT and drift-control layer.
+
+10. Чего не хватает
+
+10.1. Только SPEC-level governance format and enforcement details.
+
+11. Риски двусмысленности
+
+11.1. Нельзя считать archive/deprecate implicit.
+11.2. Нельзя оставлять governance без ownership.
+11.3. Нельзя закрыть Epic 7 без future drift-control rules.
+
+READY FOR SPEC: YES
