@@ -6,7 +6,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from services.factory_api.operator_workspaces import task_continuity_contract
-from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
+from tests._helpers import basic_auth_header, insert_release_and_job, seed_minimal_db, temp_env
 
 
 class TestE6Mf5S3TaskContinuity(unittest.TestCase):
@@ -22,10 +22,11 @@ class TestE6Mf5S3TaskContinuity(unittest.TestCase):
     def test_task_continuity_endpoint(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
+            job_id = insert_release_and_job(env)
             client = self._new_client()
             h = basic_auth_header(env.basic_user, env.basic_pass)
-            payload = client.get("/v1/workspaces/task-continuity?parent=problem:blocked&status=blocked&scope=job:42", headers=h).json()
-            self.assertEqual(payload["current_scope"], "job:42")
+            payload = client.get(f"/v1/workspaces/task-continuity?parent=problem:blocked&status=blocked&scope=job:{job_id}", headers=h).json()
+            self.assertEqual(payload["current_scope"], f"job:{job_id}")
 
 
 if __name__ == "__main__":

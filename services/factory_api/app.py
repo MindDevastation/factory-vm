@@ -5937,19 +5937,40 @@ def api_workspace_catalog(_: bool = Depends(require_basic_auth(env))):
     return workspace_family_catalog()
 
 
+@app.get("/v1/workspaces/{family}/{entity_id}")
+def api_workspace_summary(family: str, entity_id: str, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import build_workspace_summary
+
+    conn = dbm.connect(env)
+    try:
+        return build_workspace_summary(conn=conn, family=family, entity_id=entity_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    finally:
+        conn.close()
+
+
 @app.get("/v1/workspaces/{family}/{entity_id}/drilldown")
 def api_workspace_drilldown(family: str, entity_id: str, request: Request, _: bool = Depends(require_basic_auth(env))):
-    from services.factory_api.operator_workspaces import entity_drilldown_contract
+    from services.factory_api.operator_workspaces import build_workspace_summary, entity_drilldown_contract
+
+    conn = dbm.connect(env)
+    try:
+        summary = build_workspace_summary(conn=conn, family=family, entity_id=entity_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    finally:
+        conn.close()
 
     return entity_drilldown_contract(
         entry_context=request.query_params.get("entry", "control_center"),
-        scope=f"{family}:{entity_id}",
+        scope=f"{summary['workspace_family']}:{summary['entity_id']}",
         related_context_links=[
-            {"kind": "channel_workspace", "href": "/ui/workspaces/channel/1"},
-            {"kind": "batch_workspace", "href": "/ui/workspaces/batch/2026-04"},
+            {"kind": item.get("kind", "related"), "href": item.get("href", "/")}
+            for item in summary.get("related_contexts", [])
         ],
         return_path=request.query_params.get("return_path", "/"),
-        open_full_context_path=f"/ui/workspaces/{family}/{entity_id}",
+        open_full_context_path=f"/v1/workspaces/{summary['workspace_family'].lower().replace('_workspace','')}/{summary['entity_id']}",
     )
 
 
