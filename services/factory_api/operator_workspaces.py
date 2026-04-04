@@ -46,3 +46,12 @@ def task_continuity_contract(*, parent_context_ref: str, filters: dict[str, str]
         "result_return_path": str(result_return_path),
         "restorable": True,
     }
+
+
+def result_return_contract(*, from_action: str, return_path: str, open_full_context_path: str) -> dict[str, Any]:
+    return {
+        "from_action": str(from_action),
+        "return_path": str(return_path),
+        "open_full_context_path": str(open_full_context_path),
+        "continuation_supported": True,
+    }

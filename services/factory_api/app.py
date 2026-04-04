@@ -5965,6 +5965,17 @@ def api_workspace_task_continuity(request: Request, _: bool = Depends(require_ba
     )
 
 
+@app.get("/v1/workspaces/result-return")
+def api_workspace_result_return(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import result_return_contract
+
+    return result_return_contract(
+        from_action=request.query_params.get("action", "mutate"),
+        return_path=request.query_params.get("return_path", "/"),
+        open_full_context_path=request.query_params.get("open_full", request.query_params.get("return_path", "/")),
+    )
+
+
 @app.get("/v1/problems/readiness/contract")
 def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
     return {
