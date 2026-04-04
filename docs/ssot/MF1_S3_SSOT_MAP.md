@@ -10,7 +10,7 @@ Evidence note: One canonical source selected per listed topic for MF1 baseline; 
 
 | Topic / Domain / Workflow | Canonical source | Subordinate / related docs | Owner |
 |---|---|---|---|
-| `epic7/specification` | `docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt` | `docs/req/REQ_Epic_6A_Full_Pack.txt` | Documentation Governance / Spec Custodian |
+| `epic7/specification` | `docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt` | `docs/req/REQ_Epic_7_Full_Pack.txt` | Documentation Governance / Spec Custodian |
 | `epic7/requirements` | `docs/req/REQ_Epic_7_Full_Pack.txt` | — | Documentation Governance / Requirement Custodian |
 | `project/runtime-entry` | `README.md` | `docs/LAUNCH_GUIDE.md` | Platform Backend / Runtime Maintainer |
 | `qa/test-execution` | `TESTING.md` | `README.md` | QA Engineering / Test Process Owner |
