@@ -1,0 +1,1398 @@
+EPIC_6_SPEC_BUNDLE_v1.1
+Epic 6 — Operator UX Consolidation & Design System
+Bundle status: normalized copy of all current SPECs for E6-MF1..E6-MF6
+Format: copy-friendly plain text
+Normalization note: editorial and terminology cleanup only; no scope expansion, no product-logic change.
+
+Source basis:
+- REQ_EPIC6_OPERATOR_UX_CONSOLIDATION_AND_DESIGN_SYSTEM_v1.0
+- REQ_E6_MF1_UX_INFORMATION_ARCHITECTURE_APP_SHELL_AND_NAVIGATION_FOUNDATION_v1.0
+- REQ_E6_MF2_SHARED_DESIGN_SYSTEM_LAYOUT_RULES_AND_INTERACTION_STANDARDS_v1.0
+- REQ_E6_MF3_UNIFIED_FACTORY_CONTROL_CENTER_AND_CROSS_DOMAIN_OVERVIEW_v1.0
+- REQ_E6_MF4_PROBLEM_PAGES_READINESS_INDICATORS_AND_ATTENTION_ROUTING_v1.0
+- REQ_E6_MF5_OPERATOR_WORKSPACES_ENTITY_DRILLDOWNS_AND_TASK_CONTINUITY_v1.0
+- REQ_E6_MF6_SHARED_ACTION_UX_PREVIEW_CONFIRM_EXECUTE_AND_BATCH_INTERACTION_CONSOLIDATION_v1.0
+
+====================================================================
+SPEC_E6_MF1_UX_INFORMATION_ARCHITECTURE_APP_SHELL_AND_NAVIGATION_FOUNDATION_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6-MF1 introduces the canonical UX information architecture, app shell, and navigation foundation for Epic 6.
+
+Its purpose is to define:
+- one unified app shell;
+- one canonical navigation model;
+- operator-first grouping of domains and workspaces;
+- primary entry points;
+- global context persistence rules;
+- navigation continuity across operator flows.
+
+MF1 is the UX-architecture foundation for the whole epic. It must prevent Epic 6 from degrading into disconnected local page improvements without a shared operator model.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- unified app shell;
+- global navigation frame;
+- header / primary nav / secondary nav model;
+- breadcrumb / context trail model;
+- global quick return to control center;
+- domain grouping model;
+- navigation hierarchy;
+- context continuity principles;
+- product-level URL and route architecture.
+
+2.2. Out of scope
+- full visual polish;
+- shared action patterns in full detail;
+- design-token system in full detail;
+- domain-specific KPI/report content;
+- batch interaction specifics.
+
+2.3. Boundary rules
+- IA must not be built purely from backend/service structure.
+- Navigation must not be only entity-first.
+- Navigation must not be only menu-first.
+- Existing pages must not remain isolated islands outside the canonical shell.
+- MF1 must not invent new domain semantics.
+
+3. Architectural context
+
+3.1. Epic alignment
+Epic 6 is a web-UI-first UX consolidation epic. It does not replace Epic 6A Telegram surface, does not replace Epic 5A analytics logic, and does not introduce new domain semantics.
+
+3.2. Canonical UX posture
+Epic 6 is:
+- dashboard-first;
+- problem-first;
+- workspace-based;
+- entity-drilldown capable.
+
+3.3. Foundation rule
+MF1 must be usable as the foundation for MF2–MF6.
+
+4. Canonical app shell model
+
+4.1. Required shell zones
+The unified app shell must define:
+- global header;
+- primary navigation area;
+- secondary/contextual navigation area;
+- content workspace area;
+- breadcrumb/context trail area;
+- global quick-return entry to control center.
+
+4.2. Shell invariants
+- operator must always know where they are;
+- operator must always have a path back to control center;
+- shell must support overview -> problem -> workspace -> entity drilldown continuity;
+- shell must support route grouping that reflects operator tasks.
+
+5. Domain grouping model
+
+MF1 freezes the following top-level IA groupings:
+- control center
+- workspaces
+- problems / attention
+- reports / analytics links
+- settings / admin surfaces where applicable
+
+Rules:
+- grouping is operator-task-oriented;
+- grouping must not mirror raw service/module boundaries only;
+- existing pages are reorganized under these groupings.
+
+6. Navigation hierarchy model
+
+MF1 freezes the following navigation layers:
+- global entry
+- domain workspace entry
+- entity drilldown entry
+- problem-first shortcuts
+- recent / return context where useful
+
+Rules:
+- navigation must support mixed-model usage;
+- control center is the primary operator entry point;
+- problem-first entry points are first-class;
+- workspaces and entity drilldowns are secondary but canonical routes.
+
+7. Context continuity model
+
+7.1. Required continuity behaviors
+The product must support:
+- preserving filters where practical;
+- preserving current scope where practical;
+- safe back-and-forth navigation;
+- explicit “open full context” patterns.
+
+7.2. Continuity invariants
+- moving from overview to workspace must not reset operator context unnecessarily;
+- moving from problem page to entity must preserve enough context to avoid re-triage;
+- moving back from entity drilldown must preserve parent context where practical.
+
+8. URL and route architecture
+
+8.1. Route architecture goals
+Routes must be:
+- consistently grouped;
+- human-meaningful;
+- product-IA-aligned;
+- not scattered and page-local only.
+
+8.2. Canonical route group families
+MF1 freezes route-group families for:
+- control center
+- workspaces
+- problems
+- reports / analytics links
+- settings / admin where applicable
+
+8.3. Route invariants
+- every page must belong to a canonical IA group;
+- route identity must reinforce operator task structure;
+- no isolated one-off top-level route islands without IA ownership.
+
+9. API / interface contracts
+
+9.1. Interface boundary
+MF1 is IA/shell/navigation foundation only. It does not define design system details, control-center content blocks, problem semantics, or mutate UX semantics in full.
+
+9.2. Required interface families
+- app shell layout contract
+- global navigation contract
+- breadcrumb/context trail contract
+- quick-return contract
+- route grouping contract
+- context preservation contract
+
+10. Persistence / state requirements
+
+10.1. UI-state persistence scope
+MF1 may persist or encode:
+- current workspace group
+- filter state where practical
+- current scope/context
+- recent/return context where useful
+
+10.2. Persistence rule
+Context continuity state must not create a second source of truth for domain state.
+It is navigation/session aid only.
+
+11. Error / empty / fallback principles
+
+11.1. If a target page/context is unavailable:
+- operator must receive clear route failure state;
+- shell continuity must remain intact;
+- control center return path must remain available.
+
+11.2. If preserved context is invalid or stale:
+- product may drop invalid context safely;
+- product must not silently route operator into misleading context.
+
+12. Validation rules
+
+12.1. IA validation
+- every operator surface in Epic 6 must map to a canonical IA group;
+- every operator route must have a parent navigation meaning;
+- breadcrumb must reflect canonical hierarchy, not arbitrary URL depth only.
+
+12.2. Continuity validation
+- preserved filters/scope may be restored only where still valid;
+- invalid preserved state must be safely discarded.
+
+13. Acceptance criteria
+
+MF1 is accepted if all of the following are true:
+- a unified app shell model exists;
+- canonical IA and route grouping exist;
+- domain/workspace/problem/entity navigation hierarchy exists;
+- context continuity principles exist;
+- MF1 is usable as the foundation for all later E6 microfeatures.
+
+14. Test plan
+
+14.1. Unit
+- route grouping validation
+- breadcrumb generation validation
+- context persistence validation
+- invalid-context fallback validation
+
+13.2. Integration
+- load app shell
+- navigate control center -> workspace
+- navigate control center -> problem view
+- navigate workspace -> entity drilldown
+- preserve and restore valid context
+- safely discard invalid context
+- quick return to control center
+
+13.3. Smoke
+- canonical shell loads across grouped surfaces
+- no isolated pages remain outside route grouping
+- navigation continuity works without MF2–MF6 content layers
+
+15. Rollback / migration considerations
+
+15.1. Rollout posture
+MF1 must be additive and architecture-first.
+
+15.2. Safe fallback
+If some surfaces are not yet migrated into the new shell:
+- shell must remain the canonical frame for migrated pages;
+- remaining pages may be linked as legacy surfaces temporarily, but must not break global navigation.
+
+15.3. No scope drift rule
+MF1 must not expand into design-system implementation detail or domain-content redesign.
+
+16. Open questions / ambiguities
+
+16.1. Exact shell visual composition is implementation detail and belongs partly to MF2.
+16.2. Exact recent/return-context heuristics are implementation detail as long as context continuity principles are preserved.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6 and MF1 are aligned on app shell, mixed navigation model, domain grouping, and context continuity as the architectural foundation of the whole epic.
+- Remaining uncertainty is composition/detail tuning, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- IA drifting toward backend/service structure instead of operator tasks;
+- loss of context continuity;
+- navigation collapsing into only entity-first or only menu-first behavior.
+
+====================================================================
+SPEC_E6_MF2_SHARED_DESIGN_SYSTEM_LAYOUT_RULES_AND_INTERACTION_STANDARDS_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6-MF2 introduces the shared operator-first design system, layout rules, and interaction standards for Epic 6.
+
+Its purpose is to make operator UX predictable and consistent across product surfaces by freezing:
+- shared page templates;
+- shared semantic components;
+- shared state templates;
+- shared interaction standards;
+- desktop-first but responsive layout rules.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- overview page template;
+- workspace page template;
+- detail page template;
+- problem list template;
+- summary/report page template;
+- summary cards;
+- status badges;
+- severity indicators;
+- readiness indicators;
+- inline warnings/errors;
+- action bars;
+- filters/search controls;
+- tables/list patterns;
+- loading/empty/stale/error/success/partial/blocked states;
+- button hierarchy;
+- confirmation patterns;
+- inline vs modal action rules;
+- destructive action affordances;
+- stale/conflict messaging;
+- result reporting patterns;
+- desktop-first layout rules;
+- readable tablet/mobile adaptations.
+
+2.2. Out of scope
+- full frontend component-library implementation details;
+- marketing/brand identity system;
+- decorative animation strategy as primary deliverable;
+- analytics logic;
+- publish logic.
+
+2.3. Boundary rules
+- MF2 must not degrade into cosmetic restyle only.
+- MF2 must preserve compact operator density.
+- Same semantics must map to the same UI language across domains.
+- MF2 must not invent new domain semantics.
+
+3. Canonical design-system posture
+
+3.1. Operator-first rule
+Design system is operator-first, not aesthetic-first.
+
+3.2. Semantic consistency rule
+The same semantic class must always feel the same:
+- same severity -> same UI language
+- same blocked/problem -> same visual logic
+- same confirmation class -> same interaction pattern
+
+3.3. Density rule
+The system is for dense operator work, not sparse showcase pages.
+
+3.4. Responsive rule
+Desktop-first remains canonical, with readable tablet/mobile adaptations.
+
+4. Canonical page templates
+
+MF2 freezes the following page templates:
+- OVERVIEW_PAGE
+- WORKSPACE_PAGE
+- DETAIL_PAGE
+- PROBLEM_LIST_PAGE
+- SUMMARY_REPORT_PAGE
+
+4.1. Overview page template
+Purpose:
+high-level summary, cross-domain or high-level domain entry.
+
+4.2. Workspace page template
+Purpose:
+operator task container for a domain or entity-centered workflow.
+
+4.3. Detail page template
+Purpose:
+deeper contextual inspection of one entity or one result context.
+
+4.4. Problem list page template
+Purpose:
+attention routing, blockers, degraded states, and readiness/problem queues.
+
+4.5. Summary/report page template
+Purpose:
+summary-heavy and report/export-capable read surfaces.
+
+5. Shared semantic component model
+
+MF2 freezes the following semantic component families:
+- SUMMARY_CARD
+- STATUS_BADGE
+- SEVERITY_INDICATOR
+- READINESS_INDICATOR
+- INLINE_WARNING
+- INLINE_ERROR
+- ACTION_BAR
+- FILTER_CONTROL
+- SEARCH_CONTROL
+- TABLE_PATTERN
+- LIST_PATTERN
+
+Rules:
+- these components must be shared across domains;
+- their semantics must be stable;
+- component identity must convey meaning, not just decoration.
+
+6. State template model
+
+MF2 freezes the following state templates:
+- LOADING
+- EMPTY
+- STALE
+- ERROR
+- SUCCESS
+- PARTIAL_RESULT
+- BLOCKED
+
+Rules:
+- every state template must be reusable across domains;
+- stale and blocked must be visually and behaviorally distinct;
+- partial result must not be shown as full success.
+
+7. Interaction standards
+
+7.1. Button hierarchy
+Buttons must follow one consistent hierarchy across domains:
+- primary
+- secondary
+- tertiary / low-emphasis
+- destructive
+
+7.2. Confirmation model
+MF2 freezes confirmation classes:
+- no-confirm read action
+- inline confirm
+- explicit modal confirm
+- stronger guarded confirm for higher-risk action classes
+
+7.3. Inline vs modal rule
+- low-friction safe actions may use inline patterns
+- guarded or destructive actions must use stronger confirmation
+- stale/conflict risks must have explicit operator-visible handling
+
+7.4. Result reporting patterns
+Result states must consistently show:
+- what happened
+- what changed
+- what failed
+- what remains unresolved
+- what to do next
+
+8. Layout rules
+
+8.1. Desktop-first layout
+Layouts must optimize for desktop/laptop operator use.
+
+8.2. Compact operator density
+- dense but readable tables
+- compact summaries
+- predictable spacing
+- no unnecessary sparse luxury layout
+
+8.3. Responsive baseline
+Tablet/mobile must remain readable, but advanced operator parity is not required in v1.
+
+9. API / interface contracts
+
+9.1. Interface boundary
+MF2 defines templates, shared semantics, state classes, and baseline interaction presentation contracts. It does not define domain content or domain logic.
+Canonical cross-domain mutating-flow contracts for preview/apply, preview/confirm/execute, stale/conflict handling, and result continuation are owned by MF6.
+
+9.2. Required interface families
+- page template contract
+- semantic component contract
+- state template contract
+- confirmation/result interaction contract
+- layout/responsive contract
+
+10. Persistence / state requirements
+
+10.1. Shared state classes
+Design system may persist or encode visual-state class identifiers, but must not become a domain source of truth.
+
+10.2. Result-state contract
+Result-state presentation must remain grounded in domain outputs and must not invent success/failure semantics.
+
+11. Validation rules
+
+11.1. Template validation
+- every Epic 6 surface must use one canonical template family;
+- one-off bespoke page structures without template ownership are forbidden.
+
+11.2. Semantic validation
+- same semantic meaning must not map to contradictory UI patterns across domains;
+- blocked, stale, error, and partial result must remain distinct.
+
+11.3. Density validation
+- layout must preserve operator density;
+- sparse showcase layout that harms operator throughput is invalid.
+
+12. Acceptance criteria
+
+MF2 is accepted if all of the following are true:
+- canonical page templates exist;
+- shared semantic component model exists;
+- unified state templates exist;
+- interaction standards exist for confirmation/result/stale/error classes;
+- design system can be reused across all Epic 6 surfaces.
+
+13. Test plan
+
+13.1. Unit
+- template-family validation
+- state-template validation
+- semantic-class mapping validation
+- interaction-class mapping validation
+
+14.2. Integration
+- render overview template
+- render workspace template
+- render detail template
+- render problem list template
+- render summary/report template
+- confirm same severity renders consistently across multiple surfaces
+- confirm stale/blocked/error/partial states remain distinct
+- confirm compact-density layout rules hold across representative pages
+
+14.3. Smoke
+- shared design-system patterns are reusable across E6 surfaces
+- no surface degenerates into bespoke inconsistent semantics
+- desktop-first readability preserved
+
+15. Rollback / migration considerations
+
+15.1. Rollout posture
+MF2 must be additive and standards-first.
+
+15.2. Safe fallback
+If some pages are not yet fully migrated to shared templates:
+- they may temporarily use transitional layouts;
+- semantic inconsistency must not be made canonical.
+
+15.3. No scope drift rule
+MF2 must not expand into domain logic or cosmetic-only redesign.
+
+16. Open questions / ambiguities
+
+16.1. Exact implementation of component library internals is out of scope.
+16.2. Exact motion/animation behavior is out of scope unless needed for operator value and not as primary deliverable.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6 and MF2 are aligned on design system as operator-first semantic consistency, not cosmetic refresh.
+- Remaining uncertainty is component implementation detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- design system quietly degrading into cosmetic restyle;
+- loss of compact operator density;
+- inconsistent semantics between domains.
+
+
+====================================================================
+SPEC_E6_MF3_UNIFIED_FACTORY_CONTROL_CENTER_AND_CROSS_DOMAIN_OVERVIEW_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6-MF3 introduces the unified factory control center as the main operator entry point for the product.
+
+Its purpose is to answer immediately:
+- what is happening now;
+- where the problems are;
+- which channels or batches need attention;
+- where the operator should go next.
+
+MF3 is cross-domain by design. It routes the operator into downstream workflows but does not replace all downstream pages.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- factory-wide overview surface;
+- operational health summary;
+- publish/readiness summary;
+- attention counts by domain;
+- per-channel high-level summaries;
+- per-batch/month high-level summaries;
+- cross-domain summary blocks;
+- task-routing layer.
+
+2.2. Out of scope
+- full problem-detail pages;
+- entity workspaces in full detail;
+- batch action UX in full detail;
+- domain-specific full analytics/report pages.
+
+2.3. Boundary rules
+- control center must not become a flat links page;
+- control center must not be overloaded with all downstream detail;
+- control center must preserve attention routing.
+
+3. Control center model
+
+3.1. Main entry rule
+Control center is the main entry point of Epic 6 UX.
+
+3.2. Cross-domain rule
+It must not be owned by a single domain only.
+
+3.3. Operator-centric rule
+It must answer:
+- what matters now
+- what changed
+- where attention is needed
+- where to continue work
+
+3.4. Routing-not-replacement rule
+It routes to downstream workflows rather than replacing every detailed page.
+
+4. Canonical control-center blocks
+
+MF3 freezes the following block families:
+
+4.1. Factory overview block
+Must show:
+- factory-wide status summary
+- operational health summary
+- publish/readiness summary
+- attention counts by domain
+
+4.2. Channel overview block
+Must show:
+- per-channel high-level state
+- grouped channel attention items
+- channel-level routing entry points
+
+4.3. Batch/month overview block
+Must show:
+- per-batch/month high-level state
+- grouped attention-needed batch items
+- batch routing entry points
+
+4.4. Cross-domain summary blocks
+Must support at minimum:
+- planner/readiness summary
+- jobs/pipeline summary
+- publish/manual handoff summary
+- visuals status summary where relevant
+- analytics summary links where relevant
+- ops/recovery health summary
+
+4.5. Task routing block
+Must support:
+- requires attention now
+- recently changed
+- blocked/problematic
+- continue current work
+
+5. Attention routing contract
+
+5.1. Routing invariants
+Each attention block or item must provide:
+- why it matters
+- scope or target context
+- next destination
+- urgency or importance signal
+
+5.2. Task continuity rule
+Routing from the control center must preserve enough context to avoid operator reset when entering downstream pages.
+
+6. API / interface families
+
+6.1. Interface boundary
+MF3 provides the control center surface and routing contracts, not downstream detailed workspaces or full problem pages.
+
+6.2. Required interface families
+- control-center overview data contract
+- channel overview summary contract
+- batch/month overview summary contract
+- cross-domain summary contract
+- task-routing contract
+
+7. UI contract
+
+7.1. Every control-center response/surface must include:
+- factory summary
+- current attention summary
+- grouped cross-domain overview blocks
+- grouped routeable attention items
+- links/jumps into downstream contexts
+
+7.2. The control center must remain overview-oriented and must not display full downstream detail tables by default.
+
+8. Persistence / state requirements
+
+8.1. Control center may persist:
+- recent/return context references
+- dismissed local UI emphasis state where safe
+- last viewed scope or filters where useful
+
+8.2. It must not become a second source of truth for domain state.
+
+9. Validation rules
+
+9.1. Overview validation
+- control center must include cross-domain summary, not one-domain-only content
+- control center must include attention routing
+- control center must remain useful without opening multiple pages
+
+9.2. Density validation
+- enough information to answer “what matters now?”
+- not overloaded with full downstream content
+
+10. Acceptance criteria
+
+MF3 is accepted if all of the following are true:
+- a canonical unified control center exists;
+- cross-domain overview blocks exist;
+- channel/batch attention summaries exist;
+- routing into downstream workflows exists;
+- control center answers “what matters now?” without opening multiple pages.
+
+11. Test plan
+
+11.1. Unit
+- block-family validation
+- task-routing contract validation
+- attention-item schema validation
+
+11.2. Integration
+- render factory overview
+- render channel overview summaries
+- render batch/month overview summaries
+- render cross-domain summary blocks
+- render task-routing block
+- route to downstream workflow with context preserved
+
+11.3. Smoke
+- control center usable as main entry point
+- not a flat links page
+- not overloaded with all domain detail
+
+12. Rollback / migration considerations
+
+12.1. Rollout posture
+MF3 must be additive and overview-first.
+
+12.2. Safe fallback
+If some downstream workspaces are incomplete:
+- control center may still route to transitional surfaces;
+- attention-routing integrity must remain.
+
+12.3. No scope drift rule
+MF3 must not expand into full problem-detail pages or detailed domain workspaces.
+
+13. Open questions / ambiguities
+
+13.1. Exact composition of cross-domain cards and tables is implementation detail and not a blocker as long as cross-domain overview and attention routing are preserved.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6 and MF3 are aligned on a control-center-first operator entry point.
+- Remaining uncertainty is layout/composition detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- control center degenerating into flat links page;
+- overload with downstream detail;
+- loss of attention routing.
+
+====================================================================
+SPEC_E6_MF4_PROBLEM_PAGES_READINESS_INDICATORS_AND_ATTENTION_ROUTING_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6-MF4 introduces the canonical problem-first UX layer for Epic 6.
+
+Its purpose is to make blockers, degraded states, stale/problem contexts, and readiness indicators visible, explainable, and routeable toward action.
+
+MF4 is the product-grade triage layer that bridges diagnosis and action routing.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- canonical problem page model;
+- blockers;
+- warnings;
+- degraded states;
+- stale/problem contexts;
+- queued attention items;
+- readiness indicator model;
+- severity and priority model;
+- explanation contract;
+- routing contract.
+
+2.2. Out of scope
+- full analytics anomaly center;
+- Telegram remote problem console;
+- domain-logic changes in readiness semantics.
+
+2.3. Boundary rules
+- problem pages must not degrade into colored badges only;
+- explanation layer is mandatory;
+- problem page must connect to action routing and not end at diagnosis.
+
+3. Canonical problem model
+
+3.1. Problem item families
+MF4 must support at minimum:
+- BLOCKER
+- WARNING
+- DEGRADED
+- STALE_CONTEXT
+- ATTENTION_ITEM
+
+3.2. Canonical severity / priority model
+MF4 freezes one shared operator attention-class scale for Epic 6 UX triage and presentation:
+- CRITICAL
+- BLOCKING
+- DEGRADED_WORKABLE
+- INFORMATIONAL
+
+These classes are the canonical v1 UX scale for severity/priority presentation and triage ordering.
+MF4 does not introduce separate independent severity and priority axes in v1.
+
+3.3. Readiness indicator model
+MF4 must support at minimum:
+- per-release readiness
+- per-batch readiness
+- per-channel readiness where applicable
+- pipeline/publish readiness surfaces
+
+4. Explanation contract
+
+4.1. Every problem/readiness item must be able to show:
+- primary reason
+- supporting signals
+- current status
+- next operator direction
+
+4.2. Explanation invariants
+- explanation is mandatory, not optional;
+- explanation must be operator-readable;
+- explanation must route toward action or further context.
+
+5. Routing model
+
+MF4 freezes the following routing targets:
+- open entity workspace
+- open related domain page
+- open action flow
+- open detail context
+
+Rules:
+- problem page must always provide at least one operator-next-direction where meaningful;
+- problem pages must not be dead-end diagnosis surfaces.
+
+6. API / interface families
+
+6.1. Interface boundary
+MF4 defines problem/readiness surfaces and routing contracts. It does not redesign domain readiness semantics.
+
+6.2. Required interface families
+- problem list interface
+- readiness indicator interface
+- severity/priority mapping interface
+- explanation interface
+- routing interface
+
+7. UI contract
+
+7.1. Each problem/readiness item must expose:
+- problem family
+- severity/priority
+- current status
+- explanation payload
+- routing targets
+
+7.2. Page-level surfaces must support:
+- grouped problem views
+- grouped readiness views
+- severity-based sorting/prioritization
+- direct next-step routing
+
+8. Persistence / state requirements
+
+8.1. Problem/readiness surfaces may persist:
+- last viewed filters
+- dismissed local UI emphasis state where safe
+- grouping/sorting preferences where useful
+
+8.2. They must not create new domain readiness semantics.
+
+9. Validation rules
+
+9.1. Problem validation
+- every item must have explanation payload
+- every item must have consistent severity mapping
+- every routeable item must expose next direction
+
+9.2. Readiness validation
+- readiness indicators must remain consistent across domains
+- same readiness class must map to same semantic language
+
+10. Acceptance criteria
+
+MF4 is accepted if all of the following are true:
+- canonical problem page model exists;
+- shared readiness indicator model exists;
+- severity/priority semantics exist;
+- explanation + routing contract exists;
+- operator can triage and move toward action from these pages.
+
+11. Test plan
+
+11.1. Unit
+- problem-family validation
+- severity/priority validation
+- readiness-indicator validation
+- explanation payload validation
+- routing-target validation
+
+11.2. Integration
+- render blocker page
+- render degraded/warning items
+- render readiness indicators for release/batch/channel
+- show explanation payload
+- route from problem page to entity workspace
+- route from problem page to related domain page
+- route from problem page to action flow where applicable
+
+11.3. Smoke
+- problem pages do more than show colored badges
+- explanation layer is present
+- action routing is present
+
+12. Rollback / migration considerations
+
+12.1. Rollout posture
+MF4 must be additive and triage-first.
+
+12.2. Safe fallback
+If some downstream actions are not yet standardized:
+- problem pages may still route to entity/detail context;
+- diagnosis-to-action continuity must remain as strong as possible.
+
+12.3. No scope drift rule
+MF4 must not become analytics anomaly center replacement and must not change readiness domain logic.
+
+13. Open questions / ambiguities
+
+13.1. Exact problem grouping and sorting heuristics are implementation detail so long as severity/priority, explanation, and routing remain preserved.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6 and MF4 are aligned on problem-first UX, explanation, readiness indicators, and action routing.
+- Remaining uncertainty is grouping/sorting detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- problem pages collapsing into colored badges;
+- loss of explanation layer;
+- broken diagnosis-to-action continuity.
+
+
+====================================================================
+SPEC_E6_MF5_OPERATOR_WORKSPACES_ENTITY_DRILLDOWNS_AND_TASK_CONTINUITY_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6-MF5 introduces unified operator workspaces, entity drilldowns, and task continuity surfaces for Epic 6.
+
+Its purpose is to let the operator work continuously across:
+- channel
+- release
+- job
+- batch/month
+- related contexts
+
+without repeatedly losing task state, filter state, or action context.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- workspace model;
+- channel workspace;
+- release workspace;
+- job workspace;
+- batch/month workspace;
+- entity drilldown model;
+- cross-domain continuity;
+- task continuity aids;
+- open-full-context patterns;
+- action result continuity.
+
+2.2. Out of scope
+- redesign of domain logic;
+- Telegram equivalents;
+- analytics export logic;
+- preview/confirm/execute UX standardization in full detail.
+
+2.3. Boundary rules
+- workspaces must not remain unrelated detail pages;
+- task continuity must be preserved;
+- workspaces must not be overloaded with all downstream content at once.
+
+3. Canonical workspace model
+
+MF5 freezes the following workspace families:
+- CHANNEL_WORKSPACE
+- RELEASE_WORKSPACE
+- JOB_WORKSPACE
+- BATCH_MONTH_WORKSPACE
+
+3.1. Workspace rule
+Workspaces are operator-task containers, not just detail pages.
+
+3.2. Workspace responsibility
+Each workspace must support:
+- what is this
+- what is blocked
+- what can I do next
+- what related contexts matter
+
+4. Entity drilldown model
+
+4.1. Required drilldown behavior
+- compact summary to detailed context
+- related entities visible in one path
+- preserved filters/scope where practical
+
+4.2. Drilldown invariants
+- drilldowns must preserve enough context to avoid operator reset;
+- drilldowns must expose related cross-domain context where it helps action;
+- drilldowns must not become isolated detail cul-de-sacs.
+
+5. Cross-domain continuity
+
+MF5 must support continuity:
+- from control center to workspace
+- from problem page to entity
+- from entity to action flow
+- from result back to relevant context
+
+Rules:
+- each step must preserve enough parent context;
+- operator must be able to continue work rather than restart navigation.
+
+6. Task continuity aids
+
+MF5 may provide:
+- recent/open context model where useful
+- back-to-parent clarity
+- open-full-context patterns
+- action result continuity
+
+Rules:
+- continuity aids are navigation/task aids only;
+- they must not invent new domain state semantics.
+
+7. API / interface families
+
+7.1. Interface boundary
+MF5 defines workspace and drilldown continuity contracts. It does not define shared mutate UX standardization in full.
+
+7.2. Required interface families
+- workspace summary interface
+- entity drilldown interface
+- related-context interface
+- task-continuity interface
+- result-return interface
+
+8. UI contract
+
+8.1. Each workspace must expose:
+- core entity summary
+- relevant related contexts
+- current blockers/problems where applicable
+- next-action directions
+- path back to parent context
+
+8.2. Each drilldown must expose:
+- entry context
+- current entity scope
+- related context links
+- return path
+- open-full-context pattern when needed
+
+9. Persistence / state requirements
+
+9.1. Task continuity state may preserve:
+- filters
+- current scope
+- parent context ref
+- recent/open workspace context
+- action-result return context
+
+9.2. These states must be safely restorable where valid and safely discardable where stale/invalid.
+
+10. Validation rules
+
+10.1. Workspace validation
+- each workspace must be task container, not passive detail page only;
+- each workspace must expose blockers/next actions where applicable;
+- each workspace must expose related context where helpful.
+
+10.2. Drilldown validation
+- drilldown must preserve parent context identity;
+- drilldown must support return path without forcing full re-navigation.
+
+11. Acceptance criteria
+
+MF5 is accepted if all of the following are true:
+- canonical workspace model exists for key entities;
+- drilldown continuity from overview/problem pages exists;
+- preserved-context principles exist;
+- operator can move through a task without repeatedly losing state/context.
+
+12. Test plan
+
+12.1. Unit
+- workspace-family validation
+- related-context payload validation
+- preserved-context validation
+- return-context validation
+
+12.2. Integration
+- open channel workspace from control center
+- open release workspace from problem page
+- open job workspace from workspace related context
+- open batch/month workspace from control center or problem page
+- preserve filters/scope during drilldown
+- return from action result to relevant workspace context
+- open full context when compact surface is insufficient
+
+12.3. Smoke
+- workspaces are not unrelated detail pages
+- task continuity survives overview -> problem -> entity -> action -> result path
+- workspaces are not overloaded with all downstream content
+
+13. Rollback / migration considerations
+
+13.1. Rollout posture
+MF5 must be additive and task-continuity-first.
+
+13.2. Safe fallback
+If some related contexts are not yet fully consolidated:
+- operator must still have a clear return path;
+- open-full-context escape hatch must remain available.
+
+13.3. No scope drift rule
+MF5 must not become generic content-dump detail pages or expand into action-UX standardization.
+
+14. Open questions / ambiguities
+
+14.1. Exact recent/open-context heuristics are implementation details and are not blockers as long as continuity principles remain preserved.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6 and MF5 are aligned on workspaces as operator-task containers with preserved context and cross-domain continuity.
+- Remaining uncertainty is continuity-aid tuning detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- workspaces remaining unrelated detail pages;
+- loss of task continuity;
+- overloading workspaces with too much downstream content.
+
+====================================================================
+SPEC_E6_MF6_SHARED_ACTION_UX_PREVIEW_CONFIRM_EXECUTE_AND_BATCH_INTERACTION_CONSOLIDATION_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E6-MF6 introduces the shared mutating-action UX contract across the product.
+
+Its purpose is to normalize operator interaction patterns for:
+- preview / apply
+- preview / confirm / execute
+- single-item safe mutate flows
+- batch actions
+- stale/conflict/error handling
+- result continuity after mutation
+
+MF6 makes mutating flows predictable across domains instead of forcing the operator to re-learn confirmation and result semantics per page.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- unified action-class model;
+- shared mutate patterns;
+- stale-state refusal/refresh behavior;
+- partial success/failure summaries;
+- result contract;
+- batch UX contract;
+- cross-domain mutating consistency.
+
+2.2. Out of scope
+- redesign of underlying domain semantics;
+- Telegram remote action hardening;
+- backend idempotency/audit implementation details beyond UI-contract needs.
+
+2.3. Boundary rules
+- MF6 must not degrade into cosmetic button standardization only;
+- batch safety and partial-failure clarity are mandatory;
+- stale/conflict behavior must become explicit and consistent across domains.
+
+3. Unified action-class model
+
+MF6 freezes the following action classes:
+- READ_ONLY
+- LOW_RISK_MUTATE
+- GUARDED_MUTATE
+- HIGH_RISK_MUTATE
+- BATCH_MUTATE
+
+Rules:
+- same action class should feel the same across domains;
+- confirmation intensity and result reporting must scale consistently with action class.
+
+4. Shared mutate patterns
+
+MF6 freezes the following canonical patterns:
+- PREVIEW_TO_APPLY
+- PREVIEW_TO_CONFIRM_TO_EXECUTE
+- DIRECT_MUTATE_WITH_CONFIRMATION
+- STALE_REFUSAL_OR_REFRESH
+- PARTIAL_RESULT_SUMMARY
+
+Terminology normalization rule
+- MF6 does not introduce APPROVE as a separate canonical action state in v1.
+- Existing flows that use "approve" wording must map to APPLY or CONFIRM according to the canonical action pattern and action class.
+
+4.1. Preview -> apply
+Used where previewable proposed state exists and apply is the final commit step.
+
+4.2. Preview -> confirm -> execute
+Used where preview shows scope/effect, confirm authorizes execution, and execute performs mutation.
+
+4.3. Direct mutate with confirmation
+Used where preview is not required but explicit confirm is required.
+
+4.4. Stale refusal / refresh
+Used where underlying state changed and action must not silently proceed.
+
+4.5. Partial result summary
+Used where multi-target or complex action yields mixed outcomes.
+
+5. Result contract
+
+5.1. Every mutating result must tell the operator:
+- what happened
+- what changed
+- what failed
+- what remains unresolved
+- what to do next
+
+5.2. Frozen result classes
+MF6 freezes:
+- SUCCEEDED
+- PARTIAL
+- BLOCKED
+- STALE
+- DENIED
+- FAILED
+
+5.3. Result continuity rule
+Result surfaces/messages must support continuation and must not be dead ends after mutation.
+
+6. Batch UX model
+
+6.1. Required batch UX elements
+- bounded batch target summary
+- preview before execute where required
+- explicit confirm
+- grouped result reporting
+- partial failure visibility
+- no silent overwrite
+
+6.2. Batch safety invariants
+- target set must be understandable to operator before execute
+- operator must see scope before confirm
+- no silent execution on hidden scope
+- partial failures must be explicit
+
+7. Cross-domain consistency rule
+
+Same action class must feel the same across at least:
+- planner
+- publish
+- visuals
+- analytics light actions
+- ops/recovery surfaces
+
+This consistency applies to:
+- confirmation affordance
+- stale/conflict treatment
+- success/failure/result messaging
+- continuation after action
+
+8. API / interface families
+
+8.1. Interface boundary
+MF6 defines the shared UI/interaction contract over existing domain patterns. It does not redesign underlying domain semantics.
+
+8.2. Required interface families
+- action-class mapping interface
+- preview/apply contract
+- preview/confirm/execute contract
+- direct-confirm mutate contract
+- stale/conflict result contract
+- batch preview/execute contract
+- result continuation contract
+
+9. Persistence / state requirements
+
+9.1. Shared action UX may preserve:
+- preview identity
+- confirmation identity
+- batch preview scope summary
+- stale/conflict return context
+- result continuation context
+
+9.2. These aids must support UX continuity only and must not replace domain state ownership.
+
+10. Validation rules
+
+10.1. Action-class validation
+- every mutating flow in Epic 6 surfaces must map to one frozen action class
+- confirmation behavior must be consistent with action class
+
+10.2. Batch validation
+- batch mutate must expose bounded target summary
+- preview-before-execute required where action scope is not trivially obvious
+- partial result visibility mandatory where partial outcome is possible
+
+10.3. Stale/conflict validation
+- stale/conflict result must be explicit
+- operator must not infer stale/conflict semantics differently between domains
+
+11. Acceptance criteria
+
+MF6 is accepted if all of the following are true:
+- unified action class model exists;
+- shared preview/apply and preview/confirm/execute UX contracts exist;
+- shared batch UX contract exists;
+- stale/conflict/result handling is consistent;
+- cross-domain mutating flows become predictable for the operator.
+
+12. Test plan
+
+12.1. Unit
+- action-class mapping validation
+- pattern-family validation
+- result-class validation
+- batch preview scope validation
+- stale/conflict state validation
+
+12.2. Integration
+- render preview -> apply flow
+- render preview -> confirm -> execute flow
+- render direct mutate with confirmation flow
+- render stale refusal/refresh flow
+- render partial result summary
+- confirm same action class behaves consistently across multiple domain surfaces
+- confirm batch preview/confirm/execute stays bounded and explainable
+
+12.3. Smoke
+- shared mutate UX exists across representative domains
+- stale/conflict behavior is consistent
+- result messages support continuation
+
+13. Rollback / migration considerations
+
+13.1. Rollout posture
+MF6 must be additive and shared-contract-first.
+
+13.2. Safe fallback
+If some domain surfaces are not yet migrated:
+- they may temporarily use legacy mutate UI;
+- the canonical target state remains shared action UX across domains.
+
+13.3. No scope drift rule
+MF6 must not be treated as cosmetic button standardization and must not redesign domain semantics.
+
+14. Open questions / ambiguities
+
+14.1. Exact visual phrasing/copy for confirmation and result states is implementation detail and is not a blocker as long as shared action semantics remain consistent.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 6 and MF6 are aligned on shared mutate UX as a first-class product contract.
+- Remaining uncertainty is phrasing/composition detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- reducing MF6 to cosmetic standardization only;
+- losing batch safety and partial-failure clarity;
+- leaving stale/conflict behavior inconsistent across domains.
