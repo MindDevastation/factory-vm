@@ -49,6 +49,7 @@ from services.factory_api.ui_state_templates import state_template_catalog
 from services.factory_api.interaction_presentation import interaction_presentation_contract_catalog
 from services.factory_api.density_responsive import density_responsive_catalog
 from services.factory_api.action_taxonomy import action_taxonomy_catalog
+from services.factory_api.control_center_contracts import build_control_center_contract_skeleton, default_task_routing_contract
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
@@ -5859,6 +5860,26 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
         return _plb_error(status, exc.code, exc.message)
     finally:
         conn.close()
+
+
+@app.get("/v1/control-center/contract-skeleton")
+def api_control_center_contract_skeleton(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        jobs_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"])
+        failed_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs WHERE UPPER(COALESCE(state,''))='FAILED'").fetchone()["c"])
+        channels_total = int(conn.execute("SELECT COUNT(*) AS c FROM channels").fetchone()["c"])
+        active_channels = channels_total
+        batch_month_total = int(conn.execute("SELECT COUNT(DISTINCT strftime('%Y-%m', COALESCE(planned_at,''))) AS c FROM releases WHERE planned_at IS NOT NULL").fetchone()["c"])
+    finally:
+        conn.close()
+    return build_control_center_contract_skeleton(
+        factory_summary={"jobs_total": jobs_total},
+        attention_summary={"failed_jobs": failed_total},
+        channel_summary={"channels_total": channels_total, "active_channels": active_channels},
+        batch_month_summary={"batch_month_total": batch_month_total},
+        task_routing=default_task_routing_contract(),
+    )
 
 
 @app.get("/v1/ui/jobs/statuses")
