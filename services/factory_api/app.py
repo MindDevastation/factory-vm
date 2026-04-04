@@ -5937,6 +5937,22 @@ def api_workspace_catalog(_: bool = Depends(require_basic_auth(env))):
     return workspace_family_catalog()
 
 
+@app.get("/v1/workspaces/{family}/{entity_id}/drilldown")
+def api_workspace_drilldown(family: str, entity_id: str, request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import entity_drilldown_contract
+
+    return entity_drilldown_contract(
+        entry_context=request.query_params.get("entry", "control_center"),
+        scope=f"{family}:{entity_id}",
+        related_context_links=[
+            {"kind": "channel_workspace", "href": "/ui/workspaces/channel/1"},
+            {"kind": "batch_workspace", "href": "/ui/workspaces/batch/2026-04"},
+        ],
+        return_path=request.query_params.get("return_path", "/"),
+        open_full_context_path=f"/ui/workspaces/{family}/{entity_id}",
+    )
+
+
 @app.get("/v1/problems/readiness/contract")
 def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
     return {
