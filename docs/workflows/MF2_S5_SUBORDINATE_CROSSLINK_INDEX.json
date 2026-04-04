@@ -1,0 +1,24 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF2-S5",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "canonical_workflow_set": [
+    "docs/workflows/MF2_S1_CANONICAL_WORKFLOW_STRUCTURE.md",
+    "docs/workflows/MF2_S2_STAGE_CONTRACTS.md",
+    "docs/workflows/MF2_S3_OPERATOR_RELEASE_LINKAGE.md",
+    "docs/workflows/MF2_S4_HANDOFF_MATRIX.md",
+    "docs/workflows/MF2_S5_CANON_CLEANUP_AND_CROSSLINKS.md"
+  ],
+  "subordinate_workflow_like_docs": [
+    "README.md",
+    "TESTING.md",
+    "docs/ops/runbook/README.md",
+    "docs/LAUNCH_GUIDE.md"
+  ],
+  "crosslink_policy": {
+    "preserve_subordinate_content": true,
+    "require_pointer_to_mf2_canon": true,
+    "forbid_parallel_main_workflow_claim": true,
+    "bulk_subordinate_edits_deferred": true
+  }
+}
