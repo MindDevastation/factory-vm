@@ -1,0 +1,42 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF2-S3",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "workflow_linkages": {
+    "operator": {
+      "linked_from_stages": [
+        "DEV",
+        "REVIEW",
+        "QA"
+      ],
+      "target_surfaces": [
+        "docs/ops/runbook/*"
+      ],
+      "scope_note": "guide-level operator content deferred to MF4"
+    },
+    "release_publish": {
+      "linked_from_stages": [
+        "REVIEW",
+        "QA"
+      ],
+      "scope_note": "linkage only; detailed publish semantics remain in canonical refs/specs"
+    }
+  },
+  "handoff_package_schema": [
+    "handoff_id",
+    "from_stage",
+    "to_stage",
+    "sender_role",
+    "receiver_role",
+    "artifact_bundle",
+    "decision_or_request",
+    "entry_gate_evidence",
+    "exit_expectation",
+    "notes"
+  ],
+  "cross_links": {
+    "mf1_ownership": "docs/ssot/MF1_S3_OWNERSHIP_MAP.md",
+    "mf1_ssot": "docs/ssot/MF1_S3_SSOT_MAP.md",
+    "mf2_s2_contracts": "docs/workflows/MF2_S2_STAGE_CONTRACTS.md"
+  }
+}
