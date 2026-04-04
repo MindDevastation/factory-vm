@@ -42,6 +42,7 @@ from services.factory_api.publish_queue_read import create_publish_queue_read_ro
 from services.factory_api.publish_reconcile import create_publish_reconcile_router
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
 from services.factory_api.ux_registry import breadcrumb_context, control_center_entry, primary_nav_items, route_ownership_map
+from services.factory_api.context_continuity import build_context_envelope, encode_context_token, resolve_incoming_context
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
@@ -115,6 +116,31 @@ templates.env.globals["factory_route_ownership_map"] = route_ownership_map()
 templates.env.globals["factory_control_center_entry"] = control_center_entry()
 templates.env.globals["factory_primary_nav_items"] = primary_nav_items
 templates.env.globals["factory_breadcrumb_context"] = breadcrumb_context
+
+def _request_query_dict(request: Request) -> dict[str, str]:
+    return {str(k): str(v) for k, v in request.query_params.multi_items()}
+
+
+def _context_token_for_request(request: Request) -> str:
+    envelope = build_context_envelope(
+        current_path=str(request.url.path),
+        parent_path=str(request.query_params.get("from") or "").strip() or None,
+        raw_query=_request_query_dict(request),
+    )
+    return encode_context_token(envelope)
+
+
+def _incoming_context_for_request(request: Request) -> dict[str, Any] | None:
+    token = str(request.query_params.get("ctx") or "").strip() or None
+    known_paths = set(route_ownership_map().keys())
+    envelope = resolve_incoming_context(token=token, known_paths=known_paths)
+    if envelope is None:
+        return None
+    return envelope.as_dict()
+
+
+templates.env.globals["factory_context_token_for_request"] = _context_token_for_request
+templates.env.globals["factory_incoming_context_for_request"] = _incoming_context_for_request
 
 # FastAPI/Starlette TemplateResponse expects (request, name, context, ...).
 # Keep compatibility with existing call sites that pass (name, context, ...).

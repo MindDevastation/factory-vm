@@ -48,12 +48,14 @@
     </nav>
   </header>
   <main class="shell-main">
-    <div class="shell-meta" data-route-ownership='{{ factory_route_ownership_map|tojson }}'></div>
+    {% set __ctx = factory_context_token_for_request(request) if request is defined else '' %}
+    {% set __incoming_ctx = factory_incoming_context_for_request(request) if request is defined else none %}
+    <div class="shell-meta" data-route-ownership='{{ factory_route_ownership_map|tojson }}' data-context-token='{{ __ctx }}' data-incoming-context='{{ __incoming_ctx|tojson if __incoming_ctx is not none else "" }}'></div>
     {% set __breadcrumb = factory_breadcrumb_context(current_path=__path) %}
     <div class="shell-breadcrumb" aria-label="Context trail">
       {% for crumb in __breadcrumb %}
         {% if not loop.first %} / {% endif %}
-        <a href="{{ crumb.path }}">{{ crumb.label }}</a>
+        <a href="{{ crumb.path }}{% if __ctx %}?ctx={{ __ctx|urlencode }}{% endif %}">{{ crumb.label }}</a>
       {% endfor %}
     </div>
     {% block body %}{% endblock %}
