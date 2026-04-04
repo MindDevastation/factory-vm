@@ -39,6 +39,17 @@ class TestE6Mf1S1UxRegistry(unittest.TestCase):
         breadcrumb = breadcrumb_context(current_path="/ui/publish/queueing")
         self.assertEqual(breadcrumb, [{"label": "Control Center", "path": "/"}])
 
+    def test_legacy_job_detail_route_is_bridged(self) -> None:
+        ownership = route_ownership_map()
+        self.assertIn("/jobs/", ownership)
+        self.assertEqual(ownership["/jobs/"]["route_family"], "legacy_bridge")
+        breadcrumb = breadcrumb_context(current_path="/jobs/42")
+        self.assertEqual([item["label"] for item in breadcrumb], ["Control Center", "Publish Queue", "Job Detail (Legacy)"])
+
+    def test_ui_jobs_create_route_is_not_isolated(self) -> None:
+        breadcrumb = breadcrumb_context(current_path="/ui/jobs/create")
+        self.assertEqual([item["label"] for item in breadcrumb], ["Control Center", "Create Job"])
+
     def test_control_center_entry_contract(self) -> None:
         entry = control_center_entry()
         self.assertEqual(entry, {"label": "Control Center", "path": "/"})
