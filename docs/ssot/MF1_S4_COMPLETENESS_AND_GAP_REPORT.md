@@ -15,6 +15,9 @@ Evidence note: Validation performed against MF1 acceptance and inventory contrac
 - SSOT map artifact exists: `docs/ssot/MF1_S3_SSOT_MAP.md`.
 - One-canonical-source mapping exists for listed MF1 baseline topics.
 - Legacy/deprecation candidates are explicit and preserved (this file + candidate registry).
+- Ownership completeness: all inventory records have explicit owner_team/owner_role.
+- Related-canonical completeness: all non-canonical records have explicit related canonical source.
+
 
 ## Unresolved topic / no-safe-canonical-source gaps (explicit)
 
