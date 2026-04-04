@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Problems & Readiness</h1>
+<p class="muted">Grouped operator-first triage surface.</p>
+<div class="grid">
+  <div><strong>Blockers</strong><div class="muted">{{ surface.summary.blockers }}</div></div>
+  <div><strong>Warnings</strong><div class="muted">{{ surface.summary.warnings }}</div></div>
+  <div><strong>Degraded</strong><div class="muted">{{ surface.summary.degraded }}</div></div>
+  <div><strong>Stale</strong><div class="muted">{{ surface.summary.stale }}</div></div>
+</div>
+
+{% for group_name, items in surface.groups.items() %}
+<h2 style="margin-top:16px; text-transform:capitalize;">{{ group_name }}</h2>
+<table>
+  <thead><tr><th>Job</th><th>State</th><th>Severity</th><th>Reason</th><th>Next direction</th></tr></thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td><a href="/jobs/{{ item.job_id }}">{{ item.job_id }}</a></td>
+      <td>{{ item.readiness_state }}</td>
+      <td>{{ item.severity }}</td>
+      <td>{{ item.explanation.primary_reason }}</td>
+      <td>{{ item.explanation.next_direction }}</td>
+    </tr>
+    {% endfor %}
+    {% if not items %}
+    <tr><td colspan="5" class="muted">No items in this group.</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+{% endfor %}
+{% endblock %}

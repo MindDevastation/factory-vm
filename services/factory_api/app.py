@@ -51,6 +51,7 @@ from services.factory_api.density_responsive import density_responsive_catalog
 from services.factory_api.action_taxonomy import action_taxonomy_catalog
 from services.factory_api.control_center_contracts import build_control_center_contract_skeleton, default_task_routing_contract
 from services.factory_api.problem_readiness_contracts import problem_readiness_contract_catalog, problem_readiness_item_contract
+from services.factory_api.problem_readiness_surface import build_grouped_problem_surface
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
@@ -5906,6 +5907,27 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
         return _plb_error(status, exc.code, exc.message)
     finally:
         conn.close()
+
+
+@app.get("/v1/problems/readiness/grouped")
+def api_problem_readiness_grouped(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        jobs = dbm.list_jobs(conn, limit=500)
+    finally:
+        conn.close()
+    return build_grouped_problem_surface(jobs=jobs)
+
+
+@app.get("/ui/problems/readiness", response_class=HTMLResponse)
+def ui_problem_readiness_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        jobs = dbm.list_jobs(conn, limit=500)
+    finally:
+        conn.close()
+    surface = build_grouped_problem_surface(jobs=jobs)
+    return templates.TemplateResponse("ui_problems_readiness.html", {"request": request, "surface": surface})
 
 
 @app.get("/v1/problems/readiness/contract")

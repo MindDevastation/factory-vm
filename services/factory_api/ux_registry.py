@@ -21,6 +21,7 @@ ROUTE_METADATA_REGISTRY: tuple[RouteMetadata, ...] = (
     RouteMetadata("PUBLISH_QUEUE", "/ui/publish/queue", "Publish Queue", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
     RouteMetadata("PUBLISH_BLOCKED", "/ui/publish/blocked", "Publish Blocked", "problems_attention", "problems", parent_route_key="PUBLISH_QUEUE"),
     RouteMetadata("PUBLISH_FAILED", "/ui/publish/failed", "Problems", "problems_attention", "problems", parent_route_key="PUBLISH_QUEUE", in_primary_nav=True),
+    RouteMetadata("PROBLEMS_READINESS", "/ui/problems/readiness", "Problems/Readiness", "problems_attention", "problems", parent_route_key="CONTROL_CENTER"),
     RouteMetadata("PUBLISH_MANUAL", "/ui/publish/manual", "Publish Manual", "workspaces", "workspaces", parent_route_key="PUBLISH_QUEUE"),
     RouteMetadata("PUBLISH_HEALTH", "/ui/publish/health", "Publish Health", "problems_attention", "problems", parent_route_key="PUBLISH_QUEUE"),
     RouteMetadata("PUBLISH_JOB_DETAIL", "/ui/publish/jobs/", "Publish Job", "entities", "entity_drilldown", parent_route_key="PUBLISH_QUEUE"),
