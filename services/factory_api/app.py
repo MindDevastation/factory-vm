@@ -50,6 +50,7 @@ from services.factory_api.interaction_presentation import interaction_presentati
 from services.factory_api.density_responsive import density_responsive_catalog
 from services.factory_api.action_taxonomy import action_taxonomy_catalog
 from services.factory_api.control_center_contracts import build_control_center_contract_skeleton, default_task_routing_contract
+from services.factory_api.problem_readiness_contracts import problem_readiness_contract_catalog, problem_readiness_item_contract
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
@@ -168,6 +169,7 @@ templates.env.globals["factory_state_template_catalog"] = state_template_catalog
 templates.env.globals["factory_interaction_presentation_catalog"] = interaction_presentation_contract_catalog
 templates.env.globals["factory_density_responsive_catalog"] = density_responsive_catalog
 templates.env.globals["factory_action_taxonomy_catalog"] = action_taxonomy_catalog
+templates.env.globals["factory_problem_readiness_contract_catalog"] = problem_readiness_contract_catalog
 
 # FastAPI/Starlette TemplateResponse expects (request, name, context, ...).
 # Keep compatibility with existing call sites that pass (name, context, ...).
@@ -5904,6 +5906,20 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
         return _plb_error(status, exc.code, exc.message)
     finally:
         conn.close()
+
+
+@app.get("/v1/problems/readiness/contract")
+def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
+    return {
+        "catalog": problem_readiness_contract_catalog(),
+        "sample": problem_readiness_item_contract(
+            state="FAILED",
+            severity="HIGH",
+            primary_reason="render watchdog detected non-growing output",
+            supporting_signals=["ffmpeg stderr anomaly", "output size unchanged"],
+            next_direction="open recovery workspace",
+        ),
+    }
 
 
 @app.get("/v1/control-center/contract-skeleton")
