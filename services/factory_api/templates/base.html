@@ -53,7 +53,8 @@
     {% set __template_contract = factory_page_template_contract(current_path=__path) %}
     {% set __semantic_contract = factory_semantic_contract_catalog() %}
     {% set __state_templates = factory_state_template_catalog() %}
-    <div class="shell-meta" data-route-ownership='{{ factory_route_ownership_map|tojson }}' data-context-token='{{ __ctx }}' data-incoming-context='{{ __incoming_ctx|tojson if __incoming_ctx is not none else "" }}' data-page-template='{{ __template_contract.template }}' data-page-template-contract='{{ __template_contract|tojson }}' data-semantic-contract='{{ __semantic_contract|tojson }}' data-state-templates='{{ __state_templates|tojson }}'></div>
+    {% set __interaction_contract = factory_interaction_presentation_catalog() %}
+    <div class="shell-meta" data-route-ownership='{{ factory_route_ownership_map|tojson }}' data-context-token='{{ __ctx }}' data-incoming-context='{{ __incoming_ctx|tojson if __incoming_ctx is not none else "" }}' data-page-template='{{ __template_contract.template }}' data-page-template-contract='{{ __template_contract|tojson }}' data-semantic-contract='{{ __semantic_contract|tojson }}' data-state-templates='{{ __state_templates|tojson }}' data-interaction-contract='{{ __interaction_contract|tojson }}'></div>
     {% set __breadcrumb = factory_breadcrumb_context(current_path=__path) %}
     <div class="shell-breadcrumb" aria-label="Context trail">
       {% for crumb in __breadcrumb %}
