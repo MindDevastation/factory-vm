@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from services.factory_api.action_taxonomy import representative_surfaces_matrix
+
 
 CANONICAL_ACTION_CLASSES = (
     "READ_ONLY",
@@ -81,4 +83,25 @@ def batch_preview_execute_contract(*, targets: list[str], action: str, requires_
         "requires_preview": bool(requires_preview),
         "requires_confirm": True,
         "no_silent_overwrite": True,
+    }
+
+
+def result_continuation_contract(*, result_class: str, what_changed: list[str], what_failed: list[str], unresolved: list[str], next_step: str, return_path: str) -> dict[str, Any]:
+    return {
+        "result_class": result_class,
+        "what_changed": what_changed,
+        "what_failed": what_failed,
+        "unresolved": unresolved,
+        "next_step": next_step,
+        "return_path": return_path,
+        "continuation_supported": True,
+    }
+
+
+def cross_domain_consistency_contract() -> dict[str, Any]:
+    return {
+        "surfaces": representative_surfaces_matrix(),
+        "confirmation_affordance": "class_consistent",
+        "stale_conflict_treatment": "explicit",
+        "result_messaging": "continuation_first",
     }

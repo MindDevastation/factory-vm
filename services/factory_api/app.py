@@ -6019,6 +6019,27 @@ def api_action_contract_batch_preview_execute(request: Request, _: bool = Depend
     )
 
 
+@app.get("/v1/actions/contracts/result-continuation")
+def api_action_contract_result_continuation(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import result_continuation_contract
+
+    return result_continuation_contract(
+        result_class=request.query_params.get("result", "SUCCEEDED"),
+        what_changed=[v for v in request.query_params.get("changed", "").split(",") if v],
+        what_failed=[v for v in request.query_params.get("failed", "").split(",") if v],
+        unresolved=[v for v in request.query_params.get("unresolved", "").split(",") if v],
+        next_step=request.query_params.get("next_step", "continue"),
+        return_path=request.query_params.get("return_path", "/"),
+    )
+
+
+@app.get("/v1/actions/contracts/cross-domain-consistency")
+def api_action_contract_cross_domain_consistency(_: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import cross_domain_consistency_contract
+
+    return cross_domain_consistency_contract()
+
+
 @app.get("/v1/problems/readiness/contract")
 def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
     return {
