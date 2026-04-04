@@ -1,0 +1,1001 @@
+REQ_EPIC6_OPERATOR_UX_CONSOLIDATION_AND_DESIGN_SYSTEM_FULL_PACK
+
+BLOCKERS / FREEZE ANALYSIS
+
+1. Статус блокеров
+
+Hard repo-blockers для старта REQ по Epic 6 не зафиксированы.
+Epic 6 является не repo-blocked, а product-freeze-heavy эпиком.
+
+2. Что уже можно считать зафиксированной базой
+
+- Epic 6 в каноническом контексте уже определен как:
+  - единый control center
+  - общая сводка фабрики
+  - problem pages / readiness indicators
+  - batch-production status views
+- Epic 6 не равен Telegram эпику и не подменяет Epic 6A.
+- Epic 6 не подменяет Analytics Center из Epic 5A.
+- Проект уже production-like и уже имеет множество функциональных operator surfaces, summaries, reports, preview/execute flows и existing domain pages.
+- В проекте уже закреплен functional/operator-first UI-подход; это не greenfield redesign.
+
+3. Product blockers, которые фиксируются этим пакетом
+
+3.1. Epic 6 = не “красивый редизайн вообще”, а Operator UX Consolidation & Design System.
+
+3.2. Epic 6 не invent’ит новые domain semantics.
+Он консолидирует и нормализует existing operator journeys поверх уже зафиксированных доменов:
+- planner
+- jobs
+- publish
+- visuals
+- analytics
+- ops/recovery
+- metadata
+
+3.3. Web UI = primary control surface.
+Telegram остается отдельной remote operator surface из Epic 6A.
+
+3.4. Epic 6 v1 = dashboard-first + problem-first + workspace-based UX model.
+Это означает:
+- есть единый вход через control center
+- есть problem/attention routing
+- есть domain workspaces
+- есть entity drilldowns
+- есть shared action patterns
+
+3.5. Design system в Epic 6 = operator-first design system.
+Приоритеты:
+- clarity
+- compactness
+- repeatable interaction rules
+- safe action UX
+- responsiveness for real operator use
+Не маркетинговая оболочка и не декоративный redesign-first проект.
+
+3.6. Epic 6 должен переиспользовать существующие product patterns там, где они уже есть:
+- preview/apply
+- preview/confirm/execute
+- history/snapshot semantics
+- summaries
+- queue/batch interactions
+- problem/readiness style explanations
+
+3.7. Desktop-first with responsive support.
+V1 проектируется под основной desktop/laptop operator workflow, но без поломки tablet/mobile reading scenarios.
+Мобильная parity для всех advanced actions в v1 не является обязательной.
+
+4. Итог по блокерам
+
+- Hard blockers: none
+- Product blockers: resolved by this REQ pack
+- Epic 6 можно доводить до SPEC без отдельного дополнительного discovery
+
+READY FOR SPEC: YES
+
+
+REQ_EPIC6_OPERATOR_UX_CONSOLIDATION_AND_DESIGN_SYSTEM_v1.0
+
+1. Название
+
+Epic 6 — Operator UX Consolidation & Design System
+
+2. Цель
+
+Собрать factory-vm в единый operator-first web experience, который:
+- дает единый вход в фабрику через control center;
+- консолидирует существующие operator surfaces;
+- делает problem-first и task-first navigation;
+- нормализует shared UX patterns across domains;
+- вводит operator-first design system;
+- улучшает читаемость, компактность, скорость triage и continuity operator workflows.
+
+3. Зачем делаем
+
+Сейчас продукт развивается как production-like система с уже существующими доменами и рабочими экранами, но без единой UX-архитектуры.
+Это создает риски:
+- operator cognitive overload;
+- слишком разные interaction patterns между доменами;
+- слабая связность между summary -> problem -> action -> result;
+- разбросанные точки входа;
+- повторение похожих UX-механик в разных страницах;
+- высокая цена переключения контекста между planner, jobs, publish, visuals, analytics и ops.
+
+Epic 6 нужен, чтобы сделать из набора рабочих экранов один coherent operator product.
+
+4. Зафиксированный архитектурный контекст
+
+4.1. Epic 6 — отдельный UX/domain-consolidation epic.
+Он не заменяет Telegram Operator Layer и не подменяет собой Analytics Center.
+
+4.2. Epic 6 не invent’ит новые domain semantics.
+Он работает поверх already accepted domain contracts из предыдущих эпиков.
+
+4.3. Epic 6 = web UI primary.
+Telegram остается remote operator layer из Epic 6A.
+
+4.4. Epic 6 = operator-first design system, а не visual-redesign-for-its-own-sake.
+
+4.5. Epic 6 должен быть полезным даже без переписывания продукта с нуля.
+Это consolidation/refinement epic, а не total rewrite epic.
+
+5. Scope v1
+
+В Epic 6 v1 входит:
+
+5.1. UX information architecture consolidation
+- единая navigation model;
+- unified app shell;
+- clear domain grouping;
+- control-center-first entry;
+- problem-first routing.
+
+5.2. Operator design system foundation
+- shared page templates;
+- cards, tables, filters, states, badges, summaries;
+- severity / readiness / risk indicators;
+- confirmation and action patterns;
+- empty/loading/error/success states;
+- compact desktop-first layout rules.
+
+5.3. Unified factory control center
+- top-level overview;
+- cross-domain summary;
+- attention-needed routing;
+- channel/factory overview;
+- task continuity entry points.
+
+5.4. Problem pages and readiness surfaces
+- blockers;
+- degraded states;
+- stale/problem lists;
+- readiness indicators;
+- “what needs attention now” views.
+
+5.5. Operator workspaces and entity drilldowns
+- release workspace;
+- job workspace;
+- batch/month workspace;
+- channel workspace;
+- task continuity and jump flows.
+
+5.6. Shared action UX
+- preview / approve / apply;
+- preview / confirm / execute;
+- safe mutate patterns;
+- stale/conflict handling;
+- shared batch interaction patterns.
+
+5.7. Responsive and accessibility baseline
+- desktop-first;
+- tablet/mobile readable;
+- keyboard-friendly where practical;
+- consistent action visibility and state feedback.
+
+6. Non-goals v1
+
+В Epic 6 v1 не входит:
+
+6.1. Telegram operator console.
+Это Epic 6A.
+
+6.2. Analytics logic, predictions, recommendation engine.
+Это Epic 5A.
+
+6.3. Visual asset generation or visual domain logic.
+Это Epic 5.
+
+6.4. Publish domain redesign or new publish semantics.
+Это Epic 3.
+
+6.5. Full documentation/runbook consolidation.
+Это Epic 7.
+
+6.6. Total frontend rewrite from scratch.
+
+6.7. Marketing-style brand redesign, decorative motion-first UX, or purely aesthetic restyling without operator value.
+
+7. Ключевые product-решения
+
+7.1. Epic 6 = dashboard-first + problem-first + workspace-based UX.
+
+7.2. Epic 6 = functional/operator-first UX with design-system discipline.
+
+7.3. Existing domain pages are not discarded blindly.
+They are consolidated, normalized, grouped, and brought under shared UX contracts.
+
+7.4. Shared action UX is first-class.
+Operator should not re-learn different confirmation/result patterns for each domain.
+
+7.5. Attention routing is first-class.
+The product must help answer:
+- what matters now
+- why it matters
+- where to go next
+- what action is available
+
+7.6. Cross-domain continuity is first-class.
+Operator must be able to move from summary -> problem -> entity -> action -> result without losing context.
+
+8. Canonical UX model
+
+8.1. Main entry point
+- unified factory control center
+
+8.2. Secondary navigation model
+- domain workspaces
+- problem/attention views
+- channel/batch/entity drilldowns
+
+8.3. Core navigation principle
+- not entity-only
+- not domain-tab-only
+- but mixed model:
+  - overview
+  - attention/problem routing
+  - domain workspaces
+  - entity drilldowns
+
+9. Acceptance criteria на уровне эпика
+
+Epic 6 считается успешно закрытым на уровне REQ/продукта, если:
+
+9.1. Есть единый app shell и coherent navigation model.
+
+9.2. Есть unified control center как главный operator entry point.
+
+9.3. Есть problem pages / readiness indicators / attention routing.
+
+9.4. Есть shared operator workspaces and drilldowns.
+
+9.5. Есть shared design system and interaction standards.
+
+9.6. Есть shared action UX for preview/confirm/apply/execute and batch flows.
+
+9.7. Epic 6 не invent’ит новые domain semantics и не ломает existing domain ownership.
+
+9.8. Epic 6 usable without Telegram, but remains complementary to Epic 6A.
+
+10. Предлагаемая декомпозиция на микрофичи
+
+E6-MF1 — UX Information Architecture, App Shell & Navigation Foundation
+ветка: feature/e6-mf1-app-shell-navigation
+
+E6-MF2 — Shared Design System, Layout Rules & Interaction Standards
+ветка: feature/e6-mf2-design-system-standards
+
+E6-MF3 — Unified Factory Control Center & Cross-Domain Overview
+ветка: feature/e6-mf3-control-center-overview
+
+E6-MF4 — Problem Pages, Readiness Indicators & Attention Routing
+ветка: feature/e6-mf4-problem-readiness-routing
+
+E6-MF5 — Operator Workspaces, Entity Drilldowns & Task Continuity
+ветка: feature/e6-mf5-workspaces-drilldowns
+
+E6-MF6 — Shared Action UX, Preview/Confirm/Execute & Batch Interaction Consolidation
+ветка: feature/e6-mf6-action-ux-batch-consolidation
+
+11. Что готово
+
+11.1. Зафиксирована epic-level UX рамка.
+11.2. Зафиксированы blocker resolutions.
+11.3. Зафиксирован dependency order микрофич и ветки.
+
+12. Чего не хватает
+
+12.1. Для REQ уровня эпика критических пробелов не осталось.
+12.2. Следующий шаг — SPEC или первая микрофича.
+
+13. Риски двусмысленности
+
+13.1. Нельзя quietly превратить Epic 6 в pure redesign.
+13.2. Нельзя quietly превратить Epic 6 в новый domain logic epic.
+13.3. Нельзя смешивать Epic 6 и Epic 6A.
+13.4. Нельзя потерять problem-first and action continuity principles.
+
+READY FOR SPEC: YES
+
+
+REQ_E6_MF1_UX_INFORMATION_ARCHITECTURE_APP_SHELL_AND_NAVIGATION_FOUNDATION_v1.0
+
+1. Название
+
+E6-MF1 — UX Information Architecture, App Shell & Navigation Foundation
+ветка: feature/e6-mf1-app-shell-navigation
+
+2. Цель
+
+Создать каноническую UX-архитектуру продукта, которая определяет:
+- единый app shell;
+- главную navigation model;
+- grouping domains and workspaces;
+- primary entry points;
+- global context persistence;
+- navigation continuity across operator flows.
+
+3. Зачем делаем
+
+Без MF1 Epic 6 распадется на набор локальных page improvements без общего UX-фундамента.
+Нужна общая архитектура:
+- как оператор входит в продукт;
+- как двигается между overview/problem/domain/entity;
+- как сохраняется контекст;
+- как продукт группирует существующие возможности.
+
+4. Scope v1
+
+В MF1 входит:
+
+4.1. Unified app shell
+- global navigation frame;
+- header / primary nav / secondary nav model;
+- breadcrumb/context trail model;
+- global quick-return to control center.
+
+4.2. Domain grouping
+- control center
+- workspaces
+- problems/attention
+- reports/analytics links
+- settings/admin surfaces where applicable
+
+4.3. Navigation hierarchy
+- global entry
+- domain workspace entry
+- entity drilldown entry
+- problem-first shortcuts
+- recent/return context where useful
+
+4.4. Context continuity
+- preserve filters/scope where practical;
+- safe back-and-forth navigation;
+- explicit “open full context” patterns.
+
+4.5. URL and route architecture at product level
+- consistent route grouping;
+- no scattered page identity;
+- human-meaningful IA structure.
+
+5. Non-goals v1
+
+В MF1 не входит:
+- full visual polish;
+- action patterns;
+- design token system in full detail;
+- domain-specific KPI/report content;
+- batch interaction specifics.
+
+6. Ключевые product-решения
+
+6.1. App shell = mandatory foundation, not optional chrome.
+
+6.2. Navigation must be mixed-model:
+- dashboard-first
+- problem-first
+- workspace-based
+- entity-drilldown capable
+
+6.3. IA must reflect real operator tasks, not internal service/module boundaries only.
+
+6.4. Existing pages are reorganized under one shell, not left as isolated islands.
+
+7. Acceptance criteria
+
+7.1. Есть unified app shell model.
+7.2. Есть canonical IA and route grouping.
+7.3. Есть domain/workspace/problem/entity navigation hierarchy.
+7.4. Есть context continuity principles.
+7.5. MF1 пригоден как foundation для всех остальных E6 microfeatures.
+
+8. Зависимости
+
+Это foundation-микрофича для всего Epic 6.
+От нее зависят:
+- MF2
+- MF3
+- MF4
+- MF5
+- MF6
+
+9. Что готово
+
+9.1. На уровне Epic 6 уже зафиксирован dashboard-first control-center-first подход.
+
+10. Чего не хватает
+
+10.1. Для REQ уровня MF1 критических пробелов не осталось.
+
+11. Риски двусмысленности
+
+11.1. Нельзя строить IA purely by backend/service structure.
+11.2. Нельзя терять context continuity.
+11.3. Нельзя делать navigation model only entity-first or only menu-first.
+
+READY FOR SPEC: YES
+
+
+REQ_E6_MF2_SHARED_DESIGN_SYSTEM_LAYOUT_RULES_AND_INTERACTION_STANDARDS_v1.0
+
+1. Название
+
+E6-MF2 — Shared Design System, Layout Rules & Interaction Standards
+ветка: feature/e6-mf2-design-system-standards
+
+2. Цель
+
+Ввести shared operator-first design system и interaction standards, чтобы все продуктовые поверхности использовали:
+- единые layout rules;
+- единые summary components;
+- единые status/severity patterns;
+- единые tables/filters/forms states;
+- единые empty/error/loading/result states;
+- единые interaction patterns.
+
+3. Зачем делаем
+
+Сейчас продукт может оставаться функциональным, но без единого design system возрастает цена:
+- переключения между страницами;
+- понимания статусов;
+- работы с actions/confirmations;
+- чтения summary/problem surfaces.
+
+MF2 нужен, чтобы operator UX стал predictable и consistent.
+
+4. Scope v1
+
+В MF2 входит:
+
+4.1. Page templates
+- overview page template
+- workspace page template
+- detail page template
+- problem list template
+- summary/report page template
+
+4.2. Shared visual-semantic components
+- summary cards
+- status badges
+- severity indicators
+- readiness indicators
+- inline warnings/errors
+- action bars
+- filters/search controls
+- tables/list patterns
+
+4.3. State templates
+- loading
+- empty
+- stale
+- error
+- success
+- partial result
+- blocked state
+
+4.4. Interaction standards
+- button hierarchy
+- confirmation patterns
+- inline vs modal actions
+- destructive action affordances
+- stale/conflict messaging
+- result reporting patterns
+
+4.5. Responsive/layout rules
+- desktop-first grid
+- compact operator density
+- tablet/mobile readable adaptations
+
+5. Non-goals v1
+
+В MF2 не входит:
+- full frontend component library implementation details;
+- brand identity system for marketing;
+- decorative animation strategy as primary deliverable;
+- analytics or publish domain logic.
+
+6. Ключевые product-решения
+
+6.1. Design system = operator-first, not aesthetic-first.
+
+6.2. Visual consistency must carry semantic meaning:
+- same severity -> same UI language
+- same blocked/problem -> same visual logic
+- same confirmation class -> same interaction pattern
+
+6.3. Compactness matters.
+The system is for dense operator work, not sparse showcase pages.
+
+6.4. Responsive baseline matters, but desktop-first remains canonical.
+
+7. Acceptance criteria
+
+7.1. Есть canonical page templates.
+7.2. Есть shared component semantics.
+7.3. Есть unified state templates.
+7.4. Есть interaction standards for confirmation/result/stale/error classes.
+7.5. Design system can be reused across all Epic 6 surfaces.
+
+8. Зависимости
+
+Зависит от:
+- MF1
+
+Используется далее в:
+- MF3
+- MF4
+- MF5
+- MF6
+
+9. Что готово
+
+9.1. Epic-level decision о design system как operator-first foundation уже зафиксирован.
+
+10. Чего не хватает
+
+10.1. Для REQ уровня MF2 критических пробелов не осталось.
+
+11. Риски двусмысленности
+
+11.1. Нельзя quietly заменить design system косметическим restyle.
+11.2. Нельзя потерять compact operator density.
+11.3. Нельзя сделать inconsistent semantics between domains.
+
+READY FOR SPEC: YES
+
+
+REQ_E6_MF3_UNIFIED_FACTORY_CONTROL_CENTER_AND_CROSS_DOMAIN_OVERVIEW_v1.0
+
+1. Название
+
+E6-MF3 — Unified Factory Control Center & Cross-Domain Overview
+ветка: feature/e6-mf3-control-center-overview
+
+2. Цель
+
+Сделать единый control center как главный вход в продукт, который показывает:
+- общее состояние фабрики;
+- high-level health/readiness;
+- cross-domain summaries;
+- channels/batches needing attention;
+- task entry points into the rest of the product.
+
+3. Зачем делаем
+
+Сейчас оператору нужно собирать ментальную картину фабрики из разных доменных экранов.
+MF3 нужен, чтобы answer first question immediately:
+- что сейчас происходит с фабрикой?
+- где проблемы?
+- куда идти дальше?
+
+4. Scope v1
+
+В MF3 входит:
+
+4.1. Factory overview surface
+- factory-wide status summary
+- operational health summary
+- publish/readiness summary
+- analytics highlights links where relevant
+- attention counts by domain
+
+4.2. Channel and batch overview summaries
+- per-channel high-level state
+- per-batch/month high-level state
+- attention-needed grouping
+
+4.3. Cross-domain summary blocks
+- planner/readiness summary
+- jobs/pipeline summary
+- publish/manual handoff summary
+- visuals status summary where relevant
+- analytics summary links where relevant
+- ops/recovery health summary
+
+4.4. Task routing layer
+- “requires attention now”
+- “recently changed”
+- “blocked/problematic”
+- “continue current work” entry points
+
+5. Non-goals v1
+
+В MF3 не входит:
+- full problem-detail pages;
+- entity workspaces in full detail;
+- batch action UX in full detail;
+- domain-specific full analytics/report pages.
+
+6. Ключевые product-решения
+
+6.1. Control center = main entry point.
+
+6.2. It must be cross-domain, not owned by one domain only.
+
+6.3. It must be operator-centric:
+- what matters now
+- what changed
+- where attention is needed
+- where to continue work
+
+6.4. It must route, not replace every downstream page.
+
+7. Acceptance criteria
+
+7.1. Есть canonical unified control center.
+7.2. Есть cross-domain overview blocks.
+7.3. Есть channel/batch attention summaries.
+7.4. Есть routing into downstream workflows.
+7.5. Control center answers “what matters now?” without needing to open multiple pages.
+
+8. Зависимости
+
+Зависит от:
+- MF1
+- MF2
+
+Связан с:
+- Epic 3
+- Epic 4
+- Epic 5
+- Epic 5A
+- Epic 6A
+
+9. Что готово
+
+9.1. Epic-level requirement for unified control center already fixed.
+
+10. Чего не хватает
+
+10.1. Для REQ уровня MF3 критических пробелов не осталось.
+
+11. Риски двусмысленности
+
+11.1. Нельзя quietly превратить control center в flat links page.
+11.2. Нельзя перегрузить его всем domain detail.
+11.3. Нельзя потерять attention routing.
+
+READY FOR SPEC: YES
+
+
+REQ_E6_MF4_PROBLEM_PAGES_READINESS_INDICATORS_AND_ATTENTION_ROUTING_v1.0
+
+1. Название
+
+E6-MF4 — Problem Pages, Readiness Indicators & Attention Routing
+ветка: feature/e6-mf4-problem-readiness-routing
+
+2. Цель
+
+Создать в продукте единый problem-first UX слой, который:
+- делает блокеры и degraded states явно видимыми;
+- показывает readiness indicators;
+- группирует operator attention queues;
+- объясняет why-this-is-problematic;
+- помогает перейти к исправлению.
+
+3. Зачем делаем
+
+Operator control center без problem-first surfaces не решает главное:
+- где именно проблема;
+- насколько она критична;
+- что мешает продвинуть release/batch/channel;
+- какой следующий шаг нужен.
+
+MF4 делает attention routing product-grade.
+
+4. Scope v1
+
+В MF4 входит:
+
+4.1. Problem page model
+- blockers
+- warnings
+- degraded states
+- stale/problem contexts
+- queued attention items
+
+4.2. Readiness indicator model
+- per-release readiness
+- per-batch readiness
+- per-channel readiness where applicable
+- pipeline/publish readiness surfaces
+
+4.3. Severity and priority model
+- critical
+- blocking
+- degraded but workable
+- informational
+
+4.4. Explanation contract
+Каждый problem/readiness item должен уметь показать:
+- primary reason
+- supporting signals
+- current status
+- next operator direction
+
+4.5. Routing model
+- open entity workspace
+- open related domain page
+- open action flow
+- open detail context
+
+5. Non-goals v1
+
+В MF4 не входит:
+- full analytics anomaly center;
+- Telegram remote problem console;
+- domain logic changes in readiness semantics.
+
+6. Ключевые product-решения
+
+6.1. Problem-first surfaces are mandatory, not optional support pages.
+
+6.2. Readiness indicators must be consistent across domains.
+
+6.3. Problem pages must explain, not just label.
+
+6.4. Problem pages must route to action, not end at diagnosis.
+
+7. Acceptance criteria
+
+7.1. Есть canonical problem page model.
+7.2. Есть shared readiness indicator model.
+7.3. Есть severity/priority semantics.
+7.4. Есть explanation + routing contract.
+7.5. Operator can triage and move toward action from these pages.
+
+8. Зависимости
+
+Зависит от:
+- MF1
+- MF2
+- MF3
+
+Связан с:
+- readiness semantics from previous epics
+- publish/problem contexts
+- analytics/risk contexts where relevant
+
+9. Что готово
+
+9.1. Epic-level requirement for problem pages and readiness indicators already fixed.
+
+10. Чего не хватает
+
+10.1. Для REQ уровня MF4 критических пробелов не осталось.
+
+11. Риски двусмысленности
+
+11.1. Нельзя quietly свести problem pages к colored badges.
+11.2. Нельзя потерять explanation layer.
+11.3. Нельзя разрывать problem page and action routing.
+
+READY FOR SPEC: YES
+
+
+REQ_E6_MF5_OPERATOR_WORKSPACES_ENTITY_DRILLDOWNS_AND_TASK_CONTINUITY_v1.0
+
+1. Название
+
+E6-MF5 — Operator Workspaces, Entity Drilldowns & Task Continuity
+ветка: feature/e6-mf5-workspaces-drilldowns
+
+2. Цель
+
+Создать unified operator workspaces и entity drilldowns, чтобы оператор мог работать сквозным образом с:
+- channel
+- release
+- job
+- batch/month
+- related contexts
+без потери задачи, фильтров и текущего действия.
+
+3. Зачем делаем
+
+Сейчас даже при наличии отдельных страниц операторский flow может рваться:
+- summary отдельно;
+- problem отдельно;
+- entity detail отдельно;
+- action flow отдельно.
+
+MF5 нужен, чтобы построить task continuity across these contexts.
+
+4. Scope v1
+
+В MF5 входит:
+
+4.1. Workspace model
+- channel workspace
+- release workspace
+- job workspace
+- batch/month workspace
+
+4.2. Entity drilldown model
+- compact summary -> detailed context
+- related entities visible in one path
+- preserved filters/scope where practical
+
+4.3. Cross-domain continuity
+- from control center to workspace
+- from problem page to entity
+- from entity to action flow
+- from result back to relevant context
+
+4.4. Task continuity aids
+- recent/open context model where useful
+- back-to-parent clarity
+- open-full-context patterns
+- action result continuity
+
+5. Non-goals v1
+
+В MF5 не входит:
+- redesign of domain logic;
+- Telegram equivalents;
+- analytics export logic;
+- preview/confirm/execute UX standardization in full detail (belongs to MF6).
+
+6. Ключевые product-решения
+
+6.1. Workspaces are operator-task containers, not just entity detail pages.
+
+6.2. Drilldowns must preserve enough context to avoid operator reset.
+
+6.3. Cross-domain related context must be visible where it helps action.
+
+6.4. Entity workspace must support “what is this / what is blocked / what can I do next”.
+
+7. Acceptance criteria
+
+7.1. Есть canonical workspace model for key entities.
+7.2. Есть drilldown continuity from overview/problem pages.
+7.3. Есть preserved context principles.
+7.4. Operator can move through a task without losing state/context repeatedly.
+
+8. Зависимости
+
+Зависит от:
+- MF1
+- MF2
+- MF3
+- MF4
+
+9. Что готово
+
+9.1. Epic-level need for unified control-center-to-workspace continuity already fixed.
+
+10. Чего не хватает
+
+10.1. Для REQ уровня MF5 критических пробелов не осталось.
+
+11. Риски двусмысленности
+
+11.1. Нельзя quietly оставить workspaces как unrelated detail pages.
+11.2. Нельзя потерять task continuity.
+11.3. Нельзя перегружать workspace всем downstream content сразу.
+
+READY FOR SPEC: YES
+
+
+REQ_E6_MF6_SHARED_ACTION_UX_PREVIEW_CONFIRM_EXECUTE_AND_BATCH_INTERACTION_CONSOLIDATION_v1.0
+
+1. Название
+
+E6-MF6 — Shared Action UX, Preview/Confirm/Execute & Batch Interaction Consolidation
+ветка: feature/e6-mf6-action-ux-batch-consolidation
+
+2. Цель
+
+Нормализовать mutating interaction patterns по всему продукту, чтобы оператор сталкивался с единым UX-контрактом для:
+- preview / approve / apply
+- preview / confirm / execute
+- single-item safe mutate flows
+- batch actions
+- stale/conflict/error handling
+- action results and follow-up continuity
+
+3. Зачем делаем
+
+В проекте уже существуют preview/apply, preview/confirm/execute, batch preview/execute и другие mutating patterns в разных доменах.
+Без MF6 оператору приходится заново интерпретировать:
+- что значит preview
+- когда действие финально
+- где confirmation
+- как выглядит partial failure
+- как ведут себя stale/conflict cases
+
+MF6 делает эти механики единым UX-contract across domains.
+
+4. Scope v1
+
+В MF6 входит:
+
+4.1. Action class model
+- read-only
+- low-risk mutate
+- guarded mutate
+- high-risk mutate
+- batch mutate
+
+4.2. Shared mutate patterns
+- preview -> apply
+- preview -> confirm -> execute
+- direct mutate with confirmation
+- stale-state refusal/refresh behavior
+- partial success/failure summaries
+
+4.3. Result contract
+После действия оператор должен получать:
+- what happened
+- what changed
+- what failed
+- what remains unresolved
+- what to do next
+
+4.4. Batch UX model
+- bounded batch target summary
+- preview before execute where required
+- explicit confirm
+- result grouping
+- partial failure visibility
+- no silent overwrites
+
+4.5. Cross-domain action consistency
+Same action class should feel the same across:
+- planner
+- publish
+- visuals
+- analytics light actions
+- ops/recovery surfaces
+
+5. Non-goals v1
+
+В MF6 не входит:
+- redesign of underlying domain semantics;
+- Telegram remote action hardening (belongs to Epic 6A);
+- backend idempotency/audit implementation details outside UI contract needs.
+
+6. Ключевые product-решения
+
+6.1. Shared action UX is a first-class product contract.
+
+6.2. Operators should not need to infer confirmation/result semantics from page to page.
+
+6.3. Batch flows must be operator-safe and explainable.
+
+6.4. Stale/conflict handling must be explicit and consistent.
+
+6.5. Result pages/messages must support continuation, not dead-end after mutation.
+
+7. Acceptance criteria
+
+7.1. Есть unified action class model.
+7.2. Есть shared preview/apply and preview/confirm/execute UX contracts.
+7.3. Есть shared batch UX contract.
+7.4. Есть consistent stale/conflict/result handling.
+7.5. Cross-domain mutating flows become predictable for the operator.
+
+8. Зависимости
+
+Зависит от:
+- MF1
+- MF2
+- MF3
+- MF4
+- MF5
+
+9. Что готово
+
+9.1. В проекте уже есть reusable preview/execute/apply patterns в разных доменах; Epic 6 нормализует их в один UX contract.
+
+10. Чего не хватает
+
+10.1. Для REQ уровня MF6 критических пробелов не осталось.
+
+11. Риски двусмысленности
+
+11.1. Нельзя quietly свести MF6 к cosmetic button standardization.
+11.2. Нельзя потерять batch safety and partial failure clarity.
+11.3. Нельзя оставить stale/conflict behavior inconsistent across domains.
+
+READY FOR SPEC: YES
