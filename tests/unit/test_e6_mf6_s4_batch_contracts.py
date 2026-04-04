@@ -18,6 +18,7 @@ class TestE6Mf6S4BatchContracts(unittest.TestCase):
     def test_batch_preview_contract(self) -> None:
         payload = batch_preview_execute_contract(targets=["job:1", "job:2"], action="batch_execute")
         self.assertEqual(payload["action_class"], "BATCH_MUTATE")
+        self.assertEqual(payload["pattern"], "PREVIEW_TO_CONFIRM_TO_EXECUTE")
 
     def test_batch_preview_endpoint(self) -> None:
         with temp_env() as (_, env):

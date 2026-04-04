@@ -4,38 +4,41 @@ from typing import Any
 
 
 _ACTION_CLASS_BY_ACTION: dict[str, str] = {
-    "refresh": "SAFE_REFRESH",
-    "recompute": "SAFE_RECOMPUTE",
-    "retry": "MUTATE_RETRY",
-    "cancel": "MUTATE_CANCEL",
-    "reclaim": "MUTATE_RECLAIM",
-    "cleanup": "MUTATE_CLEANUP",
-    "restart": "MUTATE_RESTART",
-    "approve": "MUTATE_APPROVE",
-    "reject": "MUTATE_REJECT",
+    "refresh": "READ_ONLY",
+    "recompute": "READ_ONLY",
+    "open": "READ_ONLY",
+    "retry": "LOW_RISK_MUTATE",
+    "apply": "LOW_RISK_MUTATE",
+    "confirm": "GUARDED_MUTATE",
+    "approve": "GUARDED_MUTATE",
+    "reject": "GUARDED_MUTATE",
+    "cancel": "HIGH_RISK_MUTATE",
+    "reclaim": "HIGH_RISK_MUTATE",
+    "cleanup": "HIGH_RISK_MUTATE",
+    "restart": "HIGH_RISK_MUTATE",
+    "batch_apply": "BATCH_MUTATE",
+    "batch_execute": "BATCH_MUTATE",
 }
 
 _PATTERN_FAMILY_BY_ACTION_CLASS: dict[str, str] = {
-    "SAFE_REFRESH": "INLINE_SAFE_ACTION",
-    "SAFE_RECOMPUTE": "INLINE_SAFE_ACTION",
-    "MUTATE_RETRY": "PREVIEW_CONFIRM_EXECUTE",
-    "MUTATE_CANCEL": "PREVIEW_CONFIRM_EXECUTE",
-    "MUTATE_RECLAIM": "PREVIEW_CONFIRM_EXECUTE",
-    "MUTATE_CLEANUP": "PREVIEW_CONFIRM_EXECUTE",
-    "MUTATE_RESTART": "PREVIEW_CONFIRM_EXECUTE",
-    "MUTATE_APPROVE": "PREVIEW_CONFIRM_EXECUTE",
-    "MUTATE_REJECT": "PREVIEW_CONFIRM_EXECUTE",
+    "READ_ONLY": "DIRECT_READ_ONLY",
+    "LOW_RISK_MUTATE": "PREVIEW_TO_APPLY",
+    "GUARDED_MUTATE": "PREVIEW_TO_CONFIRM_TO_EXECUTE",
+    "HIGH_RISK_MUTATE": "DIRECT_MUTATE_WITH_CONFIRMATION",
+    "BATCH_MUTATE": "PREVIEW_TO_CONFIRM_TO_EXECUTE",
 }
 
 _RESULT_CLASS_BY_OUTCOME: dict[str, str] = {
-    "ok": "SUCCESS",
-    "success": "SUCCESS",
+    "ok": "SUCCEEDED",
+    "success": "SUCCEEDED",
+    "succeeded": "SUCCEEDED",
     "partial": "PARTIAL",
     "blocked": "BLOCKED",
     "stale": "STALE",
-    "conflict": "CONFLICT",
-    "error": "ERROR",
-    "failed": "ERROR",
+    "denied": "DENIED",
+    "conflict": "DENIED",
+    "error": "FAILED",
+    "failed": "FAILED",
 }
 
 _REPRESENTATIVE_SURFACES: list[dict[str, str]] = [
@@ -48,16 +51,16 @@ _REPRESENTATIVE_SURFACES: list[dict[str, str]] = [
 
 
 def classify_action_class(*, action: str) -> str:
-    return _ACTION_CLASS_BY_ACTION.get(str(action or "").strip().lower(), "UNKNOWN_ACTION_CLASS")
+    return _ACTION_CLASS_BY_ACTION.get(str(action or "").strip().lower(), "GUARDED_MUTATE")
 
 
 def pattern_family_for_action(*, action: str) -> str:
     action_class = classify_action_class(action=action)
-    return _PATTERN_FAMILY_BY_ACTION_CLASS.get(action_class, "UNCLASSIFIED_PATTERN")
+    return _PATTERN_FAMILY_BY_ACTION_CLASS.get(action_class, "PREVIEW_TO_CONFIRM_TO_EXECUTE")
 
 
 def classify_result_class(*, outcome: str) -> str:
-    return _RESULT_CLASS_BY_OUTCOME.get(str(outcome or "").strip().lower(), "ERROR")
+    return _RESULT_CLASS_BY_OUTCOME.get(str(outcome or "").strip().lower(), "FAILED")
 
 
 def classify_stale_conflict(*, expected_version: str | None, actual_version: str | None) -> str:
@@ -65,7 +68,11 @@ def classify_stale_conflict(*, expected_version: str | None, actual_version: str
         return "UNKNOWN_VERSION_STATE"
     if expected_version == actual_version:
         return "CURRENT"
-    if expected_version.split(":", 1)[0] == actual_version.split(":", 1)[0]:
+    expected_text = str(expected_version)
+    actual_text = str(actual_version)
+    if ":" not in expected_text and ":" not in actual_text:
+        return "STALE"
+    if expected_text.split(":", 1)[0] == actual_text.split(":", 1)[0]:
         return "STALE"
     return "CONFLICT"
 

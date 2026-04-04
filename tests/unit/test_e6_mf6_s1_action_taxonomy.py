@@ -13,14 +13,16 @@ from services.factory_api.action_taxonomy import (
 
 class TestE6Mf6S1ActionTaxonomy(unittest.TestCase):
     def test_action_class_and_pattern_mapping(self) -> None:
-        self.assertEqual(classify_action_class(action="retry"), "MUTATE_RETRY")
-        self.assertEqual(pattern_family_for_action(action="retry"), "PREVIEW_CONFIRM_EXECUTE")
-        self.assertEqual(pattern_family_for_action(action="refresh"), "INLINE_SAFE_ACTION")
+        self.assertEqual(classify_action_class(action="retry"), "LOW_RISK_MUTATE")
+        self.assertEqual(classify_action_class(action="approve"), "GUARDED_MUTATE")
+        self.assertEqual(pattern_family_for_action(action="retry"), "PREVIEW_TO_APPLY")
+        self.assertEqual(pattern_family_for_action(action="cancel"), "DIRECT_MUTATE_WITH_CONFIRMATION")
 
     def test_result_class_mapping(self) -> None:
-        self.assertEqual(classify_result_class(outcome="ok"), "SUCCESS")
+        self.assertEqual(classify_result_class(outcome="ok"), "SUCCEEDED")
         self.assertEqual(classify_result_class(outcome="partial"), "PARTIAL")
-        self.assertEqual(classify_result_class(outcome="stale"), "STALE")
+        self.assertEqual(classify_result_class(outcome="conflict"), "DENIED")
+        self.assertEqual(classify_result_class(outcome="failed"), "FAILED")
 
     def test_stale_conflict_classification(self) -> None:
         self.assertEqual(classify_stale_conflict(expected_version="job:1", actual_version="job:2"), "STALE")

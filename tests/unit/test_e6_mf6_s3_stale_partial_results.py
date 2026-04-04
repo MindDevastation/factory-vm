@@ -17,6 +17,7 @@ class TestE6Mf6S3StalePartialResults(unittest.TestCase):
 
     def test_stale_and_partial_contracts(self) -> None:
         self.assertEqual(stale_refusal_or_refresh_contract(expected_version="v1", actual_version="v2")["status"], "STALE")
+        self.assertEqual(stale_refusal_or_refresh_contract(expected_version="job:1", actual_version="release:1")["status"], "CONFLICT")
         self.assertEqual(partial_result_summary_contract(succeeded=["a"], failed=["b"], unresolved=[])["result_class"], "PARTIAL")
 
     def test_stale_and_partial_endpoints(self) -> None:

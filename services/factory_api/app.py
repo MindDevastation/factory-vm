@@ -5990,6 +5990,16 @@ def api_action_contract_preview_confirm_execute(request: Request, _: bool = Depe
     return preview_confirm_execute_contract(action=request.query_params.get("action", "cancel"), preview_scope=request.query_params.get("scope", "job"))
 
 
+@app.get("/v1/actions/contracts/direct-confirm")
+def api_action_contract_direct_confirm(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import direct_mutate_with_confirmation_contract
+
+    return direct_mutate_with_confirmation_contract(
+        action=request.query_params.get("action", "cancel"),
+        target_scope=request.query_params.get("scope", "job"),
+    )
+
+
 @app.get("/v1/actions/contracts/stale-refresh")
 def api_action_contract_stale_refresh(request: Request, _: bool = Depends(require_basic_auth(env))):
     from services.factory_api.shared_action_flows import stale_refusal_or_refresh_contract
