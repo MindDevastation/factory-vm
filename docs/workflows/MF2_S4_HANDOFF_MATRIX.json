@@ -1,0 +1,88 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF2-S4",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "handoffs": [
+    {
+      "handoff_id": "H1",
+      "from_stage": "DISCOVERY",
+      "to_stage": "REQ",
+      "sender_role": "Discovery Owner",
+      "receiver_role": "Requirement Owner",
+      "artifact_package": [
+        "discovery_summary",
+        "candidate_scope",
+        "open_questions"
+      ]
+    },
+    {
+      "handoff_id": "H2",
+      "from_stage": "REQ",
+      "to_stage": "SPEC",
+      "sender_role": "Requirement Owner",
+      "receiver_role": "Spec Owner",
+      "artifact_package": [
+        "canonical_req_artifact",
+        "acceptance_criteria"
+      ]
+    },
+    {
+      "handoff_id": "H3",
+      "from_stage": "SPEC",
+      "to_stage": "DEV",
+      "sender_role": "Spec Owner",
+      "receiver_role": "Implementer",
+      "artifact_package": [
+        "canonical_spec_artifact",
+        "scope_boundary",
+        "non_goals"
+      ]
+    },
+    {
+      "handoff_id": "H4",
+      "from_stage": "DEV",
+      "to_stage": "REVIEW",
+      "sender_role": "Implementer",
+      "receiver_role": "Reviewer",
+      "artifact_package": [
+        "scoped_diff",
+        "validation_evidence",
+        "known_limitations"
+      ]
+    },
+    {
+      "handoff_id": "H5",
+      "from_stage": "REVIEW",
+      "to_stage": "QA",
+      "sender_role": "Reviewer",
+      "receiver_role": "QA Owner",
+      "artifact_package": [
+        "review_verdict",
+        "fix_list_or_waiver"
+      ]
+    },
+    {
+      "handoff_id": "H6",
+      "from_stage": "QA",
+      "to_stage": "RELEASE_DECISION",
+      "sender_role": "QA Owner",
+      "receiver_role": "Release/Operator Owner",
+      "artifact_package": [
+        "qa_verdict",
+        "evidence_bundle",
+        "release_recommendation"
+      ]
+    }
+  ],
+  "gate_rules": {
+    "entry_gate_requires_complete_package": true,
+    "exit_gate_requires_receiver_ack": true,
+    "missing_artifact_blocks_progression": true,
+    "sender_receiver_identity_mandatory": true
+  },
+  "cross_links": {
+    "mf2_s2_contracts": "docs/workflows/MF2_S2_STAGE_CONTRACTS.md",
+    "mf2_s3_package_schema": "docs/workflows/MF2_S3_HANDOFF_PACKAGE_SCHEMA.json",
+    "mf1_ownership": "docs/ssot/MF1_S3_OWNERSHIP_MAP.md"
+  }
+}
