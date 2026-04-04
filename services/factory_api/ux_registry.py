@@ -125,3 +125,19 @@ def breadcrumb_context(*, current_path: str) -> list[dict[str, str]]:
 
 def control_center_entry() -> dict[str, str]:
     return {"label": "Control Center", "path": "/"}
+
+
+def route_metadata_for_path(*, current_path: str) -> dict[str, str | bool | None] | None:
+    item = _find_route_by_path(current_path)
+    if item is None:
+        return None
+    return {
+        "route_key": item.route_key,
+        "path": item.path,
+        "label": item.label,
+        "owner_group": item.owner_group,
+        "route_family": item.route_family,
+        "parent_route_key": item.parent_route_key,
+        "in_primary_nav": item.in_primary_nav,
+        "migrated_shell": item.migrated_shell,
+    }

@@ -42,6 +42,7 @@ from services.factory_api.publish_queue_read import create_publish_queue_read_ro
 from services.factory_api.publish_reconcile import create_publish_reconcile_router
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
 from services.factory_api.ux_registry import breadcrumb_context, control_center_entry, primary_nav_items, route_ownership_map
+from services.factory_api.page_templates import page_template_contract
 from services.factory_api.context_continuity import build_context_envelope, encode_context_token, resolve_incoming_context
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
@@ -116,6 +117,7 @@ templates.env.globals["factory_route_ownership_map"] = route_ownership_map()
 templates.env.globals["factory_control_center_entry"] = control_center_entry()
 templates.env.globals["factory_primary_nav_items"] = primary_nav_items
 templates.env.globals["factory_breadcrumb_context"] = breadcrumb_context
+templates.env.globals["factory_page_template_contract"] = page_template_contract
 
 def _request_query_dict(request: Request) -> dict[str, str]:
     return {str(k): str(v) for k, v in request.query_params.multi_items()}
