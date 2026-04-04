@@ -41,6 +41,17 @@ from services.factory_api.publish_bulk_actions import create_publish_bulk_action
 from services.factory_api.publish_queue_read import create_publish_queue_read_router
 from services.factory_api.publish_reconcile import create_publish_reconcile_router
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
+from services.factory_api.ux_registry import breadcrumb_context, control_center_entry, primary_nav_items, route_ownership_map
+from services.factory_api.page_templates import page_template_contract
+from services.factory_api.context_continuity import build_context_envelope, encode_context_token, resolve_incoming_context
+from services.factory_api.ux_semantics import action_bar_semantics, filter_control_semantics, inline_message_semantics, readiness_indicator_semantics, severity_indicator_semantics, status_badge_semantics, table_list_semantics
+from services.factory_api.ui_state_templates import state_template_catalog
+from services.factory_api.interaction_presentation import interaction_presentation_contract_catalog
+from services.factory_api.density_responsive import density_responsive_catalog
+from services.factory_api.action_taxonomy import action_taxonomy_catalog
+from services.factory_api.control_center_contracts import build_control_center_contract_skeleton, default_task_routing_contract
+from services.factory_api.problem_readiness_contracts import problem_readiness_contract_catalog, problem_readiness_item_contract
+from services.factory_api.problem_readiness_surface import build_grouped_problem_surface
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
@@ -109,6 +120,57 @@ logger = logging.getLogger(__name__)
 _render_all_channel_slug: ContextVar[Optional[str]] = ContextVar("render_all_channel_slug", default=None)
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+templates.env.globals["factory_route_ownership_map"] = route_ownership_map()
+templates.env.globals["factory_control_center_entry"] = control_center_entry()
+templates.env.globals["factory_primary_nav_items"] = primary_nav_items
+templates.env.globals["factory_breadcrumb_context"] = breadcrumb_context
+templates.env.globals["factory_page_template_contract"] = page_template_contract
+
+def _request_query_dict(request: Request) -> dict[str, str]:
+    return {str(k): str(v) for k, v in request.query_params.multi_items()}
+
+
+def _context_token_for_request(request: Request) -> str:
+    envelope = build_context_envelope(
+        current_path=str(request.url.path),
+        parent_path=str(request.query_params.get("from") or "").strip() or None,
+        raw_query=_request_query_dict(request),
+    )
+    return encode_context_token(envelope)
+
+
+def _incoming_context_for_request(request: Request) -> dict[str, Any] | None:
+    token = str(request.query_params.get("ctx") or "").strip() or None
+    known_paths = set(route_ownership_map().keys())
+    envelope = resolve_incoming_context(token=token, known_paths=known_paths)
+    if envelope is None:
+        return None
+    return envelope.as_dict()
+
+
+templates.env.globals["factory_context_token_for_request"] = _context_token_for_request
+templates.env.globals["factory_incoming_context_for_request"] = _incoming_context_for_request
+
+
+def _semantic_contract_catalog() -> dict[str, Any]:
+    return {
+        "status_badge": status_badge_semantics(status="DRAFT"),
+        "severity_indicator": severity_indicator_semantics(severity="BLOCKING"),
+        "readiness_indicator": readiness_indicator_semantics(readiness="NOT_READY"),
+        "inline_message": inline_message_semantics(level="WARNING", text="sample"),
+        "action_bar": action_bar_semantics(actions=[{"action": "refresh", "kind": "PRIMARY"}]),
+        "filter_controls": filter_control_semantics(filters=["status", "channel", "time_window"]),
+        "table_list_pattern": table_list_semantics(variant="TABLE"),
+    }
+
+
+templates.env.globals["factory_semantic_contract_catalog"] = _semantic_contract_catalog
+templates.env.globals["factory_state_template_catalog"] = state_template_catalog
+templates.env.globals["factory_interaction_presentation_catalog"] = interaction_presentation_contract_catalog
+templates.env.globals["factory_density_responsive_catalog"] = density_responsive_catalog
+templates.env.globals["factory_action_taxonomy_catalog"] = action_taxonomy_catalog
+templates.env.globals["factory_problem_readiness_contract_catalog"] = problem_readiness_contract_catalog
 
 # FastAPI/Starlette TemplateResponse expects (request, name, context, ...).
 # Keep compatibility with existing call sites that pass (name, context, ...).
@@ -5410,9 +5472,53 @@ def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
         jobs = dbm.list_jobs(conn, limit=200)
+        jobs_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"])
+        failed_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs WHERE UPPER(COALESCE(state,''))='FAILED'").fetchone()["c"])
+        channels_total = int(conn.execute("SELECT COUNT(*) AS c FROM channels").fetchone()["c"])
+        batch_month_total = int(conn.execute("SELECT COUNT(DISTINCT strftime('%Y-%m', COALESCE(planned_at,''))) AS c FROM releases WHERE planned_at IS NOT NULL").fetchone()["c"])
+        control_center = build_control_center_contract_skeleton(
+            factory_summary={"jobs_total": jobs_total},
+            attention_summary={"failed_jobs": failed_total},
+            channel_summary={"channels_total": channels_total, "active_channels": channels_total},
+            batch_month_summary={"batch_month_total": batch_month_total},
+            task_routing=default_task_routing_contract(),
+        )
+        attention_routes = [
+            {
+                "why": "Failed jobs require operator triage",
+                "scope": "publish_failed",
+                "urgency": "HIGH" if failed_total > 0 else "NORMAL",
+                "next": "/ui/publish/failed",
+            },
+            {
+                "why": "Planning drift can block upcoming batches",
+                "scope": "planning",
+                "urgency": "NORMAL",
+                "next": "/ui/planner",
+            },
+        ]
+        recent_changes = [
+            {
+                "job_id": int(j.get("id") or 0),
+                "state": str(j.get("state") or ""),
+                "updated_at": str(j.get("updated_at") or ""),
+                "route": f"/jobs/{int(j.get('id') or 0)}",
+            }
+            for j in jobs[:5]
+            if j.get("id") is not None
+        ]
+        token = str(request.query_params.get("ctx") or "").strip() or None
+        incoming = resolve_incoming_context(token=token, known_paths=set(route_ownership_map().keys()))
+        return_to_context = None
+        if incoming is not None:
+            return_to_context = {
+                "path": incoming.current_path,
+                "token": token,
+                "label": "Return to previous context",
+            }
     finally:
         conn.close()
-    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs})
+    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs, "control_center": control_center, "attention_routes": attention_routes, "recent_changes": recent_changes, "return_to_context": return_to_context})
 
 
 @app.get("/ui/ops/recovery", response_class=HTMLResponse)
@@ -5801,6 +5907,202 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
         return _plb_error(status, exc.code, exc.message)
     finally:
         conn.close()
+
+
+@app.get("/v1/problems/readiness/grouped")
+def api_problem_readiness_grouped(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        jobs = dbm.list_jobs(conn, limit=500)
+    finally:
+        conn.close()
+    return build_grouped_problem_surface(jobs=jobs)
+
+
+@app.get("/ui/problems/readiness", response_class=HTMLResponse)
+def ui_problem_readiness_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        jobs = dbm.list_jobs(conn, limit=500)
+    finally:
+        conn.close()
+    surface = build_grouped_problem_surface(jobs=jobs)
+    return templates.TemplateResponse("ui_problems_readiness.html", {"request": request, "surface": surface})
+
+
+@app.get("/v1/workspaces/catalog")
+def api_workspace_catalog(_: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import workspace_family_catalog
+
+    return workspace_family_catalog()
+
+
+@app.get("/v1/workspaces/{family}/{entity_id}")
+def api_workspace_summary(family: str, entity_id: str, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import build_workspace_summary
+
+    conn = dbm.connect(env)
+    try:
+        return build_workspace_summary(conn=conn, family=family, entity_id=entity_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    finally:
+        conn.close()
+
+
+@app.get("/v1/workspaces/{family}/{entity_id}/drilldown")
+def api_workspace_drilldown(family: str, entity_id: str, request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import build_workspace_summary, entity_drilldown_contract
+
+    conn = dbm.connect(env)
+    try:
+        summary = build_workspace_summary(conn=conn, family=family, entity_id=entity_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    finally:
+        conn.close()
+
+    return entity_drilldown_contract(
+        entry_context=request.query_params.get("entry", "control_center"),
+        scope=f"{summary['workspace_family']}:{summary['entity_id']}",
+        related_context_links=[
+            {"kind": item.get("kind", "related"), "href": item.get("href", "/")}
+            for item in summary.get("related_contexts", [])
+        ],
+        return_path=request.query_params.get("return_path", "/"),
+        open_full_context_path=f"/v1/workspaces/{summary['workspace_family'].lower().replace('_workspace','')}/{summary['entity_id']}",
+    )
+
+
+@app.get("/v1/workspaces/task-continuity")
+def api_workspace_task_continuity(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import task_continuity_contract
+
+    return task_continuity_contract(
+        parent_context_ref=request.query_params.get("parent", "control_center"),
+        filters={"status": request.query_params.get("status", "all")},
+        scope=request.query_params.get("scope", "job"),
+        result_return_path=request.query_params.get("return_path", "/"),
+    )
+
+
+@app.get("/v1/workspaces/result-return")
+def api_workspace_result_return(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import result_return_contract
+
+    return result_return_contract(
+        from_action=request.query_params.get("action", "mutate"),
+        return_path=request.query_params.get("return_path", "/"),
+        open_full_context_path=request.query_params.get("open_full", request.query_params.get("return_path", "/")),
+    )
+
+
+@app.get("/v1/actions/contracts/preview-apply")
+def api_action_contract_preview_apply(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import preview_to_apply_contract
+
+    return preview_to_apply_contract(action=request.query_params.get("action", "retry"), preview_scope=request.query_params.get("scope", "job"))
+
+
+@app.get("/v1/actions/contracts/preview-confirm-execute")
+def api_action_contract_preview_confirm_execute(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import preview_confirm_execute_contract
+
+    return preview_confirm_execute_contract(action=request.query_params.get("action", "cancel"), preview_scope=request.query_params.get("scope", "job"))
+
+
+@app.get("/v1/actions/contracts/direct-confirm")
+def api_action_contract_direct_confirm(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import direct_mutate_with_confirmation_contract
+
+    return direct_mutate_with_confirmation_contract(
+        action=request.query_params.get("action", "cancel"),
+        target_scope=request.query_params.get("scope", "job"),
+    )
+
+
+@app.get("/v1/actions/contracts/stale-refresh")
+def api_action_contract_stale_refresh(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import stale_refusal_or_refresh_contract
+
+    return stale_refusal_or_refresh_contract(expected_version=request.query_params.get("expected", "v1"), actual_version=request.query_params.get("actual", "v1"))
+
+
+@app.get("/v1/actions/contracts/partial-result")
+def api_action_contract_partial_result(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import partial_result_summary_contract
+
+    return partial_result_summary_contract(
+        succeeded=[v for v in request.query_params.get("succeeded", "").split(",") if v],
+        failed=[v for v in request.query_params.get("failed", "").split(",") if v],
+        unresolved=[v for v in request.query_params.get("unresolved", "").split(",") if v],
+    )
+
+
+@app.get("/v1/actions/contracts/batch-preview-execute")
+def api_action_contract_batch_preview_execute(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import batch_preview_execute_contract
+
+    return batch_preview_execute_contract(
+        targets=[v for v in request.query_params.get("targets", "").split(",") if v],
+        action=request.query_params.get("action", "batch_execute"),
+        requires_preview=request.query_params.get("requires_preview", "1") != "0",
+    )
+
+
+@app.get("/v1/actions/contracts/result-continuation")
+def api_action_contract_result_continuation(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import result_continuation_contract
+
+    return result_continuation_contract(
+        result_class=request.query_params.get("result", "SUCCEEDED"),
+        what_changed=[v for v in request.query_params.get("changed", "").split(",") if v],
+        what_failed=[v for v in request.query_params.get("failed", "").split(",") if v],
+        unresolved=[v for v in request.query_params.get("unresolved", "").split(",") if v],
+        next_step=request.query_params.get("next_step", "continue"),
+        return_path=request.query_params.get("return_path", "/"),
+    )
+
+
+@app.get("/v1/actions/contracts/cross-domain-consistency")
+def api_action_contract_cross_domain_consistency(_: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import cross_domain_consistency_contract
+
+    return cross_domain_consistency_contract()
+
+
+@app.get("/v1/problems/readiness/contract")
+def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
+    return {
+        "catalog": problem_readiness_contract_catalog(),
+        "sample": problem_readiness_item_contract(
+            state="FAILED",
+            severity="BLOCKING",
+            primary_reason="render watchdog detected non-growing output",
+            supporting_signals=["ffmpeg stderr anomaly", "output size unchanged"],
+            next_direction="open recovery workspace",
+        ),
+    }
+
+
+@app.get("/v1/control-center/contract-skeleton")
+def api_control_center_contract_skeleton(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        jobs_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"])
+        failed_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs WHERE UPPER(COALESCE(state,''))='FAILED'").fetchone()["c"])
+        channels_total = int(conn.execute("SELECT COUNT(*) AS c FROM channels").fetchone()["c"])
+        active_channels = channels_total
+        batch_month_total = int(conn.execute("SELECT COUNT(DISTINCT strftime('%Y-%m', COALESCE(planned_at,''))) AS c FROM releases WHERE planned_at IS NOT NULL").fetchone()["c"])
+    finally:
+        conn.close()
+    return build_control_center_contract_skeleton(
+        factory_summary={"jobs_total": jobs_total},
+        attention_summary={"failed_jobs": failed_total},
+        channel_summary={"channels_total": channels_total, "active_channels": active_channels},
+        batch_month_summary={"batch_month_total": batch_month_total},
+        task_routing=default_task_routing_contract(),
+    )
 
 
 @app.get("/v1/ui/jobs/statuses")
