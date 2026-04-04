@@ -5990,6 +5990,24 @@ def api_action_contract_preview_confirm_execute(request: Request, _: bool = Depe
     return preview_confirm_execute_contract(action=request.query_params.get("action", "cancel"), preview_scope=request.query_params.get("scope", "job"))
 
 
+@app.get("/v1/actions/contracts/stale-refresh")
+def api_action_contract_stale_refresh(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import stale_refusal_or_refresh_contract
+
+    return stale_refusal_or_refresh_contract(expected_version=request.query_params.get("expected", "v1"), actual_version=request.query_params.get("actual", "v1"))
+
+
+@app.get("/v1/actions/contracts/partial-result")
+def api_action_contract_partial_result(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import partial_result_summary_contract
+
+    return partial_result_summary_contract(
+        succeeded=[v for v in request.query_params.get("succeeded", "").split(",") if v],
+        failed=[v for v in request.query_params.get("failed", "").split(",") if v],
+        unresolved=[v for v in request.query_params.get("unresolved", "").split(",") if v],
+    )
+
+
 @app.get("/v1/problems/readiness/contract")
 def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
     return {

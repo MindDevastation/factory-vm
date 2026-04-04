@@ -46,3 +46,26 @@ def preview_confirm_execute_contract(*, action: str, preview_scope: str) -> dict
         "confirm_step": "CONFIRM",
         "execute_step": "EXECUTE",
     }
+
+
+def stale_refusal_or_refresh_contract(*, expected_version: str, actual_version: str) -> dict[str, Any]:
+    stale = expected_version != actual_version
+    return {
+        "pattern": "STALE_REFUSAL_OR_REFRESH",
+        "status": "STALE" if stale else "CURRENT",
+        "expected_version": expected_version,
+        "actual_version": actual_version,
+        "next_action": "refresh" if stale else "continue",
+    }
+
+
+def partial_result_summary_contract(*, succeeded: list[str], failed: list[str], unresolved: list[str]) -> dict[str, Any]:
+    result_class = "PARTIAL" if failed or unresolved else "SUCCEEDED"
+    return {
+        "pattern": "PARTIAL_RESULT_SUMMARY",
+        "result_class": result_class,
+        "succeeded": succeeded,
+        "failed": failed,
+        "unresolved": unresolved,
+        "next_step": "review failures" if failed or unresolved else "continue",
+    }
