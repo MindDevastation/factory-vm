@@ -24,6 +24,8 @@ class TestE6Mf3S2ControlCenterOverview(unittest.TestCase):
             self.assertIn("Factory summary", html)
             self.assertIn("Attention summary", html)
             self.assertIn("Task routing", html)
+            self.assertIn("Attention routing", html)
+            self.assertIn("next destination", html)
             self.assertIn("Recent jobs overview (expand for table)", html)
 
 

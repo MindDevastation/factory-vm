@@ -34,6 +34,15 @@
   </p>
 </section>
 
+<section style="margin:0 0 18px 0;">
+  <h3>Attention routing</h3>
+  <ul style="margin:0 0 0 18px; padding:0;">
+    {% for item in attention_routes %}
+    <li><strong>{{ item.urgency }}</strong> — {{ item.why }} (scope: {{ item.scope }}) → <a href="{{ item.next }}">next destination</a></li>
+    {% endfor %}
+  </ul>
+</section>
+
 <h2>Channels</h2>
 <p>
   <button type="button" id="channel-add-btn">Add Channel (YouTube OAuth)</button>

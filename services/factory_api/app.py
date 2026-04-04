@@ -5480,9 +5480,23 @@ def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
             batch_month_summary={"batch_month_total": batch_month_total},
             task_routing=default_task_routing_contract(),
         )
+        attention_routes = [
+            {
+                "why": "Failed jobs require operator triage",
+                "scope": "publish_failed",
+                "urgency": "HIGH" if failed_total > 0 else "NORMAL",
+                "next": "/ui/publish/failed",
+            },
+            {
+                "why": "Planning drift can block upcoming batches",
+                "scope": "planning",
+                "urgency": "NORMAL",
+                "next": "/ui/planner",
+            },
+        ]
     finally:
         conn.close()
-    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs, "control_center": control_center})
+    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs, "control_center": control_center, "attention_routes": attention_routes})
 
 
 @app.get("/ui/ops/recovery", response_class=HTMLResponse)
