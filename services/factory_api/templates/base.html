@@ -30,6 +30,16 @@
     .muted { color: #6b7280; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     pre { background: #0b1020; color: #e5e7eb; padding: 12px; border-radius: 10px; overflow:auto;}
+    @media (max-width: 1024px) {
+      .shell-main { padding: 16px; }
+      th, td { padding: 8px; }
+    }
+    @media (max-width: 768px) {
+      .shell-header-inner { padding: 10px 12px; }
+      .shell-nav { padding: 0 12px 10px 12px; gap: 8px; }
+      .shell-nav a { font-size: 12px; padding: 4px 8px; }
+      table { display: block; overflow-x: auto; white-space: nowrap; }
+    }
   </style>
 </head>
 <body>
@@ -54,7 +64,8 @@
     {% set __semantic_contract = factory_semantic_contract_catalog() %}
     {% set __state_templates = factory_state_template_catalog() %}
     {% set __interaction_contract = factory_interaction_presentation_catalog() %}
-    <div class="shell-meta" data-route-ownership='{{ factory_route_ownership_map|tojson }}' data-context-token='{{ __ctx }}' data-incoming-context='{{ __incoming_ctx|tojson if __incoming_ctx is not none else "" }}' data-page-template='{{ __template_contract.template }}' data-page-template-contract='{{ __template_contract|tojson }}' data-semantic-contract='{{ __semantic_contract|tojson }}' data-state-templates='{{ __state_templates|tojson }}' data-interaction-contract='{{ __interaction_contract|tojson }}'></div>
+    {% set __density_responsive = factory_density_responsive_catalog() %}
+    <div class="shell-meta" data-route-ownership='{{ factory_route_ownership_map|tojson }}' data-context-token='{{ __ctx }}' data-incoming-context='{{ __incoming_ctx|tojson if __incoming_ctx is not none else "" }}' data-page-template='{{ __template_contract.template }}' data-page-template-contract='{{ __template_contract|tojson }}' data-semantic-contract='{{ __semantic_contract|tojson }}' data-state-templates='{{ __state_templates|tojson }}' data-interaction-contract='{{ __interaction_contract|tojson }}' data-density-responsive='{{ __density_responsive|tojson }}'></div>
     {% set __breadcrumb = factory_breadcrumb_context(current_path=__path) %}
     <div class="shell-breadcrumb" aria-label="Context trail">
       {% for crumb in __breadcrumb %}

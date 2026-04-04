@@ -47,6 +47,7 @@ from services.factory_api.context_continuity import build_context_envelope, enco
 from services.factory_api.ux_semantics import action_bar_semantics, filter_control_semantics, inline_message_semantics, readiness_indicator_semantics, severity_indicator_semantics, status_badge_semantics, table_list_semantics
 from services.factory_api.ui_state_templates import state_template_catalog
 from services.factory_api.interaction_presentation import interaction_presentation_contract_catalog
+from services.factory_api.density_responsive import density_responsive_catalog
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
@@ -163,6 +164,7 @@ def _semantic_contract_catalog() -> dict[str, Any]:
 templates.env.globals["factory_semantic_contract_catalog"] = _semantic_contract_catalog
 templates.env.globals["factory_state_template_catalog"] = state_template_catalog
 templates.env.globals["factory_interaction_presentation_catalog"] = interaction_presentation_contract_catalog
+templates.env.globals["factory_density_responsive_catalog"] = density_responsive_catalog
 
 # FastAPI/Starlette TemplateResponse expects (request, name, context, ...).
 # Keep compatibility with existing call sites that pass (name, context, ...).
