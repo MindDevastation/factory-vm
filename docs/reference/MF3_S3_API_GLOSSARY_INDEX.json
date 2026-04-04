@@ -1,0 +1,43 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF3-S3",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "reference_surfaces": [
+    {
+      "name": "runtime_api_behavior_truth",
+      "anchor": "services/factory_api/app.py"
+    },
+    {
+      "name": "workflow_contract_reference",
+      "anchor": "docs/workflows/MF2_S2_STAGE_CONTRACTS.md"
+    },
+    {
+      "name": "ops_operational_entry",
+      "anchor": "docs/ops/runbook/README.md"
+    },
+    {
+      "name": "documentation_status_governance",
+      "anchor": "docs/governance/MF6_S1_GOVERNANCE_STATUS_BASELINE.md"
+    },
+    {
+      "name": "ssot_ownership_registry",
+      "anchor": "docs/ssot/MF1_S3_SSOT_MAP.md"
+    }
+  ],
+  "glossary_alias_map": {
+    "CANONICAL": [
+      "ACTIVE_CANONICAL"
+    ],
+    "SUBORDINATE": [
+      "secondary",
+      "reference"
+    ],
+    "LEGACY_CANDIDATE": [
+      "legacy-doc-candidate"
+    ]
+  },
+  "constraints": {
+    "no_semantic_rewrite_via_naming": true,
+    "taxonomy_status_separation_required": true
+  }
+}
