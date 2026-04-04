@@ -5469,9 +5469,20 @@ def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
         jobs = dbm.list_jobs(conn, limit=200)
+        jobs_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"])
+        failed_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs WHERE UPPER(COALESCE(state,''))='FAILED'").fetchone()["c"])
+        channels_total = int(conn.execute("SELECT COUNT(*) AS c FROM channels").fetchone()["c"])
+        batch_month_total = int(conn.execute("SELECT COUNT(DISTINCT strftime('%Y-%m', COALESCE(planned_at,''))) AS c FROM releases WHERE planned_at IS NOT NULL").fetchone()["c"])
+        control_center = build_control_center_contract_skeleton(
+            factory_summary={"jobs_total": jobs_total},
+            attention_summary={"failed_jobs": failed_total},
+            channel_summary={"channels_total": channels_total, "active_channels": channels_total},
+            batch_month_summary={"batch_month_total": batch_month_total},
+            task_routing=default_task_routing_contract(),
+        )
     finally:
         conn.close()
-    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs})
+    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs, "control_center": control_center})
 
 
 @app.get("/ui/ops/recovery", response_class=HTMLResponse)

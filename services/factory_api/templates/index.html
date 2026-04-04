@@ -18,6 +18,22 @@
 </p>
 <p class="muted">Secondary surfaces: <a href="/ui/publish/blocked">Publish Blocked</a> · <a href="/ui/publish/manual">Publish Manual</a> · <a href="/ui/publish/health">Publish Health</a> · <a href="/ui/metadata/title-templates">Metadata · Title Templates</a> · <a href="/ui/track-catalog/custom-tags">TAGS</a> · <a href="/ui/track-catalog/analysis-report">Track Catalog · Analysis Report</a> · <a href="/ui/db-viewer">Database</a></p>
 
+<section style="margin:16px 0 20px 0;">
+  <h2>Control Center Overview</h2>
+  {% set cc = control_center %}
+  <div class="grid">
+    <div><strong>Factory summary</strong><div class="muted">Jobs total: {{ cc.factory_summary.jobs_total }}</div></div>
+    <div><strong>Attention summary</strong><div class="muted">Failed jobs: {{ cc.attention_summary.failed_jobs }}</div></div>
+    <div><strong>Channel summary</strong><div class="muted">Channels total: {{ cc.channel_summary.channels_total }}</div></div>
+    <div><strong>Batch/Month summary</strong><div class="muted">Active batches: {{ cc.batch_month_summary.batch_month_total }}</div></div>
+  </div>
+  <p style="margin-top:10px;"><strong>Task routing:</strong>
+  {% for route in cc.task_routing %}
+    <a href="{{ route.route }}">{{ route.intent }}</a>{% if not loop.last %} · {% endif %}
+  {% endfor %}
+  </p>
+</section>
+
 <h2>Channels</h2>
 <p>
   <button type="button" id="channel-add-btn">Add Channel (YouTube OAuth)</button>
@@ -93,6 +109,9 @@
   </tbody>
 </table>
 
+<details style="margin:12px 0;">
+  <summary><strong>Recent jobs overview (expand for table)</strong></summary>
+
 <p>
     <strong>Status filter:</strong>
     <details id="jobs-status-filter-dropdown" style="display:inline-block;position:relative;">
@@ -146,6 +165,7 @@
     {% endfor %}
   </tbody>
 </table>
+</details>
 
 <style>
   .row-failed {
