@@ -5930,6 +5930,13 @@ def ui_problem_readiness_page(request: Request, _: bool = Depends(require_basic_
     return templates.TemplateResponse("ui_problems_readiness.html", {"request": request, "surface": surface})
 
 
+@app.get("/v1/workspaces/catalog")
+def api_workspace_catalog(_: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import workspace_family_catalog
+
+    return workspace_family_catalog()
+
+
 @app.get("/v1/problems/readiness/contract")
 def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
     return {
