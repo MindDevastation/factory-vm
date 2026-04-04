@@ -46,6 +46,7 @@ def problem_readiness_item_contract(*, state: str, severity: str, primary_reason
             current_status=str(state or "").strip().upper(),
             next_direction=next_direction,
         ),
+        "routing_targets": [],
     }
 
 

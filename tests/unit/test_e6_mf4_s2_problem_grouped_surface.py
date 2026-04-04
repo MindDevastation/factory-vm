@@ -26,6 +26,7 @@ class TestE6Mf4S2ProblemGroupedSurface(unittest.TestCase):
         blockers = surface["groups"]["blockers"]
         self.assertEqual([item["job_id"] for item in blockers], [2, 1])
         self.assertEqual(surface["summary"]["stale"], 1)
+        self.assertEqual(blockers[0]["routing_targets"][0]["kind"], "entity_workspace")
 
     def test_grouped_endpoint_and_ui_page(self) -> None:
         with temp_env() as (_, env):

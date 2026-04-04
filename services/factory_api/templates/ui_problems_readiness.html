@@ -21,7 +21,7 @@
       <td>{{ item.severity }}</td>
       <td><strong>{{ item.explanation.primary_reason }}</strong><div class="muted">Supporting signals: {{ item.explanation.supporting_signals|join(', ') }}</div></td>
       <td>{{ item.explanation.current_status }}</td>
-      <td>{{ item.explanation.next_direction }}</td>
+      <td>{{ item.explanation.next_direction }}<div class="muted">{% for target in item.routing_targets %}<a href="{{ target.href }}">{{ target.kind }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</div></td>
     </tr>
     {% endfor %}
     {% if not items %}

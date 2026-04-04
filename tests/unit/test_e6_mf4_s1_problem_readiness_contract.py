@@ -33,6 +33,7 @@ class TestE6Mf4S1ProblemReadinessContract(unittest.TestCase):
         )
         self.assertEqual(item["problem_family"], "EXECUTION_FAILURE")
         self.assertIn("explanation", item)
+        self.assertIn("routing_targets", item)
 
     def test_problem_readiness_contract_endpoint(self) -> None:
         with temp_env() as (_, env):

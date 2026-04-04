@@ -40,6 +40,12 @@ def build_grouped_problem_surface(*, jobs: list[dict[str, Any]]) -> dict[str, An
             next_direction="open recovery workspace" if state in {"FAILED", "BLOCKED"} else "open publish workspace",
         )
         item["job_id"] = int(job.get("id") or 0)
+        item["routing_targets"] = [
+            {"kind": "entity_workspace", "href": f"/jobs/{item["job_id"]}"},
+            {"kind": "related_domain", "href": "/ui/publish/queue"},
+            {"kind": "action_flow", "href": "/ui/ops/recovery" if state in {"FAILED", "BLOCKED"} else "/ui/planner"},
+            {"kind": "detail_context", "href": f"/ui/publish/jobs/{item["job_id"]}"},
+        ]
         item["group"] = _group_for_state(state)
         item["severity"] = severity
         items.append(item)
