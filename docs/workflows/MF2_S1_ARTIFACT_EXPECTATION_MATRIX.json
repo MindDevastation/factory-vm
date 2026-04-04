@@ -1,0 +1,72 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF2-S1",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "workflow_structure": {
+    "canonical_artifact": "docs/workflows/MF2_S1_CANONICAL_WORKFLOW_STRUCTURE.md",
+    "next_contract_artifact": "docs/workflows/MF2_S2_STAGE_CONTRACTS.md"
+  },
+  "stage_order": [
+    "DISCOVERY",
+    "REQ",
+    "SPEC",
+    "DEV",
+    "REVIEW",
+    "QA"
+  ],
+  "artifact_expectation_matrix": [
+    {
+      "stage": "DISCOVERY",
+      "required_inputs": [],
+      "required_outputs": [],
+      "entry_gate": "skeleton",
+      "exit_gate": "skeleton",
+      "notes": "MF2-S1 skeleton only"
+    },
+    {
+      "stage": "REQ",
+      "required_inputs": [],
+      "required_outputs": [],
+      "entry_gate": "skeleton",
+      "exit_gate": "skeleton",
+      "notes": "MF2-S1 skeleton only"
+    },
+    {
+      "stage": "SPEC",
+      "required_inputs": [],
+      "required_outputs": [],
+      "entry_gate": "skeleton",
+      "exit_gate": "skeleton",
+      "notes": "MF2-S1 skeleton only"
+    },
+    {
+      "stage": "DEV",
+      "required_inputs": [],
+      "required_outputs": [],
+      "entry_gate": "skeleton",
+      "exit_gate": "skeleton",
+      "notes": "MF2-S1 skeleton only"
+    },
+    {
+      "stage": "REVIEW",
+      "required_inputs": [],
+      "required_outputs": [],
+      "entry_gate": "skeleton",
+      "exit_gate": "skeleton",
+      "notes": "MF2-S1 skeleton only"
+    },
+    {
+      "stage": "QA",
+      "required_inputs": [],
+      "required_outputs": [],
+      "entry_gate": "skeleton",
+      "exit_gate": "skeleton",
+      "notes": "MF2-S1 skeleton only"
+    }
+  ],
+  "cross_links": {
+    "ownership_map": "docs/ssot/MF1_S3_OWNERSHIP_MAP.md",
+    "ssot_map": "docs/ssot/MF1_S3_SSOT_MAP.md",
+    "gap_report": "docs/ssot/MF1_S4_COMPLETENESS_AND_GAP_REPORT.md"
+  }
+}
