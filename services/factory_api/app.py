@@ -5976,6 +5976,20 @@ def api_workspace_result_return(request: Request, _: bool = Depends(require_basi
     )
 
 
+@app.get("/v1/actions/contracts/preview-apply")
+def api_action_contract_preview_apply(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import preview_to_apply_contract
+
+    return preview_to_apply_contract(action=request.query_params.get("action", "retry"), preview_scope=request.query_params.get("scope", "job"))
+
+
+@app.get("/v1/actions/contracts/preview-confirm-execute")
+def api_action_contract_preview_confirm_execute(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import preview_confirm_execute_contract
+
+    return preview_confirm_execute_contract(action=request.query_params.get("action", "cancel"), preview_scope=request.query_params.get("scope", "job"))
+
+
 @app.get("/v1/problems/readiness/contract")
 def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
     return {
