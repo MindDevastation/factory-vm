@@ -1,0 +1,17 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF4-S2",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "guides": [
+    "docs/guides/MF4_S2_PLANNER_GUIDE.md",
+    "docs/guides/MF4_S2_PUBLISH_MANUAL_HANDOFF_GUIDE.md",
+    "docs/guides/MF4_S2_VISUAL_WORKFLOW_GUIDE.md",
+    "docs/guides/MF4_S2_ANALYTICS_CENTER_GUIDE.md"
+  ],
+  "mode_taxonomy_required": ["READ", "ACTION", "RISKY_ACTION"],
+  "constraints": {
+    "task_oriented": true,
+    "no_low_level_api_duplication": true,
+    "no_deep_ops_recovery_content": true
+  }
+}
