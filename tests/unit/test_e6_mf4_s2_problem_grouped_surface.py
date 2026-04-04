@@ -42,6 +42,7 @@ class TestE6Mf4S2ProblemGroupedSurface(unittest.TestCase):
             self.assertIn("groups", payload)
             html = client.get("/ui/problems/readiness", headers=h).text
             self.assertIn("Problems & Readiness", html)
+            self.assertIn("Current status", html)
 
 
 if __name__ == "__main__":

@@ -12,19 +12,20 @@
 {% for group_name, items in surface.groups.items() %}
 <h2 style="margin-top:16px; text-transform:capitalize;">{{ group_name }}</h2>
 <table>
-  <thead><tr><th>Job</th><th>State</th><th>Severity</th><th>Reason</th><th>Next direction</th></tr></thead>
+  <thead><tr><th>Job</th><th>State</th><th>Severity</th><th>Explanation</th><th>Current status</th><th>Next direction</th></tr></thead>
   <tbody>
     {% for item in items %}
     <tr>
       <td><a href="/jobs/{{ item.job_id }}">{{ item.job_id }}</a></td>
       <td>{{ item.readiness_state }}</td>
       <td>{{ item.severity }}</td>
-      <td>{{ item.explanation.primary_reason }}</td>
+      <td><strong>{{ item.explanation.primary_reason }}</strong><div class="muted">Supporting signals: {{ item.explanation.supporting_signals|join(', ') }}</div></td>
+      <td>{{ item.explanation.current_status }}</td>
       <td>{{ item.explanation.next_direction }}</td>
     </tr>
     {% endfor %}
     {% if not items %}
-    <tr><td colspan="5" class="muted">No items in this group.</td></tr>
+    <tr><td colspan="6" class="muted">No items in this group.</td></tr>
     {% endif %}
   </tbody>
 </table>
