@@ -1,0 +1,1416 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF1-S3",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "inventory_contract_fields": [
+    "artifact_path",
+    "title_or_label",
+    "doc_class",
+    "owner_team",
+    "owner_role",
+    "canonical_status",
+    "topic_domain_workflow_coverage",
+    "canonical_for",
+    "related_canonical_source",
+    "notes"
+  ],
+  "records": [
+    {
+      "artifact_path": "docs/BACKUP_RESTORE_PR300_HANDOFF.md",
+      "title_or_label": "BACKUP_RESTORE_PR300_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/CTA_S7_HANDOFF_ROW_EXAMPLE.md",
+      "title_or_label": "CTA_S7_HANDOFF_ROW_EXAMPLE.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/CTUX_S10_PR244_HANDOFF.md",
+      "title_or_label": "CTUX_S10_PR244_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/CTUX_S11_PR247_HANDOFF.md",
+      "title_or_label": "CTUX_S11_PR247_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/CTUX_S4_PR226_HANDOFF.md",
+      "title_or_label": "CTUX_S4_PR226_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/CTUX_S6_HANDOFF_PREVIEW_CONFIRM.md",
+      "title_or_label": "CTUX_S6_HANDOFF_PREVIEW_CONFIRM.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/CTUX_S7_PR234_HANDOFF.md",
+      "title_or_label": "CTUX_S7_PR234_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/CTUX_S8_HANDOFF_P1_RESPONSES.md",
+      "title_or_label": "CTUX_S8_HANDOFF_P1_RESPONSES.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/CTUX_S9_HANDOFF_P1_UI_HELP_REVIEW.md",
+      "title_or_label": "CTUX_S9_HANDOFF_P1_UI_HELP_REVIEW.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/E6A_FINAL_EVIDENCE_AUDIT_2026-04-03.md",
+      "title_or_label": "E6A_FINAL_EVIDENCE_AUDIT_2026-04-03.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "audit"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/EPIC3_MF3_MF6_PREFLIGHT_AUDIT_2026-04-02.md",
+      "title_or_label": "EPIC3_MF3_MF6_PREFLIGHT_AUDIT_2026-04-02.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "audit"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/EPIC3_PUBLISH_POLICY_ENGINE_CONTRACT_FREEZE.md",
+      "title_or_label": "EPIC3_PUBLISH_POLICY_ENGINE_CONTRACT_FREEZE.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/FVR_S10_PR215_HANDOFF.md",
+      "title_or_label": "FVR_S10_PR215_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/FVR_S11_PR221_HANDOFF.md",
+      "title_or_label": "FVR_S11_PR221_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/FVR_S2_FOLLOWUP_HANDOFF_ROW_SUMMARY.md",
+      "title_or_label": "FVR_S2_FOLLOWUP_HANDOFF_ROW_SUMMARY.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/FVR_S6_FOLLOWUP_HANDOFF_SEED_ROUNDTRIP.md",
+      "title_or_label": "FVR_S6_FOLLOWUP_HANDOFF_SEED_ROUNDTRIP.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/LAUNCH_GUIDE.md",
+      "title_or_label": "LAUNCH_GUIDE.md",
+      "doc_class": "GUIDE",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/LOCAL_DEBUG.md",
+      "title_or_label": "LOCAL_DEBUG.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/P0_S2_CANONICAL_REVIEW_REFERENCE.md",
+      "title_or_label": "P0_S2_CANONICAL_REVIEW_REFERENCE.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P0_PR256_HANDOFF.md",
+      "title_or_label": "PLAYLIST_BUILDER_P0_PR256_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P1_PR259_HANDOFF.md",
+      "title_or_label": "PLAYLIST_BUILDER_P1_PR259_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P2_PR262_HANDOFF.md",
+      "title_or_label": "PLAYLIST_BUILDER_P2_PR262_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P3_PR265_HANDOFF.md",
+      "title_or_label": "PLAYLIST_BUILDER_P3_PR265_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P4_PR268_HANDOFF.md",
+      "title_or_label": "PLAYLIST_BUILDER_P4_PR268_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P5_PR271_HANDOFF.md",
+      "title_or_label": "PLAYLIST_BUILDER_P5_PR271_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P6_PR272_HANDOFF.md",
+      "title_or_label": "PLAYLIST_BUILDER_P6_PR272_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P7_PR274_HANDOFF.md",
+      "title_or_label": "PLAYLIST_BUILDER_P7_PR274_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P8_PR276_HANDOFF.md",
+      "title_or_label": "PLAYLIST_BUILDER_P8_PR276_HANDOFF.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "handoff"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_SPEC_REMEDIATION_BACKFILL.md",
+      "title_or_label": "PLAYLIST_BUILDER_SPEC_REMEDIATION_BACKFILL.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/POSTGRES_PLAN.md",
+      "title_or_label": "POSTGRES_PLAN.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/REQ_Epic_6A_Full_Pack.txt",
+      "title_or_label": "REQ_Epic_6A_Full_Pack.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/REQ_Epic_6_Full_Pack.txt",
+      "title_or_label": "REQ_Epic_6_Full_Pack.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/SPEC_OPS_BACKUP_RESTORE_v1.0_FINAL_ACCEPTANCE.md",
+      "title_or_label": "SPEC_OPS_BACKUP_RESTORE_v1.0_FINAL_ACCEPTANCE.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/TRACK_ANALYZER_OUTPUT.md",
+      "title_or_label": "TRACK_ANALYZER_OUTPUT.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/TZ_v9.md",
+      "title_or_label": "TZ_v9.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ctux_s2_smoke.md",
+      "title_or_label": "ctux_s2_smoke.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/e6a_slice_commit_index.md",
+      "title_or_label": "e6a_slice_commit_index.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/e6a_spec_traceability_matrix.md",
+      "title_or_label": "e6a_spec_traceability_matrix.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/epics/README.md",
+      "title_or_label": "README.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/epics/epic5-visual-automation-pack.md",
+      "title_or_label": "epic5-visual-automation-pack.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/epics/epic5a-analytics-center.md",
+      "title_or_label": "epic5a-analytics-center.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/backup_restore.md",
+      "title_or_label": "backup_restore.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/logging_retention.md",
+      "title_or_label": "logging_retention.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/production_smoke.md",
+      "title_or_label": "production_smoke.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/README.md",
+      "title_or_label": "README.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "Operations",
+      "owner_role": "On-call Maintainer",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [
+        "ops/production-entry"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/daily_checks.md",
+      "title_or_label": "daily_checks.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/initial_setup_and_launch.md",
+      "title_or_label": "initial_setup_and_launch.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "Operations",
+      "owner_role": "Deployment Operator",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [
+        "ops/initial-launch"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/monthly_batch_workflow.md",
+      "title_or_label": "monthly_batch_workflow.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/api_not_responding.md",
+      "title_or_label": "api_not_responding.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/api_unhealthy.md",
+      "title_or_label": "api_unhealthy.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/backup_restore_verification_failure.md",
+      "title_or_label": "backup_restore_verification_failure.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/disk_pressure_retention.md",
+      "title_or_label": "disk_pressure_retention.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/low_disk_space.md",
+      "title_or_label": "low_disk_space.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/repeated_job_failures.md",
+      "title_or_label": "repeated_job_failures.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/smoke_check_failure.md",
+      "title_or_label": "smoke_check_failure.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/stale_or_stuck_jobs.md",
+      "title_or_label": "stale_or_stuck_jobs.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/token_or_integration_readiness_problem.md",
+      "title_or_label": "token_or_integration_readiness_problem.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/worker_heartbeat_missing.md",
+      "title_or_label": "worker_heartbeat_missing.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/worker_stalled.md",
+      "title_or_label": "worker_stalled.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/post_deploy_verification.md",
+      "title_or_label": "post_deploy_verification.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "Operations",
+      "owner_role": "Deployment Operator",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [
+        "ops/post-deploy-verification"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/post_reboot_verification.md",
+      "title_or_label": "post_reboot_verification.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "Operations",
+      "owner_role": "On-call Maintainer",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [
+        "ops/post-reboot-verification"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/post_restore_verification.md",
+      "title_or_label": "post_restore_verification.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "Operations",
+      "owner_role": "Recovery Operator",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [
+        "ops/post-restore-verification"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/recovery_console.md",
+      "title_or_label": "recovery_console.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/after_deploy.md",
+      "title_or_label": "after_deploy.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/after_reboot.md",
+      "title_or_label": "after_reboot.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/after_restore.md",
+      "title_or_label": "after_restore.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/backup_and_restore_cli.md",
+      "title_or_label": "backup_and_restore_cli.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/before_batch_run.md",
+      "title_or_label": "before_batch_run.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/before_risky_maintenance.md",
+      "title_or_label": "before_risky_maintenance.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/preflight_environment.md",
+      "title_or_label": "preflight_environment.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/service_control_and_logs.md",
+      "title_or_label": "service_control_and_logs.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/when_disk_warning_triggers.md",
+      "title_or_label": "when_disk_warning_triggers.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/when_failed_or_stale_jobs_accumulate.md",
+      "title_or_label": "when_failed_or_stale_jobs_accumulate.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/when_smoke_fails.md",
+      "title_or_label": "when_smoke_fails.md",
+      "doc_class": "RUNBOOK",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "ops",
+        "runbook"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/req/REQ_Epic_6A_Full_Pack.txt",
+      "title_or_label": "REQ_Epic_6A_Full_Pack.txt",
+      "doc_class": "NORMATIVE_PRODUCT_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "requirements"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/req/REQ_Epic_6_Full_Pack.txt",
+      "title_or_label": "REQ_Epic_6_Full_Pack.txt",
+      "doc_class": "NORMATIVE_PRODUCT_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "requirements"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/req/REQ_Epic_7_Full_Pack.txt",
+      "title_or_label": "REQ_Epic_7_Full_Pack.txt",
+      "doc_class": "NORMATIVE_PRODUCT_DOC",
+      "owner_team": "Documentation Governance",
+      "owner_role": "Requirement Custodian",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "requirements"
+      ],
+      "canonical_for": [
+        "epic7/requirements"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/scaling_channels.md",
+      "title_or_label": "scaling_channels.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/spec/EPIC_6A_SPEC_BUNDLE_v1.0.txt",
+      "title_or_label": "EPIC_6A_SPEC_BUNDLE_v1.0.txt",
+      "doc_class": "NORMATIVE_PRODUCT_DOC",
+      "owner_team": "Documentation Governance",
+      "owner_role": "Spec Custodian",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "spec"
+      ],
+      "canonical_for": [
+        "epic6a/specification"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/spec/EPIC_6_SPEC_BUNDLE_v1.1.txt",
+      "title_or_label": "EPIC_6_SPEC_BUNDLE_v1.1.txt",
+      "doc_class": "NORMATIVE_PRODUCT_DOC",
+      "owner_team": "Documentation Governance",
+      "owner_role": "Spec Custodian",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "spec"
+      ],
+      "canonical_for": [
+        "epic6/specification"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+      "title_or_label": "EPIC_7_SPEC_BUNDLE_v1.1.txt",
+      "doc_class": "NORMATIVE_PRODUCT_DOC",
+      "owner_team": "Documentation Governance",
+      "owner_role": "Spec Custodian",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "spec"
+      ],
+      "canonical_for": [
+        "epic7/specification"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "docs/ssot/MF1_S1_DISCOVERY_AND_SCOPE_RULES.md",
+      "title_or_label": "MF1_S1_DISCOVERY_AND_SCOPE_RULES.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": ".qa_api_tail200.txt",
+      "title_or_label": ".qa_api_tail200.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": ".qa_report.md",
+      "title_or_label": ".qa_report.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": ".qa_texture_summary.txt",
+      "title_or_label": ".qa_texture_summary.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": ".qa_worker_tail.txt",
+      "title_or_label": ".qa_worker_tail.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": ".qa_worker_tail400.txt",
+      "title_or_label": ".qa_worker_tail400.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "AGENTS.md",
+      "title_or_label": "AGENTS.md",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "LOCAL_SETUP_WINDOWS.md",
+      "title_or_label": "LOCAL_SETUP_WINDOWS.md",
+      "doc_class": "GUIDE",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "README.md",
+      "title_or_label": "README.md",
+      "doc_class": "GUIDE",
+      "owner_team": "Platform Backend",
+      "owner_role": "Runtime Maintainer",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "project-entry"
+      ],
+      "canonical_for": [
+        "project/runtime-entry"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "TESTING.md",
+      "title_or_label": "TESTING.md",
+      "doc_class": "WORKFLOW_DOC",
+      "owner_team": "QA Engineering",
+      "owner_role": "Test Process Owner",
+      "canonical_status": "CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "qa",
+        "testing"
+      ],
+      "canonical_for": [
+        "qa/test-execution"
+      ],
+      "related_canonical_source": "self",
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "requirements-all.txt",
+      "title_or_label": "requirements-all.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "requirements-dev.txt",
+      "title_or_label": "requirements-dev.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "requirements-whisper.txt",
+      "title_or_label": "requirements-whisper.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "requirements-yamnet.txt",
+      "title_or_label": "requirements-yamnet.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    },
+    {
+      "artifact_path": "requirements.txt",
+      "title_or_label": "requirements.txt",
+      "doc_class": "REFERENCE_DOC",
+      "owner_team": "TBD",
+      "owner_role": "TBD",
+      "canonical_status": "NON_CANONICAL",
+      "topic_domain_workflow_coverage": [
+        "reference"
+      ],
+      "canonical_for": [],
+      "related_canonical_source": null,
+      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+    }
+  ]
+}
