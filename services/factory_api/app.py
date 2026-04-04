@@ -5953,6 +5953,18 @@ def api_workspace_drilldown(family: str, entity_id: str, request: Request, _: bo
     )
 
 
+@app.get("/v1/workspaces/task-continuity")
+def api_workspace_task_continuity(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import task_continuity_contract
+
+    return task_continuity_contract(
+        parent_context_ref=request.query_params.get("parent", "control_center"),
+        filters={"status": request.query_params.get("status", "all")},
+        scope=request.query_params.get("scope", "job"),
+        result_return_path=request.query_params.get("return_path", "/"),
+    )
+
+
 @app.get("/v1/problems/readiness/contract")
 def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
     return {

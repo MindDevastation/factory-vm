@@ -36,3 +36,13 @@ def entity_drilldown_contract(*, entry_context: str, scope: str, related_context
         "open_full_context_path": str(open_full_context_path),
         "preserves_parent_identity": True,
     }
+
+
+def task_continuity_contract(*, parent_context_ref: str, filters: dict[str, str], scope: str, result_return_path: str) -> dict[str, Any]:
+    return {
+        "parent_context_ref": str(parent_context_ref),
+        "filters": {str(k): str(v) for k, v in filters.items()},
+        "current_scope": str(scope),
+        "result_return_path": str(result_return_path),
+        "restorable": True,
+    }
