@@ -1,0 +1,31 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF3-S2",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "documentation_status_literals": [
+    "CANONICAL",
+    "SUBORDINATE",
+    "NON_CANONICAL",
+    "LEGACY_CANDIDATE",
+    "DEPRECATED",
+    "ARCHIVED"
+  ],
+  "workflow_stage_lifecycle": [
+    "DISCOVERY",
+    "REQ",
+    "SPEC",
+    "DEV",
+    "REVIEW",
+    "QA"
+  ],
+  "boundary_notes": {
+    "documentation_status_scope": "documentation_artifacts",
+    "workflow_stage_scope": "process_stage_artifacts",
+    "runtime_job_states_out_of_scope": true
+  },
+  "cross_links": {
+    "mf6_s1_status_baseline": "docs/governance/MF6_S1_GOVERNANCE_STATUS_BASELINE.md",
+    "mf2_stage_contracts": "docs/workflows/MF2_S2_STAGE_CONTRACTS.md",
+    "mf1_status_schema": "docs/ssot/MF1_S2_TAXONOMY_STATUS_OWNERSHIP_SCHEMA.md"
+  }
+}
