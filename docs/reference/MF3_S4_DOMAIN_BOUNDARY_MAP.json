@@ -1,0 +1,58 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF3-S4",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "boundary_map": [
+    {
+      "boundary": "governance_ssot_vs_workflow_contracts",
+      "primary_side": [
+        "docs/governance/*",
+        "docs/ssot/*"
+      ],
+      "secondary_side": [
+        "docs/workflows/*"
+      ],
+      "decision": "governance_ssot_define_policy_workflow_consumes_via_crosslink"
+    },
+    {
+      "boundary": "workflow_contracts_vs_operator_guides",
+      "primary_side": [
+        "docs/workflows/*"
+      ],
+      "secondary_side": [
+        "docs/guides/*"
+      ],
+      "decision": "workflow_normative_process_guides_task_usage"
+    },
+    {
+      "boundary": "workflow_contracts_vs_ops_runbooks",
+      "primary_side": [
+        "docs/workflows/*"
+      ],
+      "secondary_side": [
+        "docs/ops/runbook/*"
+      ],
+      "decision": "workflow_contracts_vs_execution_playbooks"
+    },
+    {
+      "boundary": "reference_docs_vs_runtime_code_truth",
+      "primary_side": [
+        "services/factory_api/app.py"
+      ],
+      "secondary_side": [
+        "docs/reference/*"
+      ],
+      "decision": "runtime_truth_prevails_reference_aligns"
+    }
+  ],
+  "conflict_resolution_notes": [
+    "subordinate_main_workflow_claims_remain_noncanonical",
+    "reference_docs_must_not_absorb_procedural_howto_content",
+    "legacy_status_aliases_traceable_but_noncanonical"
+  ],
+  "cross_links": {
+    "mf1_ssot": "docs/ssot/MF1_S3_SSOT_MAP.md",
+    "mf2_workflow": "docs/workflows/MF2_S1_CANONICAL_WORKFLOW_STRUCTURE.md",
+    "mf3_reference": "docs/reference/MF3_S3_API_REFERENCE_SURFACE.md"
+  }
+}
