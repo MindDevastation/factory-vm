@@ -9,6 +9,7 @@ from services.factory_api.problem_readiness_contracts import (
     attention_class_for_severity,
     problem_family_for_state,
     problem_readiness_item_contract,
+    readiness_indicator_for_state,
 )
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
@@ -20,18 +21,21 @@ class TestE6Mf4S1ProblemReadinessContract(unittest.TestCase):
         return TestClient(mod.app)
 
     def test_problem_family_and_attention_mapping(self) -> None:
-        self.assertEqual(problem_family_for_state(state="FAILED"), "EXECUTION_FAILURE")
-        self.assertEqual(attention_class_for_severity(severity="HIGH"), "PRIORITY")
+        self.assertEqual(problem_family_for_state(state="FAILED"), "BLOCKER")
+        self.assertEqual(attention_class_for_severity(severity="BLOCKING"), "BLOCKING")
+        self.assertEqual(readiness_indicator_for_state(state="STALE"), "DEGRADED")
 
     def test_problem_item_contract_shape(self) -> None:
         item = problem_readiness_item_contract(
             state="FAILED",
-            severity="HIGH",
+            severity="BLOCKING",
             primary_reason="x",
             supporting_signals=["a", "b"],
             next_direction="open workspace",
         )
-        self.assertEqual(item["problem_family"], "EXECUTION_FAILURE")
+        self.assertEqual(item["problem_family"], "BLOCKER")
+        self.assertEqual(item["severity_priority"], "BLOCKING")
+        self.assertIn("readiness_indicator", item)
         self.assertIn("explanation", item)
         self.assertIn("routing_targets", item)
 

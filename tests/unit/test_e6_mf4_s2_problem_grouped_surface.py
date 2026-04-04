@@ -26,7 +26,7 @@ class TestE6Mf4S2ProblemGroupedSurface(unittest.TestCase):
         blockers = surface["groups"]["blockers"]
         self.assertEqual([item["job_id"] for item in blockers], [2, 1])
         self.assertEqual(surface["summary"]["stale"], 1)
-        self.assertEqual(blockers[0]["routing_targets"][0]["kind"], "entity_workspace")
+        self.assertEqual(blockers[0]["routing_targets"][0]["kind"], "open_entity_workspace")
 
     def test_grouped_endpoint_and_ui_page(self) -> None:
         with temp_env() as (_, env):
@@ -43,7 +43,8 @@ class TestE6Mf4S2ProblemGroupedSurface(unittest.TestCase):
             self.assertIn("groups", payload)
             html = client.get("/ui/problems/readiness", headers=h).text
             self.assertIn("Problems & Readiness", html)
-            self.assertIn("Current status", html)
+            self.assertIn("Severity/Priority", html)
+            self.assertIn("Readiness", html)
 
 
 if __name__ == "__main__":

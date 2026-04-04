@@ -156,7 +156,7 @@ templates.env.globals["factory_incoming_context_for_request"] = _incoming_contex
 def _semantic_contract_catalog() -> dict[str, Any]:
     return {
         "status_badge": status_badge_semantics(status="DRAFT"),
-        "severity_indicator": severity_indicator_semantics(severity="HIGH"),
+        "severity_indicator": severity_indicator_semantics(severity="BLOCKING"),
         "readiness_indicator": readiness_indicator_semantics(readiness="NOT_READY"),
         "inline_message": inline_message_semantics(level="WARNING", text="sample"),
         "action_bar": action_bar_semantics(actions=[{"action": "refresh", "kind": "PRIMARY"}]),
@@ -6077,7 +6077,7 @@ def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
         "catalog": problem_readiness_contract_catalog(),
         "sample": problem_readiness_item_contract(
             state="FAILED",
-            severity="HIGH",
+            severity="BLOCKING",
             primary_reason="render watchdog detected non-growing output",
             supporting_signals=["ffmpeg stderr anomaly", "output size unchanged"],
             next_direction="open recovery workspace",
