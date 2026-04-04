@@ -27,6 +27,21 @@ class TestE6Mf3S2ControlCenterOverview(unittest.TestCase):
             self.assertIn("Attention routing", html)
             self.assertIn("next destination", html)
             self.assertIn("Recent jobs overview (expand for table)", html)
+            self.assertIn("Continue current work", html)
+            self.assertIn("Recently changed", html)
+
+
+    def test_dashboard_shows_return_to_context_when_token_valid(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            seed = client.get("/ui/planner", headers=h)
+            self.assertEqual(seed.status_code, 200)
+            marker = "data-context-token='"
+            token = seed.text.split(marker, 1)[1].split("'", 1)[0]
+            html = client.get(f"/?ctx={token}", headers=h).text
+            self.assertIn("Return to previous context", html)
 
 
 if __name__ == "__main__":

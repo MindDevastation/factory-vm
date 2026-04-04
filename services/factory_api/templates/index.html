@@ -43,6 +43,24 @@
   </ul>
 </section>
 
+<section style="margin:0 0 18px 0;">
+  <h3>Continue current work</h3>
+  {% if return_to_context %}
+    <p><a href="{{ return_to_context.path }}?ctx={{ return_to_context.token|urlencode }}">{{ return_to_context.label }}</a></p>
+  {% else %}
+    <p class="muted">No previous context token detected for this session.</p>
+  {% endif %}
+  <p><strong>Recently changed</strong></p>
+  <ul style="margin:0 0 0 18px; padding:0;">
+    {% for item in recent_changes %}
+    <li><a href="{{ item.route }}">job {{ item.job_id }}</a> · {{ item.state }} · <span class="muted">{{ item.updated_at }}</span></li>
+    {% endfor %}
+    {% if not recent_changes %}
+    <li class="muted">No recent changes available.</li>
+    {% endif %}
+  </ul>
+</section>
+
 <h2>Channels</h2>
 <p>
   <button type="button" id="channel-add-btn">Add Channel (YouTube OAuth)</button>

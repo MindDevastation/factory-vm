@@ -5494,9 +5494,28 @@ def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
                 "next": "/ui/planner",
             },
         ]
+        recent_changes = [
+            {
+                "job_id": int(j.get("id") or 0),
+                "state": str(j.get("state") or ""),
+                "updated_at": str(j.get("updated_at") or ""),
+                "route": f"/jobs/{int(j.get('id') or 0)}",
+            }
+            for j in jobs[:5]
+            if j.get("id") is not None
+        ]
+        token = str(request.query_params.get("ctx") or "").strip() or None
+        incoming = resolve_incoming_context(token=token, known_paths=set(route_ownership_map().keys()))
+        return_to_context = None
+        if incoming is not None:
+            return_to_context = {
+                "path": incoming.current_path,
+                "token": token,
+                "label": "Return to previous context",
+            }
     finally:
         conn.close()
-    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs, "control_center": control_center, "attention_routes": attention_routes})
+    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs, "control_center": control_center, "attention_routes": attention_routes, "recent_changes": recent_changes, "return_to_context": return_to_context})
 
 
 @app.get("/ui/ops/recovery", response_class=HTMLResponse)
