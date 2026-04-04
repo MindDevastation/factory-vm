@@ -6008,6 +6008,17 @@ def api_action_contract_partial_result(request: Request, _: bool = Depends(requi
     )
 
 
+@app.get("/v1/actions/contracts/batch-preview-execute")
+def api_action_contract_batch_preview_execute(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import batch_preview_execute_contract
+
+    return batch_preview_execute_contract(
+        targets=[v for v in request.query_params.get("targets", "").split(",") if v],
+        action=request.query_params.get("action", "batch_execute"),
+        requires_preview=request.query_params.get("requires_preview", "1") != "0",
+    )
+
+
 @app.get("/v1/problems/readiness/contract")
 def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
     return {

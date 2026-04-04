@@ -69,3 +69,16 @@ def partial_result_summary_contract(*, succeeded: list[str], failed: list[str], 
         "unresolved": unresolved,
         "next_step": "review failures" if failed or unresolved else "continue",
     }
+
+
+def batch_preview_execute_contract(*, targets: list[str], action: str, requires_preview: bool = True) -> dict[str, Any]:
+    return {
+        "action_class": "BATCH_MUTATE",
+        "pattern": "BATCH_PREVIEW_CONFIRM_EXECUTE",
+        "action": str(action),
+        "target_count": len(targets),
+        "targets": targets,
+        "requires_preview": bool(requires_preview),
+        "requires_confirm": True,
+        "no_silent_overwrite": True,
+    }
