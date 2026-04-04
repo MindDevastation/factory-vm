@@ -41,6 +41,7 @@ from services.factory_api.publish_bulk_actions import create_publish_bulk_action
 from services.factory_api.publish_queue_read import create_publish_queue_read_router
 from services.factory_api.publish_reconcile import create_publish_reconcile_router
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
+from services.factory_api.ux_registry import breadcrumb_context, control_center_entry, primary_nav_items, route_ownership_map
 from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
 from services.planner import background_assignment_service
 from services.planner import cover_assignment_service
@@ -109,6 +110,11 @@ logger = logging.getLogger(__name__)
 _render_all_channel_slug: ContextVar[Optional[str]] = ContextVar("render_all_channel_slug", default=None)
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+templates.env.globals["factory_route_ownership_map"] = route_ownership_map()
+templates.env.globals["factory_control_center_entry"] = control_center_entry()
+templates.env.globals["factory_primary_nav_items"] = primary_nav_items
+templates.env.globals["factory_breadcrumb_context"] = breadcrumb_context
 
 # FastAPI/Starlette TemplateResponse expects (request, name, context, ...).
 # Keep compatibility with existing call sites that pass (name, context, ...).
