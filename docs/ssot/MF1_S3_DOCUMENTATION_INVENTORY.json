@@ -21,13 +21,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/CTA_S7_HANDOFF_ROW_EXAMPLE.md",
@@ -35,13 +35,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/CTUX_S10_PR244_HANDOFF.md",
@@ -49,13 +49,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/CTUX_S11_PR247_HANDOFF.md",
@@ -63,13 +63,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/CTUX_S4_PR226_HANDOFF.md",
@@ -77,13 +77,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/CTUX_S6_HANDOFF_PREVIEW_CONFIRM.md",
@@ -91,13 +91,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/CTUX_S7_PR234_HANDOFF.md",
@@ -105,13 +105,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/CTUX_S8_HANDOFF_P1_RESPONSES.md",
@@ -119,13 +119,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/CTUX_S9_HANDOFF_P1_UI_HELP_REVIEW.md",
@@ -133,13 +133,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/E6A_FINAL_EVIDENCE_AUDIT_2026-04-03.md",
@@ -147,13 +147,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "audit"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/EPIC3_MF3_MF6_PREFLIGHT_AUDIT_2026-04-02.md",
@@ -161,13 +161,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "audit"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/EPIC3_PUBLISH_POLICY_ENGINE_CONTRACT_FREEZE.md",
@@ -189,13 +189,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/FVR_S11_PR221_HANDOFF.md",
@@ -203,13 +203,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/FVR_S2_FOLLOWUP_HANDOFF_ROW_SUMMARY.md",
@@ -217,13 +217,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/FVR_S6_FOLLOWUP_HANDOFF_SEED_ROUNDTRIP.md",
@@ -231,13 +231,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/LAUNCH_GUIDE.md",
@@ -287,13 +287,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/PLAYLIST_BUILDER_P1_PR259_HANDOFF.md",
@@ -301,13 +301,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/PLAYLIST_BUILDER_P2_PR262_HANDOFF.md",
@@ -315,13 +315,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/PLAYLIST_BUILDER_P3_PR265_HANDOFF.md",
@@ -329,13 +329,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/PLAYLIST_BUILDER_P4_PR268_HANDOFF.md",
@@ -343,13 +343,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/PLAYLIST_BUILDER_P5_PR271_HANDOFF.md",
@@ -357,13 +357,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/PLAYLIST_BUILDER_P6_PR272_HANDOFF.md",
@@ -371,13 +371,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/PLAYLIST_BUILDER_P7_PR274_HANDOFF.md",
@@ -385,13 +385,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/PLAYLIST_BUILDER_P8_PR276_HANDOFF.md",
@@ -399,13 +399,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "handoff"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/PLAYLIST_BUILDER_SPEC_REMEDIATION_BACKFILL.md",
@@ -413,13 +413,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "reference"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/POSTGRES_PLAN.md",
@@ -525,13 +525,13 @@
       "doc_class": "REFERENCE_DOC",
       "owner_team": "TBD",
       "owner_role": "TBD",
-      "canonical_status": "NON_CANONICAL",
+      "canonical_status": "LEGACY_CANDIDATE",
       "topic_domain_workflow_coverage": [
         "reference"
       ],
       "canonical_for": [],
-      "related_canonical_source": null,
-      "notes": "MF1-S3 initial assignment; non-canonical ownership may be refined in later slices."
+      "related_canonical_source": "docs/ssot/MF1_S3_SSOT_MAP.md",
+      "notes": "MF1-S4 legacy/deprecation candidate; retained explicitly (not deleted)."
     },
     {
       "artifact_path": "docs/e6a_spec_traceability_matrix.md",
