@@ -26,6 +26,11 @@ class TestE6Mf6S2SharedMutatePatterns(unittest.TestCase):
         self.assertEqual(preview_confirm_execute_contract(action="approve", preview_scope="job:7")["pattern"], "PREVIEW_TO_CONFIRM_TO_EXECUTE")
         self.assertEqual(direct_mutate_with_confirmation_contract(action="cancel", target_scope="job:7")["pattern"], "DIRECT_MUTATE_WITH_CONFIRMATION")
 
+
+    def test_taxonomy_consistency_between_modules(self) -> None:
+        self.assertEqual(canonical_action_class_for_action(action="approve"), "GUARDED_MUTATE")
+        self.assertEqual(canonical_action_class_for_action(action="batch_execute"), "BATCH_MUTATE")
+
     def test_pattern_endpoints(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)

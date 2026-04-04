@@ -36,5 +36,14 @@ class TestE6Mf5S2EntityDrilldown(unittest.TestCase):
             self.assertIn("JOB_WORKSPACE", payload["current_entity_scope"])
 
 
+
+    def test_entity_drilldown_endpoint_not_found(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.get("/v1/workspaces/job/999999/drilldown", headers=h)
+            self.assertEqual(resp.status_code, 404)
+
 if __name__ == "__main__":
     unittest.main()

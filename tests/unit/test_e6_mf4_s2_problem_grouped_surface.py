@@ -47,5 +47,15 @@ class TestE6Mf4S2ProblemGroupedSurface(unittest.TestCase):
             self.assertIn("Readiness", html)
 
 
+
+    def test_grouped_items_expose_all_required_routing_targets(self) -> None:
+        surface = build_grouped_problem_surface(jobs=[{"id": 9, "state": "FAILED", "stage": "RENDER", "error_reason": "x"}])
+        item = surface["groups"]["blockers"][0]
+        kinds = {target["kind"] for target in item["routing_targets"]}
+        self.assertEqual(
+            kinds,
+            {"open_entity_workspace", "open_related_domain_page", "open_action_flow", "open_detail_context"},
+        )
+
 if __name__ == "__main__":
     unittest.main()
