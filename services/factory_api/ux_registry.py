@@ -32,22 +32,36 @@ ROUTE_METADATA_REGISTRY: tuple[RouteMetadata, ...] = (
     RouteMetadata("CUSTOM_TAGS_DASHBOARD", "/ui/track-catalog/custom-tags/dashboard", "Tag Dashboard", "entities", "entity_drilldown", parent_route_key="CUSTOM_TAGS"),
 )
 
+_ROUTE_BY_KEY: dict[str, RouteMetadata] = {item.route_key: item for item in ROUTE_METADATA_REGISTRY}
+_ROUTE_BY_EXACT_PATH: dict[str, RouteMetadata] = {item.path: item for item in ROUTE_METADATA_REGISTRY}
+
+
+def _path_matches_prefix(*, current_path: str, prefix: str) -> bool:
+    if not current_path.startswith(prefix):
+        return False
+    if current_path == prefix:
+        return True
+    if prefix.endswith("/"):
+        return True
+    return current_path[len(prefix)] == "/"
+
 
 def _find_route_by_path(current_path: str) -> RouteMetadata | None:
-    exact = {item.path: item for item in ROUTE_METADATA_REGISTRY}
-    if current_path in exact:
-        return exact[current_path]
-    candidates = [item for item in ROUTE_METADATA_REGISTRY if item.path != "/" and current_path.startswith(item.path)]
+    exact = _ROUTE_BY_EXACT_PATH.get(current_path)
+    if exact is not None:
+        return exact
+    candidates = [
+        item
+        for item in ROUTE_METADATA_REGISTRY
+        if item.path != "/" and _path_matches_prefix(current_path=current_path, prefix=item.path)
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda item: len(item.path))
 
 
 def _find_route_by_key(route_key: str) -> RouteMetadata | None:
-    for item in ROUTE_METADATA_REGISTRY:
-        if item.route_key == route_key:
-            return item
-    return None
+    return _ROUTE_BY_KEY.get(route_key)
 
 
 def route_ownership_map() -> dict[str, dict[str, str | bool | None]]:

@@ -32,6 +32,13 @@ class TestE6Mf1S1UxRegistry(unittest.TestCase):
         breadcrumb = breadcrumb_context(current_path="/not-mapped")
         self.assertEqual(breadcrumb, [{"label": "Control Center", "path": "/"}])
 
+    def test_prefix_matching_respects_segment_boundaries(self) -> None:
+        nav = primary_nav_items(current_path="/ui/publish/queueing")
+        publish_queue = next(item for item in nav if item["key"] == "PUBLISH_QUEUE")
+        self.assertFalse(publish_queue["active"])
+        breadcrumb = breadcrumb_context(current_path="/ui/publish/queueing")
+        self.assertEqual(breadcrumb, [{"label": "Control Center", "path": "/"}])
+
     def test_control_center_entry_contract(self) -> None:
         entry = control_center_entry()
         self.assertEqual(entry, {"label": "Control Center", "path": "/"})
