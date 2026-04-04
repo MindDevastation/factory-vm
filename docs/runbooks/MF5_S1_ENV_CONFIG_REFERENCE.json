@@ -1,0 +1,29 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF5-S1",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "mode": "routine_operation",
+  "start_sequence": [
+    "confirm_env_source",
+    "start_api_service",
+    "start_worker_roles",
+    "start_bot_integrations",
+    "confirm_basic_responsiveness"
+  ],
+  "stop_sequence": [
+    "pause_new_intake",
+    "stop_bot_integrations",
+    "stop_worker_roles",
+    "stop_api_service",
+    "record_stop_notes"
+  ],
+  "env_config_refs": [
+    "deploy/env",
+    "FACTORY_BASIC_AUTH_USER",
+    "FACTORY_BASIC_AUTH_PASS"
+  ],
+  "constraints": {
+    "routine_mode_only": true,
+    "no_incident_or_recovery_content": true
+  }
+}
