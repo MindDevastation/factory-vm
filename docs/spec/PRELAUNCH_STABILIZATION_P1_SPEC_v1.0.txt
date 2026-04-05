@@ -1,0 +1,324 @@
+SPEC_PRELAUNCH_STABILIZATION_P1_CODE_AUDIT_OPTIMIZATION_AND_BUG_FIX_PASS_v1.0
+
+1. Overview / цель
+
+Pre-Launch Stabilization — Punkt 1 defines a controlled pre-launch repository program for factory-vm before VPS launch.
+
+Its purpose is to:
+- find and fix real bugs;
+- remove dangerous inefficiencies;
+- strengthen runtime reliability;
+- preserve product logic;
+- avoid chaotic repository-wide rewrite.
+
+This is not a literal file-by-file rewrite. It is a controlled repository audit and fix program.
+
+2. Scope / Exclusions
+
+2.1. In scope
+- runtime-critical project code
+- services/
+- scripts/
+- planner/ and other working modules
+- domain services
+- workers
+- orchestrators
+- API routers
+- operational helpers
+- UI templates / JS helpers only when they contain working logic or contract-binding logic
+- tests only when updates are required by real code fixes or stale assertion cleanup
+- contract linkages between files:
+  - inter-module invariants
+  - stale/idempotency/guard logic
+  - error handling
+  - runtime safety
+  - API / UI / service consistency
+
+2.2. Out of scope
+- documentation
+- handoff docs
+- REQ/SPEC texts
+- non-executable documentation artifacts
+- __pycache__/
+- .venv/
+- node_modules/
+- build artifacts
+- caches
+- temporary files
+- generated outputs
+- binary artifacts
+- lockfiles unless a separate conscious fix requires them
+- AGENTS-like instruction files
+- process-only files unless they are runtime code
+- rewriting old migrations
+- rewriting existing migrations
+- architecture redesign
+- product redesign
+- documentation rewrite
+- repo-wide refactor disguised as optimization
+
+2.3. Migration rule
+A new additive migration is allowed only if a real confirmed fix requires it.
+
+3. Canonical operating model
+
+3.1. Work unit model
+Work must proceed by:
+- subsystem
+- package
+- bounded file batch
+- runtime-critical zone
+
+Work must not proceed as uncontrolled file-by-file rewrite.
+
+3.2. Two execution modes
+The program has exactly two active execution modes:
+- Audit Only
+- Apply Fixes
+
+3.3. Mode ordering rule
+Repo-wide or subsystem-wide audit without code changes must happen first.
+Only after audit may APPLY happen in bounded batches.
+
+3.4. Apply rule
+Every APPLY must be:
+- limited to a bounded batch
+- preceded by TEST-IMPACT CHECK
+- free of mass redesign
+- justified by confirmable reasons
+
+4. Program phases
+
+4.1. Phase A — Repo Audit Only
+Required output:
+- subsystem/batch list
+- bug candidate list
+- optimization candidate list
+- risk level
+- test impact
+- explicit do-not-touch zones
+
+4.2. Phase B — Batched Apply
+Required per batch:
+- /plan
+- TEST-IMPACT CHECK
+- narrow APPLY
+- targeted tests
+- handoff
+
+4.3. Phase C — Final Stabilization Pass
+Required output:
+- repeat audit-only pass
+- seam/stitch-point problem search
+- minimal follow-up fixes only
+
+5. Subsystem traversal priority
+
+Required subsystem order:
+1. core runtime / orchestrators / workers
+2. API / domain services
+3. planner / publish / queue / recovery
+4. Telegram / operator surfaces
+5. reports / exports / analytics-like modules
+6. UI templates / JS helpers
+7. tests alignment
+
+This order is canonical for the program unless a later explicit blocker requires deviation.
+
+6. Safe optimization policy
+
+Only safe optimizations without logic change are allowed.
+
+Allowed optimization classes:
+- local removal of obvious duplication
+- branching simplification without behavior change
+- local optimization of queries, loops, I/O, or service glue
+- removal of dead code when provable
+- stronger error handling
+- stronger stale/idempotency/guard behavior
+- local micro-optimizations only when:
+  - evidence-backed
+  - contract-preserving
+  - not requiring cross-module redesign
+
+7. Prohibited change classes
+
+The following are forbidden in Punkt 1:
+- architectural rewrites
+- moving domain responsibility between modules
+- mass renaming of API / DTO / field names
+- silent behavior changes “for consistency”
+- cosmetic churn without runtime value
+- rewriting tests only to fit new code
+- repo-wide refactor under optimization label
+
+8. Bug definition
+
+A bug in Punkt 1 is only something confirmed by one or more of the following:
+- contract violation between layers or modules
+- explicit logical error in code
+- unsafe or broken edge-case path
+- stale/invariant violation
+- incorrect error handling
+- reproducible runtime problem
+- inconsistency between code and existing tests/contracts where code side is provably wrong
+
+Not a bug:
+- prettier alternative code
+- desire to “do it differently”
+- unproven hypothesis without evidence
+
+9. Audit artifact model
+
+9.1. Required audit classifications
+Audit findings must be classified at minimum as:
+- confirmed bug candidate
+- safe optimization candidate
+- do-not-touch area
+- deferred issue candidate
+
+9.2. Required finding fields
+Each confirmed or candidate finding must include:
+- subsystem / batch
+- affected area
+- issue type
+- risk level
+- evidence basis
+- contract/logic/runtime rationale
+- apply recommendation or defer recommendation
+- test impact
+
+9.3. Drift control inside audit
+Audit findings must not mutate code.
+Audit only mode produces findings and batch plans, not hidden fixes.
+
+10. Batch apply contract
+
+10.1. Required batch boundaries
+Each batch must be:
+- subsystem-aligned or contract-zone-aligned
+- limited in scope
+- justified by shared runtime/contract rationale
+- small enough for targeted testing and handoff
+
+10.2. Required batch outputs
+Each apply batch must produce:
+- planned scope
+- TEST-IMPACT CHECK
+- applied fixes summary
+- targeted tests run
+- outcome summary
+- deferred issues if any remain in that batch
+
+10.3. Cross-batch safety rule
+A batch may touch multiple files only when needed by a confirmed shared contract/runtime issue.
+Cross-module redesign remains forbidden.
+
+11. TEST-IMPACT CHECK contract
+
+11.1. TEST-IMPACT CHECK is mandatory before every apply batch.
+
+11.2. TEST-IMPACT CHECK must explicitly inspect:
+- existing tests
+- fixtures
+- contract assertions
+- UI smoke expectations
+
+11.3. TEST-IMPACT CHECK must explicitly list:
+- which existing tests must be updated
+- which new tests must be added
+- which stale assertions / fixtures / contracts must be corrected
+
+11.4. Stale-test rule
+No stale tests may be left behind after real behavior changes.
+
+12. Verification model
+
+12.1. Targeted test rule
+Every apply batch must run targeted tests appropriate to the changed scope.
+
+12.2. No test-churn rule
+Tests are not an optimization target by themselves.
+They change only when required by real code fixes or stale test cleanup.
+
+12.3. Final-pass verification rule
+After Phase C, final stabilization summary must confirm:
+- all runtime-critical subsystems audited
+- all confirmed issues either fixed or explicitly deferred with reason
+- no uncontrolled repo-wide rewrite occurred
+- product logic did not change without separate product decision
+
+13. Outputs
+
+Punkt 1 must produce:
+- repo audit summary
+- subsystem/batch list
+- confirmed bug candidate list
+- safe optimization candidate list
+- apply results per batch
+- final stabilization summary
+- knowingly deferred issue list, if any remain
+
+14. Definition of done
+
+Punkt 1 is done only when all of the following are true:
+- all runtime-critical subsystems have passed audit
+- all confirmed bug/perf issues are either fixed or explicitly deferred with reason
+- no repo-wide uncontrolled rewrite occurred
+- product logic was not changed without separate product decision
+- all touched areas passed needed targeted tests
+- project is ready for the next step:
+  - local run
+  - manual QA
+  - backlog capture for additional fixes
+
+15. Rollback / containment principles
+
+15.1. Per-batch containment
+Every APPLY must remain bounded enough that its risk and rollback surface are understandable.
+
+15.2. No uncontrolled spread
+If an issue suggests cross-module redesign, it must be deferred out of Punkt 1 unless a narrow safe fix is possible.
+
+15.3. Audit/apply separation
+Audit-only and apply must not collapse into one uncontrolled pass.
+
+16. Validation rules
+
+16.1. Scope validation
+- documentation artifacts must stay out of scope
+- old migrations must not be rewritten
+- generated/junk artifacts must stay out of scope unless explicitly required by a real fix
+
+16.2. Apply validation
+- every apply must be batch-bounded
+- every apply must have TEST-IMPACT CHECK
+- every apply must state confirmable reasons
+- every apply must avoid redesign
+
+16.3. Optimization validation
+- optimization must be safe
+- optimization must preserve behavior
+- optimization must preserve contract
+- optimization must not require cross-module redesign
+
+17. Open questions / ambiguities
+
+17.1. Exact subsystem batching boundaries are implementation details and may vary by repo evidence, as long as the canonical priority order and batch-bounded rule remain preserved.
+
+17.2. Exact reporting format for audit summaries and per-batch handoffs is implementation detail, as long as the required outputs remain explicit and inspectable.
+
+Ready for Dev? Yes
+
+Причины
+- REQ fully fixes audit-first, batched-apply execution model, scope boundaries, allowed vs forbidden changes, TEST-IMPACT CHECK, subsystem order, outputs, and definition of done.
+- No critical REQ-level gaps remain.
+- Remaining uncertainty is execution-format detail, not a blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- audit-only and apply collapsing into one uncontrolled pass
+- safe optimization drifting into hidden redesign
+- batch scope becoming too wide and creating repo-wide churn
