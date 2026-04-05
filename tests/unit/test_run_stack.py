@@ -6,11 +6,19 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.run_stack import _resolve_runtime_roles
+from scripts.run_stack import _reap_exited_processes, _resolve_runtime_roles, _supervise_processes
 from services.common.runtime_roles import RuntimeRoleInputs, persist_runtime_role_inputs, resolve_required_runtime_roles, runtime_role_inputs_from_runtime
 
 
 class TestRunStack(unittest.TestCase):
+    class _FakeProc:
+        def __init__(self, *, code: int | None, args: list[str]) -> None:
+            self._code = code
+            self.args = args
+
+        def poll(self) -> int | None:
+            return self._code
+
     def test_worker_roles_includes_track_jobs_by_default(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("IMPORTER_ENABLED", None)
@@ -81,6 +89,24 @@ class TestRunStack(unittest.TestCase):
         self.assertEqual(inputs, RuntimeRoleInputs(profile="prod", no_importer_flag=True, with_bot_flag=True))
         self.assertEqual(resolved.required_roles, ["orchestrator", "qa", "uploader", "cleanup", "bot", "track_jobs"])
         self.assertEqual(launched, resolved.required_roles)
+
+    def test_reap_exited_processes_removes_only_exited_children(self) -> None:
+        running = self._FakeProc(code=None, args=["python", "-m", "services.factory_api"])
+        exited = self._FakeProc(code=0, args=["python", "-m", "services.workers", "--role", "orchestrator"])
+        procs = [running, exited]
+
+        _reap_exited_processes(procs)
+
+        self.assertEqual(procs, [running])
+
+    def test_supervisor_returns_deterministically_when_all_children_exit(self) -> None:
+        procs = [self._FakeProc(code=0, args=["python", "-m", "services.factory_api"])]
+
+        with patch("scripts.run_stack.time.sleep") as sleep_mock:
+            _supervise_processes(procs, poll_interval_seconds=0.01)
+
+        self.assertEqual(procs, [])
+        sleep_mock.assert_not_called()
 
 
 if __name__ == "__main__":

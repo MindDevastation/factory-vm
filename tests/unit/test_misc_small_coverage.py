@@ -26,6 +26,16 @@ class TestMiscSmallCoverage(unittest.TestCase):
             (folder / "meta.json").write_text("{bad", encoding="utf-8")
             self.assertIsNone(local_fs.load_meta(folder))
 
+    def test_local_fs_resolve_asset_path_enforces_release_boundary(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td) / "release"
+            (folder / "audio").mkdir(parents=True, exist_ok=True)
+            safe = local_fs.resolve_asset_path(folder, "audio/track.wav")
+            self.assertEqual(safe, (folder / "audio" / "track.wav").resolve())
+
+            with self.assertRaises(ValueError):
+                local_fs.resolve_asset_path(folder, "../outside.wav")
+
     def test_ffmpeg_run_uses_popen(self):
         p = Mock()
         p.communicate.return_value = ("OUT", "ERR")
