@@ -81,12 +81,17 @@ def main() -> None:
         )
         release_id = int(cur.lastrowid)
 
-        cur2 = conn.execute(
-            """INSERT INTO jobs(release_id, job_type, state, stage, priority, created_at, updated_at)
-            VALUES(?, ?, ?, ?, ?, ?, ?)""",
-            (release_id, "RENDER_LONG", "QA_RUNNING", "QA", 1, ts, ts),
+        job_id = dbm.insert_job_with_lineage_defaults(
+            conn,
+            release_id=release_id,
+            job_type="RENDER_LONG",
+            state="QA_RUNNING",
+            stage="QA",
+            priority=1,
+            attempt=0,
+            created_at=ts,
+            updated_at=ts,
         )
-        job_id = int(cur2.lastrowid)
     finally:
         conn.close()
 

@@ -1,0 +1,22 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF6-S4",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "drift_classes": [
+    "CODE_VS_DOC_DRIFT",
+    "REQ_VS_DOC_DRIFT",
+    "CODE_VS_REQ_DRIFT"
+  ],
+  "resolution_steps": [
+    "classify_drift",
+    "collect_runtime_and_req_spec_evidence",
+    "choose_authoritative_source",
+    "apply_minimal_correction",
+    "update_linked_artifacts",
+    "record_residual_drift"
+  ],
+  "constraints": {
+    "no_canon_reopen_without_defect_evidence": true,
+    "unproven_defect_mark_as_risk_or_not_verified": true
+  }
+}

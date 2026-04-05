@@ -9,8 +9,11 @@
   <a href="/">Dashboard</a>
   <span class="muted" style="margin:0 8px;">|</span>
   <button type="button" id="bulk-create-open">Bulk create series</button>
+  <button type="button" id="metadata-bulk-open">Metadata Bulk Preview</button>
+  <button type="button" id="mass-actions-open" disabled>Planner Mass Actions</button>
   <button type="button" id="import-open">Import</button>
   <button type="button" id="bulk-delete-btn" disabled>Delete selected</button>
+  <span class="muted" id="mass-actions-selected-count">Selected: 0</span>
 </p>
 <details style="margin:8px 0 12px 0;">
   <summary><strong>Quick help</strong></summary>
@@ -25,6 +28,38 @@
   <label>Channel <input id="filter-channel" placeholder="channel slug"></label>
   <label>Content type <input id="filter-content-type" placeholder="content type"></label>
   <label>Search <input id="filter-q" placeholder="title/notes"></label>
+  <label>Readiness
+    <select id="filter-readiness-status">
+      <option value="">all</option>
+      <option value="NOT_READY">NOT_READY</option>
+      <option value="BLOCKED">BLOCKED</option>
+      <option value="READY_FOR_MATERIALIZATION">READY_FOR_MATERIALIZATION</option>
+    </select>
+  </label>
+  <label>Readiness problem
+    <select id="filter-readiness-problem">
+      <option value="">all</option>
+      <option value="attention_required">attention_required</option>
+      <option value="blocked_only">blocked_only</option>
+      <option value="ready_only">ready_only</option>
+    </select>
+  </label>
+  <label>Materialized state
+    <select id="filter-materialized-state">
+      <option value="">all</option>
+      <option value="materialized">materialized</option>
+      <option value="not_materialized">not_materialized</option>
+      <option value="binding_inconsistent">binding_inconsistent</option>
+    </select>
+  </label>
+  <label>Job creation state
+    <select id="filter-job-creation-state">
+      <option value="">all</option>
+      <option value="has_open_job">has_open_job</option>
+      <option value="no_open_job">no_open_job</option>
+      <option value="inconsistent_open_job_state">inconsistent_open_job_state</option>
+    </select>
+  </label>
   <label>Sort by
     <select id="sort-by">
       <option value="created_at">created_at</option>
@@ -34,6 +69,13 @@
       <option value="channel_slug">channel_slug</option>
       <option value="content_type">content_type</option>
       <option value="status">status</option>
+      <option value="readiness_priority">readiness_priority</option>
+    </select>
+  </label>
+  <label>Readiness sort
+    <select id="readiness-priority">
+      <option value="attention_first">attention_first</option>
+      <option value="ready_first">ready_first</option>
     </select>
   </label>
   <label>Sort dir
@@ -43,18 +85,60 @@
     <select id="page-size"><option>20</option><option selected>50</option><option>100</option></select>
   </label>
   <button type="button" id="reload-btn">Reload</button>
+  <button type="button" id="refresh-readiness-btn">Refresh readiness</button>
 </div>
 
 <p class="muted" id="planner-note"></p>
+<fieldset style="margin: 10px 0;">
+  <legend>Monthly Planning Templates</legend>
+  <p class="muted">Archived templates are visible but cannot be previewed/applied.</p>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+    <label>Channel <input id="mpt-channel-id" type="number" min="1" value="1"></label>
+    <label>Status
+      <select id="mpt-status">
+        <option value="">all</option>
+        <option value="ACTIVE">ACTIVE</option>
+        <option value="ARCHIVED">ARCHIVED</option>
+      </select>
+    </label>
+    <label>Search <input id="mpt-q" placeholder="template name"></label>
+    <button type="button" id="mpt-reload-btn">Reload templates</button>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Name</th><th>Channel</th><th>Status</th><th>Item count</th><th>Updated</th><th>Usage summary</th><th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="mpt-list-body"><tr><td colspan="8" class="muted">Loading templates...</td></tr></tbody>
+  </table>
+  <div id="mpt-detail-pane" style="margin-top:10px; padding:10px; border:1px solid #ddd;">
+    <p class="muted">Select a template to open detail/editor.</p>
+  </div>
+</fieldset>
+
+<div id="readiness-summary-strip" style="display:flex; gap:10px; flex-wrap:wrap; margin: 8px 0 12px 0;">
+  <span><strong>Total:</strong> <span id="readiness-summary-total">0</span></span>
+  <span><strong>READY:</strong> <span id="readiness-summary-ready">0</span></span>
+  <span><strong>NOT_READY:</strong> <span id="readiness-summary-not-ready">0</span></span>
+  <span><strong>BLOCKED:</strong> <span id="readiness-summary-blocked">0</span></span>
+  <span><strong>Attention:</strong> <span id="readiness-summary-attention">0</span></span>
+  <span class="muted"><strong>Computed at:</strong> <span id="readiness-summary-computed-at">-</span></span>
+</div>
 <table>
   <thead>
     <tr>
       <th><input id="select-all" type="checkbox"></th>
-      <th>ID</th><th>Status</th><th>Channel</th><th>Content type</th><th>Title</th><th>Publish at</th><th>Notes</th><th>Updated</th>
+      <th>ID</th><th>Status</th><th>Readiness</th><th>Materialization</th><th>Job creation</th><th>Action</th><th>Channel</th><th>Content type</th><th>Title</th><th>Publish at</th><th>Notes</th><th>Updated</th>
     </tr>
   </thead>
-  <tbody id="planner-tbody"><tr><td colspan="9" class="muted">Loading...</td></tr></tbody>
+  <tbody id="planner-tbody"><tr><td colspan="13" class="muted">Loading...</td></tr></tbody>
 </table>
+<p class="muted">Materialization only creates or returns canonical release binding. It does not create jobs and does not start render/upload/publish.</p>
+<p class="muted">Job creation does not start render.</p>
+<p class="muted">Job creation does not retry failed jobs.</p>
+<p class="muted">Job creation does not start publish/upload flows.</p>
+<p class="muted" id="job-create-open-job-cta"></p>
 <p>
   <button type="button" id="prev-page">Prev</button>
   <span id="page-label" class="muted"></span>
@@ -80,6 +164,44 @@
   </form>
 </dialog>
 
+<dialog id="job-creation-dialog" style="min-width:min(820px, 95vw);">
+  <form method="dialog">
+    <h3>Planned Release Job Creation</h3>
+    <p class="muted" id="job-creation-dialog-release-label"></p>
+    <fieldset>
+      <legend>Job creation state summary</legend>
+      <pre id="job-creation-summary-body" class="muted" style="white-space:pre-wrap;">No job creation details loaded.</pre>
+    </fieldset>
+    <fieldset style="margin-top:10px;">
+      <legend>Open-job diagnostics (read-only)</legend>
+      <pre id="job-creation-diagnostics-body" class="muted" style="white-space:pre-wrap;">No open-job diagnostics loaded.</pre>
+    </fieldset>
+    <p class="muted" id="job-creation-open-job-cta"></p>
+    <menu>
+      <button type="button" id="job-creation-dialog-close">Close</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="materialization-dialog" style="min-width:min(820px, 95vw);">
+  <form method="dialog">
+    <h3>Planned Release Materialization</h3>
+    <p class="muted" id="materialization-dialog-release-label"></p>
+    <fieldset>
+      <legend>Materialization state summary</legend>
+      <pre id="materialization-summary-body" class="muted" style="white-space:pre-wrap;">No materialization details loaded.</pre>
+    </fieldset>
+    <fieldset style="margin-top:10px;">
+      <legend>Binding diagnostics (read-only)</legend>
+      <pre id="materialization-diagnostics-body" class="muted" style="white-space:pre-wrap;">No binding diagnostics loaded.</pre>
+    </fieldset>
+    <p class="muted" id="materialization-open-release-cta"></p>
+    <menu>
+      <button type="button" id="materialization-dialog-close">Close</button>
+    </menu>
+  </form>
+</dialog>
+
 <dialog id="import-modal">
   <form method="dialog" id="import-form">
     <h3>Import releases</h3>
@@ -94,6 +216,249 @@
       <button type="button" id="import-cancel">Close</button>
       <button type="button" id="import-confirm-strict" disabled>Confirm strict</button>
       <button type="button" id="import-confirm-replace" disabled>Replace conflicts</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="metadata-bulk-modal" style="min-width: min(1100px, 95vw);">
+  <form method="dialog" id="metadata-bulk-form">
+    <h3>Planner · Metadata Bulk Preview</h3>
+    <p class="muted">Preview does not change release metadata until you apply.</p>
+    <p class="muted">Applying changes affects only the selected fields of the selected release targets.</p>
+    <p class="muted">Overwrite confirmation is required explicitly per item and field.</p>
+
+    <fieldset>
+      <legend>Preview setup</legend>
+      <label><input type="checkbox" id="mbp-field-title" checked> title</label>
+      <label><input type="checkbox" id="mbp-field-description" checked> description</label>
+      <label><input type="checkbox" id="mbp-field-tags" checked> tags</label>
+      <div style="margin-top:8px;">
+        <label for="mbp-overrides-json">Override JSON (optional)</label><br>
+        <textarea id="mbp-overrides-json" rows="6" style="width:100%;">{}</textarea>
+      </div>
+      <button type="button" id="mbp-preview-btn">Create bulk preview</button>
+      <span id="mbp-session-label" class="muted" style="margin-left:8px;"></span>
+    </fieldset>
+
+    <div id="mbp-stale-banner" style="display:none; margin-top:10px; padding:8px; border:1px solid #fbbf24; background:#fffbeb;">
+      <strong>Prepared batch state is stale or expired. Create a new bulk preview.</strong>
+      <button type="button" id="mbp-create-new-preview-btn" style="margin-left:8px;">Create new bulk preview</button>
+    </div>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Aggregate preview</legend>
+      <pre id="mbp-summary" class="muted" style="white-space:pre-wrap;">No preview yet.</pre>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Item filters</legend>
+      <label><input type="checkbox" id="mbp-filter-applyable-only"> Applyable only</label>
+      <label><input type="checkbox" id="mbp-filter-overwrite-only"> Overwrite only</label>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Apply selection</legend>
+      <label><input type="checkbox" id="mbp-apply-field-title" checked> title</label>
+      <label><input type="checkbox" id="mbp-apply-field-description" checked> description</label>
+      <label><input type="checkbox" id="mbp-apply-field-tags" checked> tags</label>
+      <button type="button" id="mbp-apply-selected-btn" style="margin-left:8px;">Apply selected subset</button>
+      <pre id="mbp-apply-result" class="muted" style="white-space:pre-wrap; margin-top:8px;">No apply yet.</pre>
+    </fieldset>
+
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="mbp-select-all-items"></th>
+          <th>planner_item_id</th>
+          <th>mapping_status</th>
+          <th>release_id</th>
+          <th>duplicate_of_release_id</th>
+          <th>mapping diagnostics</th>
+          <th>fields</th>
+        </tr>
+      </thead>
+      <tbody id="mbp-items-body"><tr><td colspan="7" class="muted">No preview yet.</td></tr></tbody>
+    </table>
+
+    <p class="muted">
+      Mapping labels: Unresolved target · Duplicate target deduped · Invalid selection.
+    </p>
+    <p class="muted">
+      Source labels: Channel default used · Temporary override active for this channel.
+    </p>
+
+    <menu>
+      <button type="button" id="mbp-close-btn">Close</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="mpt-preview-modal" style="min-width:min(1100px, 95vw);">
+  <form method="dialog">
+    <h3>Monthly Template Preview/Apply</h3>
+    <p class="muted">Preview creates nothing.</p>
+    <p class="muted">Apply creates planned releases only.</p>
+    <p class="muted">Apply does not start materialization, job creation, render, upload, or publish.</p>
+    <fieldset>
+      <legend>Target context</legend>
+      <label>Template <input id="mpt-preview-template-id" type="number" readonly></label>
+      <label>Channel <input id="mpt-preview-channel-id" type="number" min="1"></label>
+      <label>Target month <input id="mpt-preview-target-month" placeholder="YYYY-MM"></label>
+      <button type="button" id="mpt-preview-run-btn">Run preview</button>
+      <button type="button" id="mpt-apply-run-btn" disabled>Apply using preview</button>
+    </fieldset>
+    <fieldset style="margin-top:10px;">
+      <legend>Summary / copyable JSON</legend>
+      <button type="button" id="mpt-copy-preview-json-btn">Copy preview JSON</button>
+      <pre id="mpt-preview-json" class="muted" style="white-space:pre-wrap;">No preview yet.</pre>
+      <button type="button" id="mpt-copy-apply-json-btn">Copy apply JSON</button>
+      <pre id="mpt-apply-json" class="muted" style="white-space:pre-wrap;">No apply yet.</pre>
+    </fieldset>
+    <fieldset style="margin-top:10px;">
+      <legend>Item filters</legend>
+      <label><input type="checkbox" id="mpt-filter-createable-only"> createable-only</label>
+      <label><input type="checkbox" id="mpt-filter-conflicts-only"> conflicts-only</label>
+      <span class="muted">Conflicts = blocked duplicate/invalid date or overlap warnings.</span>
+    </fieldset>
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th>item_key</th><th>slot_code</th><th>position</th><th>planned_date</th><th>outcome</th><th>reasons</th><th>overlap_warnings</th>
+        </tr>
+      </thead>
+      <tbody id="mpt-preview-items-body"><tr><td colspan="7" class="muted">No preview yet.</td></tr></tbody>
+    </table>
+    <fieldset style="margin-top:10px;">
+      <legend>Apply result summary</legend>
+      <div id="mpt-apply-summary" style="display:flex; gap:12px; flex-wrap:wrap;">
+        <span><strong>Total:</strong> <span id="mpt-apply-total">0</span></span>
+        <span><strong>Created:</strong> <span id="mpt-apply-created">0</span></span>
+        <span><strong>Blocked duplicate:</strong> <span id="mpt-apply-blocked-duplicate">0</span></span>
+        <span><strong>Blocked invalid date:</strong> <span id="mpt-apply-blocked-invalid-date">0</span></span>
+        <span><strong>Failed:</strong> <span id="mpt-apply-failed">0</span></span>
+        <span><strong>Overlap warnings:</strong> <span id="mpt-apply-overlap-warnings">0</span></span>
+      </div>
+    </fieldset>
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th>item_key</th><th>slot_code</th><th>outcome</th><th>planned_release_id</th><th>reasons</th>
+        </tr>
+      </thead>
+      <tbody id="mpt-apply-items-body"><tr><td colspan="5" class="muted">No apply result yet.</td></tr></tbody>
+    </table>
+    <menu>
+      <button type="button" id="mpt-preview-close-btn">Close</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="mass-actions-dialog" style="min-width:min(1100px, 95vw);">
+  <form method="dialog">
+    <h3>Planner · Mass Actions</h3>
+    <p class="muted">Preview changes nothing.</p>
+    <p class="muted">Preview is read-only until execute.</p>
+    <p class="muted">Execute performs only the selected batch action.</p>
+    <p class="muted">No render/upload/publish steps will start.</p>
+    <p class="muted">Some items may create new entities, return existing entities, be skipped, or fail.</p>
+
+    <fieldset>
+      <legend>Batch action setup</legend>
+      <p><strong>Selected planner items:</strong> <span id="pma-selected-count">0</span></p>
+      <label>Action
+        <select id="pma-action-type">
+          <option value="BATCH_MATERIALIZE_SELECTED">BATCH_MATERIALIZE_SELECTED</option>
+          <option value="BATCH_CREATE_JOBS_FOR_SELECTED">BATCH_CREATE_JOBS_FOR_SELECTED</option>
+        </select>
+      </label>
+      <button type="button" id="pma-preview-btn">Create preview</button>
+      <span class="muted" id="pma-session-label"></span>
+    </fieldset>
+
+    <div id="pma-stale-banner" style="display:none; margin-top:10px; padding:8px; border:1px solid #fbbf24; background:#fffbeb;">
+      <strong>Preview session is stale or expired. Create a new preview.</strong>
+    </div>
+    <p class="muted" style="margin-top:8px;">
+      Expires at: <span id="pma-expires-at">-</span> · Remaining: <span id="pma-ttl-remaining">-</span>
+    </p>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Preview / Result summary</legend>
+      <button type="button" id="pma-copy-summary-json-btn">Copy summary JSON</button>
+      <pre id="pma-summary-json" class="muted" style="white-space:pre-wrap;">No preview yet.</pre>
+      <button type="button" id="pma-copy-result-json-btn">Copy execute result JSON</button>
+      <pre id="pma-result-json" class="muted" style="white-space:pre-wrap;">No execute yet.</pre>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Quick filters</legend>
+      <label><input type="checkbox" id="pma-filter-executable-only"> executable_only (created new + returned existing)</label>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
+        <button type="button" data-pma-kind-filter="ALL">all</button>
+        <button type="button" data-pma-kind-filter="SUCCESS_CREATED_NEW">created new</button>
+        <button type="button" data-pma-kind-filter="SUCCESS_RETURNED_EXISTING">returned existing</button>
+        <button type="button" data-pma-kind-filter="SKIPPED_NON_EXECUTABLE">skipped</button>
+        <button type="button" data-pma-kind-filter="FAILED_INVALID_OR_INCONSISTENT">failed</button>
+      </div>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Execute confirmation</legend>
+      <p class="muted">Execute runs only selected subset from preview scope. No scope widening is allowed.</p>
+      <label><input type="checkbox" id="pma-execute-confirm"> I confirm execute for selected preview items.</label>
+      <button type="button" id="pma-execute-btn" disabled>Execute selected</button>
+    </fieldset>
+
+    <fieldset style="margin-top:10px;">
+      <legend>Execute result counters</legend>
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        <span><strong>Total:</strong> <span id="pma-result-total">0</span></span>
+        <span><strong>Succeeded:</strong> <span id="pma-result-succeeded">0</span></span>
+        <span><strong>Failed:</strong> <span id="pma-result-failed">0</span></span>
+        <span><strong>Skipped:</strong> <span id="pma-result-skipped">0</span></span>
+        <span><strong>Created new:</strong> <span id="pma-result-created-new">0</span></span>
+        <span><strong>Returned existing:</strong> <span id="pma-result-returned-existing">0</span></span>
+      </div>
+    </fieldset>
+
+    <table style="margin-top:10px;">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="pma-select-all-items"></th>
+          <th>planned_release_id</th>
+          <th>result_kind</th>
+          <th>expected/message</th>
+          <th>reason/details</th>
+        </tr>
+      </thead>
+      <tbody id="pma-items-body"><tr><td colspan="5" class="muted">No preview yet.</td></tr></tbody>
+    </table>
+
+    <menu>
+      <button type="button" id="pma-close-btn">Close</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="readiness-dialog" style="min-width:min(980px, 95vw);">
+  <form method="dialog">
+    <h3>Planned Release Readiness</h3>
+    <p class="muted" id="readiness-dialog-release-label"></p>
+    <p class="muted">Readiness is derived and read-only in this view; opening this dialog does not modify release data.</p>
+    <fieldset>
+      <legend>Aggregate</legend>
+      <p><strong>Status:</strong> <span id="readiness-dialog-aggregate">-</span></p>
+      <p><strong>Computed at:</strong> <span id="readiness-dialog-computed-at">-</span></p>
+      <p><strong>Primary reason:</strong> <span id="readiness-dialog-primary-reason">-</span></p>
+      <p><strong>Primary remediation:</strong> <span id="readiness-dialog-primary-remediation">-</span></p>
+      <label><input type="checkbox" id="readiness-actionable-only"> actionable_only (hide PASS checks)</label>
+    </fieldset>
+    <fieldset style="margin-top:10px;">
+      <legend>Domains</legend>
+      <div id="readiness-domains-body" class="muted">No readiness loaded.</div>
+    </fieldset>
+    <menu>
+      <button type="button" id="readiness-dialog-close">Close</button>
     </menu>
   </form>
 </dialog>

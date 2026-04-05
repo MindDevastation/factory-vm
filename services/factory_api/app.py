@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -34,6 +34,28 @@ from services.factory_api.ui_gdrive import run_preflight_for_job
 from services.factory_api.ui_jobs_enqueue import check_ui_render_guard, enqueue_ui_render_job
 from services.factory_api.db_viewer import create_db_viewer_router
 from services.factory_api.planner import create_planner_router
+from services.factory_api.publish_audit_status import create_publish_audit_status_router
+from services.factory_api.publish_policy import create_publish_policy_router
+from services.factory_api.publish_job_actions import create_publish_job_actions_router
+from services.factory_api.publish_bulk_actions import create_publish_bulk_actions_router
+from services.factory_api.publish_queue_read import create_publish_queue_read_router
+from services.factory_api.publish_reconcile import create_publish_reconcile_router
+from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
+from services.factory_api.ux_registry import breadcrumb_context, control_center_entry, primary_nav_items, route_ownership_map
+from services.factory_api.page_templates import page_template_contract
+from services.factory_api.context_continuity import build_context_envelope, encode_context_token, resolve_incoming_context
+from services.factory_api.ux_semantics import action_bar_semantics, filter_control_semantics, inline_message_semantics, readiness_indicator_semantics, severity_indicator_semantics, status_badge_semantics, table_list_semantics
+from services.factory_api.ui_state_templates import state_template_catalog
+from services.factory_api.interaction_presentation import interaction_presentation_contract_catalog
+from services.factory_api.density_responsive import density_responsive_catalog
+from services.factory_api.action_taxonomy import action_taxonomy_catalog
+from services.factory_api.control_center_contracts import build_control_center_contract_skeleton, default_task_routing_contract
+from services.factory_api.problem_readiness_contracts import problem_readiness_contract_catalog, problem_readiness_item_contract
+from services.factory_api.problem_readiness_surface import build_grouped_problem_surface
+from services.planner.release_job_creation_service import ReleaseJobCreationError, ReleaseJobCreationService
+from services.planner import background_assignment_service
+from services.planner import cover_assignment_service
+from services.planner import visual_batch_service
 from services.playlist_builder.api_adapter import (
     PlaylistBuilderValidationError,
     build_channel_settings_payload,
@@ -67,6 +89,17 @@ from services.track_analysis_report.xlsx_export import export_report_to_xlsx_byt
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
+from services.metadata import (
+    channel_visual_style_template_service,
+    channel_defaults_service,
+    description_template_service,
+    descriptiongen_service,
+    preview_apply_service,
+    title_template_service,
+    titlegen_service,
+    video_tag_preset_service,
+    video_tagsgen_service,
+)
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
@@ -87,9 +120,90 @@ logger = logging.getLogger(__name__)
 _render_all_channel_slug: ContextVar[Optional[str]] = ContextVar("render_all_channel_slug", default=None)
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+templates.env.globals["factory_route_ownership_map"] = route_ownership_map()
+templates.env.globals["factory_control_center_entry"] = control_center_entry()
+templates.env.globals["factory_primary_nav_items"] = primary_nav_items
+templates.env.globals["factory_breadcrumb_context"] = breadcrumb_context
+templates.env.globals["factory_page_template_contract"] = page_template_contract
+
+def _request_query_dict(request: Request) -> dict[str, str]:
+    return {str(k): str(v) for k, v in request.query_params.multi_items()}
+
+
+def _context_token_for_request(request: Request) -> str:
+    envelope = build_context_envelope(
+        current_path=str(request.url.path),
+        parent_path=str(request.query_params.get("from") or "").strip() or None,
+        raw_query=_request_query_dict(request),
+    )
+    return encode_context_token(envelope)
+
+
+def _incoming_context_for_request(request: Request) -> dict[str, Any] | None:
+    token = str(request.query_params.get("ctx") or "").strip() or None
+    known_paths = set(route_ownership_map().keys())
+    envelope = resolve_incoming_context(token=token, known_paths=known_paths)
+    if envelope is None:
+        return None
+    return envelope.as_dict()
+
+
+templates.env.globals["factory_context_token_for_request"] = _context_token_for_request
+templates.env.globals["factory_incoming_context_for_request"] = _incoming_context_for_request
+
+
+def _semantic_contract_catalog() -> dict[str, Any]:
+    return {
+        "status_badge": status_badge_semantics(status="DRAFT"),
+        "severity_indicator": severity_indicator_semantics(severity="BLOCKING"),
+        "readiness_indicator": readiness_indicator_semantics(readiness="NOT_READY"),
+        "inline_message": inline_message_semantics(level="WARNING", text="sample"),
+        "action_bar": action_bar_semantics(actions=[{"action": "refresh", "kind": "PRIMARY"}]),
+        "filter_controls": filter_control_semantics(filters=["status", "channel", "time_window"]),
+        "table_list_pattern": table_list_semantics(variant="TABLE"),
+    }
+
+
+templates.env.globals["factory_semantic_contract_catalog"] = _semantic_contract_catalog
+templates.env.globals["factory_state_template_catalog"] = state_template_catalog
+templates.env.globals["factory_interaction_presentation_catalog"] = interaction_presentation_contract_catalog
+templates.env.globals["factory_density_responsive_catalog"] = density_responsive_catalog
+templates.env.globals["factory_action_taxonomy_catalog"] = action_taxonomy_catalog
+templates.env.globals["factory_problem_readiness_contract_catalog"] = problem_readiness_contract_catalog
+
+# FastAPI/Starlette TemplateResponse expects (request, name, context, ...).
+# Keep compatibility with existing call sites that pass (name, context, ...).
+_original_template_response = templates.TemplateResponse
+
+
+def _template_response_compat(first_arg, *args, **kwargs):
+    if isinstance(first_arg, Request):
+        return _original_template_response(first_arg, *args, **kwargs)
+
+    name = first_arg
+    context = args[0] if args else kwargs.get("context")
+    if not isinstance(context, dict):
+        raise TypeError("TemplateResponse context must be a dict")
+
+    request = context.get("request")
+    if not isinstance(request, Request):
+        raise TypeError("TemplateResponse context must include a Request at context['request']")
+
+    remaining_args = args[1:]
+    return _original_template_response(request, name, context, *remaining_args, **kwargs)
+
+
+templates.TemplateResponse = _template_response_compat
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 app.include_router(create_db_viewer_router(env))
 app.include_router(create_planner_router(env))
+app.include_router(create_publish_audit_status_router(env))
+app.include_router(create_publish_policy_router(env))
+app.include_router(create_publish_job_actions_router(env))
+app.include_router(create_publish_bulk_actions_router(env))
+app.include_router(create_publish_queue_read_router(env))
+app.include_router(create_publish_reconcile_router(env))
 
 
 def _create_drive_client(_env: Env) -> DriveClient:
@@ -140,6 +254,35 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
     finally:
         conn.close()
     return rows
+
+
+@app.post("/v1/releases/{release_id}/jobs/create-or-select")
+def api_release_jobs_create_or_select(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        svc = ReleaseJobCreationService(conn)
+        try:
+            result = svc.create_or_select(release_id=release_id)
+        except ReleaseJobCreationError as exc:
+            status_code = 422
+            if exc.code == "PRJ_RELEASE_NOT_FOUND":
+                status_code = 404
+            elif exc.code == "PRJ_CONCURRENCY_CONFLICT":
+                status_code = 409
+            elif exc.code == "PRJ_JOB_CREATE_FAILED":
+                status_code = 500
+            return _prj_error(status_code, exc.code, exc.message, release_id)
+    finally:
+        conn.close()
+
+    return {
+        "release_id": result.release_id,
+        "result": result.result,
+        "job": result.job,
+        "current_open_relation": result.current_open_relation,
+        "job_creation_state_summary": result.job_creation_state_summary,
+        "open_job_diagnostics": result.open_job_diagnostics,
+    }
 
 
 def _plb_error(status_code: int, code: str, message: str, diagnostics: dict[str, Any] | None = None) -> JSONResponse:
@@ -199,6 +342,2404 @@ def api_playlist_builder_tags_options(channel_slug: str | None = None, _: bool =
             "reason": reason,
         },
     }
+
+
+def _mtb_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _mtg_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _cvst_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _prj_error(status_code: int, code: str, message: str, release_id: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "release_id": release_id,
+            "result": "FAILED",
+            "error": {"code": code, "message": message},
+        },
+    )
+
+
+def _vbg_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _vcover_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _vbatch_error(status_code: int, code: str, message: str, details: Dict[str, Any] | None = None) -> JSONResponse:
+    err: Dict[str, Any] = {"code": code, "message": message}
+    if details:
+        err["details"] = details
+    return JSONResponse(status_code=status_code, content={"error": err})
+
+
+class MetadataTitleTemplatePreviewRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_body: str
+    release_date: str | None = None
+
+
+class MetadataTitleTemplateCreateRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_name: str
+    template_body: str
+    make_default: bool = False
+
+
+class MetadataTitleTemplatePatchRequest(BaseModel):
+    template_name: str | None = None
+    template_body: str | None = None
+
+
+class MetadataDescriptionTemplatePreviewRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_body: str
+    release_id: int | None = None
+
+
+class MetadataVideoTagPresetPreviewRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    preset_body: list[str]
+    release_id: int | None = None
+
+
+class MetadataVideoTagPresetCreateRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    preset_name: str
+    preset_body: list[str]
+    make_default: bool = False
+
+
+class MetadataVideoTagPresetPatchRequest(BaseModel):
+    preset_name: str | None = None
+    preset_body: list[str] | None = None
+
+
+class ChannelVisualStyleTemplateCreateRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_name: str
+    template_payload: Dict[str, Any]
+    make_default: bool = False
+
+
+class ChannelVisualStyleTemplatePatchRequest(BaseModel):
+    template_name: str | None = None
+    template_payload: Dict[str, Any] | None = None
+
+
+class ChannelVisualStyleTemplateReleaseOverrideRequest(BaseModel):
+    template_id: int
+
+
+class MetadataDescriptionTemplateCreateRequest(BaseModel):
+    channel_slug: str = Field(min_length=1)
+    template_name: str
+    template_body: str
+    make_default: bool = False
+
+
+class MetadataDescriptionTemplatePatchRequest(BaseModel):
+    template_name: str | None = None
+    template_body: str | None = None
+
+
+class MetadataTitleGenGenerateRequest(BaseModel):
+    template_id: int | None = None
+
+
+class MetadataDescriptionGenGenerateRequest(BaseModel):
+    template_id: int | None = None
+
+
+class MetadataVideoTagsGenGenerateRequest(BaseModel):
+    preset_id: int | None = None
+
+
+class MetadataVideoTagsGenApplyRequest(BaseModel):
+    preset_id: int | None = None
+    generation_fingerprint: str = Field(min_length=1)
+    overwrite_confirmed: bool = False
+
+
+class MetadataTitleGenApplyRequest(BaseModel):
+    template_id: int | None = None
+    generation_fingerprint: str = Field(min_length=1)
+    overwrite_confirmed: bool = False
+
+
+class MetadataDescriptionGenApplyRequest(BaseModel):
+    template_id: int | None = None
+    generation_fingerprint: str = Field(min_length=1)
+    overwrite_confirmed: bool = False
+
+
+class MetadataPreviewApplySourcesRequest(BaseModel):
+    title_template_id: int | None = None
+    description_template_id: int | None = None
+    video_tag_preset_id: int | None = None
+
+
+class MetadataPreviewApplyPreviewRequest(BaseModel):
+    fields: list[str] | None = None
+    sources: MetadataPreviewApplySourcesRequest = Field(default_factory=MetadataPreviewApplySourcesRequest)
+
+
+class MetadataPreviewApplyApplyRequest(BaseModel):
+    selected_fields: list[str]
+    overwrite_confirmed_fields: list[str] = Field(default_factory=list)
+
+
+class MetadataChannelDefaultsUpdateRequest(BaseModel):
+    default_title_template_id: int | None = None
+    default_description_template_id: int | None = None
+    default_video_tag_preset_id: int | None = None
+
+
+class BackgroundPreviewRequest(BaseModel):
+    background_asset_id: int | None = None
+    source_family: str | None = None
+    source_reference: str | None = None
+    template_assisted: bool = False
+
+
+class BackgroundApproveRequest(BaseModel):
+    preview_id: str = Field(min_length=1)
+
+
+class CoverInputPayloadRequest(BaseModel):
+    provider_family: str = Field(min_length=1)
+    input_payload: Dict[str, Any] = Field(default_factory=dict)
+    template_ref: Dict[str, Any] | None = None
+
+
+class CoverCandidateCreateRequest(BaseModel):
+    cover_asset_id: int
+    source_provider_family: str = Field(min_length=1)
+    source_reference: str | None = None
+    input_payload_id: int | None = None
+    selection_mode: str = "manual"
+    template_ref: Dict[str, Any] | None = None
+
+
+class CoverCandidateSelectRequest(BaseModel):
+    candidate_id: str = Field(min_length=1)
+
+
+class CoverApproveRequest(BaseModel):
+    candidate_id: str | None = None
+
+
+class VisualApplyRequest(BaseModel):
+    reuse_override_confirmed: bool = False
+    stale_token: str = Field(min_length=1)
+    conflict_token: str = Field(min_length=1)
+
+
+class VisualBatchPreviewRequest(BaseModel):
+    action_type: str = Field(min_length=1)
+    selected_release_ids: list[int] = Field(min_length=1)
+    action_payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class VisualBatchExecuteRequest(BaseModel):
+    preview_session_id: str = Field(min_length=1)
+    selected_release_ids: list[int] = Field(min_length=1)
+    overwrite_confirmed: bool = False
+    reuse_override_confirmed: bool = False
+
+
+def _mdo_sources_from_defaults(defaults: Dict[str, Any]) -> List[Dict[str, Any]]:
+    field_pairs = (
+        ("title", "title_template"),
+        ("description", "description_template"),
+        ("tags", "video_tag_preset"),
+    )
+    refs: List[Dict[str, Any]] = []
+    for field_name, source_type in field_pairs:
+        source = defaults.get(source_type)
+        refs.append(
+            {
+                "field_name": field_name,
+                "source_type": source_type,
+                "source_id": int(source["id"]) if source else None,
+            }
+        )
+    return refs
+
+
+@app.get("/v1/metadata/releases/{release_id}/titlegen/context")
+def api_metadata_titlegen_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            context = titlegen_service.load_titlegen_context(conn, release_id=release_id)
+        except titlegen_service.TitleGenError as exc:
+            status_code = 404 if exc.code == "MTG_RELEASE_NOT_FOUND" else 422
+            logger.info(
+                "metadata.titlegen.context_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": None,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    default_item = None
+    if context.default_template is not None:
+        default_item = {
+            "id": int(context.default_template["id"]),
+            "template_name": str(context.default_template["template_name"]),
+            "status": str(context.default_template.get("status") or ""),
+            "is_default": bool(int(context.default_template.get("is_default") or 0)),
+        }
+
+    payload = {
+        "release_id": context.release_id,
+        "channel_slug": context.channel_slug,
+        "current_title": context.current_title,
+        "has_existing_title": context.has_existing_title,
+        "default_template": default_item,
+        "active_templates": context.active_templates,
+        "can_generate_with_default": context.can_generate_with_default,
+    }
+    logger.info(
+        "metadata.titlegen.context_loaded",
+        extra={
+            "release_id": context.release_id,
+            "channel_slug": context.channel_slug,
+            "template_id": default_item["id"] if default_item else None,
+            "overwrite_required": context.has_existing_title,
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return payload
+
+
+@app.get("/v1/metadata/releases/{release_id}/descriptiongen/context")
+def api_metadata_descriptiongen_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            context = descriptiongen_service.load_descriptiongen_context(conn, release_id=release_id)
+        except descriptiongen_service.DescriptionGenError as exc:
+            status_code = 404 if exc.code == "MTD_RELEASE_NOT_FOUND" else 422
+            logger.info(
+                "metadata.descriptiongen.context_loaded",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": None,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    default_item = None
+    if context.default_template is not None:
+        default_item = {
+            "id": int(context.default_template["id"]),
+            "template_name": str(context.default_template["template_name"]),
+            "status": str(context.default_template.get("status") or ""),
+            "is_default": bool(int(context.default_template.get("is_default") or 0)),
+        }
+
+    payload = {
+        "release_id": context.release_id,
+        "channel_slug": context.channel_slug,
+        "current_description": context.current_description,
+        "has_existing_description": context.has_existing_description,
+        "default_template": default_item,
+        "active_templates": context.active_templates,
+        "can_generate_with_default": context.can_generate_with_default,
+    }
+    logger.info(
+        "metadata.descriptiongen.context_loaded",
+        extra={
+            "release_id": context.release_id,
+            "channel_slug": context.channel_slug,
+            "template_id": default_item["id"] if default_item else None,
+            "overwrite_required": context.has_existing_description,
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return payload
+
+
+@app.get("/v1/metadata/releases/{release_id}/video-tags/context")
+def api_metadata_video_tags_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            context = video_tagsgen_service.load_video_tags_context(conn, release_id=release_id)
+        except video_tagsgen_service.VideoTagsGenError as exc:
+            status_code = 404 if exc.code == "MTV_RELEASE_NOT_FOUND" else 422
+            logger.info(
+                "metadata.video_tags.generate_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "preset_id": None,
+                    "overwrite_required": None,
+                    "dropped_empty_count": None,
+                    "removed_duplicates_count": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    default_item = None
+    if context.default_preset is not None:
+        default_item = {
+            "id": int(context.default_preset["id"]),
+            "preset_name": str(context.default_preset["preset_name"]),
+            "status": str(context.default_preset.get("status") or ""),
+            "is_default": bool(int(context.default_preset.get("is_default") or 0)),
+        }
+    return {
+        "release_id": context.release_id,
+        "channel_slug": context.channel_slug,
+        "current_tags_json": context.current_tags_json,
+        "has_existing_tags": context.has_existing_tags,
+        "default_preset": default_item,
+        "active_presets": context.active_presets,
+        "can_generate_with_default": context.can_generate_with_default,
+    }
+
+
+@app.get("/v1/metadata/releases/{release_id}/preview-apply/context")
+def api_metadata_preview_apply_context(release_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            context = preview_apply_service.load_preview_apply_context(conn, release_id=release_id)
+        except preview_apply_service.MetadataPreviewApplyError as exc:
+            logger.info(
+                "metadata.preview_apply.context_loaded",
+                extra={
+                    "session_id": None,
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "requested_fields": [],
+                    "prepared_fields": [],
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            status_code = 404 if exc.code == "MPA_RELEASE_NOT_FOUND" else 422
+            return _mpa_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    logger.info(
+        "metadata.preview_apply.context_loaded",
+        extra={
+            "session_id": None,
+            "release_id": context.release_id,
+            "channel_slug": context.channel_slug,
+            "requested_fields": [],
+            "prepared_fields": [],
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return {
+        "release_id": context.release_id,
+        "channel_slug": context.channel_slug,
+        "current": context.current,
+        "defaults": context.defaults,
+        "active_sources": context.active_sources,
+    }
+
+
+@app.post("/v1/metadata/releases/{release_id}/preview-apply/preview")
+def api_metadata_preview_apply_preview(
+    release_id: int,
+    payload: MetadataPreviewApplyPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = preview_apply_service.create_preview_session(
+                conn,
+                release_id=release_id,
+                requested_fields=payload.fields,
+                sources=payload.sources.model_dump(),
+                created_by=env.basic_user,
+                ttl_seconds=env.metadata_preview_ttl_sec,
+            )
+        except preview_apply_service.MetadataPreviewApplyError as exc:
+            logger.info(
+                "metadata.preview_apply.preview_failed",
+                extra={
+                    "session_id": None,
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "requested_fields": payload.fields or ["title", "description", "tags"],
+                    "prepared_fields": [],
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            status_code = 404 if exc.code == "MPA_RELEASE_NOT_FOUND" else 422
+            return _mpa_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    logger.info(
+        "metadata.preview_apply.preview_created",
+        extra={
+            "session_id": body["session_id"],
+            "release_id": body["release_id"],
+            "channel_slug": body["channel_slug"],
+            "requested_fields": body["summary"]["requested_fields"],
+            "prepared_fields": body["summary"]["prepared_fields"],
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.get("/v1/metadata/channels/{channel_slug}/defaults")
+def api_metadata_channel_defaults_read(channel_slug: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            payload = channel_defaults_service.read_channel_defaults(conn, channel_slug=channel_slug)
+        except channel_defaults_service.MetadataDefaultsError as exc:
+            status_code = 404 if exc.code == "MDO_CHANNEL_NOT_FOUND" else 422
+            logger.info(
+                "metadata.defaults.read",
+                extra={
+                    "channel_slug": channel_slug,
+                    "field_name": None,
+                    "source_type": None,
+                    "source_id": None,
+                    "source_refs": [],
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mdo_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.defaults.read",
+        extra={
+            "channel_slug": channel_slug,
+            "field_name": "multiple",
+            "source_type": "multiple",
+            "source_id": None,
+            "source_refs": _mdo_sources_from_defaults(payload["defaults"]),
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return payload
+
+
+@app.put("/v1/metadata/channels/{channel_slug}/defaults")
+def api_metadata_channel_defaults_update(
+    channel_slug: str,
+    payload: MetadataChannelDefaultsUpdateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    previous_defaults: dict[str, Any] | None = None
+    request_sources = [
+        {"field_name": "title", "source_type": "title_template", "source_id": payload.default_title_template_id},
+        {"field_name": "description", "source_type": "description_template", "source_id": payload.default_description_template_id},
+        {"field_name": "tags", "source_type": "video_tag_preset", "source_id": payload.default_video_tag_preset_id},
+    ]
+    try:
+        try:
+            previous_defaults = channel_defaults_service.read_channel_defaults(conn, channel_slug=channel_slug)["defaults"]
+            result = channel_defaults_service.update_channel_defaults(
+                conn,
+                channel_slug=channel_slug,
+                default_title_template_id=payload.default_title_template_id,
+                default_description_template_id=payload.default_description_template_id,
+                default_video_tag_preset_id=payload.default_video_tag_preset_id,
+            )
+        except channel_defaults_service.MetadataDefaultsError as exc:
+            status_code = 404 if exc.code in {"MDO_CHANNEL_NOT_FOUND", "MDO_DEFAULT_SOURCE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.defaults.updated",
+                extra={
+                    "channel_slug": channel_slug,
+                    "field_name": exc.field_name,
+                    "source_type": exc.source_type,
+                    "source_id": exc.source_id,
+                    "source_refs": request_sources,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mdo_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    if previous_defaults is not None:
+        cleared_fields: list[dict[str, Any]] = []
+        for field_name, source_type, response_key in [
+            ("title", "title_template", "title_template"),
+            ("description", "description_template", "description_template"),
+            ("tags", "video_tag_preset", "video_tag_preset"),
+        ]:
+            previous_source = previous_defaults.get(response_key)
+            current_source = result["defaults"].get(response_key)
+            if previous_source is not None and current_source is None:
+                cleared_fields.append(
+                    {
+                        "field_name": field_name,
+                        "source_type": source_type,
+                        "source_id": previous_source.get("id"),
+                    }
+                )
+        for cleared in cleared_fields:
+            logger.info(
+                "metadata.defaults.cleared",
+                extra={
+                    "channel_slug": channel_slug,
+                    "field_name": cleared["field_name"],
+                    "source_type": cleared["source_type"],
+                    "source_id": cleared["source_id"],
+                    "source_refs": _mdo_sources_from_defaults(result["defaults"]),
+                    "result_status": "success",
+                    "error_codes": [],
+                },
+            )
+
+    logger.info(
+        "metadata.defaults.updated",
+        extra={
+            "channel_slug": channel_slug,
+            "field_name": "multiple",
+            "source_type": "multiple",
+            "source_id": None,
+            "source_refs": _mdo_sources_from_defaults(result["defaults"]),
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return result
+
+
+@app.get("/v1/metadata/preview-apply/sessions/{session_id}")
+def api_metadata_preview_apply_session(session_id: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    session_row = conn.execute("SELECT release_id, channel_slug FROM metadata_preview_sessions WHERE id = ?", (session_id,)).fetchone()
+    release_id_hint = int(session_row["release_id"]) if session_row else None
+    channel_slug_hint = str(session_row["channel_slug"]) if session_row else None
+    try:
+        try:
+            body = preview_apply_service.get_preview_session(conn, session_id=session_id)
+        except preview_apply_service.MetadataPreviewApplyError as exc:
+            event = "metadata.preview_apply.apply_failed"
+            if exc.code == "MPA_SESSION_EXPIRED":
+                event = "metadata.preview_apply.session_expired"
+            logger.info(
+                event,
+                extra={
+                    "session_id": session_id,
+                    "release_id": release_id_hint,
+                    "channel_slug": channel_slug_hint,
+                    "selected_apply_fields": [],
+                    "overwrite_confirmed_fields": [],
+                    "stale_fields": list(exc.details.get("stale_fields") or []),
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            status_code = 404 if exc.code in {"MPA_SESSION_NOT_FOUND", "MPA_RELEASE_NOT_FOUND"} else 422
+            return _mpa_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    if body["session_status"] == "EXPIRED":
+        logger.info(
+            "metadata.preview_apply.session_expired",
+            extra={
+                "session_id": body["session_id"],
+                "release_id": body["release_id"],
+                "channel_slug": body["channel_slug"],
+                "selected_apply_fields": [],
+                "overwrite_confirmed_fields": [],
+                "stale_fields": [],
+                "result_status": "ok",
+                "error_codes": [],
+            },
+        )
+    stale_fields = [field for field, rec in body["fields"].items() if rec.get("status") == "STALE"]
+    if stale_fields:
+        logger.info(
+            "metadata.preview_apply.stale_detected",
+            extra={
+                "session_id": body["session_id"],
+                "release_id": body["release_id"],
+                "channel_slug": body["channel_slug"],
+                "selected_apply_fields": [],
+                "overwrite_confirmed_fields": [],
+                "stale_fields": stale_fields,
+                "result_status": "ok",
+                "error_codes": [],
+            },
+        )
+    return body
+
+
+@app.post("/v1/metadata/preview-apply/sessions/{session_id}/apply")
+def api_metadata_preview_apply_apply(
+    session_id: str,
+    payload: MetadataPreviewApplyApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    session_row = conn.execute("SELECT release_id, channel_slug FROM metadata_preview_sessions WHERE id = ?", (session_id,)).fetchone()
+    release_id_hint = int(session_row["release_id"]) if session_row else None
+    channel_slug_hint = str(session_row["channel_slug"]) if session_row else None
+    try:
+        try:
+            body = preview_apply_service.apply_preview_session(
+                conn,
+                session_id=session_id,
+                selected_fields=payload.selected_fields,
+                overwrite_confirmed_fields=payload.overwrite_confirmed_fields,
+            )
+        except preview_apply_service.MetadataPreviewApplyError as exc:
+            event = "metadata.preview_apply.apply_failed"
+            if exc.code == "MPA_SESSION_EXPIRED":
+                event = "metadata.preview_apply.session_expired"
+            if exc.code == "MPA_PREVIEW_STALE":
+                event = "metadata.preview_apply.stale_detected"
+            logger.info(
+                event,
+                extra={
+                    "session_id": session_id,
+                    "release_id": release_id_hint,
+                    "channel_slug": channel_slug_hint,
+                    "selected_apply_fields": payload.selected_fields,
+                    "overwrite_confirmed_fields": payload.overwrite_confirmed_fields,
+                    "stale_fields": list(exc.details.get("stale_fields") or []),
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            status_code = 404 if exc.code in {"MPA_SESSION_NOT_FOUND", "MPA_RELEASE_NOT_FOUND"} else 422
+            return _mpa_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    logger.info(
+        "metadata.preview_apply.applied",
+        extra={
+            "session_id": body["session_id"],
+            "release_id": body["release_id"],
+            "channel_slug": body["channel_slug"],
+            "selected_apply_fields": payload.selected_fields,
+            "overwrite_confirmed_fields": payload.overwrite_confirmed_fields,
+            "stale_fields": body.get("stale_fields", []),
+            "result_status": body["result"],
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/background/candidates")
+def api_visual_background_candidates(
+    release_id: int,
+    template_assisted: bool = False,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = background_assignment_service.list_background_candidates(
+                conn,
+                release_id=release_id,
+                template_assisted=template_assisted,
+            )
+        except background_assignment_service.BackgroundAssignmentError as exc:
+            status_code = 404 if exc.code == "VBG_RELEASE_NOT_FOUND" else 422
+            return _vbg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/background/preview")
+def api_visual_background_preview(
+    release_id: int,
+    payload: BackgroundPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = background_assignment_service.preview_background_assignment(
+                conn,
+                release_id=release_id,
+                background_asset_id=payload.background_asset_id,
+                source_family=payload.source_family,
+                source_reference=payload.source_reference,
+                template_assisted=payload.template_assisted,
+                selected_by=env.basic_user,
+            )
+        except background_assignment_service.BackgroundAssignmentError as exc:
+            status_code = 404 if exc.code in {"VBG_RELEASE_NOT_FOUND", "VBG_PREVIEW_NOT_FOUND"} else 422
+            return _vbg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/background/approve")
+def api_visual_background_approve(
+    release_id: int,
+    payload: BackgroundApproveRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = background_assignment_service.approve_background_assignment(
+                conn,
+                release_id=release_id,
+                preview_id=payload.preview_id,
+                approved_by=env.basic_user,
+            )
+        except background_assignment_service.BackgroundAssignmentError as exc:
+            status_code = 404 if exc.code in {"VBG_RELEASE_NOT_FOUND", "VBG_PREVIEW_NOT_FOUND"} else 422
+            return _vbg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/background/apply")
+def api_visual_background_apply(
+    release_id: int,
+    payload: VisualApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = background_assignment_service.apply_background_assignment(
+                conn,
+                release_id=release_id,
+                applied_by=env.basic_user,
+                reuse_override_confirmed=bool(payload.reuse_override_confirmed),
+                stale_token=payload.stale_token,
+                conflict_token=payload.conflict_token,
+            )
+        except background_assignment_service.BackgroundAssignmentError as exc:
+            status_code = 404 if exc.code in {"VBG_RELEASE_NOT_FOUND", "VBG_PREVIEW_NOT_FOUND"} else 422
+            return _vbg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/input-payload")
+def api_visual_cover_input_payload_create(
+    release_id: int,
+    payload: CoverInputPayloadRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.create_cover_selection_input(
+                conn,
+                release_id=release_id,
+                provider_family=payload.provider_family,
+                input_payload=dict(payload.input_payload),
+                template_ref=dict(payload.template_ref) if payload.template_ref is not None else None,
+                created_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code == "VCOVER_RELEASE_NOT_FOUND" else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/candidates")
+def api_visual_cover_candidate_create(
+    release_id: int,
+    payload: CoverCandidateCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.create_cover_candidate_reference(
+                conn,
+                release_id=release_id,
+                cover_asset_id=payload.cover_asset_id,
+                source_provider_family=payload.source_provider_family,
+                source_reference=payload.source_reference,
+                input_payload_id=payload.input_payload_id,
+                selection_mode=payload.selection_mode,
+                template_ref=dict(payload.template_ref) if payload.template_ref is not None else None,
+                created_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_ASSET_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/cover/candidates")
+def api_visual_cover_candidates_list(
+    release_id: int,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.list_cover_candidates(conn, release_id=release_id)
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code == "VCOVER_RELEASE_NOT_FOUND" else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/cover/candidates/{candidate_id}/preview")
+def api_visual_cover_candidate_preview(
+    release_id: int,
+    candidate_id: str,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.preview_cover_candidate(conn, release_id=release_id, candidate_id=candidate_id)
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/select")
+def api_visual_cover_candidate_select(
+    release_id: int,
+    payload: CoverCandidateSelectRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.select_cover_candidate_for_approval(
+                conn,
+                release_id=release_id,
+                candidate_id=payload.candidate_id,
+                selected_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/approve")
+def api_visual_cover_candidate_approve(
+    release_id: int,
+    payload: CoverApproveRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.approve_cover_candidate(
+                conn,
+                release_id=release_id,
+                candidate_id=payload.candidate_id,
+                approved_by=env.basic_user,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_CANDIDATE_NOT_FOUND", "VCOVER_PREVIEW_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/releases/{release_id}/cover/apply")
+def api_visual_cover_candidate_apply(
+    release_id: int,
+    payload: VisualApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = cover_assignment_service.apply_cover_candidate(
+                conn,
+                release_id=release_id,
+                applied_by=env.basic_user,
+                reuse_override_confirmed=bool(payload.reuse_override_confirmed),
+                stale_token=payload.stale_token,
+                conflict_token=payload.conflict_token,
+            )
+        except cover_assignment_service.CoverAssignmentError as exc:
+            status_code = 404 if exc.code in {"VCOVER_RELEASE_NOT_FOUND", "VCOVER_PREVIEW_NOT_FOUND"} else 422
+            return _vcover_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return body
+
+
+@app.get("/v1/visual/releases/{release_id}/history")
+def api_visual_release_history(
+    release_id: int,
+    limit: int = 20,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    limit_clamped = max(1, min(int(limit), 100))
+    conn = dbm.connect(env)
+    try:
+        release = conn.execute("SELECT id FROM releases WHERE id = ?", (release_id,)).fetchone()
+        if not release:
+            return _vcover_error(404, "VVIS_RELEASE_NOT_FOUND", "visual release not found")
+        rows = conn.execute(
+            """
+            SELECT id, preview_scope, history_stage, preview_id, background_asset_id, cover_asset_id, decision_mode, reuse_warning_json, actor, created_at
+            FROM release_visual_history_events
+            WHERE release_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (release_id, limit_clamped),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {"release_id": release_id, "items": [dict(row) for row in rows]}
+
+
+@app.post("/v1/visual/batch/preview")
+def api_visual_batch_preview(
+    payload: VisualBatchPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = visual_batch_service.create_visual_batch_preview_session(
+                conn,
+                action_type=payload.action_type,
+                selected_release_ids=list(payload.selected_release_ids),
+                created_by=env.basic_user,
+                action_payload=dict(payload.action_payload),
+            )
+            conn.commit()
+        except visual_batch_service.VisualBatchError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code == "VBATCH_RELEASES_NOT_FOUND" else 422
+            return _vbatch_error(status_code, exc.code, exc.message, exc.details)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/visual/batch/execute")
+def api_visual_batch_execute(
+    payload: VisualBatchExecuteRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            body = visual_batch_service.execute_visual_batch_preview_session(
+                conn,
+                preview_session_id=payload.preview_session_id,
+                selected_release_ids=list(payload.selected_release_ids),
+                overwrite_confirmed=bool(payload.overwrite_confirmed),
+                reuse_override_confirmed=bool(payload.reuse_override_confirmed),
+                executed_by=env.basic_user,
+            )
+            conn.commit()
+        except visual_batch_service.VisualBatchError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code == "VBATCH_SESSION_NOT_FOUND" else 409 if exc.code.startswith("VBATCH_PREVIEW_") else 422
+            return _vbatch_error(status_code, exc.code, exc.message, exc.details)
+    finally:
+        conn.close()
+    return body
+
+
+@app.post("/v1/metadata/releases/{release_id}/video-tags/generate")
+def api_metadata_video_tags_generate(
+    release_id: int,
+    payload: MetadataVideoTagsGenGenerateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = video_tagsgen_service.generate_video_tags_preview(
+                conn,
+                release_id=release_id,
+                preset_id=payload.preset_id,
+            )
+        except video_tagsgen_service.VideoTagsGenError as exc:
+            status_code = 404 if exc.code in {"MTV_RELEASE_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.video_tags.generate_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "preset_id": payload.preset_id,
+                    "overwrite_required": None,
+                    "dropped_empty_count": None,
+                    "removed_duplicates_count": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "used_preset": {
+            "id": int(result.used_preset["id"]),
+            "preset_name": str(result.used_preset["preset_name"]),
+            "is_default_channel_preset": bool(result.used_preset["is_default_channel_preset"]),
+        },
+        "current_tags_json": result.current_tags_json,
+        "has_existing_tags": result.has_existing_tags,
+        "overwrite_required": result.overwrite_required,
+        "rendered_items_before_normalization": result.rendered_items_before_normalization,
+        "dropped_empty_items": result.dropped_empty_items,
+        "removed_duplicates": result.removed_duplicates,
+        "proposed_tags_json": result.proposed_tags_json,
+        "normalized_count": result.normalized_count,
+        "generation_fingerprint": result.generation_fingerprint,
+        "warnings": result.warnings,
+    }
+    logger.info(
+        "metadata.video_tags.generated",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "preset_id": int(result.used_preset["id"]),
+            "overwrite_required": result.overwrite_required,
+            "dropped_empty_count": len(result.dropped_empty_items),
+            "removed_duplicates_count": len(result.removed_duplicates),
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.post("/v1/metadata/releases/{release_id}/video-tags/apply")
+def api_metadata_video_tags_apply(
+    release_id: int,
+    payload: MetadataVideoTagsGenApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = video_tagsgen_service.apply_generated_video_tags(
+                conn,
+                release_id=release_id,
+                preset_id=payload.preset_id,
+                generation_fingerprint=payload.generation_fingerprint,
+                overwrite_confirmed=payload.overwrite_confirmed,
+            )
+        except video_tagsgen_service.VideoTagsGenError as exc:
+            status_code = 404 if exc.code in {"MTV_RELEASE_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.video_tags.apply_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "preset_id": payload.preset_id,
+                    "overwrite_required": None,
+                    "dropped_empty_count": None,
+                    "removed_duplicates_count": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "tags_updated": result.tags_updated,
+        "tags_before": result.tags_before,
+        "tags_after": result.tags_after,
+        "used_preset_id": result.used_preset_id,
+    }
+    if result.message is not None:
+        body["message"] = result.message
+    logger.info(
+        "metadata.video_tags.applied",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "preset_id": result.used_preset_id,
+            "overwrite_required": result.overwrite_required,
+            "dropped_empty_count": None,
+            "removed_duplicates_count": None,
+            "result_status": "no_op" if not result.tags_updated else "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.post("/v1/metadata/releases/{release_id}/descriptiongen/generate")
+def api_metadata_descriptiongen_generate(
+    release_id: int,
+    payload: MetadataDescriptionGenGenerateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = descriptiongen_service.generate_description_preview(
+                conn,
+                release_id=release_id,
+                template_id=payload.template_id,
+            )
+        except descriptiongen_service.DescriptionGenError as exc:
+            status_code = 404 if exc.code in {"MTD_RELEASE_NOT_FOUND", "MTD_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.descriptiongen.generate_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": payload.template_id,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "used_template": {
+            "id": int(result.used_template["id"]),
+            "template_name": str(result.used_template["template_name"]),
+            "is_default_channel_template": bool(result.used_template["is_default_channel_template"]),
+        },
+        "current_description": result.current_description,
+        "has_existing_description": result.has_existing_description,
+        "overwrite_required": result.overwrite_required,
+        "proposed_description": result.proposed_description,
+        "normalized_length": result.normalized_length,
+        "line_count": result.line_count,
+        "generation_fingerprint": result.generation_fingerprint,
+        "warnings": result.warnings,
+    }
+    logger.info(
+        "metadata.descriptiongen.generated",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "template_id": int(result.used_template["id"]),
+            "overwrite_required": result.overwrite_required,
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.post("/v1/metadata/releases/{release_id}/titlegen/generate")
+def api_metadata_titlegen_generate(
+    release_id: int,
+    payload: MetadataTitleGenGenerateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = titlegen_service.generate_title_preview(conn, release_id=release_id, template_id=payload.template_id)
+        except titlegen_service.TitleGenError as exc:
+            status_code = 404 if exc.code in {"MTG_RELEASE_NOT_FOUND", "MTG_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.titlegen.generate_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": payload.template_id,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "used_template": {
+            "id": int(result.used_template["id"]),
+            "template_name": str(result.used_template["template_name"]),
+            "is_default_channel_template": bool(result.used_template["is_default_channel_template"]),
+        },
+        "current_title": result.current_title,
+        "has_existing_title": result.has_existing_title,
+        "overwrite_required": result.overwrite_required,
+        "proposed_title": result.proposed_title,
+        "normalized_length": result.normalized_length,
+        "generation_fingerprint": result.generation_fingerprint,
+        "warnings": result.warnings,
+    }
+    logger.info(
+        "metadata.titlegen.generated",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "template_id": int(result.used_template["id"]),
+            "overwrite_required": result.overwrite_required,
+            "result_status": "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.post("/v1/metadata/releases/{release_id}/titlegen/apply")
+def api_metadata_titlegen_apply(
+    release_id: int,
+    payload: MetadataTitleGenApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = titlegen_service.apply_generated_title(
+                conn,
+                release_id=release_id,
+                template_id=payload.template_id,
+                generation_fingerprint=payload.generation_fingerprint,
+                overwrite_confirmed=payload.overwrite_confirmed,
+            )
+        except titlegen_service.TitleGenError as exc:
+            status_code = 404 if exc.code in {"MTG_RELEASE_NOT_FOUND", "MTG_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.titlegen.apply_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": payload.template_id,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtg_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "title_updated": result.title_updated,
+        "title_before": result.title_before,
+        "title_after": result.title_after,
+        "used_template_id": result.used_template_id,
+    }
+    if result.message is not None:
+        body["message"] = result.message
+    logger.info(
+        "metadata.titlegen.applied",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "template_id": result.used_template_id,
+            "overwrite_required": result.overwrite_required,
+            "result_status": "no_op" if not result.title_updated else "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.post("/v1/metadata/releases/{release_id}/descriptiongen/apply")
+def api_metadata_descriptiongen_apply(
+    release_id: int,
+    payload: MetadataDescriptionGenApplyRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = descriptiongen_service.apply_generated_description(
+                conn,
+                release_id=release_id,
+                template_id=payload.template_id,
+                generation_fingerprint=payload.generation_fingerprint,
+                overwrite_confirmed=payload.overwrite_confirmed,
+            )
+        except descriptiongen_service.DescriptionGenError as exc:
+            status_code = 404 if exc.code in {"MTD_RELEASE_NOT_FOUND", "MTD_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.descriptiongen.apply_failed",
+                extra={
+                    "release_id": release_id,
+                    "channel_slug": None,
+                    "template_id": payload.template_id,
+                    "overwrite_required": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    body = {
+        "release_id": result.release_id,
+        "description_updated": result.description_updated,
+        "description_before": result.description_before,
+        "description_after": result.description_after,
+        "used_template_id": result.used_template_id,
+    }
+    if result.message is not None:
+        body["message"] = result.message
+    logger.info(
+        "metadata.descriptiongen.applied",
+        extra={
+            "release_id": result.release_id,
+            "channel_slug": result.channel_slug,
+            "template_id": result.used_template_id,
+            "overwrite_required": result.overwrite_required,
+            "result_status": "no_op" if not result.description_updated else "ok",
+            "error_codes": [],
+        },
+    )
+    return body
+
+
+@app.get("/v1/metadata/title-templates/variables")
+def api_metadata_title_templates_variables(_: bool = Depends(require_basic_auth(env))):
+    return {"variables": title_template_service.allowed_variables_catalog()}
+
+
+@app.post("/v1/metadata/title-templates/preview")
+def api_metadata_title_templates_preview(
+    payload: MetadataTitleTemplatePreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    parsed_release_date: date | None = None
+    if payload.release_date is not None:
+        try:
+            parsed_release_date = date.fromisoformat(payload.release_date)
+        except ValueError:
+            return _mtb_error(422, "MTB_INVALID_RELEASE_DATE", "release_date must use YYYY-MM-DD format")
+
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_slug(conn, payload.channel_slug)
+    finally:
+        conn.close()
+
+    if not channel:
+        return _mtb_error(404, "MTB_CHANNEL_NOT_FOUND", "Channel not found")
+
+    preview = title_template_service.preview_title_template(
+        channel=channel,
+        template_body=payload.template_body,
+        release_date=parsed_release_date,
+    )
+    log_payload: Dict[str, Any] = {
+        "channel_slug": payload.channel_slug,
+        "render_status": preview.render_status,
+        "missing_variables": list(preview.missing_variables),
+        "validation_error_codes": [error["code"] for error in preview.validation_errors],
+        "template_length": len(payload.template_body),
+    }
+    logger.info("metadata.title_template.previewed", extra=log_payload)
+    if preview.validation_errors:
+        logger.info("metadata.title_template.validation_failed", extra=log_payload)
+
+    return preview.to_dict()
+
+
+def _mtd_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _mtv_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _mdo_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+def _mpa_error(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+
+
+@app.get("/v1/metadata/description-templates/variables")
+def api_metadata_description_templates_variables(_: bool = Depends(require_basic_auth(env))):
+    return {"variables": description_template_service.allowed_variables_catalog()}
+
+
+@app.post("/v1/metadata/description-templates/preview")
+def api_metadata_description_templates_preview(
+    payload: MetadataDescriptionTemplatePreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_slug(conn, payload.channel_slug)
+        if not channel:
+            return _mtd_error(404, "MTD_CHANNEL_NOT_FOUND", "Channel not found")
+        try:
+            release_row = description_template_service.load_preview_release_context(
+                conn,
+                channel_slug=payload.channel_slug,
+                release_id=payload.release_id,
+            )
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code == "MTD_RELEASE_NOT_FOUND" else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    preview = description_template_service.preview_description_template(
+        channel=channel,
+        template_body=payload.template_body,
+        release_row=release_row,
+    )
+    log_payload: Dict[str, Any] = {
+        "channel_slug": payload.channel_slug,
+        "release_id": payload.release_id,
+        "render_status": preview.render_status,
+        "missing_variables": list(preview.missing_variables),
+        "used_variables": list(preview.used_variables),
+        "validation_error_codes": [item["code"] for item in preview.validation_errors],
+        "template_length": len(payload.template_body),
+        "normalized_length": preview.normalized_length,
+        "line_count": preview.line_count,
+    }
+    logger.info("metadata.description_template.previewed", extra=log_payload)
+    if preview.validation_errors:
+        logger.info("metadata.description_template.validation_failed", extra=log_payload)
+    return preview.to_dict()
+
+
+@app.get("/v1/metadata/video-tag-presets/variables")
+def api_metadata_video_tag_presets_variables(_: bool = Depends(require_basic_auth(env))):
+    return {"variables": video_tag_preset_service.allowed_variables_catalog()}
+
+
+@app.post("/v1/metadata/video-tag-presets/preview")
+def api_metadata_video_tag_presets_preview(
+    payload: MetadataVideoTagPresetPreviewRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_slug(conn, payload.channel_slug)
+        if not channel:
+            return _mtv_error(404, "MTV_CHANNEL_NOT_FOUND", "Channel not found")
+        try:
+            release_row = video_tag_preset_service.load_preview_release_context(
+                conn,
+                channel_slug=payload.channel_slug,
+                release_id=payload.release_id,
+            )
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            status_code = 404 if exc.code == "MTV_RELEASE_NOT_FOUND" else 422
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    preview = video_tag_preset_service.preview_video_tag_preset(
+        channel=channel,
+        preset_body=payload.preset_body,
+        release_row=release_row,
+    )
+    log_payload: Dict[str, Any] = {
+        "channel_slug": payload.channel_slug,
+        "release_id": payload.release_id,
+        "render_status": preview.render_status,
+        "missing_variables": list(preview.missing_variables),
+        "used_variables": list(preview.used_variables),
+        "validation_error_codes": [item["code"] for item in preview.validation_errors],
+        "preset_item_count": len(payload.preset_body),
+        "normalized_count": preview.normalized_count,
+    }
+    logger.info("metadata.video_tag_preset.previewed", extra=log_payload)
+    if preview.validation_errors:
+        logger.info("metadata.video_tag_preset.validation_failed", extra=log_payload)
+    return preview.to_dict()
+
+
+@app.post("/v1/metadata/video-tag-presets")
+def api_metadata_video_tag_presets_create(
+    payload: MetadataVideoTagPresetCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = video_tag_preset_service.create_video_tag_preset(
+                conn,
+                channel_slug=payload.channel_slug,
+                preset_name=payload.preset_name,
+                preset_body=payload.preset_body,
+                make_default=payload.make_default,
+            )
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.video_tag_preset.validation_failed",
+                extra={
+                    "preset_id": None,
+                    "channel_slug": payload.channel_slug,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.video_tag_preset.created",
+        extra={
+            "preset_id": result["id"],
+            "channel_slug": result["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return result
+
+
+@app.get("/v1/metadata/video-tag-presets")
+def api_metadata_video_tag_presets_list(
+    channel_slug: str | None = None,
+    status: str = "active",
+    q: str | None = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    status_filter = (status or "active").lower()
+    if status_filter not in {"active", "archived", "all"}:
+        return _mtv_error(422, "MTV_INVALID_STATUS_FILTER", "status must be active|archived|all")
+    conn = dbm.connect(env)
+    try:
+        rows = video_tag_preset_service.list_video_tag_presets(
+            conn,
+            channel_slug=channel_slug,
+            status_filter=status_filter,
+            q=q,
+        )
+    finally:
+        conn.close()
+    return {"items": rows}
+
+
+@app.get("/v1/metadata/video-tag-presets/{preset_id}")
+def api_metadata_video_tag_presets_detail(preset_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = video_tag_preset_service.get_video_tag_preset(conn, preset_id=preset_id)
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.patch("/v1/metadata/video-tag-presets/{preset_id}")
+def api_metadata_video_tag_presets_patch(
+    preset_id: int,
+    payload: MetadataVideoTagPresetPatchRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = video_tag_preset_service.update_video_tag_preset(
+                conn,
+                preset_id=preset_id,
+                preset_name=payload.preset_name,
+                preset_body=payload.preset_body,
+            )
+            conn.commit()
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.video_tag_preset.validation_failed",
+                extra={
+                    "preset_id": preset_id,
+                    "channel_slug": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.video_tag_preset.updated",
+        extra={
+            "preset_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/video-tag-presets/{preset_id}/set-default")
+def api_metadata_video_tag_presets_set_default(preset_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = video_tag_preset_service.set_default_video_tag_preset(conn, preset_id=preset_id)
+            conn.commit()
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.video_tag_preset.validation_failed",
+                extra={
+                    "preset_id": preset_id,
+                    "channel_slug": None,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.video_tag_preset.default_changed",
+        extra={
+            "preset_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/video-tag-presets/{preset_id}/archive")
+def api_metadata_video_tag_presets_archive(preset_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = video_tag_preset_service.archive_video_tag_preset(conn, preset_id=preset_id)
+            conn.commit()
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.video_tag_preset.archived",
+        extra={
+            "preset_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/video-tag-presets/{preset_id}/activate")
+def api_metadata_video_tag_presets_activate(preset_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = video_tag_preset_service.activate_video_tag_preset(conn, preset_id=preset_id)
+            conn.commit()
+        except video_tag_preset_service.VideoTagPresetError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"MTV_CHANNEL_NOT_FOUND", "MTV_PRESET_NOT_FOUND"} else 422
+            return _mtv_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.video_tag_preset.activated",
+        extra={
+            "preset_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/channel-visual-style-templates")
+def api_metadata_channel_visual_style_templates_create(
+    payload: ChannelVisualStyleTemplateCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = channel_visual_style_template_service.create_channel_visual_style_template(
+                conn,
+                channel_slug=payload.channel_slug,
+                template_name=payload.template_name,
+                template_payload=payload.template_payload,
+                make_default=payload.make_default,
+            )
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            status_code = 404 if exc.code in {"CVST_CHANNEL_NOT_FOUND", "CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return result
+
+
+@app.get("/v1/metadata/channel-visual-style-templates")
+def api_metadata_channel_visual_style_templates_list(
+    channel_slug: str | None = None,
+    status: str = "active",
+    q: str | None = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    status_filter = (status or "active").lower()
+    if status_filter not in {"active", "archived", "all"}:
+        return _cvst_error(422, "CVST_INVALID_STATUS_FILTER", "status must be active|archived|all")
+    conn = dbm.connect(env)
+    try:
+        rows = channel_visual_style_template_service.list_channel_visual_style_templates(
+            conn,
+            channel_slug=channel_slug,
+            status_filter=status_filter,
+            q=q,
+        )
+    finally:
+        conn.close()
+    return {"items": rows}
+
+
+@app.get("/v1/metadata/channel-visual-style-templates/{template_id}")
+def api_metadata_channel_visual_style_templates_detail(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = channel_visual_style_template_service.get_channel_visual_style_template(conn, template_id=template_id)
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            status_code = 404 if exc.code in {"CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.patch("/v1/metadata/channel-visual-style-templates/{template_id}")
+def api_metadata_channel_visual_style_templates_patch(
+    template_id: int,
+    payload: ChannelVisualStyleTemplatePatchRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = channel_visual_style_template_service.update_channel_visual_style_template(
+                conn,
+                template_id=template_id,
+                template_name=payload.template_name,
+                template_payload=payload.template_payload,
+            )
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.post("/v1/metadata/channel-visual-style-templates/{template_id}/archive")
+def api_metadata_channel_visual_style_templates_archive(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = channel_visual_style_template_service.archive_channel_visual_style_template(conn, template_id=template_id)
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.post("/v1/metadata/channel-visual-style-templates/{template_id}/activate")
+def api_metadata_channel_visual_style_templates_activate(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = channel_visual_style_template_service.activate_channel_visual_style_template(conn, template_id=template_id)
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.post("/v1/metadata/channel-visual-style-templates/{template_id}/set-default")
+def api_metadata_channel_visual_style_templates_set_default(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = channel_visual_style_template_service.set_default_channel_visual_style_template(conn, template_id=template_id)
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.post("/v1/metadata/channel-visual-style-templates/releases/{release_id}/override")
+def api_metadata_channel_visual_style_templates_release_override_set(
+    release_id: int,
+    payload: ChannelVisualStyleTemplateReleaseOverrideRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            out = channel_visual_style_template_service.set_release_visual_style_template_override(
+                conn,
+                release_id=release_id,
+                template_id=payload.template_id,
+            )
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_RELEASE_NOT_FOUND", "CVST_TEMPLATE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return out
+
+
+@app.post("/v1/metadata/channel-visual-style-templates/releases/{release_id}/override/clear")
+def api_metadata_channel_visual_style_templates_release_override_clear(
+    release_id: int,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            out = channel_visual_style_template_service.clear_release_visual_style_template_override(
+                conn,
+                release_id=release_id,
+            )
+            conn.commit()
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            conn.rollback()
+            status_code = 404 if exc.code in {"CVST_RELEASE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return out
+
+
+@app.get("/v1/metadata/channel-visual-style-templates/releases/{release_id}/effective")
+def api_metadata_channel_visual_style_templates_release_effective(
+    release_id: int,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            out = channel_visual_style_template_service.resolve_effective_channel_visual_style_template_for_release(
+                conn,
+                release_id=release_id,
+            )
+        except channel_visual_style_template_service.ChannelVisualStyleTemplateError as exc:
+            status_code = 404 if exc.code in {"CVST_RELEASE_NOT_FOUND"} else 422
+            return _cvst_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return out
+
+
+@app.post("/v1/metadata/description-templates")
+def api_metadata_description_templates_create(
+    payload: MetadataDescriptionTemplateCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = description_template_service.create_description_template(
+                conn,
+                channel_slug=payload.channel_slug,
+                template_name=payload.template_name,
+                template_body=payload.template_body,
+                make_default=payload.make_default,
+            )
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_CHANNEL_NOT_FOUND", "MTD_TEMPLATE_NOT_FOUND"} else 422
+            logger.info(
+                "metadata.description_template.validation_failed",
+                extra={
+                    "template_id": None,
+                    "channel_slug": payload.channel_slug,
+                    "result_status": "error",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.description_template.created",
+        extra={
+            "template_id": result["id"],
+            "channel_slug": result["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return result
+
+
+@app.get("/v1/metadata/description-templates")
+def api_metadata_description_templates_list(
+    channel_slug: str | None = None,
+    status: str = "active",
+    q: str | None = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    status_filter = (status or "active").lower()
+    if status_filter not in {"active", "archived", "all"}:
+        return _mtd_error(422, "MTD_INVALID_STATUS_FILTER", "status must be active|archived|all")
+    conn = dbm.connect(env)
+    try:
+        rows = description_template_service.list_description_templates(
+            conn,
+            channel_slug=channel_slug,
+            status_filter=status_filter,
+            q=q,
+        )
+    finally:
+        conn.close()
+    return {"items": rows}
+
+
+@app.get("/v1/metadata/description-templates/{template_id}")
+def api_metadata_description_templates_detail(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = description_template_service.get_description_template(conn, template_id=template_id)
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_CHANNEL_NOT_FOUND", "MTD_TEMPLATE_NOT_FOUND"} else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.patch("/v1/metadata/description-templates/{template_id}")
+def api_metadata_description_templates_patch(
+    template_id: int,
+    payload: MetadataDescriptionTemplatePatchRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = description_template_service.update_description_template(
+                conn,
+                template_id=template_id,
+                template_name=payload.template_name,
+                template_body=payload.template_body,
+            )
+            conn.commit()
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_CHANNEL_NOT_FOUND", "MTD_TEMPLATE_NOT_FOUND"} else 422
+            if status_code == 422:
+                logger.info(
+                    "metadata.description_template.validation_failed",
+                    extra={
+                        "template_id": template_id,
+                        "channel_slug": None,
+                        "result_status": "error",
+                        "error_codes": [exc.code],
+                    },
+                )
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.description_template.updated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/description-templates/{template_id}/set-default")
+def api_metadata_description_templates_set_default(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = description_template_service.set_default_description_template(conn, template_id=template_id)
+            conn.commit()
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_TEMPLATE_NOT_FOUND"} else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.description_template.default_changed",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/description-templates/{template_id}/archive")
+def api_metadata_description_templates_archive(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = description_template_service.archive_description_template(conn, template_id=template_id)
+            conn.commit()
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_TEMPLATE_NOT_FOUND"} else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.description_template.archived",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/description-templates/{template_id}/activate")
+def api_metadata_description_templates_activate(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = description_template_service.activate_description_template(conn, template_id=template_id)
+            conn.commit()
+        except description_template_service.DescriptionTemplateError as exc:
+            status_code = 404 if exc.code in {"MTD_TEMPLATE_NOT_FOUND"} else 422
+            return _mtd_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.description_template.activated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "result_status": "success",
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates")
+def api_metadata_title_templates_create(
+    payload: MetadataTitleTemplateCreateRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            result = title_template_service.create_title_template(
+                conn,
+                channel_slug=payload.channel_slug,
+                template_name=payload.template_name,
+                template_body=payload.template_body,
+                make_default=payload.make_default,
+            )
+        except title_template_service.TemplateValidationError as exc:
+            if exc.code in {"MTB_CHANNEL_NOT_FOUND", "MTB_TEMPLATE_NOT_FOUND"}:
+                return _mtb_error(404, exc.code, exc.message)
+            logger.info(
+                "metadata.title_template.validation_failed",
+                extra={
+                    "template_id": None,
+                    "channel_slug": payload.channel_slug,
+                    "template_name": payload.template_name,
+                    "status": "ACTIVE",
+                    "is_default": payload.make_default,
+                    "validation_status": "INVALID",
+                    "error_codes": [exc.code],
+                },
+            )
+            return _mtb_error(422, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.created",
+        extra={
+            "template_id": result["id"],
+            "channel_slug": result["channel_slug"],
+            "template_name": result["template_name"],
+            "status": result["status"],
+            "is_default": result["is_default"],
+            "validation_status": result["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return result
+
+
+@app.get("/v1/metadata/title-templates")
+def api_metadata_title_templates_list(
+    channel_slug: str | None = None,
+    status: str = "active",
+    q: str | None = None,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    status_filter = (status or "active").lower()
+    if status_filter not in {"active", "archived", "all"}:
+        return _mtb_error(422, "MTB_INVALID_STATUS_FILTER", "status must be active|archived|all")
+    conn = dbm.connect(env)
+    try:
+        rows = title_template_service.list_title_templates(
+            conn,
+            channel_slug=channel_slug,
+            status_filter=status_filter,
+            q=q,
+        )
+    finally:
+        conn.close()
+    return {"items": rows}
+
+
+@app.get("/v1/metadata/title-templates/{template_id}")
+def api_metadata_title_templates_detail(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.get_title_template(conn, template_id=template_id)
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_CHANNEL_NOT_FOUND", "MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+    return item
+
+
+@app.patch("/v1/metadata/title-templates/{template_id}")
+def api_metadata_title_templates_patch(
+    template_id: int,
+    payload: MetadataTitleTemplatePatchRequest,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.update_title_template(
+                conn,
+                template_id=template_id,
+                template_name=payload.template_name,
+                template_body=payload.template_body,
+            )
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_CHANNEL_NOT_FOUND", "MTB_TEMPLATE_NOT_FOUND"} else 422
+            if status_code == 422:
+                logger.info(
+                    "metadata.title_template.validation_failed",
+                    extra={
+                        "template_id": template_id,
+                        "channel_slug": None,
+                        "template_name": payload.template_name,
+                        "status": None,
+                        "is_default": None,
+                        "validation_status": "INVALID",
+                        "error_codes": [exc.code],
+                    },
+                )
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.updated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/set-default")
+def api_metadata_title_templates_set_default(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.set_default_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.default_changed",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/archive")
+def api_metadata_title_templates_archive(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.archive_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.archived",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
+
+
+@app.post("/v1/metadata/title-templates/{template_id}/activate")
+def api_metadata_title_templates_activate(template_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        try:
+            item = title_template_service.activate_title_template(conn, template_id=template_id)
+            conn.commit()
+        except title_template_service.TemplateValidationError as exc:
+            status_code = 404 if exc.code in {"MTB_TEMPLATE_NOT_FOUND"} else 422
+            return _mtb_error(status_code, exc.code, exc.message)
+    finally:
+        conn.close()
+
+    logger.info(
+        "metadata.title_template.activated",
+        extra={
+            "template_id": item["id"],
+            "channel_slug": item["channel_slug"],
+            "template_name": item["template_name"],
+            "status": item["status"],
+            "is_default": item["is_default"],
+            "validation_status": item["validation_status"],
+            "error_codes": [],
+        },
+    )
+    return item
 
 
 @app.get("/v1/playlist-builder/channels/{channel_slug}/settings")
@@ -2931,9 +5472,53 @@ def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
         jobs = dbm.list_jobs(conn, limit=200)
+        jobs_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"])
+        failed_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs WHERE UPPER(COALESCE(state,''))='FAILED'").fetchone()["c"])
+        channels_total = int(conn.execute("SELECT COUNT(*) AS c FROM channels").fetchone()["c"])
+        batch_month_total = int(conn.execute("SELECT COUNT(DISTINCT strftime('%Y-%m', COALESCE(planned_at,''))) AS c FROM releases WHERE planned_at IS NOT NULL").fetchone()["c"])
+        control_center = build_control_center_contract_skeleton(
+            factory_summary={"jobs_total": jobs_total},
+            attention_summary={"failed_jobs": failed_total},
+            channel_summary={"channels_total": channels_total, "active_channels": channels_total},
+            batch_month_summary={"batch_month_total": batch_month_total},
+            task_routing=default_task_routing_contract(),
+        )
+        attention_routes = [
+            {
+                "why": "Failed jobs require operator triage",
+                "scope": "publish_failed",
+                "urgency": "HIGH" if failed_total > 0 else "NORMAL",
+                "next": "/ui/publish/failed",
+            },
+            {
+                "why": "Planning drift can block upcoming batches",
+                "scope": "planning",
+                "urgency": "NORMAL",
+                "next": "/ui/planner",
+            },
+        ]
+        recent_changes = [
+            {
+                "job_id": int(j.get("id") or 0),
+                "state": str(j.get("state") or ""),
+                "updated_at": str(j.get("updated_at") or ""),
+                "route": f"/jobs/{int(j.get('id') or 0)}",
+            }
+            for j in jobs[:5]
+            if j.get("id") is not None
+        ]
+        token = str(request.query_params.get("ctx") or "").strip() or None
+        incoming = resolve_incoming_context(token=token, known_paths=set(route_ownership_map().keys()))
+        return_to_context = None
+        if incoming is not None:
+            return_to_context = {
+                "path": incoming.current_path,
+                "token": token,
+                "label": "Return to previous context",
+            }
     finally:
         conn.close()
-    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs})
+    return templates.TemplateResponse("index.html", {"request": request, "jobs": jobs, "control_center": control_center, "attention_routes": attention_routes, "recent_changes": recent_changes, "return_to_context": return_to_context})
 
 
 @app.get("/ui/ops/recovery", response_class=HTMLResponse)
@@ -2949,6 +5534,46 @@ def ui_db_viewer_page(request: Request, _: bool = Depends(require_basic_auth(env
 @app.get("/ui/planner", response_class=HTMLResponse)
 def ui_planner_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("planner_bulk_releases.html", {"request": request})
+
+
+@app.get("/ui/publish/queue", response_class=HTMLResponse)
+def ui_publish_queue_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "queue"})
+
+
+@app.get("/ui/publish/blocked", response_class=HTMLResponse)
+def ui_publish_blocked_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "blocked"})
+
+
+@app.get("/ui/publish/failed", response_class=HTMLResponse)
+def ui_publish_failed_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "failed"})
+
+
+@app.get("/ui/publish/manual", response_class=HTMLResponse)
+def ui_publish_manual_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "manual"})
+
+
+@app.get("/ui/publish/health", response_class=HTMLResponse)
+def ui_publish_health_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "health"})
+
+
+@app.get("/ui/publish/jobs/{job_id}", response_class=HTMLResponse)
+def ui_publish_job_detail_page(job_id: int, request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("publish_job_detail.html", {"request": request, "job_id": job_id})
+
+
+@app.get("/ui/metadata/title-templates", response_class=HTMLResponse)
+def ui_metadata_title_templates_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("metadata_title_templates.html", {"request": request})
+
+
+@app.get("/ui/channels/{channel_slug}/metadata-defaults", response_class=HTMLResponse)
+def ui_channel_metadata_defaults_page(channel_slug: str, request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("metadata_channel_defaults.html", {"request": request, "channel_slug": channel_slug})
 
 
 @app.get("/ui/track-catalog/analysis-report", response_class=HTMLResponse)
@@ -3221,36 +5846,20 @@ def api_job_qa(job_id: int, _: bool = Depends(require_basic_auth(env))):
 
 @app.post("/v1/jobs/{job_id}/approve")
 def api_approve(job_id: int, payload: ApprovePayload, _: bool = Depends(require_basic_auth(env))):
-    comment = (payload.comment or "approved").strip() or "approved"
     conn = dbm.connect(env)
     try:
-        job = dbm.get_job(conn, job_id)
-        if not job:
-            raise HTTPException(404)
-        if str(job.get("state")) != "WAIT_APPROVAL":
-            raise HTTPException(409, "job is not in WAIT_APPROVAL")
-        dbm.set_approval(conn, job_id, "APPROVE", comment)
-        dbm.update_job_state(conn, job_id, state="APPROVED", stage="APPROVAL")
+        return approve_job(conn, job_id=job_id, comment=(payload.comment or "approved"))
     finally:
         conn.close()
-    return {"ok": True}
 
 
 @app.post("/v1/jobs/{job_id}/reject")
 def api_reject(job_id: int, payload: RejectPayload, _: bool = Depends(require_basic_auth(env))):
-    comment = payload.comment.strip()
     conn = dbm.connect(env)
     try:
-        job = dbm.get_job(conn, job_id)
-        if not job:
-            raise HTTPException(404)
-        if str(job.get("state")) != "WAIT_APPROVAL":
-            raise HTTPException(409, "job is not in WAIT_APPROVAL")
-        dbm.set_approval(conn, job_id, "REJECT", comment)
-        dbm.update_job_state(conn, job_id, state="REJECTED", stage="APPROVAL")
+        return reject_job(conn, job_id=job_id, comment=payload.comment)
     finally:
         conn.close()
-    return {"ok": True}
 
 
 
@@ -3285,23 +5894,10 @@ def api_cancel(job_id: int, payload: CancelPayload, _: bool = Depends(require_ba
 def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
-        job = dbm.get_job(conn, job_id)
-        if not job:
-            raise HTTPException(404)
-        if str(job.get("state")) not in ("APPROVED", "WAIT_APPROVAL"):
-            raise HTTPException(409, "job is not in APPROVED/WAIT_APPROVAL")
-        ts = dbm.now_ts()
-        delete_at = ts + 48 * 3600
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            dbm.update_job_state(conn, job_id, state="PUBLISHED", stage="APPROVAL", published_at=ts, delete_mp4_at=delete_at)
-            history_id = write_committed_history_for_published(conn, job_id=job_id)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        if history_id is not None:
-            logger.info("playlist_builder.history.committed_written", extra={"job_id": job_id, "history_id": history_id})
+        result = mark_job_published(conn, job_id=job_id)
+        if result.get("history_id") is not None:
+            logger.info("playlist_builder.history.committed_written", extra={"job_id": job_id, "history_id": result["history_id"]})
+        return {"ok": True, "delete_mp4_at": result["delete_mp4_at"]}
     except PlaylistBuilderApiError as exc:
         status = {
             "PLB_COMMITTED_HISTORY_MISSING_DRAFT": 409,
@@ -3311,7 +5907,202 @@ def api_mark_published(job_id: int, payload: dict, _: bool = Depends(require_bas
         return _plb_error(status, exc.code, exc.message)
     finally:
         conn.close()
-    return {"ok": True, "delete_mp4_at": delete_at}
+
+
+@app.get("/v1/problems/readiness/grouped")
+def api_problem_readiness_grouped(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        jobs = dbm.list_jobs(conn, limit=500)
+    finally:
+        conn.close()
+    return build_grouped_problem_surface(jobs=jobs)
+
+
+@app.get("/ui/problems/readiness", response_class=HTMLResponse)
+def ui_problem_readiness_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        jobs = dbm.list_jobs(conn, limit=500)
+    finally:
+        conn.close()
+    surface = build_grouped_problem_surface(jobs=jobs)
+    return templates.TemplateResponse("ui_problems_readiness.html", {"request": request, "surface": surface})
+
+
+@app.get("/v1/workspaces/catalog")
+def api_workspace_catalog(_: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import workspace_family_catalog
+
+    return workspace_family_catalog()
+
+
+@app.get("/v1/workspaces/{family}/{entity_id}")
+def api_workspace_summary(family: str, entity_id: str, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import build_workspace_summary
+
+    conn = dbm.connect(env)
+    try:
+        return build_workspace_summary(conn=conn, family=family, entity_id=entity_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    finally:
+        conn.close()
+
+
+@app.get("/v1/workspaces/{family}/{entity_id}/drilldown")
+def api_workspace_drilldown(family: str, entity_id: str, request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import build_workspace_summary, entity_drilldown_contract
+
+    conn = dbm.connect(env)
+    try:
+        summary = build_workspace_summary(conn=conn, family=family, entity_id=entity_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    finally:
+        conn.close()
+
+    return entity_drilldown_contract(
+        entry_context=request.query_params.get("entry", "control_center"),
+        scope=f"{summary['workspace_family']}:{summary['entity_id']}",
+        related_context_links=[
+            {"kind": item.get("kind", "related"), "href": item.get("href", "/")}
+            for item in summary.get("related_contexts", [])
+        ],
+        return_path=request.query_params.get("return_path", "/"),
+        open_full_context_path=f"/v1/workspaces/{summary['workspace_family'].lower().replace('_workspace','')}/{summary['entity_id']}",
+    )
+
+
+@app.get("/v1/workspaces/task-continuity")
+def api_workspace_task_continuity(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import task_continuity_contract
+
+    return task_continuity_contract(
+        parent_context_ref=request.query_params.get("parent", "control_center"),
+        filters={"status": request.query_params.get("status", "all")},
+        scope=request.query_params.get("scope", "job"),
+        result_return_path=request.query_params.get("return_path", "/"),
+    )
+
+
+@app.get("/v1/workspaces/result-return")
+def api_workspace_result_return(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.operator_workspaces import result_return_contract
+
+    return result_return_contract(
+        from_action=request.query_params.get("action", "mutate"),
+        return_path=request.query_params.get("return_path", "/"),
+        open_full_context_path=request.query_params.get("open_full", request.query_params.get("return_path", "/")),
+    )
+
+
+@app.get("/v1/actions/contracts/preview-apply")
+def api_action_contract_preview_apply(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import preview_to_apply_contract
+
+    return preview_to_apply_contract(action=request.query_params.get("action", "retry"), preview_scope=request.query_params.get("scope", "job"))
+
+
+@app.get("/v1/actions/contracts/preview-confirm-execute")
+def api_action_contract_preview_confirm_execute(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import preview_confirm_execute_contract
+
+    return preview_confirm_execute_contract(action=request.query_params.get("action", "cancel"), preview_scope=request.query_params.get("scope", "job"))
+
+
+@app.get("/v1/actions/contracts/direct-confirm")
+def api_action_contract_direct_confirm(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import direct_mutate_with_confirmation_contract
+
+    return direct_mutate_with_confirmation_contract(
+        action=request.query_params.get("action", "cancel"),
+        target_scope=request.query_params.get("scope", "job"),
+    )
+
+
+@app.get("/v1/actions/contracts/stale-refresh")
+def api_action_contract_stale_refresh(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import stale_refusal_or_refresh_contract
+
+    return stale_refusal_or_refresh_contract(expected_version=request.query_params.get("expected", "v1"), actual_version=request.query_params.get("actual", "v1"))
+
+
+@app.get("/v1/actions/contracts/partial-result")
+def api_action_contract_partial_result(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import partial_result_summary_contract
+
+    return partial_result_summary_contract(
+        succeeded=[v for v in request.query_params.get("succeeded", "").split(",") if v],
+        failed=[v for v in request.query_params.get("failed", "").split(",") if v],
+        unresolved=[v for v in request.query_params.get("unresolved", "").split(",") if v],
+    )
+
+
+@app.get("/v1/actions/contracts/batch-preview-execute")
+def api_action_contract_batch_preview_execute(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import batch_preview_execute_contract
+
+    return batch_preview_execute_contract(
+        targets=[v for v in request.query_params.get("targets", "").split(",") if v],
+        action=request.query_params.get("action", "batch_execute"),
+        requires_preview=request.query_params.get("requires_preview", "1") != "0",
+    )
+
+
+@app.get("/v1/actions/contracts/result-continuation")
+def api_action_contract_result_continuation(request: Request, _: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import result_continuation_contract
+
+    return result_continuation_contract(
+        result_class=request.query_params.get("result", "SUCCEEDED"),
+        what_changed=[v for v in request.query_params.get("changed", "").split(",") if v],
+        what_failed=[v for v in request.query_params.get("failed", "").split(",") if v],
+        unresolved=[v for v in request.query_params.get("unresolved", "").split(",") if v],
+        next_step=request.query_params.get("next_step", "continue"),
+        return_path=request.query_params.get("return_path", "/"),
+    )
+
+
+@app.get("/v1/actions/contracts/cross-domain-consistency")
+def api_action_contract_cross_domain_consistency(_: bool = Depends(require_basic_auth(env))):
+    from services.factory_api.shared_action_flows import cross_domain_consistency_contract
+
+    return cross_domain_consistency_contract()
+
+
+@app.get("/v1/problems/readiness/contract")
+def api_problem_readiness_contract(_: bool = Depends(require_basic_auth(env))):
+    return {
+        "catalog": problem_readiness_contract_catalog(),
+        "sample": problem_readiness_item_contract(
+            state="FAILED",
+            severity="BLOCKING",
+            primary_reason="render watchdog detected non-growing output",
+            supporting_signals=["ffmpeg stderr anomaly", "output size unchanged"],
+            next_direction="open recovery workspace",
+        ),
+    }
+
+
+@app.get("/v1/control-center/contract-skeleton")
+def api_control_center_contract_skeleton(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        jobs_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"])
+        failed_total = int(conn.execute("SELECT COUNT(*) AS c FROM jobs WHERE UPPER(COALESCE(state,''))='FAILED'").fetchone()["c"])
+        channels_total = int(conn.execute("SELECT COUNT(*) AS c FROM channels").fetchone()["c"])
+        active_channels = channels_total
+        batch_month_total = int(conn.execute("SELECT COUNT(DISTINCT strftime('%Y-%m', COALESCE(planned_at,''))) AS c FROM releases WHERE planned_at IS NOT NULL").fetchone()["c"])
+    finally:
+        conn.close()
+    return build_control_center_contract_skeleton(
+        factory_summary={"jobs_total": jobs_total},
+        attention_summary={"failed_jobs": failed_total},
+        channel_summary={"channels_total": channels_total, "active_channels": active_channels},
+        batch_month_summary={"batch_month_total": batch_month_total},
+        task_routing=default_task_routing_contract(),
+    )
 
 
 @app.get("/v1/ui/jobs/statuses")
@@ -3970,6 +6761,7 @@ def ui_jobs_create_page(request: Request, _: bool = Depends(require_basic_auth(e
             "field_errors": {},
             "form": {},
             "job_id": None,
+            "release_id": None,
             "locked": False,
         },
     )
@@ -4031,6 +6823,7 @@ async def ui_jobs_create_submit(
                     "field_errors": errors,
                     "form": payload.model_dump(),
                     "job_id": None,
+                    "release_id": None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4047,6 +6840,7 @@ async def ui_jobs_create_submit(
                     "field_errors": {"project": ["project is invalid"]},
                     "form": payload.model_dump(),
                     "job_id": None,
+                    "release_id": None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4064,6 +6858,8 @@ async def ui_jobs_create_submit(
             background_ext=payload.background_ext.strip(),
             audio_ids_text=payload.audio_ids_text.strip(),
         )
+        created_job = dbm.get_job(conn, job_id)
+        release_id = int(created_job["release_id"]) if created_job and created_job.get("release_id") is not None else None
         preflight = run_preflight_for_job(conn, env, job_id)
     finally:
         conn.close()
@@ -4077,6 +6873,7 @@ async def ui_jobs_create_submit(
             "field_errors": preflight.field_errors,
             "form": payload.model_dump(),
             "job_id": job_id,
+            "release_id": release_id,
             "locked": False,
         },
     )
@@ -4091,6 +6888,7 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
         channels = _all_channels(conn)
         if not draft or not job:
             raise HTTPException(404)
+        release_id = int(job["release_id"]) if job.get("release_id") is not None else None
         locked = str(job.get("state") or "") != "DRAFT"
     finally:
         conn.close()
@@ -4103,6 +6901,7 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
             "field_errors": {},
             "form": draft,
             "job_id": job_id,
+            "release_id": release_id,
             "locked": locked,
         },
     )
@@ -4168,6 +6967,7 @@ async def ui_jobs_edit_submit(
                     "field_errors": errors,
                     "form": payload.model_dump(),
                     "job_id": job_id,
+                    "release_id": int(job["release_id"]) if job.get("release_id") is not None else None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4184,6 +6984,7 @@ async def ui_jobs_edit_submit(
                     "field_errors": {"project": ["project is invalid"]},
                     "form": payload.model_dump(),
                     "job_id": job_id,
+                    "release_id": int(job["release_id"]) if job.get("release_id") is not None else None,
                     "locked": False,
                 },
                 status_code=422,
@@ -4205,6 +7006,7 @@ async def ui_jobs_edit_submit(
             audio_ids_text=payload.audio_ids_text.strip(),
         )
         preflight = run_preflight_for_job(conn, env, job_id)
+        release_id = int(job["release_id"]) if job.get("release_id") is not None else None
     finally:
         conn.close()
 
@@ -4217,6 +7019,7 @@ async def ui_jobs_edit_submit(
             "field_errors": preflight.field_errors,
             "form": payload.model_dump(),
             "job_id": job_id,
+            "release_id": release_id,
             "locked": False,
         },
     )
@@ -4226,3 +7029,534 @@ async def ui_jobs_edit_submit(
 def ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
     api_ui_jobs_render_all(True)
     return RedirectResponse(url="/", status_code=303)
+
+# --- MF6 analytics center pages/contracts (Slices 1-2) ---
+
+
+def _analytics_nav_spine() -> list[dict[str, str]]:
+    return [
+        {"key": "OVERVIEW", "label": "Overview", "path": "/v1/analytics/overview"},
+        {"key": "CHANNELS", "label": "Channels", "path": "/v1/analytics/channels"},
+        {"key": "RELEASES_VIDEOS", "label": "Releases/Videos", "path": "/v1/analytics/releases"},
+        {"key": "BATCH_MONTH", "label": "Batch/Month", "path": "/v1/analytics/batches"},
+        {"key": "ANOMALIES", "label": "Anomalies", "path": "/v1/analytics/anomalies"},
+        {"key": "RECOMMENDATIONS", "label": "Recommendations", "path": "/v1/analytics/recommendations"},
+        {"key": "REPORTS_EXPORTS", "label": "Reports/Exports", "path": "/v1/analytics/reports"},
+    ]
+
+
+def _build_page(conn: Any, scope: str, raw_filters: dict[str, Any], *, scope_ref: str | None = None, summary_cards: list[dict[str, Any]], detail_blocks: list[dict[str, Any]], anomaly_markers: list[dict[str, Any]], recommendation_summary: list[dict[str, Any]], available_actions: list[dict[str, Any]], export_actions: list[dict[str, Any]]) -> dict[str, Any]:
+    from services.analytics_center.ui_contracts import (
+        build_analytics_page_contract,
+        normalize_analytics_filters,
+    )
+    from services.analytics_center.page_aggregations import compute_page_freshness
+
+    applied = normalize_analytics_filters(raw_filters)
+    freshness, coverage = compute_page_freshness(conn, page_scope=scope, scope_ref=scope_ref)
+    page = build_analytics_page_contract(
+        page_scope=scope,
+        applied_filters=applied,
+        freshness_summary=freshness,
+        source_coverage_summary=coverage,
+        summary_cards=summary_cards,
+        detail_blocks=detail_blocks,
+        anomaly_risk_markers=anomaly_markers,
+        recommendation_summary=recommendation_summary,
+        available_actions=available_actions,
+        export_report_actions=export_actions,
+    )
+    page["navigation"] = _analytics_nav_spine()
+    return page
+
+
+def _compute_freshness_summary(conn: Any, *, page_scope: str, scope_ref: Any | None = None) -> dict[str, Any]:
+    from services.analytics_center.page_aggregations import compute_page_freshness
+
+    normalized_scope = {"BATCH_MONTH": "BATCH_MONTH", "OVERVIEW": "OVERVIEW", "CHANNEL": "CHANNEL", "RELEASE": "RELEASE", "ANOMALIES": "ANOMALIES", "RECOMMENDATIONS": "RECOMMENDATIONS", "REPORTS_EXPORTS": "REPORTS_EXPORTS"}.get(str(page_scope or "").upper(), "OVERVIEW")
+    freshness, _ = compute_page_freshness(conn, page_scope=normalized_scope, scope_ref=None if scope_ref is None else str(scope_ref))
+    return freshness
+
+
+
+
+def _analytics_filter_error(code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"error": {"code": code, "message": message}})
+
+@app.get("/v1/analytics/filter-contract")
+def api_analytics_filter_contract(_: bool = Depends(require_basic_auth(env))):
+    return {
+        "shared_filters": [
+            "channel", "release_video", "batch_month", "time_window", "anomaly_risk_status",
+            "recommendation_family", "severity", "confidence", "freshness", "source_family",
+            "target_domain", "report_export_type",
+        ],
+        "navigation": _analytics_nav_spine(),
+        "restorable": True,
+    }
+
+
+@app.get("/v1/analytics/channels")
+def api_analytics_channels_index(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute("SELECT slug FROM channels ORDER BY slug").fetchall()
+        return {"items": [str(r["slug"]) for r in rows], "path_template": "/v1/analytics/channels/{channel_slug}"}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/releases")
+def api_analytics_releases_index(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute("SELECT id FROM releases ORDER BY id DESC LIMIT 50").fetchall()
+        return {"items": [int(r["id"]) for r in rows], "path_template": "/v1/analytics/releases/{release_id}"}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/batches")
+def api_analytics_batches_index(_: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        rows = conn.execute("SELECT DISTINCT strftime('%Y-%m', COALESCE(planned_at, '')) AS batch_month FROM releases WHERE planned_at IS NOT NULL ORDER BY batch_month DESC LIMIT 24").fetchall()
+        return {"items": [str(r["batch_month"]) for r in rows if str(r["batch_month"] or "")], "path_template": "/v1/analytics/batches/{batch_month}"}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/overview")
+def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_window: str | None = None, freshness: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_overview
+
+        aggregated = aggregate_overview(conn, time_window=time_window, freshness=freshness)
+        page = _build_page(
+            conn,
+            "OVERVIEW",
+            {"time_window": time_window, "freshness": freshness},
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "recompute"}],
+            export_actions=[{"action": "export_overview", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="OVERVIEW", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/channels/{channel_slug}")
+def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, recommendation_family: str | None = None, severity: str | None = None, confidence: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+
+        aggregated = aggregate_scope(conn, scope_type="CHANNEL", scope_ref=channel_slug, filters={"time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence})
+        page = _build_page(
+            conn,
+            "CHANNEL",
+            {"channel": channel_slug, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence},
+            scope_ref=channel_slug,
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "open_anomaly"}, {"action": "open_recommendation"}],
+            export_actions=[{"action": "export_channel", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="CHANNEL", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/releases/{release_id}")
+def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None, source_family: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+        from services.analytics_center.reporting import validate_mf6_source_family_filter
+        from services.analytics_center.errors import AnalyticsDomainError
+
+        try:
+            validate_mf6_source_family_filter(context_scope="RELEASE", source_family=source_family)
+        except AnalyticsDomainError as exc:
+            return _analytics_filter_error(exc.code, exc.message)
+
+        aggregated = aggregate_scope(conn, scope_type="RELEASE", scope_ref=str(release_id), filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family})
+        page = _build_page(
+            conn,
+            "RELEASE",
+            {"release_video": str(release_id), "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family},
+            scope_ref=str(release_id),
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
+            export_actions=[{"action": "export_release", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="RELEASE", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/batches/{batch_month}")
+def api_analytics_batches(batch_month: str, _: bool = Depends(require_basic_auth(env)), channel: str | None = None, time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+
+        aggregated = aggregate_scope(conn, scope_type="BATCH_MONTH", scope_ref=batch_month, filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "channel": channel})
+        page = _build_page(
+            conn,
+            "BATCH_MONTH",
+            {"batch_month": batch_month, "channel": channel, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family},
+            scope_ref=batch_month,
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "recompute"}],
+            export_actions=[{"action": "export_batch", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="BATCH_MONTH", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/anomalies")
+def api_analytics_anomalies(_: bool = Depends(require_basic_auth(env)), scope_type: str | None = None, severity: str | None = None, confidence: str | None = None, recommendation_family: str | None = None, target_domain: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_anomalies
+
+        aggregated = aggregate_anomalies(conn, filters={"scope_type": scope_type, "severity": severity, "confidence": confidence, "recommendation_family": recommendation_family, "target_domain": target_domain})
+        page = _build_page(
+            conn,
+            "ANOMALIES",
+            {"scope_type": scope_type, "severity": severity, "confidence": confidence, "recommendation_family": recommendation_family, "target_domain": target_domain},
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "inspect_anomaly"}, {"action": "open_related_domain"}],
+            export_actions=[],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANOMALY_INSPECTED", page_scope="ANOMALIES", action_type="INSPECT_ANOMALY", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/recommendations")
+def api_analytics_recommendations(_: bool = Depends(require_basic_auth(env)), scope_type: str | None = None, recommendation_family: str | None = None, target_domain: str | None = None, severity: str | None = None, confidence: str | None = None, lifecycle_status: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_recommendations
+
+        aggregated = aggregate_recommendations(conn, filters={"scope_type": scope_type, "recommendation_family": recommendation_family, "target_domain": target_domain, "severity": severity, "confidence": confidence, "lifecycle_status": lifecycle_status})
+        page = _build_page(
+            conn,
+            "RECOMMENDATIONS",
+            {"scope_type": scope_type, "recommendation_family": recommendation_family, "target_domain": target_domain, "severity": severity, "confidence": confidence, "lifecycle_status": lifecycle_status},
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "open_next_action_surface"}, {"action": "acknowledge_recommendation"}],
+            export_actions=[],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="RECOMMENDATION_OPENED", page_scope="RECOMMENDATIONS", action_type="OPEN_RECOMMENDATION", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.get("/v1/analytics/reports")
+def api_analytics_reports(_: bool = Depends(require_basic_auth(env)), report_export_type: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        page = _build_page(
+            conn,
+            "REPORTS_EXPORTS",
+            {"report_export_type": report_export_type},
+            summary_cards=[{"card": "reports_exports"}],
+            detail_blocks=[{"table": "saved_reports", "rows": []}],
+            anomaly_markers=[],
+            recommendation_summary=[],
+            available_actions=[{"action": "export_download_report"}],
+            export_actions=[{"action": "create_report_record"}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="REPORTS_EXPORTS", action_type="VIEW_REPORTS", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
+@app.post("/v1/analytics/reports/request")
+def api_analytics_report_request(
+    payload: Dict[str, Any],
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.reporting import create_report_record
+
+        try:
+            report_id = create_report_record(
+                conn,
+                report_scope_type=str(payload.get("report_scope_type", "")),
+                report_scope_ref=payload.get("report_scope_ref"),
+                report_family=str(payload.get("report_family", "DEFAULT")),
+                filter_payload=dict(payload.get("filter_payload", {})),
+                artifact_type=str(payload.get("artifact_type", "")),
+                created_by=env.basic_user,
+            )
+        except Exception as exc:
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), freshness_summary=_compute_freshness_summary(conn, page_scope=str(payload.get("report_scope_type", "OVERVIEW")), scope_ref=payload.get("report_scope_ref")))
+            from services.analytics_center.errors import AnalyticsDomainError
+            if isinstance(exc, AnalyticsDomainError) and exc.code == "E5A_INVALID_ANALYTICS_FILTER_COMBINATION":
+                return _analytics_filter_error(exc.code, exc.message)
+            raise HTTPException(422, f"report generation failed: {exc}")
+        row = conn.execute("SELECT * FROM analytics_report_records WHERE id = ?", (int(report_id),)).fetchone()
+        event_freshness = _compute_freshness_summary(conn, page_scope=str(payload.get("report_scope_type", "OVERVIEW")), scope_ref=payload.get("report_scope_ref"))
+        _record_analytics_ui_event(event_type="ANALYTICS_REPORT_REQUESTED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_REQUEST", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary=event_freshness)
+        if row is not None and str(row["generation_status"]) == "READY":
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_GENERATED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_GENERATED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary=event_freshness)
+        else:
+            _record_analytics_ui_event(event_type="ANALYTICS_REPORT_FAILED", page_scope=str(payload.get("report_scope_type", "OVERVIEW")), action_type="REPORT_FAILED", scope_ref=payload.get("report_scope_ref"), filter_payload=dict(payload.get("filter_payload", {})), artifact_type=str(payload.get("artifact_type", "")), report_record_id=int(report_id), freshness_summary=event_freshness)
+        return {"report_record": dict(row), "deduped_or_created_id": int(report_id)}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/reports/records")
+def api_analytics_report_records(
+    _: bool = Depends(require_basic_auth(env)),
+    report_scope_type: str | None = None,
+    generation_status: str | None = None,
+):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.reporting import list_report_records
+
+        return {"items": list_report_records(conn, report_scope_type=report_scope_type, generation_status=generation_status)}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/reports/{report_record_id}/download")
+def api_analytics_report_download(report_record_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        row = conn.execute("SELECT * FROM analytics_report_records WHERE id = ?", (int(report_record_id),)).fetchone()
+        if row is None:
+            raise HTTPException(404, "report not found")
+        if str(row["generation_status"]) != "READY":
+            raise HTTPException(422, "report not ready")
+        artifact_ref = str(row["artifact_ref"] or "")
+        if not artifact_ref or not os.path.exists(artifact_ref):
+            raise HTTPException(422, "report artifact missing")
+        _record_analytics_ui_event(event_type="EXPORT_DOWNLOADED", page_scope=str(row["report_scope_type"]), action_type="DOWNLOAD", scope_ref=row["report_scope_ref"], artifact_type=str(row["artifact_type"]), report_record_id=int(report_record_id), freshness_summary=_compute_freshness_summary(conn, page_scope=str(row["report_scope_type"]), scope_ref=row["report_scope_ref"]))
+        return {"download": True, "report_record_id": int(report_record_id), "artifact_ref": artifact_ref, "artifact_type": row["artifact_type"]}
+    finally:
+        conn.close()
+
+
+
+
+def _external_sync_http_status(code: str) -> int:
+    if code in {"E5A_INVALID_EXTERNAL_SCOPE", "E5A_INVALID_REFRESH_MODE"}:
+        return 422
+    if code in {"E5A_SYNC_RUN_CONFLICT"}:
+        return 409
+    return 500
+
+
+@app.post("/v1/analytics/external/manual-refresh")
+def api_analytics_external_manual_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import request_manual_refresh
+        from services.analytics_center.errors import AnalyticsDomainError
+
+        provider_name = "YOUTUBE"
+        target_scope_type = str(payload.get("target_scope_type") or "CHANNEL")
+        target_scope_ref = str(payload.get("target_scope_ref") or "")
+        refresh_mode = str(payload.get("refresh_mode") or "MANUAL_REFRESH")
+        force = bool(payload.get("force", False))
+        metrics_subset = payload.get("metrics_subset")
+        run_id = request_manual_refresh(
+            conn,
+            target_scope_type=target_scope_type,
+            target_scope_ref=target_scope_ref,
+            refresh_mode=refresh_mode,
+            force=force,
+            metrics_subset=metrics_subset if isinstance(metrics_subset, list) else None,
+        )
+        row = conn.execute("SELECT * FROM analytics_external_sync_runs WHERE id = ?", (int(run_id),)).fetchone()
+        return {
+            "run_id": int(run_id),
+            "provider_name": provider_name,
+            "target_scope_type": target_scope_type,
+            "target_scope_ref": target_scope_ref,
+            "run_mode": str(row["run_mode"]),
+            "sync_state": str(row["sync_state"]),
+        }
+    except Exception as exc:
+        from services.analytics_center.errors import AnalyticsDomainError
+        if isinstance(exc, AnalyticsDomainError):
+            raise HTTPException(status_code=_external_sync_http_status(exc.code), detail={"code": exc.code, "message": exc.message})
+        raise
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/status")
+def api_analytics_external_status(target_scope_type: str, target_scope_ref: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import get_sync_status
+        return get_sync_status(conn, target_scope_type=target_scope_type, target_scope_ref=target_scope_ref)
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/coverage")
+def api_analytics_external_coverage(target_scope_type: str, target_scope_ref: str, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import get_coverage_report
+        return get_coverage_report(conn, target_scope_type=target_scope_type, target_scope_ref=target_scope_ref)
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/runs")
+def api_analytics_external_runs(target_scope_type: str | None = None, target_scope_ref: str | None = None, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import list_sync_runs
+        return {"items": list_sync_runs(conn, target_scope_type=target_scope_type, target_scope_ref=target_scope_ref)}
+    finally:
+        conn.close()
+
+
+@app.get("/v1/analytics/external/runs/{run_id}")
+def api_analytics_external_run_detail(run_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import get_sync_run_detail
+        row = get_sync_run_detail(conn, run_id=int(run_id))
+        if row is None:
+            raise HTTPException(status_code=404, detail={"code": "E5A_INVALID_EXTERNAL_SCOPE", "message": "sync run not found"})
+        return row
+    finally:
+        conn.close()
+
+@app.post("/v1/analytics/actions/refresh")
+def api_analytics_action_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope=str(payload.get("scope", "OVERVIEW")), scope_ref=payload.get("scope_ref"))
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="REFRESH_TRIGGERED", page_scope=str(payload.get("scope", "OVERVIEW")), action_type="REFRESH", filter_payload=payload, freshness_summary=freshness_summary)
+    return {"action": "refresh", "delegated": True, "scope": payload, "mutation": False}
+
+
+@app.post("/v1/analytics/actions/recompute")
+def api_analytics_action_recompute(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope=str(payload.get("scope", "OVERVIEW")), scope_ref=payload.get("scope_ref"))
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="RECOMPUTE_TRIGGERED", page_scope=str(payload.get("scope", "OVERVIEW")), action_type="RECOMPUTE", filter_payload=payload, freshness_summary=freshness_summary)
+    return {"action": "recompute", "delegated": True, "scope": payload, "mutation": False}
+
+
+@app.get("/v1/analytics/actions/related-domain-jump")
+def api_analytics_related_domain_jump(
+    target_domain: str,
+    scope_ref: str,
+    next_action: str,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    from services.analytics_center.reporting import build_related_domain_jump
+
+    jump = build_related_domain_jump(target_domain=target_domain, scope_ref=scope_ref, next_action=next_action)
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope="RECOMMENDATIONS", scope_ref=scope_ref)
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="RELATED_DOMAIN_JUMP_OPENED", page_scope="RECOMMENDATIONS", action_type="RELATED_DOMAIN_JUMP", scope_ref=scope_ref, filter_payload={"target_domain": target_domain, "next_action": next_action}, freshness_summary=freshness_summary)
+    return {"jump": jump, "mutation": False}
+
+
+@app.post("/v1/analytics/actions/recommendations/{recommendation_id}/acknowledge")
+def api_analytics_ack_recommendation(recommendation_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.recommendation_runtime import update_recommendation_lifecycle
+
+        update_recommendation_lifecycle(conn, recommendation_id=int(recommendation_id), target_status="ACKNOWLEDGED")
+        return {"recommendation_id": int(recommendation_id), "status": "ACKNOWLEDGED", "mutation": False}
+    finally:
+        conn.close()
+
+
+@app.post("/v1/analytics/actions/anomaly/inspect")
+def api_analytics_inspect_anomaly(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        freshness_summary = _compute_freshness_summary(conn, page_scope="ANOMALIES", scope_ref=None)
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANOMALY_INSPECTED", page_scope="ANOMALIES", action_type="INSPECT_ANOMALY", scope_ref=str(payload.get("id") or ""), filter_payload=payload, freshness_summary=freshness_summary)
+    return {"action": "inspect_anomaly", "payload": payload, "mutation": False}
+
+
+def _record_analytics_ui_event(*, event_type: str, page_scope: str, action_type: str, scope_ref: str | None = None, filter_payload: dict[str, Any] | None = None, artifact_type: str | None = None, report_record_id: int | None = None, freshness_summary: dict[str, Any] | None = None) -> None:
+    conn = dbm.connect(env)
+    try:
+        conn.execute(
+            """
+            INSERT INTO analytics_ui_events(event_type, page_scope, scope_ref, filter_payload_json, artifact_type, report_record_id, action_type, actor, freshness_summary_json, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                event_type,
+                page_scope,
+                scope_ref,
+                json.dumps(filter_payload or {}, sort_keys=True),
+                artifact_type,
+                report_record_id,
+                action_type,
+                env.basic_user,
+                json.dumps(freshness_summary or {}, sort_keys=True),
+                dbm.now_ts(),
+            ),
+        )
+        logger.info(
+            "analytics_ui_event page_scope=%s scope_ref=%s filter_payload=%s artifact_type=%s report_record_id=%s action_type=%s actor=%s upstream_freshness_summary=%s",
+            page_scope,
+            scope_ref or "-",
+            json.dumps(filter_payload or {}, sort_keys=True),
+            artifact_type or "-",
+            report_record_id if report_record_id is not None else -1,
+            action_type,
+            env.basic_user,
+            json.dumps(freshness_summary or {}, sort_keys=True),
+        )
+    finally:
+        conn.close()

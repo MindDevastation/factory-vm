@@ -1,0 +1,15 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF6-S2",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "policy_rules": [
+    "canonical_change_requires_scope_and_affected_artifacts",
+    "related_subordinate_update_same_slice_or_explicit_followup",
+    "reviewer_acknowledgment_required"
+  ],
+  "evidence_expectations": [
+    "source_of_truth_citation_required",
+    "validation_commands_logged",
+    "not_verified_items_explicit"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF5-S2",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "mode": "deploy_update",
+  "ordered_steps": [
+    "preflight_env_and_revision",
+    "apply_deploy_package",
+    "restart_or_roll_services",
+    "run_immediate_smoke",
+    "run_monitoring_checklist",
+    "halt_and_switch_on_failure"
+  ],
+  "checklist": [
+    "api_health_endpoint_ok",
+    "worker_heartbeat_visible",
+    "critical_queue_endpoints_reachable",
+    "operator_auth_path_ok"
+  ],
+  "constraints": {
+    "ordered_actionable_required": true,
+    "no_incident_recovery_absorption": true
+  }
+}

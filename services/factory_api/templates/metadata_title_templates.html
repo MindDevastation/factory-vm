@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Metadata · Title Templates</h1>
+<p>
+  <a href="/">Dashboard</a>
+</p>
+
+<details style="margin:8px 0 12px 0;">
+  <summary><strong>Quick help</strong></summary>
+  <ul style="margin:8px 0 0 18px; padding:0;">
+    <li>Preview never saves. Save and lifecycle actions only mutate template records.</li>
+    <li>Use archived filter to review and reactivate old templates.</li>
+    <li>If you archive a default template, the channel can end up with no default template.</li>
+  </ul>
+</details>
+
+<p class="muted" id="mtb-note">Loading...</p>
+<div id="mtb-error" role="alert" style="display:none;padding:8px;border-radius:8px;background:#fef2f2;color:#b91c1c;margin:8px 0;"></div>
+
+<div class="grid" style="grid-template-columns: 1.2fr 1fr; align-items:start;">
+  <section>
+    <h3 style="margin-top:0;">A) Templates list</h3>
+    <p>
+      <label>Status
+        <select id="mtb-filter-status">
+          <option value="active">active</option>
+          <option value="archived">archived</option>
+          <option value="all">all</option>
+        </select>
+      </label>
+      <label>Channel
+        <select id="mtb-filter-channel"><option value="">All channels</option></select>
+      </label>
+      <label>Search <input id="mtb-filter-q" placeholder="template name"></label>
+      <button type="button" id="mtb-filter-apply">Reload</button>
+      <button type="button" id="mtb-create-btn">Create new</button>
+    </p>
+
+    <table id="mtb-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Channel</th>
+          <th>Template name</th>
+          <th>Status</th>
+          <th>Default</th>
+          <th>Validation</th>
+          <th>Updated</th>
+        </tr>
+      </thead>
+      <tbody id="mtb-tbody"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h3 style="margin-top:0;">B) Create / Edit</h3>
+    <p class="muted" id="mtb-form-mode">Create mode</p>
+    <p>
+      <label>Channel
+        <select id="mtb-channel" required></select>
+      </label>
+    </p>
+    <p>
+      <label>Template name <input id="mtb-template-name" style="width:100%;" placeholder="Main release title"></label>
+    </p>
+    <p>
+      <label>Template body</label><br>
+      <textarea id="mtb-template-body" rows="8" style="width:100%;" spellcheck="false"></textarea>
+    </p>
+    <p>
+      <label>Preview release date (YYYY-MM-DD) <input id="mtb-release-date" placeholder="2026-02-18"></label>
+    </p>
+    <p id="mtb-allowed-variables" class="muted">Allowed variables: loading...</p>
+    <p>
+      <button type="button" id="mtb-preview-btn">Preview</button>
+      <button type="button" id="mtb-save-btn">Save</button>
+      <button type="button" id="mtb-set-default-btn" style="display:none;">Set as default</button>
+      <button type="button" id="mtb-archive-btn" style="display:none;">Archive</button>
+      <button type="button" id="mtb-activate-btn" style="display:none;">Activate</button>
+    </p>
+    <p id="mtb-archive-warning" style="display:none;color:#9a3412;"><strong>Warning:</strong> archiving current default may leave this channel with no default template.</p>
+    <p class="muted" id="mtb-last-validation"></p>
+
+    <h3>C) Preview panel</h3>
+    <p><strong>Preview result:</strong> <span id="mtb-preview-result" class="pill">idle</span></p>
+    <p><strong>Rendered title:</strong> <span id="mtb-rendered-title" class="muted">—</span></p>
+    <p><strong>Substituted values:</strong></p>
+    <ul id="mtb-substituted-values"><li class="muted">Run preview.</li></ul>
+    <p><strong>Missing variables:</strong></p>
+    <ul id="mtb-missing-variables"><li class="muted">None.</li></ul>
+    <p><strong>Validation errors:</strong></p>
+    <ul id="mtb-validation-errors"><li class="muted">None.</li></ul>
+  </section>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const noteEl = $('mtb-note');
+  const tbody = $('mtb-tbody');
+  const formModeEl = $('mtb-form-mode');
+  const previewStatusEl = $('mtb-preview-result');
+  const errorEl = $('mtb-error');
+  const renderedTitleEl = $('mtb-rendered-title');
+  const substitutedValuesEl = $('mtb-substituted-values');
+  const missingVarsEl = $('mtb-missing-variables');
+  const validationErrorsEl = $('mtb-validation-errors');
+  const lastValidationEl = $('mtb-last-validation');
+  const archiveWarningEl = $('mtb-archive-warning');
+
+  let channels = [];
+  let listById = {};
+  let activeTemplateId = null;
+  let activeTemplate = null;
+
+  function setNote(msg) { noteEl.textContent = msg; }
+  function setError(msg) {
+    if (!msg) {
+      errorEl.style.display = 'none';
+      errorEl.textContent = '';
+      return;
+    }
+    errorEl.style.display = 'block';
+    errorEl.textContent = msg;
+  }
+  function resolveApiPath(path) {
+    if (!path.startsWith('/')) { return `/${path}`; }
+    return path;
+  }
+  async function apiFetch(path, options) {
+    const req = Object.assign({ credentials: 'same-origin' }, options || {});
+    return fetch(resolveApiPath(path), req);
+  }
+  function esc(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  async function readJson(res) {
+    const text = await res.text();
+    if (!text) { return {}; }
+    try { return JSON.parse(text); } catch (_) { return {}; }
+  }
+  function renderList(items) {
+    listById = {};
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted">No templates found.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map((item) => {
+      listById[String(item.id)] = item;
+      const defaultBadge = item.is_default ? '<span class="pill">default</span>' : '<span class="muted">—</span>';
+      const validationBadge = item.validation_status === 'VALID'
+        ? '<span class="pill">valid</span>'
+        : `<span class="pill" style="background:#fee2e2;">${item.validation_status || 'invalid'}</span>`;
+      return `<tr data-template-id="${item.id}">
+        <td><button type="button" data-mtb-open="${item.id}">${item.id}</button></td>
+        <td>${esc(item.channel_slug)}</td>
+        <td>${esc(item.template_name)}</td>
+        <td><span class="pill">${item.status}</span></td>
+        <td>${defaultBadge}</td>
+        <td>${validationBadge}</td>
+        <td class="muted">${esc(item.updated_at || '')}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function fillChannelOptions(selectEl, includeBlank) {
+    const current = selectEl.value;
+    const opts = [];
+    if (includeBlank) { opts.push('<option value="">All channels</option>'); }
+    for (const ch of channels) {
+      opts.push(`<option value="${ch.slug}">${ch.display_name} (${ch.slug})</option>`);
+    }
+    selectEl.innerHTML = opts.join('');
+    if (current && channels.some((c) => c.slug === current)) {
+      selectEl.value = current;
+    }
+  }
+
+  function updateActions() {
+    const setDefaultBtn = $('mtb-set-default-btn');
+    const archiveBtn = $('mtb-archive-btn');
+    const activateBtn = $('mtb-activate-btn');
+    if (!activeTemplate) {
+      setDefaultBtn.style.display = 'none';
+      archiveBtn.style.display = 'none';
+      activateBtn.style.display = 'none';
+      archiveWarningEl.style.display = 'none';
+      return;
+    }
+    const isArchived = activeTemplate.status === 'ARCHIVED';
+    setDefaultBtn.style.display = (!isArchived && !activeTemplate.is_default) ? '' : 'none';
+    archiveBtn.style.display = !isArchived ? '' : 'none';
+    activateBtn.style.display = isArchived ? '' : 'none';
+    archiveWarningEl.style.display = activeTemplate.is_default ? '' : 'none';
+  }
+
+  function showPreview(preview) {
+    previewStatusEl.textContent = (preview && preview.render_status) ? preview.render_status : 'idle';
+    renderedTitleEl.textContent = preview && preview.rendered_title ? preview.rendered_title : '—';
+
+    const missing = Array.isArray(preview && preview.missing_variables) ? preview.missing_variables : [];
+    if (!missing.length) {
+      missingVarsEl.innerHTML = '<li class="muted">None.</li>';
+    } else {
+      missingVarsEl.innerHTML = missing.map((name) => `<li>${name}</li>`).join('');
+    }
+
+    const errors = Array.isArray(preview && preview.validation_errors) ? preview.validation_errors : [];
+    if (!errors.length) {
+      validationErrorsEl.innerHTML = '<li class="muted">None.</li>';
+    } else {
+      validationErrorsEl.innerHTML = errors.map((err) => `<li><strong>${err.code || 'ERROR'}</strong>: ${err.message || ''}</li>`).join('');
+    }
+
+    const mapping = buildVariableSubstitutions(preview, missing);
+    const names = Object.keys(mapping);
+    if (!names.length) {
+      substitutedValuesEl.innerHTML = '<li class="muted">No variables detected in template body.</li>';
+    } else {
+      substitutedValuesEl.innerHTML = names.map((name) => `<li><code>${name}</code> → <code>${mapping[name]}</code></li>`).join('');
+    }
+  }
+
+  function extractVariables(body) {
+    const text = String(body || '');
+    const found = new Set();
+    const re = /\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g;
+    let m;
+    while ((m = re.exec(text)) !== null) { found.add(m[1]); }
+    return Array.from(found).sort();
+  }
+
+  function buildVariableSubstitutions(preview, missingVars) {
+    const selectedChannel = channels.find((ch) => ch.slug === $('mtb-channel').value) || null;
+    const bodyVars = extractVariables($('mtb-template-body').value);
+    const releaseDateText = ($('mtb-release-date').value || '').trim();
+    const parts = /^\d{4}-\d{2}-\d{2}$/.test(releaseDateText) ? releaseDateText.split('-') : null;
+    const missingSet = new Set(missingVars || []);
+    const values = {};
+    for (const name of bodyVars) {
+      if (missingSet.has(name)) {
+        values[name] = '<<missing>>';
+        continue;
+      }
+      if (name === 'channel_display_name') { values[name] = selectedChannel ? selectedChannel.display_name : ''; continue; }
+      if (name === 'channel_slug') { values[name] = selectedChannel ? selectedChannel.slug : ''; continue; }
+      if (name === 'channel_kind') { values[name] = '(resolved by backend channel settings)'; continue; }
+      if (!parts) {
+        values[name] = '(requires release date)';
+        continue;
+      }
+      if (name === 'release_year') { values[name] = parts[0]; continue; }
+      if (name === 'release_month_number') { values[name] = parts[1]; continue; }
+      if (name === 'release_day_number') { values[name] = parts[2]; continue; }
+      values[name] = '(unknown)';
+    }
+    if (preview && preview.render_status === 'ERROR' && Object.keys(values).length === 0) {
+      values.__status = 'Template parse failed; no substitutions available';
+    }
+    return values;
+  }
+
+  function setFormFromTemplate(item) {
+    activeTemplate = item;
+    activeTemplateId = item ? item.id : null;
+    formModeEl.textContent = item ? `Edit mode · template #${item.id}` : 'Create mode';
+    $('mtb-channel').value = item ? item.channel_slug : $('mtb-channel').value;
+    $('mtb-channel').disabled = !!item;
+    $('mtb-template-name').value = item ? (item.template_name || '') : '';
+    $('mtb-template-body').value = item ? (item.template_body || '') : '';
+    lastValidationEl.textContent = item
+      ? `Validation: ${item.validation_status || 'UNKNOWN'} · updated_at: ${item.updated_at || 'n/a'}`
+      : '';
+    updateActions();
+    showPreview(null);
+  }
+
+  async function loadChannels() {
+    const res = await apiFetch('/v1/channels');
+    if (!res.ok) { throw new Error('Failed to load channels'); }
+    channels = await res.json();
+    fillChannelOptions($('mtb-filter-channel'), true);
+    fillChannelOptions($('mtb-channel'), false);
+    if (!$('mtb-channel').value && channels.length) {
+      $('mtb-channel').value = channels[0].slug;
+    }
+  }
+
+  async function loadAllowedVariables() {
+    const res = await apiFetch('/v1/metadata/title-templates/variables');
+    if (!res.ok) { throw new Error('Failed to load variables catalog'); }
+    const body = await res.json();
+    const allowedVariables = Array.isArray(body.variables) ? body.variables : [];
+    $('mtb-allowed-variables').innerHTML = `Allowed variables: ${allowedVariables.map((v) => `<code>${esc(v.name)}</code>`).join(', ') || 'none'}`;
+  }
+
+  async function loadList() {
+    const qs = new URLSearchParams();
+    qs.set('status', $('mtb-filter-status').value || 'active');
+    if ($('mtb-filter-channel').value) { qs.set('channel_slug', $('mtb-filter-channel').value); }
+    if ($('mtb-filter-q').value.trim()) { qs.set('q', $('mtb-filter-q').value.trim()); }
+    const res = await apiFetch(`/v1/metadata/title-templates?${qs.toString()}`);
+    const body = await readJson(res);
+    if (!res.ok) { throw new Error((body.error && body.error.message) || 'Failed to load templates'); }
+    renderList(Array.isArray(body.items) ? body.items : []);
+    setNote(`Loaded ${(body.items || []).length} templates.`);
+  }
+
+  async function openTemplate(templateId) {
+    const selected = listById[String(templateId)] || null;
+    if (!selected) { throw new Error('Template not available in current list view'); }
+    setFormFromTemplate(selected);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function runPreview() {
+    const payload = {
+      channel_slug: $('mtb-channel').value,
+      template_body: $('mtb-template-body').value,
+      release_date: $('mtb-release-date').value.trim() || null,
+    };
+    const res = await apiFetch('/v1/metadata/title-templates/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await readJson(res);
+    if (!res.ok) { throw new Error((body.error && body.error.message) || 'Preview failed'); }
+    showPreview(body);
+    setNote('Preview complete (not saved).');
+  }
+
+  async function saveTemplate() {
+    const payload = {
+      template_name: $('mtb-template-name').value,
+      template_body: $('mtb-template-body').value,
+    };
+    let url = '/v1/metadata/title-templates';
+    let method = 'POST';
+    if (activeTemplateId) {
+      url = `/v1/metadata/title-templates/${activeTemplateId}`;
+      method = 'PATCH';
+    } else {
+      payload.channel_slug = $('mtb-channel').value;
+      payload.make_default = false;
+    }
+    const res = await apiFetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await readJson(res);
+    if (!res.ok) { throw new Error((body.error && body.error.message) || 'Save failed'); }
+    setFormFromTemplate(body);
+    await loadList();
+    setNote(`Template ${method === 'POST' ? 'created' : 'saved'} successfully.`);
+  }
+
+  async function runLifecycle(action) {
+    if (!activeTemplateId) { throw new Error('Select a template first'); }
+    if (action === 'archive' && activeTemplate && activeTemplate.is_default) {
+      const proceed = window.confirm('This template is currently default. Archiving may leave the channel with no default template. Continue?');
+      if (!proceed) { return; }
+    }
+    const res = await apiFetch(`/v1/metadata/title-templates/${activeTemplateId}/${action}`, { method: 'POST' });
+    const body = await readJson(res);
+    if (!res.ok) { throw new Error((body.error && body.error.message) || `${action} failed`); }
+    setFormFromTemplate(body);
+    await loadList();
+    setNote(`Template ${action} completed.`);
+  }
+
+  document.addEventListener('click', async (event) => {
+    const openId = event.target && event.target.getAttribute ? event.target.getAttribute('data-mtb-open') : null;
+    if (!openId) { return; }
+    try {
+      setError('');
+      await openTemplate(Number(openId));
+    } catch (error) {
+      const msg = error && error.message ? error.message : 'Open failed';
+      setNote(msg);
+      setError(msg);
+    }
+  });
+
+  $('mtb-filter-apply').addEventListener('click', async () => {
+    try { setError(''); await loadList(); } catch (error) { const msg = error && error.message ? error.message : 'Reload failed'; setNote(msg); setError(msg); }
+  });
+  $('mtb-create-btn').addEventListener('click', () => setFormFromTemplate(null));
+  $('mtb-preview-btn').addEventListener('click', async () => {
+    try { setError(''); await runPreview(); } catch (error) { const msg = error && error.message ? error.message : 'Preview failed'; setNote(msg); setError(msg); }
+  });
+  $('mtb-save-btn').addEventListener('click', async () => {
+    try { setError(''); await saveTemplate(); } catch (error) { const msg = error && error.message ? error.message : 'Save failed'; setNote(msg); setError(msg); }
+  });
+  $('mtb-set-default-btn').addEventListener('click', async () => {
+    try { setError(''); await runLifecycle('set-default'); } catch (error) { const msg = error && error.message ? error.message : 'Set default failed'; setNote(msg); setError(msg); }
+  });
+  $('mtb-archive-btn').addEventListener('click', async () => {
+    try { setError(''); await runLifecycle('archive'); } catch (error) { const msg = error && error.message ? error.message : 'Archive failed'; setNote(msg); setError(msg); }
+  });
+  $('mtb-activate-btn').addEventListener('click', async () => {
+    try { setError(''); await runLifecycle('activate'); } catch (error) { const msg = error && error.message ? error.message : 'Activate failed'; setNote(msg); setError(msg); }
+  });
+
+  (async () => {
+    try {
+      await loadChannels();
+      await loadAllowedVariables();
+      setFormFromTemplate(null);
+      await loadList();
+      setError('');
+      setNote('Ready. Preview does not save.');
+    } catch (error) {
+      const msg = error && error.message ? error.message : 'Initialization failed';
+      setNote(msg);
+      setError(msg);
+    }
+  })();
+})();
+</script>
+{% endblock %}

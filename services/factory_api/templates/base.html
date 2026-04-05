@@ -3,10 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Factory VM</title>
+  <title>{% block title %}Factory VM{% endblock %}</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-    table { border-collapse: collapse; width: 100%; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; color: #111827; background: #f9fafb; }
+    .shell-header { position: sticky; top: 0; z-index: 20; background: #111827; color: #f9fafb; border-bottom: 1px solid #1f2937; }
+    .shell-header-inner { max-width: 1240px; margin: 0 auto; padding: 12px 20px; display: flex; gap: 20px; align-items: center; justify-content: space-between; }
+    .shell-brand { font-weight: 700; letter-spacing: 0.01em; }
+    .shell-control-center a { color: #93c5fd; text-decoration: none; font-weight: 600; }
+    .shell-control-center a:hover { text-decoration: underline; }
+    .shell-nav { max-width: 1240px; margin: 0 auto; padding: 0 20px 12px 20px; display: flex; flex-wrap: wrap; gap: 10px; }
+    .shell-nav a { color: #d1d5db; text-decoration: none; border: 1px solid #374151; border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+    .shell-nav a:hover { color: #fff; border-color: #6b7280; }
+    .shell-nav a.active { color: #111827; background: #f3f4f6; border-color: #f3f4f6; }
+    .shell-main { max-width: 1240px; margin: 0 auto; padding: 20px; }
+    .shell-breadcrumb { font-size: 13px; color: #6b7280; margin-bottom: 12px; }
+    .shell-breadcrumb a { color: #374151; text-decoration: none; }
+    .shell-breadcrumb a:hover { text-decoration: underline; }
+    .shell-meta { display: none; }
+    table { border-collapse: collapse; width: 100%; background: #fff; }
     th, td { border-bottom: 1px solid #eee; padding: 10px; text-align: left; vertical-align: top; }
     .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #f3f4f6; }
     .bar { width: 180px; height: 10px; background: #f3f4f6; border-radius: 6px; overflow: hidden; }
@@ -16,9 +30,52 @@
     .muted { color: #6b7280; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     pre { background: #0b1020; color: #e5e7eb; padding: 12px; border-radius: 10px; overflow:auto;}
+    @media (max-width: 1024px) {
+      .shell-main { padding: 16px; }
+      th, td { padding: 8px; }
+    }
+    @media (max-width: 768px) {
+      .shell-header-inner { padding: 10px 12px; }
+      .shell-nav { padding: 0 12px 10px 12px; gap: 8px; }
+      .shell-nav a { font-size: 12px; padding: 4px 8px; }
+      table { display: block; overflow-x: auto; white-space: nowrap; }
+    }
   </style>
 </head>
 <body>
-  {% block body %}{% endblock %}
+  <header class="shell-header">
+    <div class="shell-header-inner">
+      <div class="shell-brand">Factory VM</div>
+      <div class="shell-control-center">
+        <a href="{{ factory_control_center_entry.path }}">↩ {{ factory_control_center_entry.label }}</a>
+      </div>
+    </div>
+    <nav class="shell-nav" aria-label="Primary navigation">
+      {% set __path = request.url.path if request is defined else '' %}
+      {% for item in factory_primary_nav_items(current_path=__path) %}
+      <a href="{{ item.path }}" class="{% if item.active %}active{% endif %}">{{ item.label }}</a>
+      {% endfor %}
+    </nav>
+  </header>
+  <main class="shell-main">
+    {% set __ctx = factory_context_token_for_request(request) if request is defined else '' %}
+    {% set __incoming_ctx = factory_incoming_context_for_request(request) if request is defined else none %}
+    {% set __template_contract = factory_page_template_contract(current_path=__path) %}
+    {% set __semantic_contract = factory_semantic_contract_catalog() %}
+    {% set __state_templates = factory_state_template_catalog() %}
+    {% set __interaction_contract = factory_interaction_presentation_catalog() %}
+    {% set __density_responsive = factory_density_responsive_catalog() %}
+    {% set __action_taxonomy = factory_action_taxonomy_catalog() %}
+    {% set __problem_readiness = factory_problem_readiness_contract_catalog() %}
+    <div class="shell-meta" data-route-ownership='{{ factory_route_ownership_map|tojson }}' data-context-token='{{ __ctx }}' data-incoming-context='{{ __incoming_ctx|tojson if __incoming_ctx is not none else "" }}' data-page-template='{{ __template_contract.template }}' data-page-template-contract='{{ __template_contract|tojson }}' data-semantic-contract='{{ __semantic_contract|tojson }}' data-state-templates='{{ __state_templates|tojson }}' data-interaction-contract='{{ __interaction_contract|tojson }}' data-density-responsive='{{ __density_responsive|tojson }}' data-action-taxonomy='{{ __action_taxonomy|tojson }}' data-problem-readiness='{{ __problem_readiness|tojson }}'></div>
+    {% set __breadcrumb = factory_breadcrumb_context(current_path=__path) %}
+    <div class="shell-breadcrumb" aria-label="Context trail">
+      {% for crumb in __breadcrumb %}
+        {% if not loop.first %} / {% endif %}
+        <a href="{{ crumb.path }}{% if __ctx %}?ctx={{ __ctx|urlencode }}{% endif %}">{{ crumb.label }}</a>
+      {% endfor %}
+    </div>
+    {% block body %}{% endblock %}
+  </main>
 </body>
 </html>

@@ -1,0 +1,32 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF4-S1",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "guide_modes": [
+    "READ",
+    "ACTION",
+    "RISKY_ACTION"
+  ],
+  "task_oriented_structure": [
+    "purpose_and_trigger",
+    "mode",
+    "preconditions",
+    "inputs_artifacts_required",
+    "steps",
+    "expected_result",
+    "failure_signals",
+    "rollback_safe_stop",
+    "canonical_cross_links"
+  ],
+  "constraints": {
+    "risky_action_requires_rollback": true,
+    "template_only_scope": true,
+    "no_mf4_s2_plus_content": true,
+    "no_mf5_runbook_procedure_absorption": true
+  },
+  "cross_links": {
+    "mf2_stage_contracts": "docs/workflows/MF2_S2_STAGE_CONTRACTS.md",
+    "mf3_boundary_map": "docs/reference/MF3_S4_DOMAIN_BOUNDARY_MAP.md",
+    "ops_runbook_entry": "docs/ops/runbook/README.md"
+  }
+}

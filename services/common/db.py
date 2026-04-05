@@ -34,6 +34,15 @@ UI_JOB_STATES: tuple[str, ...] = (
     "CLEANED",
 )
 
+VISUAL_PREVIEW_SCOPE_BACKGROUND = "background"
+VISUAL_PREVIEW_SCOPE_COVER = "cover"
+VISUAL_PREVIEW_SCOPE_PACKAGE = "package"
+VISUAL_PREVIEW_SCOPES: tuple[str, ...] = (
+    VISUAL_PREVIEW_SCOPE_BACKGROUND,
+    VISUAL_PREVIEW_SCOPE_COVER,
+    VISUAL_PREVIEW_SCOPE_PACKAGE,
+)
+
 
 def _dict_factory(cursor: sqlite3.Cursor, row: Tuple[Any, ...]) -> Dict[str, Any]:
     return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
@@ -86,8 +95,10 @@ def migrate(conn: sqlite3.Connection) -> None:
             planned_at TEXT,
             origin_release_folder_id TEXT,
             origin_meta_file_id TEXT UNIQUE,
+            current_open_job_id INTEGER NULL,
             created_at REAL NOT NULL,
-            FOREIGN KEY(channel_id) REFERENCES channels(id)
+            FOREIGN KEY(channel_id) REFERENCES channels(id),
+            FOREIGN KEY(current_open_job_id) REFERENCES jobs(id)
         );
 
         CREATE TABLE IF NOT EXISTS planned_releases (
@@ -109,6 +120,104 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_pr_publish_at ON planned_releases(publish_at);
         CREATE INDEX IF NOT EXISTS idx_pr_status ON planned_releases(status);
         CREATE INDEX IF NOT EXISTS idx_pr_title ON planned_releases(title);
+
+        CREATE TABLE IF NOT EXISTS monthly_planning_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER NOT NULL,
+            template_name TEXT NOT NULL,
+            content_type TEXT NULL,
+            status TEXT NOT NULL,
+            usage_summary_json TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT NULL,
+            created_by TEXT NULL,
+            updated_by TEXT NULL,
+            archived_by TEXT NULL,
+            FOREIGN KEY(channel_id) REFERENCES channels(id),
+            CHECK(status IN ('ACTIVE','ARCHIVED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mpt_channel_status
+            ON monthly_planning_templates(channel_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_mpt_channel_name
+            ON monthly_planning_templates(channel_id, template_name);
+
+        CREATE TABLE IF NOT EXISTS monthly_planning_template_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_id INTEGER NOT NULL,
+            item_key TEXT NOT NULL,
+            slot_code TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            day_of_month INTEGER NULL,
+            notes TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(template_id) REFERENCES monthly_planning_templates(id) ON DELETE CASCADE,
+            UNIQUE(template_id, item_key),
+            UNIQUE(template_id, slot_code),
+            UNIQUE(template_id, position)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mpti_template_position
+            ON monthly_planning_template_items(template_id, position);
+
+        CREATE TABLE IF NOT EXISTS monthly_planning_template_apply_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_id INTEGER NOT NULL,
+            channel_id INTEGER NOT NULL,
+            target_month TEXT NOT NULL,
+            preview_fingerprint TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            completed_at TEXT NULL,
+            status TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            created_count INTEGER NOT NULL DEFAULT 0,
+            blocked_duplicate_count INTEGER NOT NULL DEFAULT 0,
+            blocked_invalid_date_count INTEGER NOT NULL DEFAULT 0,
+            failed_count INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(template_id) REFERENCES monthly_planning_templates(id),
+            FOREIGN KEY(channel_id) REFERENCES channels(id),
+            CHECK(status IN ('STARTED','COMPLETED','FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mptar_template_month
+            ON monthly_planning_template_apply_runs(template_id, target_month);
+
+        CREATE INDEX IF NOT EXISTS idx_mptar_channel_month
+            ON monthly_planning_template_apply_runs(channel_id, target_month);
+
+        CREATE TABLE IF NOT EXISTS monthly_planning_template_apply_run_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apply_run_id INTEGER NOT NULL,
+            template_item_key TEXT NOT NULL,
+            slot_code TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            outcome TEXT NOT NULL,
+            planned_release_id INTEGER NULL,
+            reason_code TEXT NULL,
+            reason_message TEXT NULL,
+            FOREIGN KEY(apply_run_id) REFERENCES monthly_planning_template_apply_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY(planned_release_id) REFERENCES planned_releases(id),
+            CHECK(outcome IN ('CREATED','BLOCKED_DUPLICATE','BLOCKED_INVALID_DATE','FAILED_INTERNAL'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_mptari_apply_run_position
+            ON monthly_planning_template_apply_run_items(apply_run_id, position);
+
+        CREATE TABLE IF NOT EXISTS planner_release_links (
+            planned_release_id INTEGER PRIMARY KEY,
+            release_id INTEGER NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            created_by TEXT NULL,
+            FOREIGN KEY(planned_release_id) REFERENCES planned_releases(id),
+            FOREIGN KEY(release_id) REFERENCES releases(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_planner_release_links_release_id
+            ON planner_release_links(release_id);
 
         CREATE TABLE IF NOT EXISTS assets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,12 +255,65 @@ def migrate(conn: sqlite3.Connection) -> None:
             root_job_id INTEGER NOT NULL,
             attempt_no INTEGER NOT NULL DEFAULT 1,
             force_refetch_inputs INTEGER NOT NULL DEFAULT 0,
+            publish_state TEXT,
+            publish_target_visibility TEXT,
+            publish_delivery_mode_effective TEXT,
+            publish_resolved_scope TEXT,
+            publish_reason_code TEXT,
+            publish_reason_detail TEXT,
+            publish_scheduled_at REAL,
+            publish_attempt_count INTEGER NOT NULL DEFAULT 0,
+            publish_retry_at REAL,
+            publish_last_error_code TEXT,
+            publish_last_error_message TEXT,
+            publish_in_progress_at REAL,
+            publish_last_transition_at REAL,
+            publish_hold_active INTEGER NOT NULL DEFAULT 0,
+            publish_hold_reason_code TEXT,
+            publish_manual_ack_at REAL,
+            publish_manual_completed_at REAL,
+            publish_manual_published_at REAL,
+            publish_manual_video_id TEXT,
+            publish_manual_url TEXT,
+            publish_drift_detected_at REAL,
+            publish_observed_visibility TEXT,
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL,
             FOREIGN KEY(release_id) REFERENCES releases(id),
             FOREIGN KEY(retry_of_job_id) REFERENCES jobs(id),
             FOREIGN KEY(root_job_id) REFERENCES jobs(id),
-            CHECK(attempt_no >= 1)
+            CHECK(attempt_no >= 1),
+            CHECK(
+                publish_state IS NULL
+                OR publish_state IN (
+                    'private_uploaded',
+                    'policy_blocked',
+                    'waiting_for_schedule',
+                    'ready_to_publish',
+                    'publish_in_progress',
+                    'retry_pending',
+                    'manual_handoff_pending',
+                    'manual_handoff_acknowledged',
+                    'manual_publish_completed',
+                    'published_public',
+                    'published_unlisted',
+                    'publish_failed_terminal',
+                    'publish_state_drift_detected'
+                )
+            ),
+            CHECK(
+                publish_target_visibility IS NULL
+                OR publish_target_visibility IN ('public', 'unlisted')
+            ),
+            CHECK(
+                publish_delivery_mode_effective IS NULL
+                OR publish_delivery_mode_effective IN ('automatic', 'manual')
+            ),
+            CHECK(
+                publish_resolved_scope IS NULL
+                OR publish_resolved_scope IN ('project', 'channel', 'item')
+            ),
+            CHECK(publish_state != 'retry_pending' OR publish_retry_at IS NOT NULL)
         );
 
         CREATE INDEX IF NOT EXISTS idx_jobs_state_priority ON jobs(state, priority, created_at);
@@ -227,6 +389,370 @@ def migrate(conn: sqlite3.Connection) -> None:
             created_at REAL NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS telegram_operator_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_operator_id TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            telegram_access_status TEXT NOT NULL,
+            max_permission_class TEXT NOT NULL,
+            enrolled_at TEXT NOT NULL,
+            disabled_at TEXT NULL,
+            revoked_at TEXT NULL,
+            metadata_json TEXT NULL,
+            last_error_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(telegram_user_id),
+            CHECK(telegram_access_status IN ('ACTIVE','INACTIVE','REVOKED')),
+            CHECK(max_permission_class IN ('READ_ONLY','STANDARD_OPERATOR_MUTATE','GUARDED_OPERATOR_MUTATE','PRIVILEGED_OPERATOR_MUTATE'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_operator_identities_operator
+            ON telegram_operator_identities(product_operator_id);
+
+        CREATE TABLE IF NOT EXISTS telegram_chat_bindings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_operator_id TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            thread_id INTEGER NULL,
+            chat_binding_kind TEXT NOT NULL,
+            binding_status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            activated_at TEXT NULL,
+            disabled_at TEXT NULL,
+            revoked_at TEXT NULL,
+            notes_json TEXT NULL,
+            last_error_code TEXT NULL,
+            UNIQUE(product_operator_id, telegram_user_id, chat_id, thread_id),
+            CHECK(chat_binding_kind IN ('PRIVATE_CHAT','GROUP_CHAT','GROUP_THREAD')),
+            CHECK(binding_status IN ('PENDING','ACTIVE','DISABLED','REVOKED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_chat_bindings_operator_status
+            ON telegram_chat_bindings(product_operator_id, binding_status);
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_chat_bindings_chat_status
+            ON telegram_chat_bindings(chat_id, thread_id, binding_status);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_chat_bindings_context_unique
+            ON telegram_chat_bindings(product_operator_id, telegram_user_id, chat_id, COALESCE(thread_id, -1));
+
+        CREATE TABLE IF NOT EXISTS telegram_action_gateway_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_user_id INTEGER NOT NULL,
+            product_operator_id TEXT NULL,
+            binding_id INTEGER NULL,
+            action_transport_type TEXT NOT NULL,
+            action_transport_id TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            action_class TEXT NOT NULL,
+            target_entity_type TEXT NULL,
+            target_entity_ref TEXT NULL,
+            gateway_result TEXT NOT NULL,
+            gateway_error_code TEXT NULL,
+            correlation_id TEXT NOT NULL,
+            idempotency_key TEXT NULL,
+            freshness_context TEXT NULL,
+            event_time TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(action_transport_type IN ('COMMAND','CALLBACK')),
+            CHECK(action_class IN ('READ_ONLY','STANDARD_OPERATOR_MUTATE','GUARDED_OPERATOR_MUTATE','PRIVILEGED_OPERATOR_MUTATE')),
+            CHECK(gateway_result IN ('ALLOWED','DENIED','STALE','EXPIRED','INVALID')),
+            FOREIGN KEY(binding_id) REFERENCES telegram_chat_bindings(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_gateway_events_operator_time
+            ON telegram_action_gateway_events(product_operator_id, event_time);
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_gateway_events_transport
+            ON telegram_action_gateway_events(action_transport_type, action_transport_id);
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_gateway_events_correlation
+            ON telegram_action_gateway_events(correlation_id);
+
+        CREATE TABLE IF NOT EXISTS telegram_operator_audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            resolved_product_operator_id TEXT NULL,
+            chat_id INTEGER NULL,
+            thread_id INTEGER NULL,
+            binding_id INTEGER NULL,
+            action_type TEXT NULL,
+            action_class TEXT NULL,
+            target_entity_type TEXT NULL,
+            target_entity_ref TEXT NULL,
+            gateway_result TEXT NULL,
+            gateway_error_code TEXT NULL,
+            correlation_id TEXT NULL,
+            idempotency_key TEXT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_operator_audit_events_type_time
+            ON telegram_operator_audit_events(event_type, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_inbox_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_family TEXT NOT NULL,
+            category TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            actionability_class TEXT NOT NULL,
+            lifecycle_state TEXT NOT NULL,
+            stale_behavior TEXT NOT NULL,
+            delivery_behavior TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            product_operator_id TEXT NULL,
+            chat_id INTEGER NULL,
+            thread_id INTEGER NULL,
+            binding_id INTEGER NULL,
+            target_entity_type TEXT NOT NULL,
+            target_entity_ref TEXT NOT NULL,
+            target_context_json TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            dedupe_key TEXT NOT NULL,
+            followup_key TEXT NULL,
+            related_message_id INTEGER NULL,
+            upstream_event_family TEXT NOT NULL,
+            upstream_event_ref TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NULL,
+            resolved_at TEXT NULL,
+            superseded_by_message_id INTEGER NULL,
+            CHECK(message_family IN ('CRITICAL_ALERT','ACTIONABLE_ALERT','INFORMATIONAL','SUMMARY_DIGEST','UNRESOLVED_FOLLOW_UP','RESOLUTION_UPDATE')),
+            CHECK(category IN ('PUBLISH','READINESS','RECOVERY','HEALTH','FOLLOW_UP','DIGEST','INFORMATIONAL','SYSTEM')),
+            CHECK(severity IN ('CRITICAL','HIGH','MEDIUM','LOW','INFORMATIONAL','INFO')),
+            CHECK(actionability_class IN ('INFORMATIONAL','ACTION_REQUIRED','ACK_REQUIRED','ESCALATE_ONLY','INFO_ONLY','ACTIONABLE')),
+            CHECK(lifecycle_state IN ('ACTIVE','SUPERSEDED','RESOLVED','EXPIRED','INFORMATIONAL','INFO_ONLY')),
+            CHECK(stale_behavior IN ('SUPERSEDE','RESOLVE','EXPIRE','KEEP_ACTIVE')),
+            CHECK(delivery_behavior IN ('IMMEDIATE','DIGEST','FOLLOW_UP_ONLY','SUPPRESSED')),
+            UNIQUE(dedupe_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_messages_operator_state
+            ON telegram_inbox_messages(product_operator_id, lifecycle_state, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_messages_route_state
+            ON telegram_inbox_messages(telegram_user_id, chat_id, thread_id, lifecycle_state);
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_messages_family_severity
+            ON telegram_inbox_messages(message_family, severity, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_inbox_deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            thread_id INTEGER NULL,
+            delivery_status TEXT NOT NULL,
+            delivery_reason_code TEXT NULL,
+            delivered_message_id INTEGER NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(delivery_status IN ('QUEUED','DELIVERED','FAILED','SUPPRESSED','DENIED')),
+            UNIQUE(message_id, telegram_user_id, chat_id, thread_id),
+            FOREIGN KEY(message_id) REFERENCES telegram_inbox_messages(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_deliveries_status
+            ON telegram_inbox_deliveries(delivery_status, updated_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_inbox_lifecycle_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            from_state TEXT NULL,
+            to_state TEXT NOT NULL,
+            reason_code TEXT NULL,
+            actor_type TEXT NOT NULL,
+            actor_ref TEXT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(to_state IN ('ACTIVE','SUPERSEDED','RESOLVED','EXPIRED','INFORMATIONAL','INFO_ONLY')),
+            FOREIGN KEY(message_id) REFERENCES telegram_inbox_messages(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_lifecycle_events_message_time
+            ON telegram_inbox_lifecycle_events(message_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_inbox_acknowledgments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            acknowledged_at TEXT NOT NULL,
+            ack_note TEXT NULL,
+            open_context_ref TEXT NULL,
+            escalation_ref TEXT NULL,
+            UNIQUE(message_id, telegram_user_id),
+            FOREIGN KEY(message_id) REFERENCES telegram_inbox_messages(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_acknowledgments_user_time
+            ON telegram_inbox_acknowledgments(telegram_user_id, acknowledged_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_inbox_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            message_id INTEGER NULL,
+            telegram_user_id INTEGER NULL,
+            product_operator_id TEXT NULL,
+            chat_id INTEGER NULL,
+            thread_id INTEGER NULL,
+            message_family TEXT NULL,
+            category TEXT NULL,
+            severity TEXT NULL,
+            target_context_json TEXT NULL,
+            lifecycle_state TEXT NULL,
+            routing_result TEXT NULL,
+            reason_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            FOREIGN KEY(message_id) REFERENCES telegram_inbox_messages(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_inbox_events_type_time
+            ON telegram_inbox_events(event_type, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_publish_action_contexts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL UNIQUE,
+            action_type TEXT NOT NULL,
+            action_transport_type TEXT NOT NULL,
+            actor_ref TEXT NOT NULL,
+            target_entity_type TEXT NOT NULL,
+            target_entity_ref TEXT NOT NULL,
+            context_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(action_transport_type IN ('COMMAND','CALLBACK'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_publish_action_contexts_target
+            ON telegram_publish_action_contexts(target_entity_type, target_entity_ref, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_publish_action_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            result_status TEXT NOT NULL,
+            error_code TEXT NULL,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(result_status IN ('OK','FAILED','STALE','EXPIRED','INVALID')),
+            FOREIGN KEY(request_id) REFERENCES telegram_publish_action_contexts(request_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_publish_action_results_request
+            ON telegram_publish_action_results(request_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_read_view_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_operator_id TEXT NOT NULL,
+            view_name TEXT NOT NULL,
+            view_params_json TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_read_view_snapshots_operator_view
+            ON telegram_read_view_snapshots(product_operator_id, view_name, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_read_view_access_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_operator_id TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            view_name TEXT NOT NULL,
+            access_result TEXT NOT NULL,
+            reason_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(access_result IN ('ALLOWED','DENIED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_read_view_access_events_operator_time
+            ON telegram_read_view_access_events(product_operator_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_ops_action_contexts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_ref TEXT NOT NULL UNIQUE,
+            action_type TEXT NOT NULL,
+            product_operator_id TEXT NOT NULL,
+            telegram_user_id INTEGER NOT NULL,
+            target_entity_type TEXT NOT NULL,
+            target_entity_ref TEXT NOT NULL,
+            context_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_ops_action_contexts_operator_type
+            ON telegram_ops_action_contexts(product_operator_id, action_type, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_ops_action_confirmations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_ref TEXT NOT NULL,
+            confirmation_token TEXT NOT NULL UNIQUE,
+            confirmation_status TEXT NOT NULL,
+            confirmed_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(confirmation_status IN ('PENDING','CONFIRMED','EXPIRED','CANCELLED')),
+            FOREIGN KEY(action_ref) REFERENCES telegram_ops_action_contexts(action_ref)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_ops_action_confirmations_action
+            ON telegram_ops_action_confirmations(action_ref, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_ops_action_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_ref TEXT NOT NULL,
+            result_status TEXT NOT NULL,
+            error_code TEXT NULL,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(result_status IN ('OK','FAILED','STALE','EXPIRED','INVALID')),
+            FOREIGN KEY(action_ref) REFERENCES telegram_ops_action_contexts(action_ref)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_ops_action_results_action
+            ON telegram_ops_action_results(action_ref, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_action_audit_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            record_type TEXT NOT NULL,
+            action_ref TEXT NULL,
+            request_id TEXT NULL,
+            correlation_id TEXT NULL,
+            actor_ref TEXT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_audit_records_record_time
+            ON telegram_action_audit_records(record_type, created_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_action_idempotency_records (
+            idempotency_key TEXT PRIMARY KEY,
+            action_ref TEXT NULL,
+            request_id TEXT NULL,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            response_fingerprint TEXT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_idempotency_records_last_seen
+            ON telegram_action_idempotency_records(last_seen_at);
+
+        CREATE TABLE IF NOT EXISTS telegram_action_safety_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            safety_event_type TEXT NOT NULL,
+            action_ref TEXT NULL,
+            request_id TEXT NULL,
+            reason_code TEXT NULL,
+            details_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_telegram_action_safety_events_type_time
+            ON telegram_action_safety_events(safety_event_type, created_at);
+
         CREATE TABLE IF NOT EXISTS worker_heartbeats (
             worker_id TEXT PRIMARY KEY,
             role TEXT NOT NULL,
@@ -255,6 +781,173 @@ def migrate(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(job_id) REFERENCES jobs(id),
             FOREIGN KEY(channel_id) REFERENCES channels(id)
         );
+
+        -- Legacy/compat table: kept for backward compatibility.
+        -- Epic-5 operational flow does not read/write this table as canonical state.
+        -- Canonical persisted state is represented by release_visual_preview_snapshots,
+        -- release_visual_approved_previews_scoped, and release_visual_applied_packages.
+        CREATE TABLE IF NOT EXISTS release_visual_configs (
+            release_id INTEGER PRIMARY KEY,
+            intent_config_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS release_visual_preview_snapshots (
+            id TEXT PRIMARY KEY,
+            release_id INTEGER NOT NULL,
+            preview_scope TEXT NOT NULL DEFAULT 'package',
+            intent_snapshot_json TEXT NOT NULL,
+            preview_package_json TEXT NOT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            CHECK(preview_scope IN ('background','cover','package'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_preview_snapshots_release_created
+            ON release_visual_preview_snapshots(release_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_preview_snapshots_release_scope_created
+            ON release_visual_preview_snapshots(release_id, preview_scope, created_at);
+
+        CREATE TABLE IF NOT EXISTS release_visual_approved_previews (
+            release_id INTEGER PRIMARY KEY,
+            preview_id TEXT NOT NULL UNIQUE,
+            approved_by TEXT NULL,
+            approved_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(preview_id) REFERENCES release_visual_preview_snapshots(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS release_visual_approved_previews_scoped (
+            release_id INTEGER NOT NULL,
+            preview_scope TEXT NOT NULL,
+            preview_id TEXT NOT NULL UNIQUE,
+            approved_by TEXT NULL,
+            approved_at TEXT NOT NULL,
+            PRIMARY KEY(release_id, preview_scope),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(preview_id) REFERENCES release_visual_preview_snapshots(id),
+            CHECK(preview_scope IN ('background','cover','package'))
+        );
+
+        CREATE TABLE IF NOT EXISTS release_visual_applied_packages (
+            release_id INTEGER PRIMARY KEY,
+            background_asset_id INTEGER NOT NULL,
+            cover_asset_id INTEGER NOT NULL,
+            source_preview_id TEXT NULL,
+            applied_by TEXT NULL,
+            applied_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(background_asset_id) REFERENCES assets(id),
+            FOREIGN KEY(cover_asset_id) REFERENCES assets(id),
+            FOREIGN KEY(source_preview_id) REFERENCES release_visual_preview_snapshots(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS release_visual_background_decisions (
+            release_id INTEGER PRIMARY KEY,
+            background_asset_id INTEGER NOT NULL,
+            source_family TEXT NOT NULL,
+            source_reference TEXT NULL,
+            selection_mode TEXT NOT NULL,
+            template_assisted INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(background_asset_id) REFERENCES assets(id),
+            CHECK(source_family IN ('managed_library','channel_source','operator_imported','known_resolved')),
+            CHECK(selection_mode IN ('manual','auto_assisted'))
+        );
+
+        CREATE TABLE IF NOT EXISTS release_visual_cover_selection_inputs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            release_id INTEGER NOT NULL,
+            provider_family TEXT NOT NULL,
+            input_payload_json TEXT NOT NULL,
+            template_ref_json TEXT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_cover_selection_inputs_release_created
+            ON release_visual_cover_selection_inputs(release_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS release_visual_cover_candidates (
+            id TEXT PRIMARY KEY,
+            release_id INTEGER NOT NULL,
+            source_provider_family TEXT NOT NULL,
+            source_reference TEXT NULL,
+            input_payload_id INTEGER NULL,
+            candidate_ref_json TEXT NOT NULL,
+            selection_mode TEXT NOT NULL,
+            template_ref_json TEXT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(input_payload_id) REFERENCES release_visual_cover_selection_inputs(id),
+            CHECK(selection_mode IN ('manual','auto_assisted'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_cover_candidates_release_created
+            ON release_visual_cover_candidates(release_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS release_visual_cover_selected_candidates (
+            release_id INTEGER PRIMARY KEY,
+            candidate_id TEXT NOT NULL UNIQUE,
+            selected_by TEXT NULL,
+            selected_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(candidate_id) REFERENCES release_visual_cover_candidates(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS release_visual_history_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            release_id INTEGER NOT NULL,
+            channel_id INTEGER NOT NULL,
+            preview_scope TEXT NOT NULL,
+            history_stage TEXT NOT NULL,
+            preview_id TEXT NULL,
+            background_asset_id INTEGER NULL,
+            cover_asset_id INTEGER NULL,
+            template_ref_json TEXT NULL,
+            decision_mode TEXT NULL,
+            reuse_warning_json TEXT NULL,
+            actor TEXT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            CHECK(preview_scope IN ('background','cover','package')),
+            CHECK(history_stage IN ('PREVIEWED','APPROVED','APPLIED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_history_release_stage_created
+            ON release_visual_history_events(release_id, history_stage, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_history_channel_assets_created
+            ON release_visual_history_events(channel_id, background_asset_id, cover_asset_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS release_visual_batch_preview_sessions (
+            id TEXT PRIMARY KEY,
+            action_type TEXT NOT NULL,
+            selected_release_ids_json TEXT NOT NULL,
+            scope_fingerprint TEXT NOT NULL,
+            session_status TEXT NOT NULL,
+            aggregate_preview_json TEXT NOT NULL,
+            per_item_preview_json TEXT NOT NULL,
+            invalidation_reason_code TEXT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            executed_at TEXT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_batch_preview_sessions_status
+            ON release_visual_batch_preview_sessions(session_status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_release_visual_batch_preview_sessions_expires
+            ON release_visual_batch_preview_sessions(expires_at);
 
         CREATE TABLE IF NOT EXISTS playlist_builder_channel_settings (
             channel_slug TEXT PRIMARY KEY,
@@ -330,6 +1023,418 @@ def migrate(conn: sqlite3.Connection) -> None:
             expires_at TEXT NOT NULL,
             status TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS metadata_preview_sessions (
+            id TEXT PRIMARY KEY,
+            release_id INTEGER NOT NULL,
+            channel_slug TEXT NOT NULL,
+            session_status TEXT NOT NULL,
+            requested_fields_json TEXT NOT NULL,
+            current_bundle_json TEXT NOT NULL,
+            proposed_bundle_json TEXT NOT NULL,
+            sources_json TEXT NOT NULL,
+            field_statuses_json TEXT NOT NULL,
+            dependency_fingerprints_json TEXT NOT NULL,
+            warnings_json TEXT NOT NULL,
+            errors_json TEXT NOT NULL,
+            fields_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            effective_source_selection_json TEXT NOT NULL DEFAULT '{}',
+            effective_source_provenance_json TEXT NOT NULL DEFAULT '{}',
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            applied_at TEXT NULL,
+            CHECK(session_status IN ('OPEN','APPLIED','EXPIRED','INVALIDATED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_metadata_preview_sessions_release_id
+            ON metadata_preview_sessions(release_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_metadata_preview_sessions_expires_at
+            ON metadata_preview_sessions(expires_at);
+
+        CREATE INDEX IF NOT EXISTS idx_metadata_preview_sessions_status
+            ON metadata_preview_sessions(session_status, created_at);
+
+        CREATE TABLE IF NOT EXISTS metadata_bulk_preview_sessions (
+            id TEXT PRIMARY KEY,
+            planner_context_json TEXT NOT NULL,
+            selected_item_ids_json TEXT NOT NULL,
+            requested_fields_json TEXT NOT NULL,
+            selected_channels_json TEXT NOT NULL,
+            session_status TEXT NOT NULL,
+            aggregate_summary_json TEXT NOT NULL,
+            item_states_json TEXT NOT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            applied_at TEXT NULL,
+            CHECK(session_status IN ('OPEN','APPLIED','EXPIRED','INVALIDATED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_metadata_bulk_preview_sessions_status
+            ON metadata_bulk_preview_sessions(session_status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_metadata_bulk_preview_sessions_expires_at
+            ON metadata_bulk_preview_sessions(expires_at);
+
+        CREATE TABLE IF NOT EXISTS planner_mass_action_sessions (
+            id TEXT PRIMARY KEY,
+            action_type TEXT NOT NULL,
+            planner_scope_fingerprint TEXT NOT NULL,
+            selected_item_ids_json TEXT NOT NULL,
+            preview_status TEXT NOT NULL,
+            aggregate_preview_json TEXT NOT NULL,
+            item_preview_json TEXT NOT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            executed_at TEXT NULL,
+            CHECK(action_type IN ('BATCH_MATERIALIZE_SELECTED','BATCH_CREATE_JOBS_FOR_SELECTED')),
+            CHECK(preview_status IN ('OPEN','EXECUTED','EXPIRED','INVALIDATED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_planner_mass_action_sessions_status
+            ON planner_mass_action_sessions(preview_status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_planner_mass_action_sessions_expires_at
+            ON planner_mass_action_sessions(expires_at);
+
+        CREATE TABLE IF NOT EXISTS title_templates (
+            id INTEGER PRIMARY KEY,
+            channel_slug TEXT NOT NULL,
+            template_name TEXT NOT NULL,
+            template_body TEXT NOT NULL,
+            status TEXT NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            validation_status TEXT NOT NULL,
+            validation_errors_json TEXT NULL,
+            last_validated_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT NULL,
+            CHECK(status IN ('ACTIVE','ARCHIVED')),
+            CHECK(validation_status IN ('VALID','INVALID')),
+            CHECK(LENGTH(TRIM(template_name)) > 0),
+            CHECK(LENGTH(TRIM(template_body)) > 0)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_title_templates_channel_slug
+            ON title_templates(channel_slug);
+
+        CREATE INDEX IF NOT EXISTS idx_title_templates_channel_slug_status
+            ON title_templates(channel_slug, status);
+
+        CREATE INDEX IF NOT EXISTS idx_title_templates_channel_slug_updated_at
+            ON title_templates(channel_slug, updated_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_title_templates_active_default_unique
+            ON title_templates(channel_slug)
+            WHERE status = 'ACTIVE' AND is_default = 1;
+
+        CREATE TABLE IF NOT EXISTS description_templates (
+            id INTEGER PRIMARY KEY,
+            channel_slug TEXT NOT NULL,
+            template_name TEXT NOT NULL,
+            template_body TEXT NOT NULL,
+            status TEXT NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            validation_status TEXT NOT NULL,
+            validation_errors_json TEXT NULL,
+            last_validated_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT NULL,
+            CHECK(status IN ('ACTIVE','ARCHIVED')),
+            CHECK(validation_status IN ('VALID','INVALID')),
+            CHECK(LENGTH(TRIM(template_name)) > 0),
+            CHECK(LENGTH(TRIM(template_body)) > 0)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_description_templates_channel_slug
+            ON description_templates(channel_slug);
+
+        CREATE INDEX IF NOT EXISTS idx_description_templates_channel_slug_status
+            ON description_templates(channel_slug, status);
+
+        CREATE INDEX IF NOT EXISTS idx_description_templates_channel_slug_updated_at
+            ON description_templates(channel_slug, updated_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_description_templates_active_default_unique
+            ON description_templates(channel_slug)
+            WHERE status = 'ACTIVE' AND is_default = 1;
+
+        CREATE TABLE IF NOT EXISTS video_tag_presets (
+            id INTEGER PRIMARY KEY,
+            channel_slug TEXT NOT NULL,
+            preset_name TEXT NOT NULL,
+            preset_body_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            validation_status TEXT NOT NULL,
+            validation_errors_json TEXT NULL,
+            last_validated_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT NULL,
+            CHECK(status IN ('ACTIVE','ARCHIVED')),
+            CHECK(validation_status IN ('VALID','INVALID')),
+            CHECK(LENGTH(TRIM(preset_name)) > 0),
+            CHECK(json_valid(preset_body_json)),
+            CHECK(json_type(preset_body_json) = 'array'),
+            CHECK(json_array_length(preset_body_json) > 0)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_video_tag_presets_channel_slug
+            ON video_tag_presets(channel_slug);
+
+        CREATE INDEX IF NOT EXISTS idx_video_tag_presets_channel_slug_status
+            ON video_tag_presets(channel_slug, status);
+
+        CREATE INDEX IF NOT EXISTS idx_video_tag_presets_channel_slug_updated_at
+            ON video_tag_presets(channel_slug, updated_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_video_tag_presets_active_default_unique
+            ON video_tag_presets(channel_slug)
+            WHERE status = 'ACTIVE' AND is_default = 1;
+
+        CREATE TABLE IF NOT EXISTS channel_visual_style_templates (
+            id INTEGER PRIMARY KEY,
+            channel_slug TEXT NOT NULL,
+            template_name TEXT NOT NULL,
+            template_payload_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            validation_status TEXT NOT NULL,
+            validation_errors_json TEXT NULL,
+            last_validated_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT NULL,
+            CHECK(status IN ('ACTIVE','ARCHIVED')),
+            CHECK(validation_status IN ('VALID','INVALID')),
+            CHECK(LENGTH(TRIM(template_name)) > 0),
+            CHECK(json_valid(template_payload_json))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_visual_style_templates_channel_slug
+            ON channel_visual_style_templates(channel_slug);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_visual_style_templates_channel_slug_status
+            ON channel_visual_style_templates(channel_slug, status);
+
+        CREATE INDEX IF NOT EXISTS idx_channel_visual_style_templates_channel_slug_updated_at
+            ON channel_visual_style_templates(channel_slug, updated_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_visual_style_templates_active_default_unique
+            ON channel_visual_style_templates(channel_slug)
+            WHERE status = 'ACTIVE' AND is_default = 1;
+
+        CREATE TABLE IF NOT EXISTS release_visual_style_template_overrides (
+            release_id INTEGER PRIMARY KEY,
+            template_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(template_id) REFERENCES channel_visual_style_templates(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS channel_metadata_defaults (
+            channel_slug TEXT PRIMARY KEY,
+            default_title_template_id INTEGER NULL,
+            default_description_template_id INTEGER NULL,
+            default_video_tag_preset_id INTEGER NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug)
+        );
+
+        CREATE TABLE IF NOT EXISTS publish_audit_status_project_defaults (
+            singleton_key INTEGER PRIMARY KEY CHECK(singleton_key = 1),
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            CHECK(status IN ('unknown', 'pending', 'approved', 'rejected', 'manual-only', 'suspended'))
+        );
+
+        CREATE TABLE IF NOT EXISTS publish_audit_status_channel_overrides (
+            channel_slug TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug),
+            CHECK(status IN ('unknown', 'pending', 'approved', 'rejected', 'manual-only', 'suspended'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_audit_status_channel_overrides_status
+            ON publish_audit_status_channel_overrides(status);
+
+        CREATE TABLE IF NOT EXISTS publish_audit_status_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope_type TEXT NOT NULL,
+            channel_slug TEXT NULL,
+            previous_status TEXT NULL,
+            status TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            actor_identity TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(scope_type IN ('project_default', 'channel_override')),
+            CHECK(status IN ('unknown', 'pending', 'approved', 'rejected', 'manual-only', 'suspended'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_audit_status_history_created_at
+            ON publish_audit_status_history(created_at, id);
+
+        CREATE INDEX IF NOT EXISTS idx_publish_audit_status_history_scope
+            ON publish_audit_status_history(scope_type, channel_slug, created_at, id);
+
+        CREATE TABLE IF NOT EXISTS publish_policy_project_defaults (
+            singleton_key INTEGER PRIMARY KEY CHECK(singleton_key = 1),
+            publish_mode TEXT NULL,
+            target_visibility TEXT NULL,
+            reason_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            CHECK(publish_mode IS NULL OR publish_mode IN ('auto', 'manual_only', 'hold')),
+            CHECK(target_visibility IS NULL OR target_visibility IN ('public', 'unlisted'))
+        );
+
+        CREATE TABLE IF NOT EXISTS publish_policy_channel_overrides (
+            channel_slug TEXT PRIMARY KEY,
+            publish_mode TEXT NULL,
+            target_visibility TEXT NULL,
+            reason_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug),
+            CHECK(publish_mode IS NULL OR publish_mode IN ('auto', 'manual_only', 'hold')),
+            CHECK(target_visibility IS NULL OR target_visibility IN ('public', 'unlisted'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_policy_channel_overrides_mode
+            ON publish_policy_channel_overrides(publish_mode);
+
+        CREATE TABLE IF NOT EXISTS publish_policy_item_overrides (
+            release_id INTEGER PRIMARY KEY,
+            publish_mode TEXT NULL,
+            target_visibility TEXT NULL,
+            reason_code TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            last_reason TEXT NOT NULL,
+            last_request_id TEXT NOT NULL,
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            CHECK(publish_mode IS NULL OR publish_mode IN ('auto', 'manual_only', 'hold')),
+            CHECK(target_visibility IS NULL OR target_visibility IN ('public', 'unlisted'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_policy_item_overrides_mode
+            ON publish_policy_item_overrides(publish_mode);
+
+        CREATE TABLE IF NOT EXISTS publish_global_controls (
+            singleton_key INTEGER PRIMARY KEY CHECK(singleton_key = 1),
+            auto_publish_paused INTEGER NOT NULL DEFAULT 0 CHECK(auto_publish_paused IN (0, 1)),
+            reason TEXT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL
+        );
+
+
+        CREATE TABLE IF NOT EXISTS publish_action_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_type TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            job_id INTEGER NOT NULL,
+            actor_identity TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(job_id) REFERENCES jobs(id),
+            UNIQUE(action_type, request_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_action_log_job_id
+            ON publish_action_log(job_id, created_at, id);
+
+        CREATE TABLE IF NOT EXISTS publish_bulk_action_sessions (
+            id TEXT PRIMARY KEY,
+            action_type TEXT NOT NULL,
+            action_payload_json TEXT NOT NULL DEFAULT '{}',
+            selection_fingerprint TEXT NOT NULL,
+            selected_job_ids_json TEXT NOT NULL,
+            preview_status TEXT NOT NULL,
+            aggregate_preview_json TEXT NOT NULL,
+            item_preview_json TEXT NOT NULL,
+            invalidation_reason_code TEXT NULL,
+            created_by TEXT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            executed_at TEXT NULL,
+            CHECK(action_type IN ('retry','move_to_manual','acknowledge','reschedule','hold','unblock')),
+            CHECK(preview_status IN ('OPEN','EXECUTED','EXPIRED','INVALIDATED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_bulk_action_sessions_status
+            ON publish_bulk_action_sessions(preview_status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_publish_bulk_action_sessions_expires_at
+            ON publish_bulk_action_sessions(expires_at);
+
+        CREATE TABLE IF NOT EXISTS publish_reconcile_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger_mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error_code TEXT NULL,
+            error_message TEXT NULL,
+            total_jobs INTEGER NOT NULL DEFAULT 0,
+            compared_jobs INTEGER NOT NULL DEFAULT 0,
+            drift_count INTEGER NOT NULL DEFAULT 0,
+            no_drift_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL,
+            CHECK(trigger_mode IN ('manual')),
+            CHECK(status IN ('completed', 'source_unavailable'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_reconcile_runs_created_at
+            ON publish_reconcile_runs(created_at, id);
+
+        CREATE TABLE IF NOT EXISTS publish_reconcile_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            job_id INTEGER NOT NULL,
+            release_id INTEGER NOT NULL,
+            channel_slug TEXT NOT NULL,
+            publish_state_snapshot TEXT NOT NULL,
+            expected_visibility TEXT NOT NULL,
+            observed_visibility TEXT NOT NULL,
+            drift_classification TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES publish_reconcile_runs(id),
+            FOREIGN KEY(job_id) REFERENCES jobs(id),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            CHECK(drift_classification IN ('drift_detected', 'no_drift'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_publish_reconcile_items_run_id
+            ON publish_reconcile_items(run_id, id);
+
+        CREATE INDEX IF NOT EXISTS idx_publish_reconcile_items_classification
+            ON publish_reconcile_items(drift_classification, run_id, id);
 
         CREATE TABLE IF NOT EXISTS canon_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -540,6 +1645,610 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_tcta_track_state
             ON track_custom_tag_assignments(track_pk, state);
+
+        CREATE TABLE IF NOT EXISTS analytics_external_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            source_family TEXT NOT NULL,
+            external_namespace TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(entity_type IN ('CHANNEL','RELEASE','BATCH','JOB_RUNTIME','PORTFOLIO')),
+            CHECK(source_family IN ('EXTERNAL_YOUTUBE','INTERNAL_OPERATIONAL','DERIVED_ROLLUP','COMPARISON_BASELINE','EXPLAINABILITY_OUTPUT')),
+            UNIQUE(entity_type, entity_ref, source_family, external_namespace, external_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aei_entity
+            ON analytics_external_identities(entity_type, entity_ref);
+
+        CREATE INDEX IF NOT EXISTS idx_aei_source_external
+            ON analytics_external_identities(source_family, external_namespace, external_id);
+
+        CREATE TABLE IF NOT EXISTS analytics_scope_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            channel_id INTEGER NULL,
+            release_id INTEGER NULL,
+            job_id INTEGER NULL,
+            batch_ref TEXT NULL,
+            portfolio_ref TEXT NULL,
+            normalized_scope_key TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(entity_type IN ('CHANNEL','RELEASE','BATCH','JOB_RUNTIME','PORTFOLIO')),
+            UNIQUE(entity_type, entity_ref),
+            FOREIGN KEY(channel_id) REFERENCES channels(id),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(job_id) REFERENCES jobs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_asl_scope_lookup
+            ON analytics_scope_links(normalized_scope_key, entity_type, entity_ref);
+
+        CREATE TABLE IF NOT EXISTS analytics_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            normalized_scope_key TEXT NOT NULL,
+            source_family TEXT NOT NULL,
+            window_type TEXT NOT NULL,
+            window_start_ts REAL NULL,
+            window_end_ts REAL NULL,
+            snapshot_status TEXT NOT NULL,
+            freshness_status TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL,
+            explainability_json TEXT NOT NULL DEFAULT '{}',
+            lineage_json TEXT NOT NULL DEFAULT '{}',
+            anomaly_markers_json TEXT NOT NULL DEFAULT '[]',
+            comparison_baseline_snapshot_id INTEGER NULL,
+            captured_at REAL NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(entity_type IN ('CHANNEL','RELEASE','BATCH','JOB_RUNTIME','PORTFOLIO')),
+            CHECK(source_family IN ('EXTERNAL_YOUTUBE','INTERNAL_OPERATIONAL','DERIVED_ROLLUP','COMPARISON_BASELINE','EXPLAINABILITY_OUTPUT')),
+            CHECK(window_type IN ('POINT_IN_TIME','BOUNDED_WINDOW','ROLLING_BASELINE','LAST_KNOWN_CURRENT','MONTHLY_BATCH')),
+            CHECK(snapshot_status IN ('CURRENT','HISTORICAL','SUPERSEDED','PARTIAL','FAILED')),
+            CHECK(freshness_status IN ('FRESH','STALE','PARTIAL','UNKNOWN')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(comparison_baseline_snapshot_id) REFERENCES analytics_snapshots(id)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_as_current_scope_unique
+            ON analytics_snapshots(normalized_scope_key)
+            WHERE is_current = 1;
+
+        CREATE INDEX IF NOT EXISTS idx_as_read_filters
+            ON analytics_snapshots(entity_type, entity_ref, source_family, window_type, captured_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_as_scope_current
+            ON analytics_snapshots(normalized_scope_key, is_current, captured_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_as_baseline
+            ON analytics_snapshots(comparison_baseline_snapshot_id)
+            WHERE comparison_baseline_snapshot_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS analytics_rollup_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_snapshot_id INTEGER NOT NULL,
+            child_snapshot_id INTEGER NOT NULL,
+            relation_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(relation_type IN ('CHANNEL_TO_RELEASE','RELEASE_TO_JOB_RUNTIME','RELEASE_TO_BATCH','PORTFOLIO_TO_ENTITY')),
+            FOREIGN KEY(parent_snapshot_id) REFERENCES analytics_snapshots(id),
+            FOREIGN KEY(child_snapshot_id) REFERENCES analytics_snapshots(id),
+            UNIQUE(parent_snapshot_id, child_snapshot_id, relation_type)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_arl_parent
+            ON analytics_rollup_links(parent_snapshot_id, relation_type);
+
+        CREATE INDEX IF NOT EXISTS idx_arl_child
+            ON analytics_rollup_links(child_snapshot_id, relation_type);
+
+        CREATE TABLE IF NOT EXISTS analytics_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_ref TEXT NOT NULL,
+            source_family TEXT NULL,
+            window_type TEXT NULL,
+            snapshot_status TEXT NULL,
+            freshness_status TEXT NULL,
+            snapshot_id INTEGER NULL,
+            comparison_baseline_snapshot_id INTEGER NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(event_type IN (
+                'SNAPSHOT_CREATED',
+                'SNAPSHOT_MARKED_CURRENT',
+                'SNAPSHOT_SUPERSEDED',
+                'LINKAGE_CREATED',
+                'LINKAGE_UPDATED',
+                'BASELINE_REFERENCE_ATTACHED',
+                'LINEAGE_PAYLOAD_PERSISTED',
+                'PARTIAL_SNAPSHOT_STORED',
+                'FAILED_SNAPSHOT_STORED'
+            )),
+            FOREIGN KEY(snapshot_id) REFERENCES analytics_snapshots(id),
+            FOREIGN KEY(comparison_baseline_snapshot_id) REFERENCES analytics_snapshots(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_events_scope
+            ON analytics_events(entity_type, entity_ref, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_events_snapshot
+            ON analytics_events(snapshot_id, event_type);
+
+        CREATE TABLE IF NOT EXISTS analytics_youtube_video_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_slug TEXT NOT NULL,
+            youtube_video_id TEXT NOT NULL,
+            release_id INTEGER NULL,
+            job_id INTEGER NULL,
+            youtube_channel_id TEXT NULL,
+            linkage_confidence TEXT NOT NULL,
+            linkage_source TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(linkage_confidence IN ('EXACT', 'INFERRED')),
+            CHECK(linkage_source IN ('UPLOAD_ARTIFACT', 'RELEASE_BINDING', 'MANUAL_LINK', 'RECONCILED')),
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(job_id) REFERENCES jobs(id),
+            UNIQUE(channel_slug, youtube_video_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_youtube_video_links_channel_video
+            ON analytics_youtube_video_links(channel_slug, youtube_video_id);
+
+        CREATE TABLE IF NOT EXISTS analytics_external_sync_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider_name TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            run_mode TEXT NOT NULL,
+            sync_state TEXT NOT NULL,
+            requested_metric_families_json TEXT NOT NULL DEFAULT '[]',
+            coverage_payload_json TEXT NOT NULL DEFAULT '{}',
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            created_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            partial_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            failed_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            CHECK(provider_name IN ('YOUTUBE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE_VIDEO')),
+            CHECK(run_mode IN ('INITIAL_BACKFILL', 'SCHEDULED_SYNC', 'MANUAL_REFRESH', 'PARTIAL_REFRESH', 'STALE_RESYNC')),
+            CHECK(sync_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_sync_runs_scope_time
+            ON analytics_external_sync_runs(provider_name, target_scope_type, target_scope_ref, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_sync_runs_state_time
+            ON analytics_external_sync_runs(sync_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_external_scope_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider_name TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            last_successful_sync_at REAL NULL,
+            last_attempted_sync_at REAL NULL,
+            sync_state TEXT NOT NULL,
+            freshness_status TEXT NOT NULL,
+            coverage_payload_json TEXT NOT NULL DEFAULT '{}',
+            availability_status TEXT NOT NULL DEFAULT 'NOT_YET_SYNCED',
+            updated_at REAL NOT NULL,
+            CHECK(provider_name IN ('YOUTUBE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE_VIDEO')),
+            CHECK(sync_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')),
+            CHECK(freshness_status IN ('FRESH', 'STALE', 'PARTIAL', 'UNKNOWN')),
+            UNIQUE(provider_name, target_scope_type, target_scope_ref)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_scope_status_scope
+            ON analytics_external_scope_status(provider_name, target_scope_type, target_scope_ref);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_snapshots_external_scope_time
+            ON analytics_snapshots(source_family, entity_type, entity_ref, captured_at DESC)
+            WHERE source_family = 'EXTERNAL_YOUTUBE';
+
+        CREATE TABLE IF NOT EXISTS analytics_external_audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            provider_name TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            run_mode TEXT NOT NULL,
+            sync_state TEXT NOT NULL,
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            created_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            partial_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            failed_snapshots_count INTEGER NOT NULL DEFAULT 0,
+            missing_metric_families_json TEXT NOT NULL DEFAULT '[]',
+            incomplete_backfill INTEGER NOT NULL DEFAULT 0,
+            freshness_status TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            CHECK(provider_name IN ('YOUTUBE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE_VIDEO')),
+            CHECK(run_mode IN ('INITIAL_BACKFILL', 'SCHEDULED_SYNC', 'MANUAL_REFRESH', 'PARTIAL_REFRESH', 'STALE_RESYNC')),
+            CHECK(sync_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')),
+            CHECK(incomplete_backfill IN (0,1))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_external_audit_events_scope_time
+            ON analytics_external_audit_events(provider_name, target_scope_type, target_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_operational_kpi_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            recompute_mode TEXT NOT NULL,
+            run_state TEXT NOT NULL,
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            computed_kpi_count INTEGER NOT NULL DEFAULT 0,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')),
+            CHECK(run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aokr_scope_time
+            ON analytics_operational_kpi_runs(target_scope_type, target_scope_ref, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_aokr_state_time
+            ON analytics_operational_kpi_runs(run_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_operational_kpi_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            kpi_family TEXT NOT NULL,
+            kpi_code TEXT NOT NULL,
+            status_class TEXT NOT NULL,
+            observed_from REAL NULL,
+            observed_to REAL NULL,
+            is_current INTEGER NOT NULL DEFAULT 0,
+            value_payload_json TEXT NOT NULL,
+            explainability_payload_json TEXT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(kpi_family IN ('PIPELINE_TIMING', 'QA_STATUS', 'UPLOAD_OUTCOME', 'PUBLISH_OUTCOME', 'RETRY_BURDEN', 'READINESS', 'DRIFT_RECONCILE', 'CADENCE_ADHERENCE', 'BATCH_COMPLETENESS')),
+            CHECK(status_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_operational_kpi_runs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aoks_scope_family_current
+            ON analytics_operational_kpi_snapshots(scope_type, scope_ref, kpi_family, kpi_code, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_aoks_status_class
+            ON analytics_operational_kpi_snapshots(status_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_operational_kpi_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            kpi_family TEXT NULL,
+            kpi_code TEXT NULL,
+            status_class TEXT NULL,
+            snapshot_id INTEGER NULL,
+            recompute_mode TEXT NULL,
+            run_state TEXT NULL,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(
+                recompute_mode IS NULL
+                OR recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')
+            ),
+            CHECK(
+                run_state IS NULL
+                OR run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED')
+            )
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aoke_scope_time
+            ON analytics_operational_kpi_events(target_scope_type, target_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_prediction_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_kind TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            recompute_mode TEXT NOT NULL,
+            run_state TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            baseline_count INTEGER NOT NULL DEFAULT 0,
+            comparison_count INTEGER NOT NULL DEFAULT 0,
+            prediction_count INTEGER NOT NULL DEFAULT 0,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            CHECK(run_kind IN ('BASELINE_RECOMPUTE', 'COMPARISON_RECOMPUTE', 'PREDICTION_RECOMPUTE', 'FULL_STACK_RECOMPUTE')),
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')),
+            CHECK(run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_apr_scope_kind_time
+            ON analytics_prediction_runs(target_scope_type, target_scope_ref, run_kind, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_apr_state_time
+            ON analytics_prediction_runs(run_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_baseline_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            baseline_family TEXT NOT NULL,
+            variance_class TEXT NOT NULL,
+            baseline_payload_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            comparison_basis_json TEXT NOT NULL DEFAULT '{}',
+            is_current INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(baseline_family IN ('CHANNEL_HISTORICAL', 'RELEASE_VS_CHANNEL', 'BATCH_MONTH_HISTORICAL', 'PORTFOLIO_COMPARISON')),
+            CHECK(variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_prediction_runs(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_abs_scope_family_current
+            ON analytics_baseline_snapshots(scope_type, scope_ref, baseline_family, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_abs_variance_class
+            ON analytics_baseline_snapshots(variance_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_comparison_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            comparison_family TEXT NOT NULL,
+            variance_class TEXT NOT NULL,
+            baseline_snapshot_id INTEGER NULL,
+            delta_payload_json TEXT NOT NULL,
+            comparison_basis_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            is_current INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(comparison_family IN ('RELEASE_VS_CHANNEL_BASELINE', 'CHANNEL_VS_SELF_HISTORY', 'BATCH_MONTH_VS_RECENT_CHANNEL', 'CHANNEL_VS_PORTFOLIO')),
+            CHECK(variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_prediction_runs(id),
+            FOREIGN KEY(baseline_snapshot_id) REFERENCES analytics_baseline_snapshots(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_acs_scope_family_current
+            ON analytics_comparison_snapshots(scope_type, scope_ref, comparison_family, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_acs_variance_class
+            ON analytics_comparison_snapshots(variance_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_prediction_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL,
+            scope_type TEXT NOT NULL,
+            scope_ref TEXT NOT NULL,
+            prediction_family TEXT NOT NULL,
+            variance_class TEXT NOT NULL,
+            confidence_class TEXT NOT NULL,
+            comparison_family TEXT NULL,
+            comparison_snapshot_id INTEGER NULL,
+            predicted_label TEXT NOT NULL,
+            predicted_value_json TEXT NOT NULL DEFAULT '{}',
+            signals_used_json TEXT NOT NULL DEFAULT '[]',
+            comparison_basis_json TEXT NOT NULL,
+            explainability_payload_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL DEFAULT '[]',
+            is_current INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(prediction_family IN ('WEAK_RELEASE_RISK', 'PUBLISH_WINDOW_QUALITY', 'CHANNEL_MOMENTUM', 'CADENCE_DEGRADATION_RISK', 'OPERATIONAL_ANOMALY_RISK')),
+            CHECK(variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(confidence_class IN ('LOW', 'MEDIUM', 'HIGH')),
+            CHECK(comparison_family IS NULL OR comparison_family IN ('RELEASE_VS_CHANNEL_BASELINE', 'CHANNEL_VS_SELF_HISTORY', 'BATCH_MONTH_VS_RECENT_CHANNEL', 'CHANNEL_VS_PORTFOLIO')),
+            CHECK(is_current IN (0,1)),
+            FOREIGN KEY(run_id) REFERENCES analytics_prediction_runs(id),
+            FOREIGN KEY(comparison_snapshot_id) REFERENCES analytics_comparison_snapshots(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_aps_scope_family_current
+            ON analytics_prediction_snapshots(scope_type, scope_ref, prediction_family, is_current);
+
+        CREATE INDEX IF NOT EXISTS idx_aps_variance_confidence
+            ON analytics_prediction_snapshots(variance_class, confidence_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_prediction_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL,
+            target_scope_ref TEXT NOT NULL,
+            run_kind TEXT NOT NULL,
+            prediction_family TEXT NULL,
+            comparison_family TEXT NULL,
+            variance_class TEXT NULL,
+            confidence_class TEXT NULL,
+            snapshot_id INTEGER NULL,
+            anomaly_count INTEGER NOT NULL DEFAULT 0,
+            risk_count INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(target_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(run_kind IN ('BASELINE_RECOMPUTE', 'COMPARISON_RECOMPUTE', 'PREDICTION_RECOMPUTE', 'FULL_STACK_RECOMPUTE')),
+            CHECK(prediction_family IS NULL OR prediction_family IN ('WEAK_RELEASE_RISK', 'PUBLISH_WINDOW_QUALITY', 'CHANNEL_MOMENTUM', 'CADENCE_DEGRADATION_RISK', 'OPERATIONAL_ANOMALY_RISK')),
+            CHECK(comparison_family IS NULL OR comparison_family IN ('RELEASE_VS_CHANNEL_BASELINE', 'CHANNEL_VS_SELF_HISTORY', 'BATCH_MONTH_VS_RECENT_CHANNEL', 'CHANNEL_VS_PORTFOLIO')),
+            CHECK(variance_class IS NULL OR variance_class IN ('NORMAL', 'ANOMALY', 'RISK')),
+            CHECK(confidence_class IS NULL OR confidence_class IN ('LOW', 'MEDIUM', 'HIGH'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ape_scope_time
+            ON analytics_prediction_events(target_scope_type, target_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_recommendation_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recommendation_scope_type TEXT NOT NULL,
+            recommendation_scope_ref TEXT NOT NULL,
+            recommendation_family TEXT NOT NULL,
+            recompute_mode TEXT NOT NULL,
+            run_state TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            completed_at REAL NULL,
+            recommendation_count INTEGER NOT NULL DEFAULT 0,
+            open_count INTEGER NOT NULL DEFAULT 0,
+            warning_count INTEGER NOT NULL DEFAULT 0,
+            critical_count INTEGER NOT NULL DEFAULT 0,
+            error_code TEXT NULL,
+            error_detail TEXT NULL,
+            created_at REAL NOT NULL,
+            CHECK(recommendation_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recommendation_family IN ('PUBLISH_TIMING_SUGGESTION', 'CADENCE_BATCH_HEALTH_SUGGESTION', 'WEAK_RELEASE_ATTENTION', 'OPERATIONAL_REMEDIATION', 'CHANNEL_OPTIMIZATION', 'ANOMALY_RISK_ALERT', 'CONTENT_PACKAGING_SUGGESTION')),
+            CHECK(recompute_mode IN ('FULL_RECOMPUTE', 'INCREMENTAL_RECOMPUTE', 'TARGETED_RECOMPUTE')),
+            CHECK(run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_arr_scope_family_mode_time
+            ON analytics_recommendation_runs(recommendation_scope_type, recommendation_scope_ref, recommendation_family, recompute_mode, started_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_arr_state_time
+            ON analytics_recommendation_runs(run_state, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_recommendation_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NULL REFERENCES analytics_recommendation_runs(id) ON DELETE SET NULL,
+            recommendation_scope_type TEXT NOT NULL,
+            recommendation_scope_ref TEXT NOT NULL,
+            recommendation_family TEXT NOT NULL,
+            issue_key TEXT NOT NULL,
+            title_text TEXT NOT NULL,
+            summary_text TEXT NOT NULL,
+            severity_class TEXT NOT NULL,
+            confidence_class TEXT NOT NULL,
+            lifecycle_status TEXT NOT NULL DEFAULT 'OPEN',
+            target_domain TEXT NOT NULL,
+            target_pointer_payload_json TEXT NOT NULL,
+            explainability_payload_json TEXT NOT NULL,
+            source_snapshot_refs_json TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            CHECK(recommendation_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recommendation_family IN ('PUBLISH_TIMING_SUGGESTION', 'CADENCE_BATCH_HEALTH_SUGGESTION', 'WEAK_RELEASE_ATTENTION', 'OPERATIONAL_REMEDIATION', 'CHANNEL_OPTIMIZATION', 'ANOMALY_RISK_ALERT', 'CONTENT_PACKAGING_SUGGESTION')),
+            CHECK(severity_class IN ('INFO', 'WARNING', 'CRITICAL')),
+            CHECK(confidence_class IN ('LOW', 'MEDIUM', 'HIGH')),
+            CHECK(lifecycle_status IN ('OPEN', 'ACKNOWLEDGED', 'DISMISSED', 'SUPERSEDED')),
+            CHECK(target_domain IN ('PUBLISH', 'METADATA', 'VISUALS', 'PLANNER', 'OPERATIONAL_TROUBLESHOOTING'))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ars_current_open_scope_issue
+            ON analytics_recommendation_snapshots(recommendation_scope_type, recommendation_scope_ref, recommendation_family, issue_key)
+            WHERE is_current = 1 AND lifecycle_status = 'OPEN';
+
+        CREATE INDEX IF NOT EXISTS idx_ars_scope_family_status
+            ON analytics_recommendation_snapshots(recommendation_scope_type, recommendation_scope_ref, recommendation_family, lifecycle_status, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_ars_queue_order
+            ON analytics_recommendation_snapshots(is_current, lifecycle_status, severity_class, confidence_class, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_recommendation_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            recommendation_scope_type TEXT NOT NULL,
+            recommendation_scope_ref TEXT NOT NULL,
+            recommendation_family TEXT NULL,
+            target_domain TEXT NULL,
+            severity_class TEXT NULL,
+            confidence_class TEXT NULL,
+            lifecycle_status TEXT NULL,
+            recommendation_id INTEGER NULL,
+            run_state TEXT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL,
+            CHECK(recommendation_scope_type IN ('CHANNEL', 'RELEASE', 'BATCH_MONTH', 'PORTFOLIO')),
+            CHECK(recommendation_family IS NULL OR recommendation_family IN ('PUBLISH_TIMING_SUGGESTION', 'CADENCE_BATCH_HEALTH_SUGGESTION', 'WEAK_RELEASE_ATTENTION', 'OPERATIONAL_REMEDIATION', 'CHANNEL_OPTIMIZATION', 'ANOMALY_RISK_ALERT', 'CONTENT_PACKAGING_SUGGESTION')),
+            CHECK(target_domain IS NULL OR target_domain IN ('PUBLISH', 'METADATA', 'VISUALS', 'PLANNER', 'OPERATIONAL_TROUBLESHOOTING')),
+            CHECK(severity_class IS NULL OR severity_class IN ('INFO', 'WARNING', 'CRITICAL')),
+            CHECK(confidence_class IS NULL OR confidence_class IN ('LOW', 'MEDIUM', 'HIGH')),
+            CHECK(lifecycle_status IS NULL OR lifecycle_status IN ('OPEN', 'ACKNOWLEDGED', 'DISMISSED', 'SUPERSEDED')),
+            CHECK(run_state IS NULL OR run_state IN ('RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_are_scope_time
+            ON analytics_recommendation_events(recommendation_scope_type, recommendation_scope_ref, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_report_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_scope_type TEXT NOT NULL,
+            report_scope_ref TEXT NULL,
+            report_family TEXT NOT NULL,
+            filter_payload_json TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            artifact_ref TEXT NULL,
+            generation_status TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            created_by TEXT NOT NULL,
+            CHECK(report_scope_type IN ('OVERVIEW', 'CHANNEL', 'RELEASE', 'BATCH_MONTH')),
+            CHECK(artifact_type IN ('XLSX', 'STRUCTURED_REPORT', 'API_REPORT')),
+            CHECK(generation_status IN ('PENDING', 'READY', 'FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_report_records_scope_time
+            ON analytics_report_records(report_scope_type, COALESCE(report_scope_ref, ''), created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_report_records_status_time
+            ON analytics_report_records(generation_status, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS analytics_ui_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            page_scope TEXT NOT NULL,
+            scope_ref TEXT NULL,
+            filter_payload_json TEXT NOT NULL DEFAULT '{}',
+            artifact_type TEXT NULL,
+            report_record_id INTEGER NULL,
+            action_type TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            freshness_summary_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_analytics_ui_events_scope_time
+            ON analytics_ui_events(page_scope, created_at DESC);
         """
     )
 
@@ -548,6 +2257,12 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_channels_columns(conn)
     _ensure_ui_job_drafts_columns(conn)
     _ensure_tracks_columns(conn)
+    _ensure_metadata_preview_sessions_columns(conn)
+    _ensure_release_visual_scoped_preview_approval(conn)
+    _ensure_planned_release_materialization_binding(conn)
+    _ensure_planned_releases_template_preview_foundation(conn)
+    _ensure_monthly_planning_template_apply_schema(conn)
+    _ensure_releases_current_open_job_relation(conn)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -640,6 +2355,248 @@ def _ensure_jobs_columns(conn: sqlite3.Connection) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_retry_of_job_id ON jobs(retry_of_job_id);")
     with suppress(Exception):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_root_job_id_attempt_no ON jobs(root_job_id, attempt_no);")
+    if "publish_state" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_state TEXT;")
+    if "publish_target_visibility" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_target_visibility TEXT;")
+    if "publish_delivery_mode_effective" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_delivery_mode_effective TEXT;")
+    if "publish_resolved_scope" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_resolved_scope TEXT;")
+    if "publish_reason_code" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_reason_code TEXT;")
+    if "publish_reason_detail" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_reason_detail TEXT;")
+    if "publish_scheduled_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_scheduled_at REAL;")
+    if "publish_attempt_count" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_attempt_count INTEGER NOT NULL DEFAULT 0;")
+    if "publish_retry_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_retry_at REAL;")
+    if "publish_last_error_code" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_last_error_code TEXT;")
+    if "publish_last_error_message" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_last_error_message TEXT;")
+    if "publish_in_progress_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_in_progress_at REAL;")
+    if "publish_last_transition_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_last_transition_at REAL;")
+    if "publish_hold_active" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_hold_active INTEGER NOT NULL DEFAULT 0;")
+    if "publish_hold_reason_code" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_hold_reason_code TEXT;")
+    if "publish_manual_ack_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_manual_ack_at REAL;")
+    if "publish_manual_completed_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_manual_completed_at REAL;")
+    if "publish_manual_published_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_manual_published_at REAL;")
+    if "publish_manual_video_id" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_manual_video_id TEXT;")
+    if "publish_manual_url" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_manual_url TEXT;")
+    if "publish_drift_detected_at" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_drift_detected_at REAL;")
+    if "publish_observed_visibility" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE jobs ADD COLUMN publish_observed_visibility TEXT;")
+
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_jobs_publish_runtime_state_id
+            ON jobs(publish_state ASC, id ASC)
+            WHERE publish_state IS NOT NULL;
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_jobs_publish_runtime_retry_due
+            ON jobs(publish_state ASC, publish_retry_at ASC, id ASC)
+            WHERE publish_state = 'retry_pending' AND publish_retry_at IS NOT NULL;
+            """
+        )
+
+
+def _ensure_planned_release_materialization_binding(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "planned_releases")
+    if "materialized_release_id" not in cols:
+        with suppress(Exception):
+            conn.execute(
+                """
+                ALTER TABLE planned_releases
+                ADD COLUMN materialized_release_id INTEGER NULL REFERENCES releases(id);
+                """
+            )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_materialized_release_unique
+            ON planned_releases(materialized_release_id)
+            WHERE materialized_release_id IS NOT NULL;
+            """
+        )
+
+
+def _ensure_planned_releases_template_preview_foundation(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "planned_releases")
+    if "planning_slot_code" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE planned_releases ADD COLUMN planning_slot_code TEXT NULL;")
+    if "source_template_id" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE planned_releases ADD COLUMN source_template_id INTEGER NULL;")
+    if "source_template_item_key" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE planned_releases ADD COLUMN source_template_item_key TEXT NULL;")
+    if "source_template_target_month" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE planned_releases ADD COLUMN source_template_target_month TEXT NULL;")
+    if "source_template_apply_run_id" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE planned_releases ADD COLUMN source_template_apply_run_id INTEGER NULL;")
+
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_pr_preview_slot_month
+            ON planned_releases(channel_slug, planning_slot_code, publish_at);
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_pr_preview_provenance_month
+            ON planned_releases(source_template_id, source_template_item_key, source_template_target_month);
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_slot_month_unique
+            ON planned_releases(channel_slug, planning_slot_code, substr(publish_at, 1, 7))
+            WHERE planning_slot_code IS NOT NULL AND publish_at IS NOT NULL;
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_provenance_month_unique
+            ON planned_releases(source_template_id, source_template_item_key, source_template_target_month)
+            WHERE source_template_id IS NOT NULL
+              AND source_template_item_key IS NOT NULL
+              AND source_template_target_month IS NOT NULL;
+            """
+        )
+
+
+def _ensure_monthly_planning_template_apply_schema(conn: sqlite3.Connection) -> None:
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS monthly_planning_template_apply_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                target_month TEXT NOT NULL,
+                preview_fingerprint TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT NULL,
+                status TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                created_count INTEGER NOT NULL DEFAULT 0,
+                blocked_duplicate_count INTEGER NOT NULL DEFAULT 0,
+                blocked_invalid_date_count INTEGER NOT NULL DEFAULT 0,
+                failed_count INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(template_id) REFERENCES monthly_planning_templates(id),
+                FOREIGN KEY(channel_id) REFERENCES channels(id),
+                CHECK(status IN ('STARTED','COMPLETED','FAILED'))
+            );
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_mptar_template_month
+            ON monthly_planning_template_apply_runs(template_id, target_month);
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_mptar_channel_month
+            ON monthly_planning_template_apply_runs(channel_id, target_month);
+            """
+        )
+
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS monthly_planning_template_apply_run_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                apply_run_id INTEGER NOT NULL,
+                template_item_key TEXT NOT NULL,
+                slot_code TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                outcome TEXT NOT NULL,
+                planned_release_id INTEGER NULL,
+                reason_code TEXT NULL,
+                reason_message TEXT NULL,
+                FOREIGN KEY(apply_run_id) REFERENCES monthly_planning_template_apply_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY(planned_release_id) REFERENCES planned_releases(id),
+                CHECK(outcome IN ('CREATED','BLOCKED_DUPLICATE','BLOCKED_INVALID_DATE','FAILED_INTERNAL'))
+            );
+            """
+        )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_mptari_apply_run_position
+            ON monthly_planning_template_apply_run_items(apply_run_id, position);
+            """
+        )
+
+
+def _ensure_releases_current_open_job_relation(conn: sqlite3.Connection) -> None:
+    cols = _table_columns(conn, "releases")
+    if "current_open_job_id" not in cols:
+        with suppress(Exception):
+            conn.execute(
+                """
+                ALTER TABLE releases
+                ADD COLUMN current_open_job_id INTEGER NULL REFERENCES jobs(id);
+                """
+            )
+    with suppress(Exception):
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_current_open_job_unique
+            ON releases(current_open_job_id)
+            WHERE current_open_job_id IS NOT NULL;
+            """
+        )
 
 
 def _migrate_jobs_retry_lineage(conn: sqlite3.Connection) -> None:
@@ -738,6 +2695,87 @@ def _ensure_tracks_columns(conn: sqlite3.Connection) -> None:
     if "month_batch" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE tracks ADD COLUMN month_batch TEXT;")
+
+
+def _ensure_metadata_preview_sessions_columns(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "metadata_preview_sessions"):
+        return
+    cols = _table_columns(conn, "metadata_preview_sessions")
+    if "fields_snapshot_json" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN fields_snapshot_json TEXT NOT NULL DEFAULT '{}';")
+    if "effective_source_selection_json" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN effective_source_selection_json TEXT NOT NULL DEFAULT '{}';")
+    if "effective_source_provenance_json" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE metadata_preview_sessions ADD COLUMN effective_source_provenance_json TEXT NOT NULL DEFAULT '{}';")
+
+
+def _ensure_release_visual_scoped_preview_approval(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "release_visual_preview_snapshots"):
+        cols = _table_columns(conn, "release_visual_preview_snapshots")
+        if "preview_scope" not in cols:
+            with suppress(Exception):
+                conn.execute(
+                    "ALTER TABLE release_visual_preview_snapshots "
+                    "ADD COLUMN preview_scope TEXT NOT NULL DEFAULT 'package';"
+                )
+        with suppress(Exception):
+            conn.execute(
+                "UPDATE release_visual_preview_snapshots SET preview_scope = 'package' "
+                "WHERE preview_scope IS NULL OR TRIM(preview_scope) = '';"
+            )
+        with suppress(Exception):
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_release_visual_preview_snapshots_release_scope_created
+                ON release_visual_preview_snapshots(release_id, preview_scope, created_at);
+                """
+            )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS release_visual_approved_previews_scoped (
+            release_id INTEGER NOT NULL,
+            preview_scope TEXT NOT NULL,
+            preview_id TEXT NOT NULL UNIQUE,
+            approved_by TEXT NULL,
+            approved_at TEXT NOT NULL,
+            PRIMARY KEY(release_id, preview_scope),
+            FOREIGN KEY(release_id) REFERENCES releases(id),
+            FOREIGN KEY(preview_id) REFERENCES release_visual_preview_snapshots(id),
+            CHECK(preview_scope IN ('background','cover','package'))
+        );
+        """
+    )
+
+    legacy_rows = conn.execute(
+        """
+        SELECT ap.release_id, ap.preview_id, ap.approved_by, ap.approved_at
+        FROM release_visual_approved_previews ap
+        LEFT JOIN release_visual_approved_previews_scoped scoped
+          ON scoped.release_id = ap.release_id
+         AND scoped.preview_scope = ?
+        WHERE scoped.release_id IS NULL
+        """,
+        (VISUAL_PREVIEW_SCOPE_BACKGROUND,),
+    ).fetchall()
+    for row in legacy_rows:
+        conn.execute(
+            """
+            INSERT INTO release_visual_approved_previews_scoped(
+                release_id, preview_scope, preview_id, approved_by, approved_at
+            ) VALUES(?, ?, ?, ?, ?)
+            """,
+            (
+                int(row["release_id"]),
+                VISUAL_PREVIEW_SCOPE_BACKGROUND,
+                str(row["preview_id"]),
+                row["approved_by"],
+                str(row["approved_at"]),
+            ),
+        )
 
 
 def now_ts() -> float:
@@ -1017,6 +3055,1089 @@ def update_ui_job_playlist_builder_override_json(
         (playlist_builder_override_json, ts, job_id),
     )
     return int(cur.rowcount or 0) > 0
+
+
+def create_title_template(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    template_name: str,
+    template_body: str,
+    status: str,
+    is_default: bool,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    created_at: str,
+    updated_at: str,
+    archived_at: str | None,
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO title_templates(
+            channel_slug, template_name, template_body, status, is_default,
+            validation_status, validation_errors_json, last_validated_at,
+            created_at, updated_at, archived_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            channel_slug,
+            template_name,
+            template_body,
+            status,
+            int(is_default),
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            created_at,
+            updated_at,
+            archived_at,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def unset_active_default_title_template(conn: sqlite3.Connection, *, channel_slug: str) -> None:
+    conn.execute(
+        """
+        UPDATE title_templates
+        SET is_default = 0
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1
+        """,
+        (channel_slug,),
+    )
+
+
+def get_title_template_by_id(conn: sqlite3.Connection, template_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute("SELECT * FROM title_templates WHERE id = ?", (template_id,)).fetchone()
+
+
+def list_title_templates(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str | None,
+    status: str | None,
+    q: str | None,
+) -> List[Dict[str, Any]]:
+    where: list[str] = []
+    args: list[Any] = []
+    if channel_slug:
+        where.append("channel_slug = ?")
+        args.append(channel_slug)
+    if status == "ACTIVE":
+        where.append("status = 'ACTIVE'")
+    elif status == "ARCHIVED":
+        where.append("status = 'ARCHIVED'")
+    if q:
+        where.append("template_name LIKE ?")
+        args.append(f"%{q}%")
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+    return conn.execute(
+        f"""
+        SELECT *
+        FROM title_templates
+        {where_clause}
+        ORDER BY updated_at DESC, id DESC
+        """,
+        tuple(args),
+    ).fetchall()
+
+
+def update_title_template_fields(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    template_name: str,
+    template_body: str,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE title_templates
+        SET template_name = ?,
+            template_body = ?,
+            validation_status = ?,
+            validation_errors_json = ?,
+            last_validated_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            template_name,
+            template_body,
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            updated_at,
+            template_id,
+        ),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def set_title_template_default_flag(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    is_default: bool,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE title_templates
+        SET is_default = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (int(is_default), updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def archive_title_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    updated_at: str,
+    archived_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE title_templates
+        SET status = 'ARCHIVED',
+            is_default = 0,
+            archived_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (archived_at, updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def activate_title_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE title_templates
+        SET status = 'ACTIVE',
+            archived_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def create_description_template(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    template_name: str,
+    template_body: str,
+    status: str,
+    is_default: bool,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    created_at: str,
+    updated_at: str,
+    archived_at: str | None,
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO description_templates(
+            channel_slug, template_name, template_body, status, is_default,
+            validation_status, validation_errors_json, last_validated_at,
+            created_at, updated_at, archived_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            channel_slug,
+            template_name,
+            template_body,
+            status,
+            int(is_default),
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            created_at,
+            updated_at,
+            archived_at,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def unset_active_default_description_template(conn: sqlite3.Connection, *, channel_slug: str) -> None:
+    conn.execute(
+        """
+        UPDATE description_templates
+        SET is_default = 0
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1
+        """,
+        (channel_slug,),
+    )
+
+
+def get_description_template_by_id(conn: sqlite3.Connection, template_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute("SELECT * FROM description_templates WHERE id = ?", (template_id,)).fetchone()
+
+
+def list_description_templates(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str | None,
+    status: str | None,
+    q: str | None,
+) -> List[Dict[str, Any]]:
+    where: list[str] = []
+    args: list[Any] = []
+    if channel_slug:
+        where.append("channel_slug = ?")
+        args.append(channel_slug)
+    if status == "ACTIVE":
+        where.append("status = 'ACTIVE'")
+    elif status == "ARCHIVED":
+        where.append("status = 'ARCHIVED'")
+    if q:
+        where.append("template_name LIKE ?")
+        args.append(f"%{q}%")
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+    return conn.execute(
+        f"""
+        SELECT *
+        FROM description_templates
+        {where_clause}
+        ORDER BY updated_at DESC, id DESC
+        """,
+        tuple(args),
+    ).fetchall()
+
+
+def update_description_template_fields(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    template_name: str,
+    template_body: str,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE description_templates
+        SET template_name = ?,
+            template_body = ?,
+            validation_status = ?,
+            validation_errors_json = ?,
+            last_validated_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            template_name,
+            template_body,
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            updated_at,
+            template_id,
+        ),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def set_description_template_default_flag(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    is_default: bool,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE description_templates
+        SET is_default = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (int(is_default), updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def archive_description_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    updated_at: str,
+    archived_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE description_templates
+        SET status = 'ARCHIVED',
+            is_default = 0,
+            archived_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (archived_at, updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def activate_description_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE description_templates
+        SET status = 'ACTIVE',
+            archived_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def create_video_tag_preset(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    preset_name: str,
+    preset_body_json: str,
+    status: str,
+    is_default: bool,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    created_at: str,
+    updated_at: str,
+    archived_at: str | None,
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO video_tag_presets(
+            channel_slug, preset_name, preset_body_json, status, is_default,
+            validation_status, validation_errors_json, last_validated_at,
+            created_at, updated_at, archived_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            channel_slug,
+            preset_name,
+            preset_body_json,
+            status,
+            int(is_default),
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            created_at,
+            updated_at,
+            archived_at,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def unset_active_default_video_tag_preset(conn: sqlite3.Connection, *, channel_slug: str) -> None:
+    conn.execute(
+        """
+        UPDATE video_tag_presets
+        SET is_default = 0
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1
+        """,
+        (channel_slug,),
+    )
+
+
+def get_video_tag_preset_by_id(conn: sqlite3.Connection, preset_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute("SELECT * FROM video_tag_presets WHERE id = ?", (preset_id,)).fetchone()
+
+
+def get_channel_metadata_defaults(conn: sqlite3.Connection, *, channel_slug: str) -> Optional[Dict[str, Any]]:
+    return conn.execute("SELECT * FROM channel_metadata_defaults WHERE channel_slug = ?", (channel_slug,)).fetchone()
+
+
+def upsert_channel_metadata_defaults(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    default_title_template_id: int | None,
+    default_description_template_id: int | None,
+    default_video_tag_preset_id: int | None,
+    created_at: str,
+    updated_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO channel_metadata_defaults(
+            channel_slug,
+            default_title_template_id,
+            default_description_template_id,
+            default_video_tag_preset_id,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(channel_slug) DO UPDATE SET
+            default_title_template_id = excluded.default_title_template_id,
+            default_description_template_id = excluded.default_description_template_id,
+            default_video_tag_preset_id = excluded.default_video_tag_preset_id,
+            updated_at = excluded.updated_at
+        """,
+        (
+            channel_slug,
+            default_title_template_id,
+            default_description_template_id,
+            default_video_tag_preset_id,
+            created_at,
+            updated_at,
+        ),
+    )
+
+
+def list_video_tag_presets(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str | None,
+    status: str | None,
+    q: str | None,
+) -> List[Dict[str, Any]]:
+    where: list[str] = []
+    args: list[Any] = []
+    if channel_slug:
+        where.append("channel_slug = ?")
+        args.append(channel_slug)
+    if status == "ACTIVE":
+        where.append("status = 'ACTIVE'")
+    elif status == "ARCHIVED":
+        where.append("status = 'ARCHIVED'")
+    if q:
+        where.append("preset_name LIKE ?")
+        args.append(f"%{q}%")
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+    return conn.execute(
+        f"""
+        SELECT *
+        FROM video_tag_presets
+        {where_clause}
+        ORDER BY updated_at DESC, id DESC
+        """,
+        tuple(args),
+    ).fetchall()
+
+
+def update_video_tag_preset_fields(
+    conn: sqlite3.Connection,
+    *,
+    preset_id: int,
+    preset_name: str,
+    preset_body_json: str,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE video_tag_presets
+        SET preset_name = ?,
+            preset_body_json = ?,
+            validation_status = ?,
+            validation_errors_json = ?,
+            last_validated_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            preset_name,
+            preset_body_json,
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            updated_at,
+            preset_id,
+        ),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def set_video_tag_preset_default_flag(
+    conn: sqlite3.Connection,
+    *,
+    preset_id: int,
+    is_default: bool,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE video_tag_presets
+        SET is_default = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (int(is_default), updated_at, preset_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def archive_video_tag_preset(
+    conn: sqlite3.Connection,
+    *,
+    preset_id: int,
+    updated_at: str,
+    archived_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE video_tag_presets
+        SET status = 'ARCHIVED',
+            is_default = 0,
+            archived_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (archived_at, updated_at, preset_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def activate_video_tag_preset(
+    conn: sqlite3.Connection,
+    *,
+    preset_id: int,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE video_tag_presets
+        SET status = 'ACTIVE',
+            archived_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (updated_at, preset_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def create_channel_visual_style_template(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    template_name: str,
+    template_payload_json: str,
+    status: str,
+    is_default: bool,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    created_at: str,
+    updated_at: str,
+    archived_at: str | None,
+) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO channel_visual_style_templates(
+            channel_slug, template_name, template_payload_json, status, is_default,
+            validation_status, validation_errors_json, last_validated_at,
+            created_at, updated_at, archived_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            channel_slug,
+            template_name,
+            template_payload_json,
+            status,
+            int(is_default),
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            created_at,
+            updated_at,
+            archived_at,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def get_channel_visual_style_template_by_id(conn: sqlite3.Connection, template_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute("SELECT * FROM channel_visual_style_templates WHERE id = ?", (template_id,)).fetchone()
+
+
+def list_channel_visual_style_templates(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str | None,
+    status: str | None,
+    q: str | None,
+) -> List[Dict[str, Any]]:
+    where: list[str] = []
+    args: list[Any] = []
+    if channel_slug:
+        where.append("channel_slug = ?")
+        args.append(channel_slug)
+    if status == "ACTIVE":
+        where.append("status = 'ACTIVE'")
+    elif status == "ARCHIVED":
+        where.append("status = 'ARCHIVED'")
+    if q:
+        where.append("template_name LIKE ?")
+        args.append(f"%{q}%")
+    where_clause = f"WHERE {' AND '.join(where)}" if where else ""
+    return conn.execute(
+        f"""
+        SELECT *
+        FROM channel_visual_style_templates
+        {where_clause}
+        ORDER BY updated_at DESC, id DESC
+        """,
+        tuple(args),
+    ).fetchall()
+
+
+def update_channel_visual_style_template_fields(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    template_name: str,
+    template_payload_json: str,
+    validation_status: str,
+    validation_errors_json: str | None,
+    last_validated_at: str,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE channel_visual_style_templates
+        SET template_name = ?,
+            template_payload_json = ?,
+            validation_status = ?,
+            validation_errors_json = ?,
+            last_validated_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            template_name,
+            template_payload_json,
+            validation_status,
+            validation_errors_json,
+            last_validated_at,
+            updated_at,
+            template_id,
+        ),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def set_channel_visual_style_template_default_flag(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    is_default: bool,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE channel_visual_style_templates
+        SET is_default = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (int(is_default), updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def unset_active_default_channel_visual_style_template(conn: sqlite3.Connection, *, channel_slug: str) -> None:
+    conn.execute(
+        """
+        UPDATE channel_visual_style_templates
+        SET is_default = 0
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1
+        """,
+        (channel_slug,),
+    )
+
+
+def archive_channel_visual_style_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    updated_at: str,
+    archived_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE channel_visual_style_templates
+        SET status = 'ARCHIVED',
+            is_default = 0,
+            archived_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (archived_at, updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def activate_channel_visual_style_template(
+    conn: sqlite3.Connection,
+    *,
+    template_id: int,
+    updated_at: str,
+) -> bool:
+    cur = conn.execute(
+        """
+        UPDATE channel_visual_style_templates
+        SET status = 'ACTIVE',
+            archived_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (updated_at, template_id),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def upsert_release_visual_style_template_override(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    template_id: int,
+    created_at: str,
+    updated_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO release_visual_style_template_overrides(release_id, template_id, created_at, updated_at)
+        VALUES(?, ?, ?, ?)
+        ON CONFLICT(release_id) DO UPDATE SET
+            template_id = excluded.template_id,
+            updated_at = excluded.updated_at
+        """,
+        (release_id, template_id, created_at, updated_at),
+    )
+
+
+def clear_release_visual_style_template_override(conn: sqlite3.Connection, *, release_id: int) -> bool:
+    cur = conn.execute(
+        "DELETE FROM release_visual_style_template_overrides WHERE release_id = ?",
+        (release_id,),
+    )
+    return int(cur.rowcount or 0) > 0
+
+
+def get_release_visual_style_template_override_by_release_id(conn: sqlite3.Connection, *, release_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute(
+        "SELECT * FROM release_visual_style_template_overrides WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+
+
+def get_active_default_channel_visual_style_template(conn: sqlite3.Connection, *, channel_slug: str) -> Optional[Dict[str, Any]]:
+    return conn.execute(
+        """
+        SELECT *
+        FROM channel_visual_style_templates
+        WHERE channel_slug = ? AND status = 'ACTIVE' AND is_default = 1
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (channel_slug,),
+    ).fetchone()
+
+
+def resolve_release_visual_style_template_rows(conn: sqlite3.Connection, *, release_id: int) -> Dict[str, Any]:
+    release_row = conn.execute(
+        """
+        SELECT r.id AS release_id, c.slug AS channel_slug
+        FROM releases r
+        JOIN channels c ON c.id = r.channel_id
+        WHERE r.id = ?
+        """,
+        (release_id,),
+    ).fetchone()
+    if not release_row:
+        return {"release": None, "override": None, "default": None}
+
+    override_row = conn.execute(
+        """
+        SELECT o.release_id, o.template_id, o.created_at, o.updated_at, t.*
+        FROM release_visual_style_template_overrides o
+        JOIN channel_visual_style_templates t ON t.id = o.template_id
+        WHERE o.release_id = ?
+        """,
+        (release_id,),
+    ).fetchone()
+    default_row = get_active_default_channel_visual_style_template(conn, channel_slug=str(release_row["channel_slug"]))
+    return {"release": release_row, "override": override_row, "default": default_row}
+
+
+def upsert_release_visual_approved_preview(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    preview_scope: str,
+    preview_id: str,
+    approved_by: str | None,
+    approved_at: str,
+) -> None:
+    _validate_visual_preview_scope(preview_scope)
+    conn.execute(
+        """
+        INSERT INTO release_visual_approved_previews_scoped(
+            release_id, preview_scope, preview_id, approved_by, approved_at
+        ) VALUES(?, ?, ?, ?, ?)
+        ON CONFLICT(release_id, preview_scope) DO UPDATE SET
+            preview_id=excluded.preview_id,
+            approved_by=excluded.approved_by,
+            approved_at=excluded.approved_at
+        """,
+        (release_id, preview_scope, preview_id, approved_by, approved_at),
+    )
+    if preview_scope == VISUAL_PREVIEW_SCOPE_BACKGROUND:
+        conn.execute(
+            """
+            INSERT INTO release_visual_approved_previews(release_id, preview_id, approved_by, approved_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(release_id) DO UPDATE SET
+                preview_id=excluded.preview_id,
+                approved_by=excluded.approved_by,
+                approved_at=excluded.approved_at
+            """,
+            (release_id, preview_id, approved_by, approved_at),
+        )
+
+
+def get_release_visual_approved_preview(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    preview_scope: str,
+) -> Optional[Dict[str, Any]]:
+    _validate_visual_preview_scope(preview_scope)
+    row = conn.execute(
+        """
+        SELECT release_id, preview_scope, preview_id, approved_by, approved_at
+        FROM release_visual_approved_previews_scoped
+        WHERE release_id = ? AND preview_scope = ?
+        """,
+        (release_id, preview_scope),
+    ).fetchone()
+    if row:
+        return row
+    if preview_scope != VISUAL_PREVIEW_SCOPE_BACKGROUND:
+        return None
+    legacy = conn.execute(
+        "SELECT release_id, preview_id, approved_by, approved_at FROM release_visual_approved_previews WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    if not legacy:
+        return None
+    return {
+        "release_id": int(legacy["release_id"]),
+        "preview_scope": VISUAL_PREVIEW_SCOPE_BACKGROUND,
+        "preview_id": legacy["preview_id"],
+        "approved_by": legacy["approved_by"],
+        "approved_at": legacy["approved_at"],
+    }
+
+
+def _validate_visual_preview_scope(preview_scope: str) -> None:
+    if preview_scope not in VISUAL_PREVIEW_SCOPES:
+        raise ValueError(f"unsupported visual preview scope: {preview_scope}")
+
+
+def upsert_release_visual_background_decision(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    background_asset_id: int,
+    source_family: str,
+    source_reference: str | None,
+    selection_mode: str,
+    template_assisted: bool,
+    created_at: str,
+    updated_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO release_visual_background_decisions(
+            release_id, background_asset_id, source_family, source_reference, selection_mode,
+            template_assisted, created_at, updated_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(release_id) DO UPDATE SET
+            background_asset_id=excluded.background_asset_id,
+            source_family=excluded.source_family,
+            source_reference=excluded.source_reference,
+            selection_mode=excluded.selection_mode,
+            template_assisted=excluded.template_assisted,
+            updated_at=excluded.updated_at
+        """,
+        (
+            release_id,
+            background_asset_id,
+            source_family,
+            source_reference,
+            selection_mode,
+            1 if template_assisted else 0,
+            created_at,
+            updated_at,
+        ),
+    )
+
+
+def get_release_visual_background_decision_by_release_id(conn: sqlite3.Connection, *, release_id: int) -> Optional[Dict[str, Any]]:
+    return conn.execute(
+        "SELECT * FROM release_visual_background_decisions WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+
+
+def resolve_canonical_cover_asset_id_for_background_apply(conn: sqlite3.Connection, *, release_id: int) -> int | None:
+    applied = conn.execute(
+        "SELECT cover_asset_id FROM release_visual_applied_packages WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    if applied and applied["cover_asset_id"] is not None:
+        return int(applied["cover_asset_id"])
+
+    release_row = conn.execute(
+        "SELECT channel_id, current_open_job_id FROM releases WHERE id = ?",
+        (release_id,),
+    ).fetchone()
+    if not release_row or release_row["current_open_job_id"] is None:
+        return None
+
+    row = conn.execute(
+        """
+        SELECT ji.asset_id
+        FROM job_inputs ji
+        JOIN assets a ON a.id = ji.asset_id
+        WHERE ji.job_id = ?
+          AND ji.role = 'COVER'
+          AND a.channel_id = ?
+        ORDER BY ji.order_index ASC, ji.asset_id ASC
+        LIMIT 1
+        """,
+        (int(release_row["current_open_job_id"]), int(release_row["channel_id"])),
+    ).fetchone()
+    if not row:
+        return None
+    return int(row["asset_id"])
+
+
+def resolve_canonical_background_asset_id_for_cover_apply(conn: sqlite3.Connection, *, release_id: int) -> int | None:
+    applied = conn.execute(
+        "SELECT background_asset_id FROM release_visual_applied_packages WHERE release_id = ?",
+        (release_id,),
+    ).fetchone()
+    if applied and applied["background_asset_id"] is not None:
+        return int(applied["background_asset_id"])
+
+    release_row = conn.execute(
+        "SELECT channel_id, current_open_job_id FROM releases WHERE id = ?",
+        (release_id,),
+    ).fetchone()
+    if not release_row or release_row["current_open_job_id"] is None:
+        return None
+
+    row = conn.execute(
+        """
+        SELECT ji.asset_id
+        FROM job_inputs ji
+        JOIN assets a ON a.id = ji.asset_id
+        WHERE ji.job_id = ?
+          AND ji.role = 'BACKGROUND'
+          AND a.channel_id = ?
+        ORDER BY ji.order_index ASC, ji.asset_id ASC
+        LIMIT 1
+        """,
+        (int(release_row["current_open_job_id"]), int(release_row["channel_id"])),
+    ).fetchone()
+    if not row:
+        return None
+    return int(row["asset_id"])
+
+
+def list_background_candidate_assets(
+    conn: sqlite3.Connection,
+    *,
+    release_id: int,
+    channel_id: int,
+    source_family: str,
+) -> list[Dict[str, Any]]:
+    if source_family == "managed_library":
+        rows = conn.execute(
+            """
+            SELECT id, name, origin_id
+            FROM assets
+            WHERE channel_id = ? AND kind = 'IMAGE' AND UPPER(origin) = 'MANAGED'
+            ORDER BY id DESC
+            """,
+            (channel_id,),
+        ).fetchall()
+    elif source_family == "channel_source":
+        rows = conn.execute(
+            """
+            SELECT id, name, origin_id
+            FROM assets
+            WHERE channel_id = ? AND kind = 'IMAGE' AND UPPER(origin) = 'CHANNEL'
+            ORDER BY id DESC
+            """,
+            (channel_id,),
+        ).fetchall()
+    elif source_family == "operator_imported":
+        rows = conn.execute(
+            """
+            SELECT id, name, origin_id
+            FROM assets
+            WHERE channel_id = ? AND kind = 'IMAGE' AND UPPER(origin) IN ('LOCAL', 'OPERATOR')
+            ORDER BY id DESC
+            """,
+            (channel_id,),
+        ).fetchall()
+    elif source_family == "known_resolved":
+        rows = conn.execute(
+            """
+            SELECT a.id, a.name, a.origin_id
+            FROM assets a
+            WHERE a.channel_id = ?
+              AND a.kind = 'IMAGE'
+              AND a.id IN (
+                SELECT background_asset_id FROM release_visual_applied_packages WHERE release_id = ?
+                UNION
+                SELECT ji.asset_id
+                FROM jobs j
+                JOIN job_inputs ji ON ji.job_id = j.id
+                WHERE j.release_id = ? AND ji.role = 'BACKGROUND'
+              )
+            ORDER BY a.id DESC
+            """,
+            (channel_id, release_id, release_id),
+        ).fetchall()
+    else:
+        rows = []
+    return [dict(row) for row in rows]
 
 
 def _next_job_id(conn: sqlite3.Connection) -> int:
@@ -1588,3 +4709,181 @@ def pop_pending_reply(conn: sqlite3.Connection, user_id: int) -> Optional[Dict[s
         return None
     conn.execute("DELETE FROM tg_pending WHERE user_id = ?", (user_id,))
     return row
+
+
+def insert_metadata_preview_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    release_id: int,
+    channel_slug: str,
+    session_status: str,
+    requested_fields_json: str,
+    current_bundle_json: str,
+    proposed_bundle_json: str,
+    sources_json: str,
+    field_statuses_json: str,
+    dependency_fingerprints_json: str,
+    warnings_json: str,
+    errors_json: str,
+    fields_snapshot_json: str,
+    effective_source_selection_json: str,
+    effective_source_provenance_json: str,
+    created_by: str | None,
+    created_at: str,
+    expires_at: str,
+    applied_at: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO metadata_preview_sessions(
+            id, release_id, channel_slug, session_status, requested_fields_json,
+            current_bundle_json, proposed_bundle_json, sources_json, field_statuses_json,
+            dependency_fingerprints_json, warnings_json, errors_json, fields_snapshot_json,
+            effective_source_selection_json, effective_source_provenance_json,
+            created_by, created_at, expires_at, applied_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            release_id,
+            channel_slug,
+            session_status,
+            requested_fields_json,
+            current_bundle_json,
+            proposed_bundle_json,
+            sources_json,
+            field_statuses_json,
+            dependency_fingerprints_json,
+            warnings_json,
+            errors_json,
+            fields_snapshot_json,
+            effective_source_selection_json,
+            effective_source_provenance_json,
+            created_by,
+            created_at,
+            expires_at,
+            applied_at,
+        ),
+    )
+
+
+def insert_metadata_bulk_preview_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    planner_context_json: str,
+    selected_item_ids_json: str,
+    requested_fields_json: str,
+    selected_channels_json: str,
+    session_status: str,
+    aggregate_summary_json: str,
+    item_states_json: str,
+    created_by: str | None,
+    created_at: str,
+    expires_at: str,
+    applied_at: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO metadata_bulk_preview_sessions(
+            id, planner_context_json, selected_item_ids_json, requested_fields_json, selected_channels_json,
+            session_status, aggregate_summary_json, item_states_json, created_by, created_at, expires_at, applied_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            planner_context_json,
+            selected_item_ids_json,
+            requested_fields_json,
+            selected_channels_json,
+            session_status,
+            aggregate_summary_json,
+            item_states_json,
+            created_by,
+            created_at,
+            expires_at,
+            applied_at,
+        ),
+    )
+
+
+def insert_planner_mass_action_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    action_type: str,
+    planner_scope_fingerprint: str,
+    selected_item_ids_json: str,
+    preview_status: str,
+    aggregate_preview_json: str,
+    item_preview_json: str,
+    created_by: str | None,
+    created_at: str,
+    expires_at: str,
+    executed_at: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO planner_mass_action_sessions(
+            id, action_type, planner_scope_fingerprint, selected_item_ids_json, preview_status,
+            aggregate_preview_json, item_preview_json, created_by, created_at, expires_at, executed_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            action_type,
+            planner_scope_fingerprint,
+            selected_item_ids_json,
+            preview_status,
+            aggregate_preview_json,
+            item_preview_json,
+            created_by,
+            created_at,
+            expires_at,
+            executed_at,
+        ),
+    )
+
+
+def insert_publish_bulk_action_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    action_type: str,
+    action_payload_json: str,
+    selection_fingerprint: str,
+    selected_job_ids_json: str,
+    preview_status: str,
+    aggregate_preview_json: str,
+    item_preview_json: str,
+    invalidation_reason_code: str | None,
+    created_by: str | None,
+    created_at: str,
+    expires_at: str,
+    executed_at: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO publish_bulk_action_sessions(
+            id, action_type, action_payload_json, selection_fingerprint, selected_job_ids_json, preview_status,
+            aggregate_preview_json, item_preview_json, invalidation_reason_code,
+            created_by, created_at, expires_at, executed_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            action_type,
+            action_payload_json,
+            selection_fingerprint,
+            selected_job_ids_json,
+            preview_status,
+            aggregate_preview_json,
+            item_preview_json,
+            invalidation_reason_code,
+            created_by,
+            created_at,
+            expires_at,
+            executed_at,
+        ),
+    )

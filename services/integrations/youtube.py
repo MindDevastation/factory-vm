@@ -80,3 +80,10 @@ class YouTubeClient:
     def set_thumbnail(self, *, video_id: str, image_path: Path) -> None:
         media = MediaFileUpload(str(image_path))
         self._yt.thumbnails().set(videoId=video_id, media_body=media).execute()
+
+    def set_video_privacy(self, *, video_id: str, privacy_status: str) -> None:
+        normalized = str(privacy_status or "").strip().lower()
+        if normalized not in {"private", "public", "unlisted"}:
+            raise ValueError("privacy_status must be one of: private, public, unlisted")
+        body = {"id": str(video_id), "status": {"privacyStatus": normalized}}
+        self._yt.videos().update(part="status", body=body).execute()

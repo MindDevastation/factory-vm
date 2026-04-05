@@ -46,8 +46,10 @@ class Env:
     retry_backoff_sec: int
     max_render_attempts: int
     max_upload_attempts: int
-
+    metadata_preview_ttl_sec: int
+    metadata_bulk_preview_ttl_sec: int
     worker_sleep_sec: int
+    planner_mass_action_preview_ttl_sec: int = 1800
     custom_tags_seed_dir: str = "data/seeds/custom_tags"
     db_viewer_policy_path: str = ""
     db_viewer_privileged_users: str = ""
@@ -94,6 +96,9 @@ class Env:
             retry_backoff_sec=int(os.environ.get("RETRY_BACKOFF_SEC", "300")),
             max_render_attempts=int(os.environ.get("MAX_RENDER_ATTEMPTS", "3")),
             max_upload_attempts=int(os.environ.get("MAX_UPLOAD_ATTEMPTS", "3")),
+            metadata_preview_ttl_sec=int(os.environ.get("FACTORY_METADATA_PREVIEW_TTL_SEC", "1800")),
+            metadata_bulk_preview_ttl_sec=int(os.environ.get("FACTORY_METADATA_BULK_PREVIEW_TTL_SEC", "1800")),
+            planner_mass_action_preview_ttl_sec=int(os.environ.get("FACTORY_PLANNER_MASS_ACTION_PREVIEW_TTL_SEC", "1800")),
 
             worker_sleep_sec=int(os.environ.get("WORKER_SLEEP_SEC", "5")),
             custom_tags_seed_dir=os.environ.get("CUSTOM_TAGS_SEED_DIR", "data/seeds/custom_tags"),

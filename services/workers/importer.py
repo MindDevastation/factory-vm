@@ -301,7 +301,11 @@ def _local_attach_assets(conn, ch: Dict[str, Any], job_id: int, rel) -> None:
 
     order = 0
     for ap in audio_list:
-        apath = resolve_asset_path(rel.folder, str(ap))
+        try:
+            apath = resolve_asset_path(rel.folder, str(ap))
+        except ValueError:
+            log.warning("Skipping unsafe local audio asset path: release=%s path=%s", rel.folder, ap)
+            continue
         if not apath.exists():
             continue
         asset_id = dbm.create_asset(
@@ -316,7 +320,12 @@ def _local_attach_assets(conn, ch: Dict[str, Any], job_id: int, rel) -> None:
         dbm.link_job_input(conn, job_id, asset_id, "TRACK", order)
         order += 1
 
-    cpath = resolve_asset_path(rel.folder, str(cover_path)) if cover_path else None
+    cpath = None
+    if cover_path:
+        try:
+            cpath = resolve_asset_path(rel.folder, str(cover_path))
+        except ValueError:
+            log.warning("Skipping unsafe local cover asset path: release=%s path=%s", rel.folder, cover_path)
     if cpath and cpath.exists():
         cover_asset_id = dbm.create_asset(
             conn,

@@ -1,0 +1,22 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF4-S3",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "mode_taxonomy": ["READ", "ACTION", "RISKY_ACTION"],
+  "channel_split": [
+    {"task_type": "quick_status_check", "preferred": "telegram"},
+    {"task_type": "single_acknowledged_action", "preferred": "telegram"},
+    {"task_type": "bulk_high_risk_action", "preferred": "web_ui"},
+    {"task_type": "deep_triage_navigation", "preferred": "web_ui"}
+  ],
+  "constraints": {
+    "explicit_web_vs_telegram_split_required": true,
+    "risk_ambiguity_defaults_to_web": true,
+    "no_ops_runbook_absorption": true
+  },
+  "cross_links": {
+    "mf2_contracts": "docs/workflows/MF2_S2_STAGE_CONTRACTS.md",
+    "mf2_handoffs": "docs/workflows/MF2_S4_HANDOFF_MATRIX.md",
+    "mf3_boundaries": "docs/reference/MF3_S4_DOMAIN_BOUNDARY_MAP.md"
+  }
+}

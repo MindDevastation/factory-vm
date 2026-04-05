@@ -28,8 +28,181 @@
 
   <p><label>Title* <input name="title" value="{{ form.title|default('') }}" {% if locked %}disabled{% endif %}></label></p>
   {% if field_errors.title %}<p style="color:#b91c1c">{{ field_errors.title|join('; ') }}</p>{% endif %}
+  {% if mode == 'edit' and job_id %}
+  <fieldset id="titlegen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
+    <legend><strong>Title Generator (single release)</strong></legend>
+    <p class="muted">Generation does not change the release title until you apply.</p>
+    <p><b>Target release:</b> <span id="titlegen-release-id">{% if release_id %}#{{ release_id }}{% else %}—{% endif %}</span></p>
+    <p><b>Current release title:</b> <span id="titlegen-current-title">{{ form.title|default('') }}</span></p>
+    <p><b>Default channel template:</b> <span id="titlegen-default-template">Loading...</span></p>
+    <p>
+      <label>Template for this operation:
+        <select id="titlegen-template-select">
+          <option value="">Loading templates...</option>
+        </select>
+      </label>
+      <span id="titlegen-selected-template" class="muted" style="margin-left:8px;"></span>
+    </p>
+    <p><b>Proposed generated title:</b> <span id="titlegen-proposed-title">—</span></p>
+    <p id="titlegen-overwrite-warning" style="display:none; color:#92400e;"><b>Applying this generated title will overwrite the existing release title.</b></p>
+    <p id="titlegen-status" style="min-height:1.4em"></p>
+    <p>
+      <button id="titlegen-generate-btn" type="button" {% if locked %}disabled{% endif %}>Generate Title</button>
+      <button id="titlegen-regenerate-btn" type="button" {% if locked %}disabled{% endif %}>Regenerate</button>
+      <button id="titlegen-apply-btn" type="button" {% if locked %}disabled{% endif %}>Apply Generated Title</button>
+    </p>
+    <p class="muted">Apply changes only <code>release.title</code>. This does not update channel defaults or template configuration.</p>
+  </fieldset>
+  {% endif %}
 
   <p><label>Description <textarea name="description" {% if locked %}disabled{% endif %}>{{ form.description|default('') }}</textarea></label></p>
+  {% if mode == 'edit' and release_id %}
+  <fieldset id="descriptiongen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
+    <legend><strong>Description Generator (single release)</strong></legend>
+    <p class="muted">Generation does not change the release description until you apply.</p>
+    <p><b>Target release:</b> <span id="descriptiongen-release-id">#{{ release_id }}</span></p>
+    <p><b>Current release description:</b></p>
+    <pre id="descriptiongen-current-description" style="white-space:pre-wrap; background:#f8fafc; border:1px solid #e2e8f0; padding:8px;">{{ form.description|default('') }}</pre>
+    <p><b>Default channel template:</b> <span id="descriptiongen-default-template">Loading...</span></p>
+    <p>
+      <label>Template for this operation:
+        <select id="descriptiongen-template-select">
+          <option value="">Loading templates...</option>
+        </select>
+      </label>
+      <span id="descriptiongen-selected-template" class="muted" style="margin-left:8px;"></span>
+    </p>
+    <p><b>Proposed generated description:</b></p>
+    <pre id="descriptiongen-proposed-description" style="white-space:pre-wrap; background:#f8fafc; border:1px solid #e2e8f0; padding:8px;">—</pre>
+    <p id="descriptiongen-overwrite-warning" style="display:none; color:#92400e;"><b>Applying this generated description will overwrite the existing release description.</b></p>
+    <label id="descriptiongen-overwrite-checkbox-row" style="display:none;">
+      <input id="descriptiongen-overwrite-checkbox" type="checkbox">
+      I confirm overwrite for this release description.
+    </label>
+    <p id="descriptiongen-status" style="min-height:1.4em"></p>
+    <p>
+      <button id="descriptiongen-generate-btn" type="button" {% if locked %}disabled{% endif %}>Generate Description</button>
+      <button id="descriptiongen-regenerate-btn" type="button" {% if locked %}disabled{% endif %}>Regenerate</button>
+      <button id="descriptiongen-apply-btn" type="button" {% if locked %}disabled{% endif %}>Apply Generated Description</button>
+    </p>
+    <p class="muted">Apply changes only <code>release.description</code>. This does not update channel defaults or template configuration.</p>
+  </fieldset>
+  {% endif %}
+  {% if mode == 'edit' and release_id %}
+  <fieldset id="videotagsgen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
+    <legend><strong>Video Tags Generator (single release)</strong></legend>
+    <p class="muted">Generation does not change the release tags until you apply.</p>
+    <p><b>Target release:</b> <span id="videotagsgen-release-id">#{{ release_id }}</span></p>
+    <p><b>Current release.tags_json:</b> <span id="videotagsgen-current-tags-json">{{ form.tags_csv|default('') }}</span></p>
+    <p><b>Default channel preset:</b> <span id="videotagsgen-default-preset">Loading...</span></p>
+    <p>
+      <label>Preset for this operation:
+        <select id="videotagsgen-preset-select">
+          <option value="">Loading presets...</option>
+        </select>
+      </label>
+      <span id="videotagsgen-selected-preset" class="muted" style="margin-left:8px;"></span>
+    </p>
+    <p><b>Proposed tags JSON:</b> <span id="videotagsgen-proposed-tags-json">—</span></p>
+    <p><b>Dropped empty items:</b> <span id="videotagsgen-dropped-empty-items">—</span></p>
+    <p><b>Removed duplicates:</b> <span id="videotagsgen-removed-duplicates">—</span></p>
+    <p id="videotagsgen-overwrite-warning" style="display:none; color:#92400e;"><b>Applying this generated tag list will overwrite the existing release tags.</b></p>
+    <label id="videotagsgen-overwrite-checkbox-row" style="display:none;">
+      <input id="videotagsgen-overwrite-checkbox" type="checkbox">
+      I confirm overwrite for this release tags list.
+    </label>
+    <p id="videotagsgen-status" style="min-height:1.4em"></p>
+    <p>
+      <button id="videotagsgen-generate-btn" type="button" {% if locked %}disabled{% endif %}>Generate Video Tags</button>
+      <button id="videotagsgen-regenerate-btn" type="button" {% if locked %}disabled{% endif %}>Regenerate</button>
+      <button id="videotagsgen-apply-btn" type="button" {% if locked %}disabled{% endif %}>Apply Generated Tags</button>
+    </p>
+    <p class="muted">Apply changes only <code>release.tags_json</code>. This does not update channel defaults or preset configuration.</p>
+  </fieldset>
+  {% endif %}
+  {% if mode == 'edit' and release_id %}
+  <fieldset id="mpa-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
+    <legend><strong>Unified Metadata Preview / Apply (single release)</strong></legend>
+    <p class="muted">Preview does not change release metadata until you apply.</p>
+    <p class="muted">Temporary override affects only this operation.</p>
+    <p class="muted">Applying generated metadata does not change channel defaults.</p>
+    <p class="muted">Changing defaults is a separate action.</p>
+    <p><b>Target release:</b> <span id="mpa-release-id">#{{ release_id }}</span></p>
+    <p><b>Current title:</b> <span id="mpa-current-title">{{ form.title|default('') or '(empty)' }}</span></p>
+    <p><b>Current description:</b></p>
+    <pre id="mpa-current-description" style="white-space:pre-wrap; background:#f8fafc; border:1px solid #e2e8f0; padding:8px;">{{ form.description|default('') or '(empty)' }}</pre>
+    <p><b>Current tags:</b> <span id="mpa-current-tags">{{ form.tags_csv|default('') or '(empty)' }}</span></p>
+    <fieldset style="margin:8px 0; border:1px solid #ddd; padding:8px;">
+      <legend>Preview request</legend>
+      <label><input id="mpa-request-title" type="checkbox" checked> Title</label>
+      <label><input id="mpa-request-description" type="checkbox" checked> Description</label>
+      <label><input id="mpa-request-tags" type="checkbox" checked> Tags</label>
+      <p>
+        <label>Title template override:
+          <select id="mpa-title-source-select"><option value="">Loading...</option></select>
+        </label>
+        <button type="button" id="mpa-title-use-default-btn">Use channel default</button>
+        <button type="button" id="mpa-title-clear-override-btn">Clear override</button>
+      </p>
+      <p>
+        <label>Description template override:
+          <select id="mpa-description-source-select"><option value="">Loading...</option></select>
+        </label>
+        <button type="button" id="mpa-description-use-default-btn">Use channel default</button>
+        <button type="button" id="mpa-description-clear-override-btn">Clear override</button>
+      </p>
+      <p>
+        <label>Video tag preset override:
+          <select id="mpa-tags-source-select"><option value="">Loading...</option></select>
+        </label>
+        <button type="button" id="mpa-tags-use-default-btn">Use channel default</button>
+        <button type="button" id="mpa-tags-clear-override-btn">Clear override</button>
+      </p>
+    </fieldset>
+    <p id="mpa-status" style="min-height:1.4em"></p>
+    <p>
+      <button id="mpa-preview-btn" type="button" {% if locked %}disabled{% endif %}>Preview / Regenerate</button>
+      <button id="mpa-apply-selected-btn" type="button" disabled {% if locked %}disabled{% endif %}>Apply Selected Fields</button>
+      <button id="mpa-apply-ready-btn" type="button" disabled {% if locked %}disabled{% endif %}>Apply All Ready Fields</button>
+    </p>
+    <p id="mpa-partial-warning" style="display:none; color:#92400e;"><b>Other prepared fields can still be applied.</b></p>
+    <div id="mpa-fields-grid" style="display:none;"></div>
+  </fieldset>
+  {% endif %}
+  {% if mode == 'edit' and release_id %}
+  <fieldset id="visual-workflow-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
+    <legend><strong>Visual Workflow (Epic 5 primary)</strong></legend>
+    <p class="muted">Read/write visual intent/config, preview/approve/apply, and inspect history/reuse without leaving this page.</p>
+    <details id="visual-workflow-legend" style="margin:8px 0;">
+      <summary><strong>Legend / Help (read-only)</strong></summary>
+      <ul style="margin:8px 0 0 18px;">
+        <li><b>Preview</b> = proposed visual package; no runtime mutation yet.</li>
+        <li><b>Approved preview</b> = operator-confirmed snapshot that is ready for apply.</li>
+        <li><b>Applied package</b> = canonical package bound to runtime (background + cover).</li>
+        <li><b>Auto-assisted</b> = template/default prefill path; <b>operator override</b> = explicit manual choice.</li>
+        <li><b>Reuse warning</b> = same identity was used previously in channel; check prior usage and confirm override when required.</li>
+        <li><b>Thumbnail rule</b> = thumbnail is derived from cover asset (no separate thumbnail entity).</li>
+        <li><b>Template management (Epic 5)</b> = API-first operator flow via <code>/v1/metadata/channel-visual-style-templates</code> (list/create/update/activate/set-default) plus release override/effective endpoints.</li>
+      </ul>
+    </details>
+    <p>
+      <button id="visual-load-effective-btn" type="button" {% if locked %}disabled{% endif %}>Load Effective Visual Template</button>
+      <button id="visual-background-candidates-btn" type="button" {% if locked %}disabled{% endif %}>Background Candidates</button>
+      <button id="visual-cover-candidates-btn" type="button" {% if locked %}disabled{% endif %}>Cover Candidates</button>
+      <button id="visual-cover-preview-btn" type="button" {% if locked %}disabled{% endif %}>Cover Preview</button>
+      <button id="visual-cover-select-btn" type="button" {% if locked %}disabled{% endif %}>Cover Select</button>
+      <button id="visual-cover-approve-btn" type="button" {% if locked %}disabled{% endif %}>Cover Approve</button>
+      <button id="visual-cover-apply-btn" type="button" {% if locked %}disabled{% endif %}>Cover Apply</button>
+      <button id="visual-history-btn" type="button" {% if locked %}disabled{% endif %}>History / Reuse Context</button>
+    </p>
+    <p>
+      <button id="visual-batch-preview-btn" type="button" {% if locked %}disabled{% endif %}>Batch Preview (entry point)</button>
+      <button id="visual-batch-execute-btn" type="button" {% if locked %}disabled{% endif %}>Batch Execute (entry point)</button>
+    </p>
+    <p id="visual-workflow-status" style="min-height:1.4em;"></p>
+    <pre id="visual-workflow-output" style="white-space:pre-wrap; background:#f8fafc; border:1px solid #e2e8f0; padding:8px; max-height:240px; overflow:auto;">—</pre>
+  </fieldset>
+  {% endif %}
   <p><label>Tags (comma-separated, no #) <input name="tags_csv" value="{{ form.tags_csv|default('') }}" {% if locked %}disabled{% endif %}></label></p>
   {% if field_errors.tags %}<p style="color:#b91c1c">{{ field_errors.tags|join('; ') }}</p>{% endif %}
 
@@ -153,6 +326,7 @@
 (function () {
   const mode = '{{ mode }}';
   const initialJobId = {{ job_id if job_id else 'null' }};
+  const initialReleaseId = {{ release_id if release_id else 'null' }};
   const modal = document.getElementById('playlist-builder-modal');
   const openBtn = document.getElementById('playlist-builder-open-btn');
   const closeBtn = document.getElementById('plb-close-btn');
@@ -163,19 +337,178 @@
   const summary = document.getElementById('plb-preview-summary');
   const tracks = document.getElementById('plb-preview-tracks');
   const audioIdsInput = document.getElementById('audio-ids-input');
-  const requiredTagsInput = document.getElementById('plb-required-tags');
-  const excludedTagsInput = document.getElementById('plb-excluded-tags');
-  const requiredTagsPickerBtn = document.getElementById('plb-required-tags-picker-btn');
-  const excludedTagsPickerBtn = document.getElementById('plb-excluded-tags-picker-btn');
-  const tagsPickerModal = document.getElementById('playlist-builder-tags-picker-modal');
-  const tagsPickerSearch = document.getElementById('plb-tags-picker-search');
-  const tagsPickerGroups = document.getElementById('plb-tags-picker-groups');
-  const tagsPickerAddBtn = document.getElementById('plb-tags-picker-add-btn');
-  const tagsPickerCloseBtn = document.getElementById('plb-tags-picker-close-btn');
+const titleInput = document.querySelector('input[name="title"]');
+const titlegenSection = document.getElementById('titlegen-section');
+const titlegenStatus = document.getElementById('titlegen-status');
+const titlegenDefaultTemplate = document.getElementById('titlegen-default-template');
+const titlegenTemplateSelect = document.getElementById('titlegen-template-select');
+const titlegenSelectedTemplate = document.getElementById('titlegen-selected-template');
+const titlegenProposedTitle = document.getElementById('titlegen-proposed-title');
+const titlegenCurrentTitle = document.getElementById('titlegen-current-title');
+const titlegenOverwriteWarning = document.getElementById('titlegen-overwrite-warning');
+const titlegenGenerateBtn = document.getElementById('titlegen-generate-btn');
+const titlegenRegenerateBtn = document.getElementById('titlegen-regenerate-btn');
+const titlegenApplyBtn = document.getElementById('titlegen-apply-btn');
+const descriptionInput = document.querySelector('textarea[name="description"]');
+const tagsCsvInput = document.querySelector('input[name="tags_csv"]');
+const descriptiongenSection = document.getElementById('descriptiongen-section');
+const descriptiongenStatus = document.getElementById('descriptiongen-status');
+const descriptiongenDefaultTemplate = document.getElementById('descriptiongen-default-template');
+const descriptiongenTemplateSelect = document.getElementById('descriptiongen-template-select');
+const descriptiongenSelectedTemplate = document.getElementById('descriptiongen-selected-template');
+const descriptiongenProposedDescription = document.getElementById('descriptiongen-proposed-description');
+const descriptiongenCurrentDescription = document.getElementById('descriptiongen-current-description');
+const descriptiongenOverwriteWarning = document.getElementById('descriptiongen-overwrite-warning');
+const descriptiongenOverwriteCheckboxRow = document.getElementById('descriptiongen-overwrite-checkbox-row');
+const descriptiongenOverwriteCheckbox = document.getElementById('descriptiongen-overwrite-checkbox');
+const descriptiongenGenerateBtn = document.getElementById('descriptiongen-generate-btn');
+const descriptiongenRegenerateBtn = document.getElementById('descriptiongen-regenerate-btn');
+const descriptiongenApplyBtn = document.getElementById('descriptiongen-apply-btn');
+const videotagsgenSection = document.getElementById('videotagsgen-section');
+const videotagsgenStatus = document.getElementById('videotagsgen-status');
+const videotagsgenDefaultPreset = document.getElementById('videotagsgen-default-preset');
+const videotagsgenPresetSelect = document.getElementById('videotagsgen-preset-select');
+const videotagsgenSelectedPreset = document.getElementById('videotagsgen-selected-preset');
+const videotagsgenCurrentTagsJson = document.getElementById('videotagsgen-current-tags-json');
+const videotagsgenProposedTagsJson = document.getElementById('videotagsgen-proposed-tags-json');
+const videotagsgenDroppedEmptyItems = document.getElementById('videotagsgen-dropped-empty-items');
+const videotagsgenRemovedDuplicates = document.getElementById('videotagsgen-removed-duplicates');
+const videotagsgenOverwriteWarning = document.getElementById('videotagsgen-overwrite-warning');
+const videotagsgenOverwriteCheckboxRow = document.getElementById('videotagsgen-overwrite-checkbox-row');
+const videotagsgenOverwriteCheckbox = document.getElementById('videotagsgen-overwrite-checkbox');
+const videotagsgenGenerateBtn = document.getElementById('videotagsgen-generate-btn');
+const videotagsgenRegenerateBtn = document.getElementById('videotagsgen-regenerate-btn');
+const videotagsgenApplyBtn = document.getElementById('videotagsgen-apply-btn');
+const mpaSection = document.getElementById('mpa-section');
+const mpaStatus = document.getElementById('mpa-status');
+const mpaPreviewBtn = document.getElementById('mpa-preview-btn');
+const mpaApplySelectedBtn = document.getElementById('mpa-apply-selected-btn');
+const mpaApplyReadyBtn = document.getElementById('mpa-apply-ready-btn');
+const mpaPartialWarning = document.getElementById('mpa-partial-warning');
+const mpaFieldsGrid = document.getElementById('mpa-fields-grid');
+const mpaRequestTitle = document.getElementById('mpa-request-title');
+const mpaRequestDescription = document.getElementById('mpa-request-description');
+const mpaRequestTags = document.getElementById('mpa-request-tags');
+const mpaTitleSourceSelect = document.getElementById('mpa-title-source-select');
+const mpaDescriptionSourceSelect = document.getElementById('mpa-description-source-select');
+const mpaTagsSourceSelect = document.getElementById('mpa-tags-source-select');
+const mpaCurrentTitle = document.getElementById('mpa-current-title');
+const mpaCurrentDescription = document.getElementById('mpa-current-description');
+const mpaCurrentTags = document.getElementById('mpa-current-tags');
+const visualWorkflowSection = document.getElementById('visual-workflow-section');
+const visualWorkflowStatus = document.getElementById('visual-workflow-status');
+const visualWorkflowOutput = document.getElementById('visual-workflow-output');
+const visualLoadEffectiveBtn = document.getElementById('visual-load-effective-btn');
+const visualBackgroundCandidatesBtn = document.getElementById('visual-background-candidates-btn');
+const visualCoverCandidatesBtn = document.getElementById('visual-cover-candidates-btn');
+const visualCoverPreviewBtn = document.getElementById('visual-cover-preview-btn');
+const visualCoverSelectBtn = document.getElementById('visual-cover-select-btn');
+const visualCoverApproveBtn = document.getElementById('visual-cover-approve-btn');
+const visualCoverApplyBtn = document.getElementById('visual-cover-apply-btn');
+const visualHistoryBtn = document.getElementById('visual-history-btn');
+const visualBatchPreviewBtn = document.getElementById('visual-batch-preview-btn');
+const visualBatchExecuteBtn = document.getElementById('visual-batch-execute-btn');
 
-  if (!modal || !openBtn || !closeBtn || !previewBtn || !applyBtn || !status || !summary || !tracks || !audioIdsInput || !requiredTagsInput || !excludedTagsInput || !requiredTagsPickerBtn || !excludedTagsPickerBtn || !tagsPickerModal || !tagsPickerSearch || !tagsPickerGroups || !tagsPickerAddBtn || !tagsPickerCloseBtn) return;
+const requiredTagsInput = document.getElementById('plb-required-tags');
+const excludedTagsInput = document.getElementById('plb-excluded-tags');
+const requiredTagsPickerBtn = document.getElementById('plb-required-tags-picker-btn');
+const excludedTagsPickerBtn = document.getElementById('plb-excluded-tags-picker-btn');
+const tagsPickerModal = document.getElementById('playlist-builder-tags-picker-modal');
+const tagsPickerSearch = document.getElementById('plb-tags-picker-search');
+const tagsPickerGroups = document.getElementById('plb-tags-picker-groups');
+const tagsPickerAddBtn = document.getElementById('plb-tags-picker-add-btn');
+const tagsPickerCloseBtn = document.getElementById('plb-tags-picker-close-btn');
 
+if (!modal || !openBtn || !closeBtn || !previewBtn || !applyBtn || !status || !summary || !tracks || !audioIdsInput) return;
+
+const hasTitleGen =
+  !!titleInput &&
+  !!titlegenSection &&
+  !!titlegenStatus &&
+  !!titlegenDefaultTemplate &&
+  !!titlegenTemplateSelect &&
+  !!titlegenSelectedTemplate &&
+  !!titlegenProposedTitle &&
+  !!titlegenCurrentTitle &&
+  !!titlegenOverwriteWarning &&
+  !!titlegenGenerateBtn &&
+  !!titlegenRegenerateBtn &&
+  !!titlegenApplyBtn;
+const hasDescriptionGen =
+  !!descriptionInput &&
+  !!descriptiongenSection &&
+  !!descriptiongenStatus &&
+  !!descriptiongenDefaultTemplate &&
+  !!descriptiongenTemplateSelect &&
+  !!descriptiongenSelectedTemplate &&
+  !!descriptiongenProposedDescription &&
+  !!descriptiongenCurrentDescription &&
+  !!descriptiongenOverwriteWarning &&
+  !!descriptiongenOverwriteCheckboxRow &&
+  !!descriptiongenOverwriteCheckbox &&
+  !!descriptiongenGenerateBtn &&
+  !!descriptiongenRegenerateBtn &&
+  !!descriptiongenApplyBtn;
+const hasVideoTagsGen =
+  !!tagsCsvInput &&
+  !!videotagsgenSection &&
+  !!videotagsgenStatus &&
+  !!videotagsgenDefaultPreset &&
+  !!videotagsgenPresetSelect &&
+  !!videotagsgenSelectedPreset &&
+  !!videotagsgenCurrentTagsJson &&
+  !!videotagsgenProposedTagsJson &&
+  !!videotagsgenDroppedEmptyItems &&
+  !!videotagsgenRemovedDuplicates &&
+  !!videotagsgenOverwriteWarning &&
+  !!videotagsgenOverwriteCheckboxRow &&
+  !!videotagsgenOverwriteCheckbox &&
+  !!videotagsgenGenerateBtn &&
+  !!videotagsgenRegenerateBtn &&
+  !!videotagsgenApplyBtn;
+const hasMetadataPreviewApply =
+  !!mpaSection &&
+  !!mpaStatus &&
+  !!mpaPreviewBtn &&
+  !!mpaApplySelectedBtn &&
+  !!mpaApplyReadyBtn &&
+  !!mpaPartialWarning &&
+  !!mpaFieldsGrid &&
+  !!mpaRequestTitle &&
+  !!mpaRequestDescription &&
+  !!mpaRequestTags &&
+  !!mpaTitleSourceSelect &&
+  !!mpaDescriptionSourceSelect &&
+  !!mpaTagsSourceSelect &&
+  !!mpaCurrentTitle &&
+  !!mpaCurrentDescription &&
+  !!mpaCurrentTags &&
+  !!titleInput &&
+  !!descriptionInput &&
+  !!tagsCsvInput;
+const hasVisualWorkflow =
+  !!visualWorkflowSection &&
+  !!visualWorkflowStatus &&
+  !!visualWorkflowOutput &&
+  !!visualLoadEffectiveBtn &&
+  !!visualBackgroundCandidatesBtn &&
+  !!visualHistoryBtn &&
+  !!visualBatchPreviewBtn &&
+  !!visualBatchExecuteBtn;
+
+const hasTagsPicker =
+  !!requiredTagsInput &&
+  !!excludedTagsInput &&
+  !!requiredTagsPickerBtn &&
+  !!excludedTagsPickerBtn &&
+  !!tagsPickerModal &&
+  !!tagsPickerSearch &&
+  !!tagsPickerGroups &&
+  !!tagsPickerAddBtn &&
+  !!tagsPickerCloseBtn;
+  
   let activeJobId = Number.isInteger(initialJobId) ? initialJobId : null;
+  let activeReleaseId = Number.isInteger(initialReleaseId) ? initialReleaseId : null;
   let lastPreviewId = null;
   let lastTrackPks = [];
   let lastPreviewOverrideSnapshot = null;
@@ -404,6 +737,735 @@
     }
   }
 
+  let titlegenContext = null;
+  let titlegenGeneration = null;
+  let titlegenSelectedTemplateId = null;
+  let descriptiongenContext = null;
+  let descriptiongenGeneration = null;
+  let descriptiongenSelectedTemplateId = null;
+  let videotagsgenContext = null;
+  let videotagsgenGeneration = null;
+  let videotagsgenSelectedPresetId = null;
+  let visualBatchPreviewSessionId = null;
+
+  function updateTitlegenSelectedLabel() {
+    if (!titlegenTemplateSelect || !titlegenSelectedTemplate) return;
+    const opt = titlegenTemplateSelect.selectedOptions && titlegenTemplateSelect.selectedOptions.length ? titlegenTemplateSelect.selectedOptions[0] : null;
+    titlegenSelectedTemplate.textContent = opt ? `Selected template: ${opt.textContent}` : '';
+  }
+
+  function resetTitlegenGeneration() {
+    titlegenGeneration = null;
+    if (titlegenProposedTitle) titlegenProposedTitle.textContent = '—';
+    if (titlegenOverwriteWarning) titlegenOverwriteWarning.style.display = 'none';
+    if (titlegenApplyBtn) titlegenApplyBtn.disabled = true;
+  }
+
+  function refreshCurrentTitleLabel() {
+    if (!titlegenCurrentTitle || !titleInput) return;
+    const current = String(titleInput.value || '');
+    titlegenCurrentTitle.textContent = current.trim() ? current : '(empty)';
+  }
+
+  function selectedTemplateIdOrNull() {
+    if (!titlegenTemplateSelect) return null;
+    const value = String(titlegenTemplateSelect.value || '').trim();
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+
+  function normalizeTitlegenTitle(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ');
+  }
+
+  function applyTitlegenContext(context) {
+    if (!titlegenTemplateSelect || !titlegenDefaultTemplate || !titlegenStatus) return;
+    titlegenContext = context;
+    titlegenTemplateSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = (context.active_templates || []).length ? 'Select a template' : 'No active templates';
+    titlegenTemplateSelect.appendChild(placeholder);
+
+    (context.active_templates || []).forEach((tpl) => {
+      const opt = document.createElement('option');
+      opt.value = String(tpl.id);
+      opt.textContent = tpl.is_default ? `${tpl.template_name} (default)` : tpl.template_name;
+      titlegenTemplateSelect.appendChild(opt);
+    });
+
+    const defaultTemplate = context.default_template;
+    if (defaultTemplate) {
+      titlegenDefaultTemplate.textContent = `${defaultTemplate.template_name} (#${defaultTemplate.id})`;
+      titlegenSelectedTemplateId = Number(defaultTemplate.id);
+      titlegenTemplateSelect.value = String(defaultTemplate.id);
+    } else {
+      titlegenDefaultTemplate.textContent = 'None configured';
+      titlegenSelectedTemplateId = null;
+      titlegenTemplateSelect.value = '';
+    }
+    updateTitlegenSelectedLabel();
+    refreshCurrentTitleLabel();
+    resetTitlegenGeneration();
+    titlegenStatus.textContent = 'Ready. Generate preview first (no changes are applied yet).';
+  }
+
+  async function loadTitlegenContext() {
+    if (!titlegenSection || !Number.isInteger(activeReleaseId) || !titlegenStatus) return;
+    titlegenStatus.textContent = 'Loading title generation context...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/titlegen/context`, { credentials: 'same-origin' });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      titlegenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Failed to load title generation context';
+      return;
+    }
+    applyTitlegenContext(payload);
+  }
+
+  async function generateTitle() {
+    if (!titlegenSection || !Number.isInteger(activeReleaseId) || !titlegenStatus) return;
+    const templateId = selectedTemplateIdOrNull();
+    if (!titlegenContext || !titlegenContext.default_template && templateId === null) {
+      titlegenStatus.textContent = 'Select a template before generating preview.';
+      return;
+    }
+    titlegenStatus.textContent = 'Generating title preview...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/titlegen/generate`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template_id: templateId }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      titlegenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Generate failed';
+      return;
+    }
+    titlegenGeneration = payload;
+    titlegenSelectedTemplateId = templateId === null ? null : templateId;
+    if (titlegenProposedTitle) titlegenProposedTitle.textContent = payload.proposed_title || '—';
+    if (titlegenOverwriteWarning) titlegenOverwriteWarning.style.display = payload.overwrite_required ? 'block' : 'none';
+    if (titlegenApplyBtn) titlegenApplyBtn.disabled = false;
+    titlegenStatus.textContent = 'Generated preview ready. Generation does not change the release title until you apply.';
+    updateTitlegenSelectedLabel();
+  }
+
+  async function applyGeneratedTitle() {
+    if (!titlegenSection || !Number.isInteger(activeReleaseId) || !titlegenStatus || !titlegenGeneration) return;
+    const templateId = selectedTemplateIdOrNull();
+    const overwriteRequired = Boolean(titlegenGeneration.overwrite_required);
+    const currentNormalized = normalizeTitlegenTitle(titlegenGeneration.current_title || '');
+    const proposedNormalized = normalizeTitlegenTitle(titlegenGeneration.proposed_title || '');
+    const overwriteNeedsConfirm = overwriteRequired && currentNormalized !== proposedNormalized;
+    if (overwriteNeedsConfirm && !window.confirm('This will overwrite the current release title. Continue?')) {
+      titlegenStatus.textContent = 'Apply canceled. Confirm overwrite to continue.';
+      return;
+    }
+    titlegenStatus.textContent = 'Applying generated title...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/titlegen/apply`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template_id: templateId,
+        generation_fingerprint: titlegenGeneration.generation_fingerprint,
+        overwrite_confirmed: overwriteNeedsConfirm,
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      titlegenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Apply failed';
+      return;
+    }
+    if (titleInput && typeof payload.title_after === 'string') {
+      titleInput.value = payload.title_after;
+    }
+    refreshCurrentTitleLabel();
+    titlegenStatus.textContent = payload.title_updated ? 'Applied. Only release.title was changed.' : (payload.message || 'Title already up to date.');
+    resetTitlegenGeneration();
+  }
+
+  function normalizeDescriptionValue(value) {
+    const text = String(value || '');
+    return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').map((line) => line.replace(/[ ]+$/g, '')).join('\n').trim();
+  }
+
+  function updateDescriptiongenSelectedLabel() {
+    if (!descriptiongenTemplateSelect || !descriptiongenSelectedTemplate) return;
+    const opt = descriptiongenTemplateSelect.selectedOptions && descriptiongenTemplateSelect.selectedOptions.length ? descriptiongenTemplateSelect.selectedOptions[0] : null;
+    descriptiongenSelectedTemplate.textContent = opt ? `Selected template: ${opt.textContent}` : '';
+  }
+
+  function resetDescriptiongenGeneration() {
+    descriptiongenGeneration = null;
+    if (descriptiongenProposedDescription) descriptiongenProposedDescription.textContent = '—';
+    if (descriptiongenOverwriteWarning) descriptiongenOverwriteWarning.style.display = 'none';
+    if (descriptiongenOverwriteCheckboxRow) descriptiongenOverwriteCheckboxRow.style.display = 'none';
+    if (descriptiongenOverwriteCheckbox) descriptiongenOverwriteCheckbox.checked = false;
+    if (descriptiongenApplyBtn) descriptiongenApplyBtn.disabled = true;
+  }
+
+  function refreshCurrentDescriptionLabel() {
+    if (!descriptiongenCurrentDescription || !descriptionInput) return;
+    const current = String(descriptionInput.value || '');
+    descriptiongenCurrentDescription.textContent = current.trim() ? current : '(empty)';
+  }
+
+  function selectedDescriptionTemplateIdOrNull() {
+    if (!descriptiongenTemplateSelect) return null;
+    const value = String(descriptiongenTemplateSelect.value || '').trim();
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+
+  function applyDescriptiongenContext(context) {
+    if (!descriptiongenTemplateSelect || !descriptiongenDefaultTemplate || !descriptiongenStatus) return;
+    descriptiongenContext = context;
+    descriptiongenTemplateSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = (context.active_templates || []).length ? 'Select a template' : 'No active templates';
+    descriptiongenTemplateSelect.appendChild(placeholder);
+
+    (context.active_templates || []).forEach((tpl) => {
+      const opt = document.createElement('option');
+      opt.value = String(tpl.id);
+      opt.textContent = tpl.is_default ? `${tpl.template_name} (default)` : tpl.template_name;
+      descriptiongenTemplateSelect.appendChild(opt);
+    });
+
+    const defaultTemplate = context.default_template;
+    if (defaultTemplate) {
+      descriptiongenDefaultTemplate.textContent = `${defaultTemplate.template_name} (#${defaultTemplate.id})`;
+      descriptiongenSelectedTemplateId = Number(defaultTemplate.id);
+      descriptiongenTemplateSelect.value = String(defaultTemplate.id);
+    } else {
+      descriptiongenDefaultTemplate.textContent = 'None configured';
+      descriptiongenSelectedTemplateId = null;
+      descriptiongenTemplateSelect.value = '';
+    }
+    updateDescriptiongenSelectedLabel();
+    refreshCurrentDescriptionLabel();
+    resetDescriptiongenGeneration();
+    descriptiongenStatus.textContent = 'Ready. Generate preview first (no changes are applied yet).';
+  }
+
+  async function loadDescriptiongenContext() {
+    if (!descriptiongenSection || !Number.isInteger(activeReleaseId) || !descriptiongenStatus) return;
+    descriptiongenStatus.textContent = 'Loading description generation context...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/descriptiongen/context`, { credentials: 'same-origin' });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      descriptiongenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Failed to load description generation context';
+      return;
+    }
+    applyDescriptiongenContext(payload);
+  }
+
+  async function generateDescription() {
+    if (!descriptiongenSection || !Number.isInteger(activeReleaseId) || !descriptiongenStatus) return;
+    const templateId = selectedDescriptionTemplateIdOrNull();
+    if (!descriptiongenContext || !descriptiongenContext.default_template && templateId === null) {
+      descriptiongenStatus.textContent = 'Select a template before generating preview.';
+      return;
+    }
+    descriptiongenStatus.textContent = 'Generating description preview...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/descriptiongen/generate`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ template_id: templateId }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      descriptiongenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Generate failed';
+      return;
+    }
+    descriptiongenGeneration = payload;
+    descriptiongenSelectedTemplateId = templateId === null ? null : templateId;
+    if (descriptiongenProposedDescription) descriptiongenProposedDescription.textContent = payload.proposed_description || '—';
+    const currentNormalized = normalizeDescriptionValue(payload.current_description || '');
+    const proposedNormalized = normalizeDescriptionValue(payload.proposed_description || '');
+    const overwriteNeedsConfirm = Boolean(payload.overwrite_required) && currentNormalized !== proposedNormalized;
+    if (descriptiongenOverwriteWarning) descriptiongenOverwriteWarning.style.display = overwriteNeedsConfirm ? 'block' : 'none';
+    if (descriptiongenOverwriteCheckboxRow) descriptiongenOverwriteCheckboxRow.style.display = overwriteNeedsConfirm ? 'block' : 'none';
+    if (descriptiongenOverwriteCheckbox) descriptiongenOverwriteCheckbox.checked = false;
+    if (descriptiongenApplyBtn) descriptiongenApplyBtn.disabled = false;
+    descriptiongenStatus.textContent = 'Generated preview ready. Generation does not change the release description until you apply.';
+    updateDescriptiongenSelectedLabel();
+  }
+
+  async function applyGeneratedDescription() {
+    if (!descriptiongenSection || !Number.isInteger(activeReleaseId) || !descriptiongenStatus || !descriptiongenGeneration) return;
+    const templateId = selectedDescriptionTemplateIdOrNull();
+    const currentNormalized = normalizeDescriptionValue(descriptiongenGeneration.current_description || '');
+    const proposedNormalized = normalizeDescriptionValue(descriptiongenGeneration.proposed_description || '');
+    const overwriteNeedsConfirm = Boolean(descriptiongenGeneration.overwrite_required) && currentNormalized !== proposedNormalized;
+    if (overwriteNeedsConfirm && !descriptiongenOverwriteCheckbox.checked) {
+      descriptiongenStatus.textContent = 'Apply canceled. Confirm overwrite to continue.';
+      return;
+    }
+    descriptiongenStatus.textContent = 'Applying generated description...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/descriptiongen/apply`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template_id: templateId,
+        generation_fingerprint: descriptiongenGeneration.generation_fingerprint,
+        overwrite_confirmed: overwriteNeedsConfirm,
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      descriptiongenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Apply failed';
+      return;
+    }
+    if (descriptionInput && typeof payload.description_after === 'string') {
+      descriptionInput.value = payload.description_after;
+    }
+    refreshCurrentDescriptionLabel();
+    descriptiongenStatus.textContent = payload.description_updated ? 'Applied. Only release.description was changed.' : (payload.message || 'Description already up to date.');
+    resetDescriptiongenGeneration();
+  }
+
+  function normalizeTagsArray(value) {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    value.forEach((item) => {
+      if (typeof item !== 'string') return;
+      const trimmed = item.trim();
+      if (!trimmed) return;
+      if (!out.includes(trimmed)) out.push(trimmed);
+    });
+    return out;
+  }
+
+  function updateVideotagsgenSelectedLabel() {
+    if (!videotagsgenPresetSelect || !videotagsgenSelectedPreset) return;
+    const opt = videotagsgenPresetSelect.selectedOptions && videotagsgenPresetSelect.selectedOptions.length ? videotagsgenPresetSelect.selectedOptions[0] : null;
+    videotagsgenSelectedPreset.textContent = opt ? `Selected preset: ${opt.textContent}` : '';
+  }
+
+  function resetVideotagsgenGeneration() {
+    videotagsgenGeneration = null;
+    if (videotagsgenProposedTagsJson) videotagsgenProposedTagsJson.textContent = '—';
+    if (videotagsgenDroppedEmptyItems) videotagsgenDroppedEmptyItems.textContent = '—';
+    if (videotagsgenRemovedDuplicates) videotagsgenRemovedDuplicates.textContent = '—';
+    if (videotagsgenOverwriteWarning) videotagsgenOverwriteWarning.style.display = 'none';
+    if (videotagsgenOverwriteCheckboxRow) videotagsgenOverwriteCheckboxRow.style.display = 'none';
+    if (videotagsgenOverwriteCheckbox) videotagsgenOverwriteCheckbox.checked = false;
+    if (videotagsgenApplyBtn) videotagsgenApplyBtn.disabled = true;
+  }
+
+  function refreshCurrentTagsLabel() {
+    if (!videotagsgenCurrentTagsJson || !tagsCsvInput) return;
+    const currentTags = String(tagsCsvInput.value || '').trim();
+    videotagsgenCurrentTagsJson.textContent = currentTags ? JSON.stringify(currentTags.split(',').map((tag) => tag.trim()).filter(Boolean)) : '[]';
+  }
+
+  function selectedPresetIdOrNull() {
+    if (!videotagsgenPresetSelect) return null;
+    const value = String(videotagsgenPresetSelect.value || '').trim();
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+
+  function applyVideotagsgenContext(context) {
+    if (!videotagsgenPresetSelect || !videotagsgenDefaultPreset || !videotagsgenStatus) return;
+    videotagsgenContext = context;
+    videotagsgenPresetSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = (context.active_presets || []).length ? 'Select a preset' : 'No active presets';
+    videotagsgenPresetSelect.appendChild(placeholder);
+
+    (context.active_presets || []).forEach((preset) => {
+      const opt = document.createElement('option');
+      opt.value = String(preset.id);
+      opt.textContent = preset.is_default ? `${preset.preset_name} (default)` : preset.preset_name;
+      videotagsgenPresetSelect.appendChild(opt);
+    });
+
+    const defaultPreset = context.default_preset;
+    if (defaultPreset) {
+      videotagsgenDefaultPreset.textContent = `${defaultPreset.preset_name} (#${defaultPreset.id})`;
+      videotagsgenSelectedPresetId = Number(defaultPreset.id);
+      videotagsgenPresetSelect.value = String(defaultPreset.id);
+    } else {
+      videotagsgenDefaultPreset.textContent = 'None configured';
+      videotagsgenSelectedPresetId = null;
+      videotagsgenPresetSelect.value = '';
+    }
+    updateVideotagsgenSelectedLabel();
+    refreshCurrentTagsLabel();
+    resetVideotagsgenGeneration();
+    videotagsgenStatus.textContent = 'Ready. Generate preview first (no changes are applied yet).';
+  }
+
+  async function loadVideotagsgenContext() {
+    if (!videotagsgenSection || !Number.isInteger(activeReleaseId) || !videotagsgenStatus) return;
+    videotagsgenStatus.textContent = 'Loading video tags generation context...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/video-tags/context`, { credentials: 'same-origin' });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      videotagsgenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Failed to load video tags generation context';
+      return;
+    }
+    applyVideotagsgenContext(payload);
+  }
+
+  async function generateVideoTags() {
+    if (!videotagsgenSection || !Number.isInteger(activeReleaseId) || !videotagsgenStatus) return;
+    const presetId = selectedPresetIdOrNull();
+    if (!videotagsgenContext || !videotagsgenContext.default_preset && presetId === null) {
+      videotagsgenStatus.textContent = 'Select a preset before generating preview.';
+      return;
+    }
+    videotagsgenStatus.textContent = 'Generating video tags preview...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/video-tags/generate`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preset_id: presetId }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      videotagsgenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Generate failed';
+      return;
+    }
+    videotagsgenGeneration = payload;
+    videotagsgenSelectedPresetId = presetId === null ? null : presetId;
+    if (videotagsgenProposedTagsJson) videotagsgenProposedTagsJson.textContent = JSON.stringify(payload.proposed_tags_json || []);
+    if (videotagsgenDroppedEmptyItems) videotagsgenDroppedEmptyItems.textContent = JSON.stringify(payload.dropped_empty_items || []);
+    if (videotagsgenRemovedDuplicates) videotagsgenRemovedDuplicates.textContent = JSON.stringify(payload.removed_duplicates || []);
+    const overwriteNeedsConfirm =
+      Boolean(payload.overwrite_required) &&
+      JSON.stringify(normalizeTagsArray(payload.current_tags_json || [])) !== JSON.stringify(normalizeTagsArray(payload.proposed_tags_json || []));
+    if (videotagsgenOverwriteWarning) videotagsgenOverwriteWarning.style.display = overwriteNeedsConfirm ? 'block' : 'none';
+    if (videotagsgenOverwriteCheckboxRow) videotagsgenOverwriteCheckboxRow.style.display = overwriteNeedsConfirm ? 'block' : 'none';
+    if (videotagsgenOverwriteCheckbox) videotagsgenOverwriteCheckbox.checked = false;
+    if (videotagsgenApplyBtn) videotagsgenApplyBtn.disabled = false;
+    videotagsgenStatus.textContent = 'Generated preview ready. Generation does not change the release tags until you apply.';
+    updateVideotagsgenSelectedLabel();
+  }
+
+  async function applyGeneratedVideoTags() {
+    if (!videotagsgenSection || !Number.isInteger(activeReleaseId) || !videotagsgenStatus || !videotagsgenGeneration) return;
+    const presetId = selectedPresetIdOrNull();
+    const overwriteNeedsConfirm =
+      Boolean(videotagsgenGeneration.overwrite_required) &&
+      JSON.stringify(normalizeTagsArray(videotagsgenGeneration.current_tags_json || [])) !== JSON.stringify(normalizeTagsArray(videotagsgenGeneration.proposed_tags_json || []));
+    if (overwriteNeedsConfirm && !videotagsgenOverwriteCheckbox.checked) {
+      videotagsgenStatus.textContent = 'Apply canceled. Confirm overwrite to continue.';
+      return;
+    }
+    videotagsgenStatus.textContent = 'Applying generated tags...';
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/video-tags/apply`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        preset_id: presetId,
+        generation_fingerprint: videotagsgenGeneration.generation_fingerprint,
+        overwrite_confirmed: overwriteNeedsConfirm,
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      videotagsgenStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Apply failed';
+      return;
+    }
+    if (tagsCsvInput && Array.isArray(payload.tags_after)) {
+      tagsCsvInput.value = payload.tags_after.join(', ');
+    }
+    refreshCurrentTagsLabel();
+    videotagsgenStatus.textContent = payload.tags_updated ? 'Applied. Only release.tags_json was changed.' : (payload.message || 'Tags already up to date.');
+    resetVideotagsgenGeneration();
+  }
+
+  const MPA_APPLYABLE_STATUSES = new Set(['PROPOSED_READY', 'OVERWRITE_READY', 'NO_CHANGE']);
+  const MPA_FIELD_LABELS = { title: 'Title', description: 'Description', tags: 'Tags' };
+  let mpaContext = null;
+  let mpaSession = null;
+  let mpaPreviewSourceModeByField = { title: 'default', description: 'default', tags: 'default' };
+
+  function mpaRequestedFields() {
+    const out = [];
+    if (mpaRequestTitle.checked) out.push('title');
+    if (mpaRequestDescription.checked) out.push('description');
+    if (mpaRequestTags.checked) out.push('tags');
+    return out;
+  }
+
+  function mpaSelectedSourceId(selectEl) {
+    const value = String(selectEl.value || '').trim();
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+
+  function renderMpaSourceSelect(selectEl, defaultSource, options, labelField) {
+    selectEl.innerHTML = '';
+    const defOpt = document.createElement('option');
+    defOpt.value = '';
+    if (defaultSource && Number.isInteger(defaultSource.id)) {
+      const defaultSourceName = defaultSource.template_name || defaultSource.preset_name || defaultSource.name || `#${defaultSource.id}`;
+      defOpt.textContent = `Use channel default: ${defaultSourceName} (#${defaultSource.id})`;
+    } else {
+      defOpt.textContent = 'Use channel default (not configured)';
+    }
+    selectEl.appendChild(defOpt);
+    (options || []).forEach((item) => {
+      const opt = document.createElement('option');
+      opt.value = String(item.id);
+      const sourceName = item[labelField] || item.template_name || item.preset_name || item.name || `#${item.id}`;
+      opt.textContent = item.is_default ? `${sourceName} (default)` : sourceName;
+      selectEl.appendChild(opt);
+    });
+    selectEl.value = '';
+  }
+
+  function formatMpaValue(field, value) {
+    if (field === 'tags') return JSON.stringify(Array.isArray(value) ? value : []);
+    const txt = value === null || value === undefined ? '' : String(value);
+    return txt.trim() ? txt : '(empty)';
+  }
+
+  function mpaDisableReason(status) {
+    if (MPA_APPLYABLE_STATUSES.has(status)) return '';
+    if (status === 'NOT_REQUESTED') return 'Not requested in this preview.';
+    if (status === 'GENERATION_FAILED') return 'Generation failed for this field.';
+    if (status === 'CONFIGURATION_MISSING') return 'No default source and no explicit source selected.';
+    if (status === 'STALE') return 'Preview is stale; regenerate preview first.';
+    return `Field status ${status} is not applyable.`;
+  }
+
+  function renderMpaCurrentBundle(current) {
+    if (!current) return;
+    if (mpaCurrentTitle) mpaCurrentTitle.textContent = formatMpaValue('title', current.title);
+    if (mpaCurrentDescription) mpaCurrentDescription.textContent = formatMpaValue('description', current.description);
+    if (mpaCurrentTags) mpaCurrentTags.textContent = formatMpaValue('tags', current.tags_json || []);
+  }
+
+  function applyMpaResultToEditableInputs(current) {
+    if (!current) return;
+    if (typeof current.title === 'string' && titleInput) titleInput.value = current.title;
+    if (typeof current.description === 'string' && descriptionInput) descriptionInput.value = current.description;
+    if (Array.isArray(current.tags_json) && tagsCsvInput) tagsCsvInput.value = current.tags_json.join(', ');
+    refreshCurrentTitleLabel();
+    refreshCurrentDescriptionLabel();
+    refreshCurrentTagsLabel();
+  }
+
+  function mpaSourceDisplayName(source) {
+    if (!source) return '(missing source)';
+    return source.source_name || source.template_name || source.preset_name || source.name || `#${source.id ?? '?'}`;
+  }
+
+  function mpaSourceType(field, source) {
+    if (source && source.source_type) return source.source_type;
+    if (field === 'title') return 'title_template';
+    if (field === 'description') return 'description_template';
+    return 'video_tag_preset';
+  }
+
+  function mpaSourceSelectionMode(field, source) {
+    if (source && source.selection_mode) return source.selection_mode;
+    return mpaPreviewSourceModeByField[field] || 'default';
+  }
+
+  function renderMpaSession(session) {
+    mpaSession = session;
+    mpaFieldsGrid.innerHTML = '';
+    mpaFieldsGrid.style.display = 'block';
+    renderMpaCurrentBundle(session.current || {});
+    const failedFields = (session.summary && session.summary.failed_fields) || [];
+    mpaPartialWarning.style.display = failedFields.length ? 'block' : 'none';
+    const fields = session.fields || {};
+    const cards = ['title', 'description', 'tags'].map((field) => {
+      const details = fields[field] || {};
+      const status = String(details.status || 'NOT_REQUESTED');
+      const disabledReason = mpaDisableReason(status);
+      const overwriteRequired = Boolean(details.overwrite_required) && status === 'OVERWRITE_READY';
+      const warnings = (details.warnings || []).map((w) => `<li>${w}</li>`).join('');
+      const errors = (details.errors || []).map((err) => {
+        if (typeof err === 'string') return `<li>${err}</li>`;
+        return `<li>${err.code || 'ERROR'}: ${err.message || ''}</li>`;
+      }).join('');
+      const source = details.source || null;
+      const selectionMode = mpaSourceSelectionMode(field, source);
+      const modeLabel = selectionMode === 'temporary_override' ? 'temporary override' : 'channel default';
+      const overrideActiveText = modeLabel === 'temporary override' ? '<span class="pill" style="background:#fef3c7;">Temporary override active</span>' : '<span class="pill">Using channel default</span>';
+      const sourceLine = source
+        ? `${mpaSourceDisplayName(source)} (${mpaSourceType(field, source)}, ${modeLabel})`
+        : '—';
+      const overrideClearHint = modeLabel === 'temporary override'
+        ? 'Clear override in preview request to return to channel default.'
+        : 'Using channel default. Select a source above to set temporary override for this operation.';
+      return `
+        <fieldset style="margin:8px 0; border:1px solid #ddd; padding:8px;">
+          <legend><strong>${MPA_FIELD_LABELS[field]}</strong></legend>
+          <p><b>Status:</b> ${status}</p>
+          <p><b>Current:</b> ${formatMpaValue(field, details.current_value)}</p>
+          <p><b>Proposed:</b> ${formatMpaValue(field, details.proposed_value)}</p>
+          <p><b>Changed:</b> ${details.changed ? 'yes' : 'no'}</p>
+          <p><b>Source:</b> ${sourceLine}</p>
+          <p>${overrideActiveText}</p>
+          <p class="muted"><b>Resolution:</b> ${overrideClearHint}</p>
+          ${warnings ? `<p style="color:#92400e;"><b>Warnings:</b></p><ul>${warnings}</ul>` : ''}
+          ${overwriteRequired ? '<p style="color:#92400e;"><b>Applying this field will overwrite the existing value.</b></p>' : ''}
+          ${errors ? `<p style="color:#b91c1c;"><b>Errors:</b></p><ul>${errors}</ul>` : ''}
+          <label>
+            <input type="checkbox" id="mpa-apply-${field}" data-mpa-apply-field="${field}" ${disabledReason ? 'disabled' : ''}>
+            Include ${MPA_FIELD_LABELS[field]} in apply
+          </label>
+          ${disabledReason ? `<p class="muted">${disabledReason}</p>` : ''}
+          <label id="mpa-overwrite-row-${field}" style="display:${overwriteRequired ? 'none' : 'none'};">
+            <input type="checkbox" id="mpa-overwrite-${field}">
+            I confirm overwrite for this field.
+          </label>
+        </fieldset>
+      `;
+    }).join('');
+    mpaFieldsGrid.innerHTML = cards;
+    mpaApplySelectedBtn.disabled = false;
+    mpaApplyReadyBtn.disabled = false;
+    ['title', 'description', 'tags'].forEach((field) => {
+      const applyEl = document.getElementById(`mpa-apply-${field}`);
+      const overwriteRow = document.getElementById(`mpa-overwrite-row-${field}`);
+      const details = (fields || {})[field] || {};
+      const needsOverwriteConfirm = Boolean(details.overwrite_required) && String(details.status || '') === 'OVERWRITE_READY';
+      if (applyEl && overwriteRow && needsOverwriteConfirm) {
+        applyEl.addEventListener('change', () => {
+          overwriteRow.style.display = applyEl.checked ? 'block' : 'none';
+          if (!applyEl.checked) {
+            const overwriteBox = document.getElementById(`mpa-overwrite-${field}`);
+            if (overwriteBox) overwriteBox.checked = false;
+          }
+        });
+      }
+    });
+    mpaStatus.textContent = 'Preview ready. Select fields to apply.';
+  }
+
+  async function loadMpaContext() {
+    if (!hasMetadataPreviewApply || !Number.isInteger(activeReleaseId)) return;
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/preview-apply/context`, { credentials: 'same-origin' });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      mpaStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Failed to load unified metadata context';
+      return;
+    }
+    mpaContext = payload;
+    renderMpaCurrentBundle(payload.current || {});
+    renderMpaSourceSelect(mpaTitleSourceSelect, payload.defaults && payload.defaults.title_template, payload.active_sources && payload.active_sources.title_templates, 'name');
+    renderMpaSourceSelect(mpaDescriptionSourceSelect, payload.defaults && payload.defaults.description_template, payload.active_sources && payload.active_sources.description_templates, 'name');
+    renderMpaSourceSelect(mpaTagsSourceSelect, payload.defaults && payload.defaults.video_tag_preset, payload.active_sources && payload.active_sources.video_tag_presets, 'name');
+    mpaStatus.textContent = 'Ready. Preview does not change release metadata until you apply.';
+  }
+
+  async function loadMpaSession(sessionId) {
+    const sessionResp = await fetch(`/v1/metadata/preview-apply/sessions/${sessionId}`, { credentials: 'same-origin' });
+    const sessionPayload = await sessionResp.json();
+    if (!sessionResp.ok) {
+      mpaStatus.textContent = (sessionPayload.error && sessionPayload.error.message) ? sessionPayload.error.message : 'Failed to load preview session';
+      return;
+    }
+    renderMpaSession(sessionPayload);
+  }
+
+  function clearMpaOverride(selectEl, fieldLabel) {
+    if (!selectEl) return;
+    selectEl.value = '';
+    mpaStatus.textContent = `${fieldLabel}: using channel default for this operation.`;
+  }
+
+  async function previewMpa() {
+    if (!hasMetadataPreviewApply || !Number.isInteger(activeReleaseId)) return;
+    const requestedFields = mpaRequestedFields();
+    if (!requestedFields.length) {
+      mpaStatus.textContent = 'Select at least one field before preview.';
+      return;
+    }
+    mpaStatus.textContent = 'Building unified preview...';
+    mpaPreviewSourceModeByField = {
+      title: mpaSelectedSourceId(mpaTitleSourceSelect) === null ? 'default' : 'explicit',
+      description: mpaSelectedSourceId(mpaDescriptionSourceSelect) === null ? 'default' : 'explicit',
+      tags: mpaSelectedSourceId(mpaTagsSourceSelect) === null ? 'default' : 'explicit',
+    };
+    const resp = await fetch(`/v1/metadata/releases/${activeReleaseId}/preview-apply/preview`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: requestedFields,
+        sources: {
+          title_template_id: mpaSelectedSourceId(mpaTitleSourceSelect),
+          description_template_id: mpaSelectedSourceId(mpaDescriptionSourceSelect),
+          video_tag_preset_id: mpaSelectedSourceId(mpaTagsSourceSelect),
+        },
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      mpaStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Preview failed';
+      return;
+    }
+    await loadMpaSession(payload.session_id);
+  }
+
+  async function applyMpa(includeAllReady) {
+    if (!hasMetadataPreviewApply || !mpaSession || !mpaSession.session_id) return;
+    const fields = mpaSession.fields || {};
+    const selectedFields = includeAllReady
+      ? ['title', 'description', 'tags'].filter((field) => MPA_APPLYABLE_STATUSES.has(String((fields[field] || {}).status || '')))
+      : ['title', 'description', 'tags'].filter((field) => {
+        const el = document.getElementById(`mpa-apply-${field}`);
+        return !!el && !!el.checked;
+      });
+    if (!selectedFields.length) {
+      mpaStatus.textContent = 'Select at least one applyable field before apply.';
+      return;
+    }
+    const overwriteConfirmedFields = [];
+    for (const field of selectedFields) {
+      const details = fields[field] || {};
+      const needsOverwriteConfirm = Boolean(details.overwrite_required) && String(details.status || '') === 'OVERWRITE_READY';
+      if (!needsOverwriteConfirm) continue;
+      const overwriteEl = document.getElementById(`mpa-overwrite-${field}`);
+      if (!overwriteEl || !overwriteEl.checked) {
+        mpaStatus.textContent = `Apply canceled. Explicit overwrite confirmation is required for ${MPA_FIELD_LABELS[field].toLowerCase()}.`;
+        return;
+      }
+      overwriteConfirmedFields.push(field);
+    }
+    mpaStatus.textContent = 'Applying selected metadata fields...';
+    const resp = await fetch(`/v1/metadata/preview-apply/sessions/${mpaSession.session_id}/apply`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        selected_fields: selectedFields,
+        overwrite_confirmed_fields: overwriteConfirmedFields,
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok) {
+      mpaStatus.textContent = (payload.error && payload.error.message) ? payload.error.message : 'Apply failed';
+      return;
+    }
+    renderMpaCurrentBundle(payload.release_metadata_after || {});
+    applyMpaResultToEditableInputs(payload.release_metadata_after || {});
+    mpaStatus.textContent = `Applied fields: ${(payload.applied_fields || []).join(', ') || '(none)'}. Unchanged: ${(payload.unchanged_fields || []).join(', ') || '(none)'}.`;
+    mpaApplySelectedBtn.disabled = true;
+    mpaApplyReadyBtn.disabled = true;
+    await loadMpaContext();
+  }
+
   function renderDiagnosticsBlock(diag, reasonText) {
     if (!diag && !reasonText) return '';
     const d = diag || {};
@@ -497,6 +1559,299 @@
     el.addEventListener('change', invalidatePreviewState);
   });
 
+  if (titlegenTemplateSelect) {
+    titlegenTemplateSelect.addEventListener('change', () => {
+      updateTitlegenSelectedLabel();
+      resetTitlegenGeneration();
+    });
+  }
+  if (titlegenGenerateBtn) titlegenGenerateBtn.addEventListener('click', generateTitle);
+  if (titlegenRegenerateBtn) titlegenRegenerateBtn.addEventListener('click', generateTitle);
+  if (titlegenApplyBtn) titlegenApplyBtn.addEventListener('click', applyGeneratedTitle);
+  if (titleInput) titleInput.addEventListener('input', refreshCurrentTitleLabel);
+  if (descriptiongenTemplateSelect) {
+    descriptiongenTemplateSelect.addEventListener('change', () => {
+      updateDescriptiongenSelectedLabel();
+      resetDescriptiongenGeneration();
+    });
+  }
+  if (descriptiongenGenerateBtn) descriptiongenGenerateBtn.addEventListener('click', generateDescription);
+  if (descriptiongenRegenerateBtn) descriptiongenRegenerateBtn.addEventListener('click', generateDescription);
+  if (descriptiongenApplyBtn) descriptiongenApplyBtn.addEventListener('click', applyGeneratedDescription);
+  if (descriptionInput) descriptionInput.addEventListener('input', refreshCurrentDescriptionLabel);
+  if (videotagsgenPresetSelect) {
+    videotagsgenPresetSelect.addEventListener('change', () => {
+      updateVideotagsgenSelectedLabel();
+      resetVideotagsgenGeneration();
+    });
+  }
+  if (videotagsgenGenerateBtn) videotagsgenGenerateBtn.addEventListener('click', generateVideoTags);
+  if (videotagsgenRegenerateBtn) videotagsgenRegenerateBtn.addEventListener('click', generateVideoTags);
+  if (videotagsgenApplyBtn) videotagsgenApplyBtn.addEventListener('click', applyGeneratedVideoTags);
+  if (tagsCsvInput) tagsCsvInput.addEventListener('input', refreshCurrentTagsLabel);
+  if (mpaPreviewBtn) mpaPreviewBtn.addEventListener('click', previewMpa);
+  if (mpaApplySelectedBtn) mpaApplySelectedBtn.addEventListener('click', () => applyMpa(false));
+  if (mpaApplyReadyBtn) mpaApplyReadyBtn.addEventListener('click', () => applyMpa(true));
+  const mpaUseDefaultActions = [
+    ['mpa-title-use-default-btn', mpaTitleSourceSelect, 'Title'],
+    ['mpa-description-use-default-btn', mpaDescriptionSourceSelect, 'Description'],
+    ['mpa-tags-use-default-btn', mpaTagsSourceSelect, 'Tags'],
+    ['mpa-title-clear-override-btn', mpaTitleSourceSelect, 'Title'],
+    ['mpa-description-clear-override-btn', mpaDescriptionSourceSelect, 'Description'],
+    ['mpa-tags-clear-override-btn', mpaTagsSourceSelect, 'Tags'],
+  ];
+  mpaUseDefaultActions.forEach(([btnId, selectEl, fieldLabel]) => {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.addEventListener('click', () => clearMpaOverride(selectEl, fieldLabel));
+  });
+
+  async function loadVisualWorkflowEffectiveTemplate() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    visualWorkflowStatus.textContent = 'Loading effective visual template/source visibility...';
+    const resp = await fetch(`/v1/metadata/channel-visual-style-templates/releases/${activeReleaseId}/effective`, { credentials: 'same-origin' });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to load effective template';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Effective visual template loaded.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  // Epic-5 visual style template management is API-first by design.
+  // These route templates are surfaced here for operator discoverability from the job edit workflow.
+  const visualStyleTemplateApiRoutes = {
+    listOrCreate: '/v1/metadata/channel-visual-style-templates',
+    detailOrPatch: '/v1/metadata/channel-visual-style-templates/${templateId}',
+    activate: '/v1/metadata/channel-visual-style-templates/${templateId}/activate',
+    setDefault: '/v1/metadata/channel-visual-style-templates/${templateId}/set-default',
+    releaseOverride: '/v1/metadata/channel-visual-style-templates/releases/${activeReleaseId}/override',
+    releaseOverrideClear: '/v1/metadata/channel-visual-style-templates/releases/${activeReleaseId}/override/clear',
+    releaseEffective: '/v1/metadata/channel-visual-style-templates/releases/${activeReleaseId}/effective',
+  };
+
+  async function loadVisualBackgroundCandidates() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    visualWorkflowStatus.textContent = 'Loading background candidates...';
+    const resp = await fetch(`/v1/visual/releases/${activeReleaseId}/background/candidates`, { credentials: 'same-origin' });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to load background candidates';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Background candidates loaded (preview/approve/apply available in visual APIs).';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  function getCoverCandidateIdFromOutput() {
+    try {
+      const parsed = JSON.parse(visualWorkflowOutput.textContent || '{}');
+      if (parsed && parsed.selected_candidate_id) return String(parsed.selected_candidate_id);
+      if (parsed && Array.isArray(parsed.candidates) && parsed.candidates.length > 0 && parsed.candidates[0].candidate_id) {
+        return String(parsed.candidates[0].candidate_id);
+      }
+    } catch (_err) {}
+    return '';
+  }
+
+  function requestCoverCandidateId(actionLabel) {
+    const fallback = getCoverCandidateIdFromOutput();
+    const input = window.prompt(`${actionLabel}: provide cover candidate id`, fallback || '');
+    return (input || '').trim();
+  }
+
+  async function loadVisualCoverCandidates() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    visualWorkflowStatus.textContent = 'Loading cover candidates...';
+    const resp = await fetch(`/v1/visual/releases/${activeReleaseId}/cover/candidates`, { credentials: 'same-origin' });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to load cover candidates';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Cover candidates loaded.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function previewVisualCoverCandidate() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    const candidateId = requestCoverCandidateId('Cover preview');
+    if (!candidateId) {
+      visualWorkflowStatus.textContent = 'Cover preview cancelled (missing candidate id).';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Loading cover preview...';
+    const resp = await fetch(`/v1/visual/releases/${activeReleaseId}/cover/candidates/${encodeURIComponent(candidateId)}/preview`, { credentials: 'same-origin' });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to preview cover candidate';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Cover preview loaded.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function selectVisualCoverCandidate() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    const candidateId = requestCoverCandidateId('Cover select');
+    if (!candidateId) {
+      visualWorkflowStatus.textContent = 'Cover select cancelled (missing candidate id).';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Selecting cover candidate for approval...';
+    const resp = await fetch(`/v1/visual/releases/${activeReleaseId}/cover/select`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidate_id: candidateId }),
+    });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to select cover candidate';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Cover candidate selected for approval.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function approveVisualCoverCandidate() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    visualWorkflowStatus.textContent = 'Approving selected cover candidate...';
+    const resp = await fetch(`/v1/visual/releases/${activeReleaseId}/cover/approve`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to approve cover candidate';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Cover candidate approved.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function applyVisualCoverCandidate() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    let approvePayload = null;
+    try {
+      approvePayload = JSON.parse(visualWorkflowOutput.textContent || '{}');
+    } catch (_err) {}
+    const staleToken = approvePayload && approvePayload.stale_token ? String(approvePayload.stale_token) : '';
+    const conflictToken = approvePayload && approvePayload.conflict_token ? String(approvePayload.conflict_token) : '';
+    if (!staleToken || !conflictToken) {
+      visualWorkflowStatus.textContent = 'Run Cover Approve first to capture apply tokens.';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Applying approved cover candidate...';
+    const performApply = async (reuseOverrideConfirmed) => {
+      return fetch(`/v1/visual/releases/${activeReleaseId}/cover/apply`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stale_token: staleToken,
+          conflict_token: conflictToken,
+          reuse_override_confirmed: !!reuseOverrideConfirmed,
+        }),
+      });
+    };
+    let resp = await performApply(false);
+    let payload = await parseJsonSafe(resp);
+    if (!resp.ok && payload && payload.error && payload.error.code === 'VCOVER_REUSE_OVERRIDE_REQUIRED') {
+      const confirmed = window.confirm('Cover reuse override required. Apply with override?');
+      if (confirmed) {
+        resp = await performApply(true);
+        payload = await parseJsonSafe(resp);
+      }
+    }
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to apply cover candidate';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Cover candidate applied.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function loadVisualHistory() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    visualWorkflowStatus.textContent = 'Loading visual history/reuse context...';
+    const resp = await fetch(`/v1/visual/releases/${activeReleaseId}/history?limit=20`, { credentials: 'same-origin' });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Failed to load visual history';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Visual history loaded.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function runVisualBatchPreviewEntry() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId)) return;
+    visualWorkflowStatus.textContent = 'Creating visual batch preview session...';
+    const resp = await fetch('/v1/visual/batch/preview', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action_type: 'BULK_GENERATE_PREVIEWS',
+        selected_release_ids: [activeReleaseId],
+        action_payload: {},
+      }),
+    });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Batch preview failed';
+      return;
+    }
+    visualBatchPreviewSessionId = payload.preview_session_id;
+    visualWorkflowStatus.textContent = `Batch preview ready: ${visualBatchPreviewSessionId}`;
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  async function runVisualBatchExecuteEntry() {
+    if (!hasVisualWorkflow || !Number.isInteger(activeReleaseId) || !visualBatchPreviewSessionId) {
+      if (hasVisualWorkflow) visualWorkflowStatus.textContent = 'Run batch preview first.';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Executing visual batch entry point...';
+    const resp = await fetch('/v1/visual/batch/execute', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        preview_session_id: visualBatchPreviewSessionId,
+        selected_release_ids: [activeReleaseId],
+        overwrite_confirmed: false,
+        reuse_override_confirmed: false,
+      }),
+    });
+    const payload = await parseJsonSafe(resp);
+    if (!resp.ok) {
+      visualWorkflowStatus.textContent = (payload && payload.error && payload.error.message) ? payload.error.message : 'Batch execute failed';
+      return;
+    }
+    visualWorkflowStatus.textContent = 'Batch execute completed.';
+    visualWorkflowOutput.textContent = JSON.stringify(payload, null, 2);
+  }
+
+  if (visualLoadEffectiveBtn) visualLoadEffectiveBtn.addEventListener('click', loadVisualWorkflowEffectiveTemplate);
+  if (visualBackgroundCandidatesBtn) visualBackgroundCandidatesBtn.addEventListener('click', loadVisualBackgroundCandidates);
+  if (visualCoverCandidatesBtn) visualCoverCandidatesBtn.addEventListener('click', loadVisualCoverCandidates);
+  if (visualCoverPreviewBtn) visualCoverPreviewBtn.addEventListener('click', previewVisualCoverCandidate);
+  if (visualCoverSelectBtn) visualCoverSelectBtn.addEventListener('click', selectVisualCoverCandidate);
+  if (visualCoverApproveBtn) visualCoverApproveBtn.addEventListener('click', approveVisualCoverCandidate);
+  if (visualCoverApplyBtn) visualCoverApplyBtn.addEventListener('click', applyVisualCoverCandidate);
+  if (visualHistoryBtn) visualHistoryBtn.addEventListener('click', loadVisualHistory);
+  if (visualBatchPreviewBtn) visualBatchPreviewBtn.addEventListener('click', runVisualBatchPreviewEntry);
+  if (visualBatchExecuteBtn) visualBatchExecuteBtn.addEventListener('click', runVisualBatchExecuteEntry);
+
+  loadTitlegenContext();
+  loadDescriptiongenContext();
+  loadVideotagsgenContext();
+  loadMpaContext();
   const previewRequestTimeoutMs = 20000;
 
   async function parseJsonSafe(resp) {

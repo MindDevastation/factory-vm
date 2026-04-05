@@ -1,0 +1,26 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF6-S1",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "status_vocabulary": [
+    "CANONICAL",
+    "SUBORDINATE",
+    "NON_CANONICAL",
+    "LEGACY_CANDIDATE",
+    "DEPRECATED",
+    "ARCHIVED"
+  ],
+  "drift_control_terms": [
+    "canonical_source",
+    "subordinate_source",
+    "drift_event",
+    "drift_resolution_needed",
+    "evidence_anchor"
+  ],
+  "baseline_obligations": [
+    "explicit_status_marking",
+    "no_silent_legacy_deletion",
+    "canonical_change_requires_related_update_or_explicit_followup"
+  ],
+  "scope_limit": "baseline_only"
+}

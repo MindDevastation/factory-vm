@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Problems & Readiness</h1>
+<p class="muted">Grouped operator-first triage surface.</p>
+<div class="grid">
+  <div><strong>Blockers</strong><div class="muted">{{ surface.summary.blockers }}</div></div>
+  <div><strong>Warnings</strong><div class="muted">{{ surface.summary.warnings }}</div></div>
+  <div><strong>Degraded</strong><div class="muted">{{ surface.summary.degraded }}</div></div>
+  <div><strong>Stale</strong><div class="muted">{{ surface.summary.stale }}</div></div>
+</div>
+
+{% for group_name, items in surface.groups.items() %}
+<h2 style="margin-top:16px; text-transform:capitalize;">{{ group_name }}</h2>
+<table>
+  <thead><tr><th>Job</th><th>State</th><th>Severity/Priority</th><th>Readiness</th><th>Explanation</th><th>Current status</th><th>Next direction</th></tr></thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td><a href="/jobs/{{ item.job_id }}">{{ item.job_id }}</a></td>
+      <td>{{ item.readiness_state }}</td>
+      <td>{{ item.severity_priority }}</td>
+      <td>{{ item.readiness_indicator }}</td>
+      <td><strong>{{ item.explanation.primary_reason }}</strong><div class="muted">Supporting signals: {{ item.explanation.supporting_signals|join(', ') }}</div></td>
+      <td>{{ item.explanation.current_status }}</td>
+      <td>{{ item.explanation.next_direction }}<div class="muted">{% for target in item.routing_targets %}<a href="{{ target.href }}">{{ target.kind }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</div></td>
+    </tr>
+    {% endfor %}
+    {% if not items %}
+    <tr><td colspan="7" class="muted">No items in this group.</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+{% endfor %}
+{% endblock %}

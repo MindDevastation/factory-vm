@@ -237,6 +237,61 @@ class TestDbMoreCoverage(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_migrate_creates_monthly_planning_template_tables_and_indexes(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                tables = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("monthly_planning_templates", tables)
+                self.assertIn("monthly_planning_template_items", tables)
+                self.assertIn("monthly_planning_template_apply_runs", tables)
+                self.assertIn("monthly_planning_template_apply_run_items", tables)
+
+                header_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='monthly_planning_templates'"
+                    ).fetchall()
+                }
+                self.assertTrue({"idx_mpt_channel_status", "idx_mpt_channel_name"}.issubset(header_indexes))
+
+                item_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='monthly_planning_template_items'"
+                    ).fetchall()
+                }
+                self.assertIn("idx_mpti_template_position", item_indexes)
+                run_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='monthly_planning_template_apply_runs'"
+                    ).fetchall()
+                }
+                self.assertTrue({"idx_mptar_template_month", "idx_mptar_channel_month"}.issubset(run_indexes))
+                run_item_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='monthly_planning_template_apply_run_items'"
+                    ).fetchall()
+                }
+                self.assertIn("idx_mptari_apply_run_position", run_item_indexes)
+
+                item_sql = str(
+                    conn.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='monthly_planning_template_items'"
+                    ).fetchone()["sql"]
+                )
+                self.assertIn("UNIQUE(template_id, item_key)", item_sql)
+                self.assertIn("UNIQUE(template_id, slot_code)", item_sql)
+                self.assertIn("UNIQUE(template_id, position)", item_sql)
+            finally:
+                conn.close()
+
     def test_migrate_creates_planned_releases_table_and_indexes(self):
         with temp_env() as (_td, env):
             conn = dbm.connect(env)
@@ -261,8 +316,19 @@ class TestDbMoreCoverage(unittest.TestCase):
                         "idx_pr_publish_at",
                         "idx_pr_status",
                         "idx_pr_title",
+                        "idx_pr_materialized_release_unique",
                     }.issubset(indexes)
                 )
+                columns = {
+                    str(r["name"])
+                    for r in conn.execute("PRAGMA table_info(planned_releases)").fetchall()
+                }
+                self.assertIn("materialized_release_id", columns)
+                self.assertIn("planning_slot_code", columns)
+                self.assertIn("source_template_id", columns)
+                self.assertIn("source_template_item_key", columns)
+                self.assertIn("source_template_target_month", columns)
+                self.assertIn("source_template_apply_run_id", columns)
             finally:
                 conn.close()
 
@@ -333,6 +399,247 @@ class TestDbMoreCoverage(unittest.TestCase):
                         ) VALUES(?,?,?,?,?,?,?,?)
                         """,
                         ("ch-status", "video", "t", None, "n", "INVALID", "c", "u"),
+                    )
+            finally:
+                conn.close()
+
+    def test_migrate_creates_planner_release_links_table(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                tables = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("planner_release_links", tables)
+            finally:
+                conn.close()
+
+    def test_migrate_creates_planner_mass_action_sessions_table_and_indexes(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                tables = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("planner_mass_action_sessions", tables)
+
+                indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='planner_mass_action_sessions'"
+                    ).fetchall()
+                }
+                self.assertTrue(
+                    {
+                        "idx_planner_mass_action_sessions_status",
+                        "idx_planner_mass_action_sessions_expires_at",
+                    }.issubset(indexes)
+                )
+
+                table_sql = str(
+                    conn.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='planner_mass_action_sessions'"
+                    ).fetchone()["sql"]
+                )
+                self.assertIn("BATCH_MATERIALIZE_SELECTED", table_sql)
+                self.assertIn("BATCH_CREATE_JOBS_FOR_SELECTED", table_sql)
+                self.assertIn("CHECK(preview_status IN ('OPEN','EXECUTED','EXPIRED','INVALIDATED'))", table_sql)
+            finally:
+                conn.close()
+
+    def test_migrate_creates_publish_audit_status_tables_and_is_idempotent(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                dbm.migrate(conn)
+                tables = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("publish_audit_status_project_defaults", tables)
+                self.assertIn("publish_audit_status_channel_overrides", tables)
+                self.assertIn("publish_audit_status_history", tables)
+
+                history_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='publish_audit_status_history'"
+                    ).fetchall()
+                }
+                self.assertTrue(
+                    {"idx_publish_audit_status_history_created_at", "idx_publish_audit_status_history_scope"}.issubset(history_indexes)
+                )
+            finally:
+                conn.close()
+
+    def test_migrate_creates_publish_policy_and_controls_tables_and_is_idempotent(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                dbm.migrate(conn)
+                dbm.migrate(conn)
+                tables = {
+                    str(r["name"])
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                self.assertIn("publish_policy_project_defaults", tables)
+                self.assertIn("publish_policy_channel_overrides", tables)
+                self.assertIn("publish_policy_item_overrides", tables)
+                self.assertIn("publish_global_controls", tables)
+
+                channel_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='publish_policy_channel_overrides'"
+                    ).fetchall()
+                }
+                item_indexes = {
+                    str(r["name"])
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='publish_policy_item_overrides'"
+                    ).fetchall()
+                }
+                self.assertIn("idx_publish_policy_channel_overrides_mode", channel_indexes)
+                self.assertIn("idx_publish_policy_item_overrides_mode", item_indexes)
+            finally:
+                conn.close()
+
+    def test_planner_release_links_constraints(self):
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                seed_minimal_db(env)
+                cur1 = conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+                    VALUES('darkwood-reverie', 'LONG', 'a', '2026-01-01T00:00:00Z', 'n', 'PLANNED', 'c', 'u')
+                    """
+                )
+                planner1 = int(cur1.lastrowid)
+                cur2 = conn.execute(
+                    """
+                    INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+                    VALUES('channel-b', 'LONG', 'b', '2026-01-01T01:00:00Z', 'n', 'PLANNED', 'c', 'u')
+                    """
+                )
+                planner2 = int(cur2.lastrowid)
+                ch = conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()
+                rel = conn.execute(
+                    """
+                    INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                    VALUES(?, 'r', 'd', '[]', NULL, NULL, 'meta-1', 1.0)
+                    """,
+                    (int(ch["id"]),),
+                )
+                release_id = int(rel.lastrowid)
+                conn.execute(
+                    """
+                    INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by)
+                    VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')
+                    """,
+                    (planner1, release_id),
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        """
+                        INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by)
+                        VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')
+                        """,
+                        (planner2, release_id),
+                    )
+            finally:
+                conn.close()
+
+    def test_planner_release_links_duplicate_planned_release_id_fails(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                planner1 = int(
+                    conn.execute(
+                        """
+                        INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+                        VALUES('darkwood-reverie', 'LONG', 'a', '2026-02-01T00:00:00Z', 'n', 'PLANNED', 'c', 'u')
+                        """
+                    ).lastrowid
+                )
+                ch1 = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                ch2 = int(conn.execute("SELECT id FROM channels WHERE slug = 'channel-b'").fetchone()["id"])
+                rel1 = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                        VALUES(?, 'r1', 'd', '[]', NULL, NULL, 'meta-dup-planned-1', 1.0)
+                        """,
+                        (ch1,),
+                    ).lastrowid
+                )
+                rel2 = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                        VALUES(?, 'r2', 'd', '[]', NULL, NULL, 'meta-dup-planned-2', 2.0)
+                        """,
+                        (ch2,),
+                    ).lastrowid
+                )
+                conn.execute(
+                    "INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by) VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')",
+                    (planner1, rel1),
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by) VALUES(?, ?, '2026-01-01T00:00:01Z', 'seed')",
+                        (planner1, rel2),
+                    )
+            finally:
+                conn.close()
+
+    def test_planner_release_links_invalid_planned_release_id_fk_fails(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                ch = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
+                rel = int(
+                    conn.execute(
+                        """
+                        INSERT INTO releases(channel_id, title, description, tags_json, planned_at, origin_release_folder_id, origin_meta_file_id, created_at)
+                        VALUES(?, 'r', 'd', '[]', NULL, NULL, 'meta-invalid-planned-fk', 1.0)
+                        """,
+                        (ch,),
+                    ).lastrowid
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by) VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')",
+                        (999999, rel),
+                    )
+            finally:
+                conn.close()
+
+    def test_planner_release_links_invalid_release_id_fk_fails(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                planner = int(
+                    conn.execute(
+                        """
+                        INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+                        VALUES('darkwood-reverie', 'LONG', 'a', '2026-03-01T00:00:00Z', 'n', 'PLANNED', 'c', 'u')
+                        """
+                    ).lastrowid
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO planner_release_links(planned_release_id, release_id, created_at, created_by) VALUES(?, ?, '2026-01-01T00:00:00Z', 'seed')",
+                        (planner, 999999),
                     )
             finally:
                 conn.close()

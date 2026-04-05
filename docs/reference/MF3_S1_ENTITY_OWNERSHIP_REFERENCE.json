@@ -1,0 +1,56 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF3-S1",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "entities": [
+    {
+      "entity": "epic7_documentation_canon",
+      "owner_team": "Documentation Governance",
+      "owner_role": "Spec Custodian",
+      "references": [
+        "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt"
+      ]
+    },
+    {
+      "entity": "epic7_requirement_bundle",
+      "owner_team": "Documentation Governance",
+      "owner_role": "Requirement Custodian",
+      "references": [
+        "docs/req/REQ_Epic_7_Full_Pack.txt"
+      ]
+    },
+    {
+      "entity": "workflow_canon",
+      "owner_team": "Documentation Governance",
+      "owner_role": "Workflow Steward",
+      "references": [
+        "docs/workflows/MF2_S1_CANONICAL_WORKFLOW_STRUCTURE.md",
+        "docs/workflows/MF2_S2_STAGE_CONTRACTS.md"
+      ]
+    },
+    {
+      "entity": "production_ops_runbook_entry",
+      "owner_team": "Operations",
+      "owner_role": "On-call Maintainer",
+      "references": [
+        "docs/ops/runbook/README.md"
+      ]
+    },
+    {
+      "entity": "runtime_entry_docs",
+      "owner_team": "Platform Backend",
+      "owner_role": "Runtime Maintainer",
+      "references": [
+        "README.md"
+      ]
+    },
+    {
+      "entity": "test_process_reference",
+      "owner_team": "QA Engineering",
+      "owner_role": "Test Process Owner",
+      "references": [
+        "TESTING.md"
+      ]
+    }
+  ]
+}

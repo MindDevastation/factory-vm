@@ -1,0 +1,21 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF5-S4",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "modes": {
+    "routine": "docs/runbooks/MF5_S1_START_STOP_AND_ENV_RUNBOOK.md",
+    "verification": "docs/runbooks/MF5_S4_PRODUCTION_SMOKE_AND_VERIFICATION_GUIDE.md",
+    "incident": "docs/runbooks/MF5_S3_INCIDENT_RESPONSE_RUNBOOK.md",
+    "recovery": "docs/runbooks/MF5_S3_RECOVERY_RUNBOOK.md"
+  },
+  "verification_honesty_rules": [
+    "verification_pass_is_time_bound",
+    "verification_pass_not_equivalent_to_full_runtime_closure",
+    "unresolved_runtime_tails_must_be_recorded"
+  ],
+  "constraints": {
+    "mode_separation_required": true,
+    "no_runtime_feature_changes": true,
+    "no_mf6_governance_closure_absorption": true
+  }
+}

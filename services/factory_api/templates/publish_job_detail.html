@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Publish Job Detail</h1>
+<p><a href="/ui/publish/queue">Back to queue</a></p>
+<p class="muted" id="publish-job-id">Job #{{ job_id }}</p>
+
+<details id="publish-detail-legend">
+  <summary><strong>State / reason legend</strong></summary>
+  <p class="muted">States and reason codes are read-only explainers for operator context; actions still use API validation and policy constraints.</p>
+</details>
+
+<div class="grid">
+  <div>
+    <h2>Explainability</h2>
+    <pre id="publish-detail-explain">Loading…</pre>
+  </div>
+  <div>
+    <h2>Audit (latest)</h2>
+    <pre id="publish-detail-audit">Loading…</pre>
+  </div>
+</div>
+
+<div id="publish-detail-actions" style="margin-top:12px; padding:8px; border:1px solid #ddd;">
+  <h2>Operator Actions</h2>
+  <p class="muted">Payload fields required by API are included below.</p>
+  <p>
+    <button type="button" class="pja-btn" data-endpoint="retry">Retry</button>
+    <button type="button" class="pja-btn" data-endpoint="unblock">Unblock</button>
+    <button type="button" class="pja-btn" data-endpoint="move-to-manual">Move to manual</button>
+    <button type="button" class="pja-btn" data-endpoint="acknowledge">Acknowledge</button>
+    <button type="button" class="pja-btn" data-endpoint="reset-failure">Reset failure</button>
+    <button type="button" class="pja-btn" data-endpoint="cancel">Cancel</button>
+  </p>
+  <p>
+    <label>Reschedule at (ISO) <input id="reschedule-at" type="text" placeholder="2026-04-01T12:00:00Z" /></label>
+    <button type="button" id="reschedule-btn">Reschedule</button>
+  </p>
+  <p>
+    <label>Actual published at (ISO) <input id="completed-at" type="text" placeholder="2026-04-01T12:00:00Z" /></label>
+    <label>Video ID <input id="completed-video-id" type="text" placeholder="abc123" /></label>
+    <label>URL <input id="completed-url" type="text" placeholder="https://youtube.com/watch?v=abc123" /></label>
+    <button type="button" id="mark-completed-btn">Mark completed</button>
+  </p>
+  <pre id="publish-detail-action-result" class="muted">No action yet.</pre>
+</div>
+
+<script>
+(async function () {
+  const jobId = {{ job_id }};
+  const explainEl = document.getElementById('publish-detail-explain');
+  const auditEl = document.getElementById('publish-detail-audit');
+  const actionResultEl = document.getElementById('publish-detail-action-result');
+
+  function requestEnvelope(reason) {
+    return {
+      confirm: true,
+      reason: reason,
+      request_id: 'ui-detail-' + jobId + '-' + Date.now()
+    };
+  }
+
+  async function loadDetail() {
+    const resp = await fetch('/v1/publish/jobs/' + encodeURIComponent(jobId));
+    const data = await resp.json();
+    const summary = {
+      state: data && data.global_state_stage_summary ? data.global_state_stage_summary.state : null,
+      stage: data && data.global_state_stage_summary ? data.global_state_stage_summary.stage : null,
+      publish_state: data ? data.publish_state : null,
+      reasons: {
+        code: data && data.effective_decision ? data.effective_decision.reason_code : null,
+        detail: data && data.effective_decision ? data.effective_decision.decision : null
+      },
+      attempts: data && data.attempts ? data.attempts.publish_attempt_count : null,
+      schedule: data && data.schedule ? data.schedule.scheduled_at : null,
+      last_error: {
+        code: data && data.last_error ? data.last_error.code : null,
+        message: data && data.last_error ? data.last_error.message : null
+      },
+      next_actions: [
+        'retry', 'unblock', 'move-to-manual', 'acknowledge', 'mark-completed', 'reschedule', 'cancel', 'reset-failure'
+      ]
+    };
+    explainEl.textContent = JSON.stringify(summary, null, 2);
+  }
+
+  async function loadAudit() {
+    const resp = await fetch('/v1/publish/jobs/' + encodeURIComponent(jobId) + '/audit');
+    const data = await resp.json();
+    auditEl.textContent = JSON.stringify(data, null, 2);
+  }
+
+  async function runAction(endpoint, payload) {
+    const resp = await fetch('/v1/publish/jobs/' + encodeURIComponent(jobId) + '/' + endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    actionResultEl.textContent = JSON.stringify(data, null, 2);
+    if (resp.ok) {
+      await Promise.all([loadDetail(), loadAudit()]);
+    }
+  }
+
+  Array.from(document.querySelectorAll('.pja-btn')).forEach((btn) => {
+    btn.addEventListener('click', async function () {
+      const endpoint = String(btn.dataset.endpoint);
+      await runAction(endpoint, requestEnvelope('ui_detail_' + endpoint));
+    });
+  });
+
+  document.getElementById('reschedule-btn').addEventListener('click', async function () {
+    await runAction('reschedule', {
+      ...requestEnvelope('ui_detail_reschedule'),
+      scheduled_at: document.getElementById('reschedule-at').value.trim()
+    });
+  });
+
+  document.getElementById('mark-completed-btn').addEventListener('click', async function () {
+    await runAction('mark-completed', {
+      ...requestEnvelope('ui_detail_mark_completed'),
+      actual_published_at: document.getElementById('completed-at').value.trim(),
+      video_id: document.getElementById('completed-video-id').value.trim() || null,
+      url: document.getElementById('completed-url').value.trim() || null
+    });
+  });
+
+  await Promise.all([loadDetail(), loadAudit()]);
+})();
+</script>
+{% endblock %}

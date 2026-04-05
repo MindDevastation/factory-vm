@@ -1,0 +1,1084 @@
+EPIC_7_SPEC_BUNDLE_v1.1
+Epic 7 — Documentation / Runbook Consolidation
+Bundle status: all current SPECs for E7-MF1..E7-MF6
+Format: copy-friendly plain text
+
+Source basis:
+- REQ_EPIC7_DOCUMENTATION_AND_RUNBOOK_CONSOLIDATION_v1.0
+- REQ_E7_MF1_DOCUMENTATION_INVENTORY_TAXONOMY_AND_SSOT_MAP_v1.0
+- REQ_E7_MF2_WORKFLOW_CONSOLIDATION_PRODUCT_DEV_REVIEW_QA_v1.0
+- REQ_E7_MF3_DOMAIN_API_AND_STATE_REFERENCE_CONSOLIDATION_v1.0
+- REQ_E7_MF4_OPERATOR_GUIDES_AND_PRODUCT_USAGE_RUNBOOKS_v1.0
+- REQ_E7_MF5_OPERATIONS_DEPLOYMENT_AND_RECOVERY_RUNBOOK_CONSOLIDATION_v1.0
+- REQ_E7_MF6_DRIFT_CONTROL_DEPRECATION_AND_DOCUMENTATION_GOVERNANCE_v1.0
+
+
+Bundle normalization notes for v1.1:
+- The canonical Epic 7 documentation status model is:
+  - CANONICAL
+  - SUBORDINATE
+  - NON_CANONICAL
+  - LEGACY_CANDIDATE
+  - DEPRECATED
+  - ARCHIVED
+- MF6 governance lifecycle uses the Epic 7 status model directly; ACTIVE_CANONICAL is retired and replaced by CANONICAL.
+- Primary doc class taxonomy must not encode lifecycle. Archive/deprecated handling is status/lifecycle, not primary class.
+- The normalized archive-oriented primary doc class is:
+  - ARCHIVE_RECORD
+- Default Epic 7 output placement convention in-repo:
+  - docs/ssot/ for inventory, taxonomy, ownership, SSOT, legacy/deprecation candidate artifacts
+  - docs/workflows/ for workflow canon and handoff artifacts
+  - docs/reference/ for reference-grade domain/API/state/boundary artifacts
+  - docs/guides/ for operator guides and task-oriented usage guides
+  - docs/runbooks/ for ops/deploy/recovery/verification runbooks
+  - docs/governance/ for drift-control, update policy, deprecation/archive, and ownership governance artifacts
+- For Epic 7 inventory scope, “project documentation artifacts in scope” means repository-tracked documentation artifacts intended as project knowledge surfaces, including docs/**, root-level documentation files, docs/spec/**, docs/req/**, checked-in runbooks/guides/reference docs, and checked-in audit/handoff documentation artifacts that are meant to remain as project knowledge.
+- Excluded from default Epic 7 inventory scope unless they are explicitly checked into the repo as documentation artifacts:
+  - PR descriptions/comments
+  - chat transcripts
+  - external links without checked-in source text
+  - generated build outputs
+
+====================================================================
+SPEC_E7_MF1_DOCUMENTATION_INVENTORY_TAXONOMY_AND_SSOT_MAP_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E7-MF1 introduces the canonical documentation inventory, taxonomy, and SSOT map foundation for Epic 7.
+
+Its purpose is to make it explicit, for every meaningful knowledge area in the project:
+- where the knowledge lives;
+- which document is canonical;
+- who owns it;
+- which related documents are subordinate, legacy, archived, or deprecated.
+
+MF1 is the foundation microfeature for the whole documentation consolidation epic. Without it, later consolidation remains ambiguous and non-governable.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- full inventory of documentation artifacts in project scope;
+- classification by canonical doc classes;
+- canonical vs non-canonical marking;
+- ownership model for documentation artifacts;
+- SSOT map by topic/domain/workflow;
+- explicit legacy/deprecated candidate list.
+
+2.2. Out of scope
+- rewriting all documentation contents;
+- deep editorial cleanup of every file;
+- final deprecation enforcement;
+- workflow rewrite itself.
+
+2.3. Boundary rules
+- inventory must not degrade into a shallow list of folders;
+- every meaningful topic must have a canonical source;
+- legacy documents must not disappear silently;
+- MF1 must not change product semantics.
+
+2.4. Documentation scope normalization
+For Epic 7 inventory scope, project documentation artifacts in scope are repository-tracked documentation surfaces intended as project knowledge artifacts, including:
+- docs/**
+- root-level documentation files
+- docs/spec/**
+- docs/req/**
+- checked-in guides, runbooks, reference docs, audit docs, and handoff docs intended to remain as project knowledge artifacts
+
+Excluded by default unless explicitly checked into the repository as documentation artifacts:
+- PR descriptions/comments
+- chat transcripts
+- external links without checked-in source text
+- generated build outputs
+
+3. Canonical documentation model
+
+3.1. Frozen doc classes
+MF1 must classify artifacts into one primary doc class from the canonical Epic 7 taxonomy:
+- NORMATIVE_PRODUCT_DOC
+- RUNBOOK
+- WORKFLOW_DOC
+- REFERENCE_DOC
+- GUIDE
+- ARCHIVE_RECORD
+
+Lifecycle state such as legacy/deprecated/archived must not be encoded as the primary doc class.
+
+3.2. Canonical status model
+MF1 freezes the following canonical status literals:
+- CANONICAL
+- SUBORDINATE
+- NON_CANONICAL
+- LEGACY_CANDIDATE
+- DEPRECATED
+- ARCHIVED
+
+3.3. Ownership model
+Every inventoried documentation artifact must have:
+- primary doc class
+- owner
+- canonical status
+- deprecation/archive status where applicable
+
+4. SSOT map model
+
+4.1. SSOT map purpose
+The SSOT map must answer, per topic/domain/workflow:
+- what is the canonical source;
+- which docs are subordinate references;
+- which docs are legacy/non-canonical;
+- who owns the canonical source.
+
+4.2. Topic coverage rule
+The SSOT map must cover at minimum:
+- product semantics
+- operator workflows
+- runbooks
+- deployment/ops
+- dev/review/QA process
+- glossary / ownership / boundaries
+
+4.3. One-canonical-source rule
+If multiple documents cover the same subject, exactly one must be designated canonical for that subject.
+Others must be marked subordinate, legacy candidate, deprecated, or archived.
+
+5. Inventory contract
+
+5.1. Every inventory record must include:
+- artifact identifier/path
+- title or recognizable label
+- doc class
+- owner
+- canonical status
+- topic/domain/workflow coverage
+- related canonical source if non-canonical
+- legacy/deprecation/archive candidate marker where applicable
+
+5.2. Inventory completeness rule
+Inventory must include all project documentation artifacts in scope, not just selected “important” directories.
+
+6. API / interface families
+
+6.1. Interface boundary
+MF1 defines documentation inventory and SSOT structure only. It does not rewrite workflows, references, guides, or runbooks in full.
+
+6.2. Required interface families
+- documentation inventory format
+- doc taxonomy format
+- ownership map format
+- SSOT map format
+- legacy/deprecation candidate list format
+
+7. Persistence / artifact requirements
+
+7.1. Required output artifacts
+MF1 must produce at minimum:
+- documentation inventory artifact
+- taxonomy artifact
+- ownership map artifact
+- SSOT map artifact
+- legacy/deprecation candidate artifact
+
+7.2. Artifact rules
+- outputs must be explicit and inspectable;
+- outputs must be documentation artifacts themselves, not only chat guidance;
+- outputs must be consistent with the frozen doc classes and canonical status model.
+
+8. Validation rules
+
+8.1. Inventory validation
+- every inventoried artifact must have one primary doc class;
+- every inventoried artifact must have canonical status;
+- every meaningful topic must have a canonical source;
+- no topic may be left without a canonical source where one is required.
+
+8.2. Ownership validation
+- every canonical source must have an owner;
+- ownership may not be implicit or missing for canonical artifacts.
+
+8.3. Legacy validation
+- legacy/deprecated candidates must be explicitly listed;
+- implicit “probably old” status is invalid.
+
+9. Acceptance criteria
+
+MF1 is accepted if all of the following are true:
+- full documentation inventory exists;
+- taxonomy by doc classes exists;
+- SSOT map exists;
+- ownership map exists;
+- legacy/deprecated candidate list exists.
+
+10. Test plan
+
+10.1. Unit
+- doc class validation
+- canonical status validation
+- ownership presence validation
+- topic-to-canonical-source validation
+
+10.2. Integration
+- build inventory across all project documentation artifacts
+- build SSOT map across domains/workflows
+- mark canonical vs subordinate vs legacy candidates
+- verify every major topic has canonical source
+
+10.3. Smoke
+- inventory is broader than a few folders
+- SSOT map is human-usable
+- legacy candidates are explicit
+
+11. Rollback / migration considerations
+
+11.1. Rollout posture
+MF1 must be additive and classification-first.
+
+11.2. Safe fallback
+If later MFs are not yet complete, MF1 outputs must still function as the documentation foundation for deciding what is canonical and what is not.
+
+11.3. No scope drift rule
+MF1 must not be used to silently rewrite product logic or to perform full-document rewrites by stealth.
+
+12. Open questions / ambiguities
+
+12.1. Exact artifact file naming is implementation detail, but folder placement is fixed by the Epic 7 bundle normalization notes:
+- docs/ssot/
+- docs/workflows/
+- docs/reference/
+- docs/guides/
+- docs/runbooks/
+- docs/governance/
+
+Outputs must remain explicit, stable, and discoverable inside that placement convention.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 7 and MF1 are aligned on inventory/taxonomy/SSOT map as the mandatory foundation for all later documentation consolidation.
+- Remaining uncertainty is artifact-format detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- inventory degrading into a shallow folder list;
+- topics left without canonical source;
+- ownership left implicit for canonical docs.
+
+====================================================================
+SPEC_E7_MF2_WORKFLOW_CONSOLIDATION_PRODUCT_DEV_REVIEW_QA_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E7-MF2 introduces the canonical workflow documentation layer for product, development, review, QA, operator, and release-related flows.
+
+Its purpose is to replace fragmented practice knowledge with one normative workflow set covering:
+- Discovery -> REQ -> SPEC -> Dev -> Review -> QA;
+- operator workflow;
+- release/publish workflow;
+- handoff workflow between stages.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- canonical end-to-end project workflow;
+- role-based handoff descriptions;
+- stage entry conditions;
+- stage exit conditions;
+- expected artifacts at each stage;
+- QA/review gating descriptions;
+- operator-facing workflow links where needed.
+
+2.2. Out of scope
+- changing product domains;
+- rewriting all runbooks;
+- workflow automation implementation.
+
+2.3. Boundary rules
+- workflow docs are normative, not optional narrative;
+- each stage must have explicit input/output contract;
+- if practice and docs conflict, one canonical process must be chosen;
+- operator and QA pathways must remain explicit.
+
+3. Canonical workflow model
+
+3.1. Required stage families
+MF2 must consolidate at minimum:
+- DISCOVERY
+- REQ
+- SPEC
+- DEV
+- REVIEW
+- QA
+- OPERATOR_WORKFLOW
+- RELEASE_PUBLISH_WORKFLOW
+- HANDOFF_WORKFLOW
+
+3.2. Stage contract rule
+Each stage must define:
+- purpose
+- entry conditions
+- required inputs
+- required artifacts
+- expected outputs
+- exit conditions
+- handoff targets
+
+3.3. Handoff rule
+Every stage-to-stage transition must define:
+- what is handed off
+- in which form
+- to which role
+- under which acceptance/gating condition
+
+4. Normative workflow artifacts
+
+4.1. Required workflow outputs
+MF2 must produce at minimum:
+- canonical project workflow artifact
+- role-based handoff artifact
+- stage boundary artifact
+- artifact expectation matrix
+- operator/release workflow linkage artifact
+
+4.2. Competing-canons rule
+There must not remain multiple “main” workflow documents after MF2 is complete.
+
+5. Role model
+
+5.1. Minimum role coverage
+Workflow docs must explicitly cover at least:
+- product/spec role
+- development role
+- review role
+- QA role
+- operator role
+
+5.2. Role boundary rule
+Role boundaries and handoff ownership must be explicit, not assumed from habit.
+
+6. API / interface families
+
+6.1. Interface boundary
+MF2 defines workflow documentation structure and canonical stage contracts. It does not rewrite domain semantics or deep operator runbooks.
+
+6.2. Required interface families
+- canonical workflow artifact
+- stage contract artifact
+- handoff matrix artifact
+- gating/entry/exit artifact
+- operator workflow linkage artifact
+
+7. Validation rules
+
+7.1. Workflow validation
+- each canonical stage must have entry and exit conditions;
+- each stage must define required artifacts;
+- each stage must define handoff targets;
+- there must be no unresolved competing primary process docs.
+
+7.2. Handoff validation
+- every handoff must identify sender role, receiver role, and required artifact package;
+- implicit handoffs are invalid for canonical workflow docs.
+
+8. Acceptance criteria
+
+MF2 is accepted if all of the following are true:
+- one canonical workflow doc set exists;
+- stage boundaries are clear;
+- handoff rules exist between product/spec/dev/review/QA;
+- competing main workflow docs do not remain.
+
+9. Test plan
+
+9.1. Unit
+- stage contract completeness validation
+- handoff completeness validation
+- artifact matrix validation
+- duplicate-main-workflow conflict validation
+
+9.2. Integration
+- consolidate product/spec/dev/review/QA chain
+- consolidate operator workflow references
+- consolidate release/publish workflow references
+- verify one canonical process path per major workflow
+
+9.3. Smoke
+- workflow docs are normative and usable
+- operator and QA pathways are explicit
+- no parallel main process canons remain
+
+10. Rollback / migration considerations
+
+10.1. Rollout posture
+MF2 must be additive and canon-forming.
+
+10.2. Safe fallback
+If some domain-specific guides still exist, they may remain as subordinate materials, but the canonical process docs from MF2 must be clearly primary.
+
+10.3. No scope drift rule
+MF2 must not rewrite domain semantics or absorb all runbook content.
+
+11. Open questions / ambiguities
+
+11.1. Exact document split between one large workflow artifact vs several linked artifacts is implementation detail so long as the workflow canon remains singular and clear.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 7 and MF2 are aligned on normative workflow consolidation with explicit stage contracts and handoffs.
+- Remaining uncertainty is packaging detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- leaving multiple competing process canons;
+- losing operator or QA pathways;
+- stage IO contracts remaining implicit.
+
+====================================================================
+SPEC_E7_MF3_DOMAIN_API_AND_STATE_REFERENCE_CONSOLIDATION_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E7-MF3 introduces the canonical reference layer for product domains, APIs, entities, state models, and epic/domain boundaries.
+
+Its purpose is to consolidate already accepted domain knowledge into one reference-grade documentation layer suitable for development, review, QA, and operator understanding.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- consolidated entity ownership reference;
+- consolidated lifecycle/state references;
+- consolidated API/reference layer;
+- glossary / naming / canonical literal references where relevant;
+- domain boundary maps.
+
+2.2. Out of scope
+- rethinking or changing frozen domain contracts;
+- exhaustive autogenerated code-level docs for every line;
+- runtime ops runbooks.
+
+2.3. Boundary rules
+- MF3 must not change frozen domain decisions through docs;
+- reference docs must remain reference-grade, not narrative operator guides;
+- domain boundary conflicts must be resolved explicitly.
+
+3. Canonical reference model
+
+3.1. Required reference families
+MF3 must produce at minimum:
+- ENTITY_OWNERSHIP_REFERENCE
+- STATE_LIFECYCLE_REFERENCE
+- API_REFERENCE
+- GLOSSARY_NAMING_REFERENCE
+- DOMAIN_BOUNDARY_MAP
+
+3.2. Reference-grade rule
+Reference docs must be:
+- canonical
+- concise
+- structured
+- lookup-oriented
+They must not be written as broad how-to guides.
+
+3.3. Domain-freeze rule
+MF3 must document already accepted product canon and must not reopen it.
+
+4. Entity ownership reference
+
+4.1. Required coverage
+MF3 must document canonical ownership for major entities and contexts, including where ownership boundaries matter across domains/epics.
+
+4.2. Ownership rule
+Every significant entity or major concept included in reference scope must have:
+- canonical owner
+- related adjacent entities
+- boundary notes where ownership is often confused
+
+5. State / lifecycle reference
+
+5.1. Required coverage
+MF3 must consolidate canonical lifecycle and state references where they already exist in frozen product canon.
+
+5.2. State reference rule
+For every included state machine/lifecycle reference, MF3 must document:
+- canonical states
+- terminal vs non-terminal classes where relevant
+- ownership of lifecycle
+- boundary notes where confusion is likely
+
+6. API / reference layer
+
+6.1. Required coverage
+MF3 must consolidate documented API/domain/reference surfaces relevant to project understanding.
+
+6.2. API reference rule
+API references must be canonical lookup docs and must not be mixed with operator usage or ops incident instructions.
+
+7. Domain boundary maps
+
+7.1. Required coverage
+MF3 must explicitly map major domain and epic boundaries where confusion is likely.
+
+7.2. Boundary rule
+If boundary conflicts or overlapping narratives exist, MF3 must resolve them into one canonical boundary reference rather than leaving parallel interpretations.
+
+8. API / interface families
+
+8.1. Interface boundary
+MF3 defines reference artifacts, not operator guides or ops runbooks.
+
+8.2. Required interface families
+- entity ownership reference artifact
+- state/lifecycle reference artifact
+- API/reference artifact
+- glossary/naming artifact
+- domain boundary map artifact
+
+9. Validation rules
+
+9.1. Reference validation
+- included references must align with frozen product canon;
+- no reference entry may silently modify domain semantics;
+- entity ownership and lifecycle references must not conflict with canonical prior epic decisions.
+
+9.2. Boundary validation
+- domain boundary conflicts must be resolved explicitly;
+- mixed narrative/reference docs are invalid as canonical reference outputs.
+
+10. Acceptance criteria
+
+MF3 is accepted if all of the following are true:
+- consolidated entity ownership reference exists;
+- consolidated lifecycle/state references exist;
+- consolidated API/reference layer exists;
+- boundary maps between major domains/epics exist.
+
+11. Test plan
+
+11.1. Unit
+- reference family validation
+- ownership-entry completeness validation
+- lifecycle-entry completeness validation
+- boundary-map completeness validation
+
+11.2. Integration
+- consolidate entity ownership from frozen canon
+- consolidate lifecycle/state references from frozen canon
+- consolidate API/reference layer
+- produce boundary map across major domains and epics
+
+11.3. Smoke
+- reference docs are lookup-oriented
+- no operator how-to guides are mixed in
+- no hidden product-semantic changes appear through reference docs
+
+12. Rollback / migration considerations
+
+12.1. Rollout posture
+MF3 must be additive and reference-first.
+
+12.2. Safe fallback
+If some deep code-level details remain outside the canonical reference layer, subordinate materials may remain, but one reference-grade canonical surface must exist.
+
+12.3. No scope drift rule
+MF3 must not absorb runtime ops runbooks or operator usage guides.
+
+13. Open questions / ambiguities
+
+13.1. Exact split between one reference handbook vs several linked reference artifacts is implementation detail so long as the canonical reference layer remains clear and non-competing.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 7 and MF3 are aligned on a reference-grade consolidation layer for entities, APIs, states, and boundaries.
+- Remaining uncertainty is packaging detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- hidden semantic changes entering through reference docs;
+- mixing reference docs with operator how-to content;
+- leaving boundary conflicts unresolved.
+
+====================================================================
+SPEC_E7_MF4_OPERATOR_GUIDES_AND_PRODUCT_USAGE_RUNBOOKS_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E7-MF4 introduces the canonical operator-facing guides and product usage runbooks for the main operator scenarios in the project.
+
+Its purpose is to gather one operator knowledge layer across:
+- planner/monthly production;
+- publish/manual handoff;
+- visual workflows;
+- analytics center;
+- Telegram operator layer;
+- problem triage and next-action guidance.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- operator guides by domain;
+- role/task-based usage runbooks;
+- problem/triage guidance;
+- next-step linking between operator scenarios;
+- web UI and Telegram operator usage docs where applicable.
+
+2.2. Out of scope
+- redesign of operator UI;
+- replacement of domain reference docs;
+- deep ops/deploy/recovery docs.
+
+2.3. Boundary rules
+- operator docs must be task-oriented;
+- operator docs must clearly distinguish read vs action vs risky action;
+- Telegram and web role split must be documented where both support a flow;
+- operator guides must not become low-level API/reference docs.
+
+3. Canonical operator-guide model
+
+3.1. Required guide families
+MF4 must support at minimum:
+- PLANNER_USAGE_GUIDE
+- PUBLISH_MANUAL_HANDOFF_GUIDE
+- VISUAL_WORKFLOW_GUIDE
+- ANALYTICS_CENTER_GUIDE
+- TELEGRAM_OPERATOR_GUIDE
+- PROBLEM_TRIAGE_GUIDE
+
+3.2. Task-oriented rule
+Each guide/runbook must be organized around operator tasks and scenarios, not code modules.
+
+3.3. Read/action/risk distinction rule
+Each guide must explicitly distinguish:
+- read/inspection tasks
+- ordinary actions
+- risky or guarded actions
+
+4. Cross-surface role-split model
+
+4.1. Web vs Telegram rule
+If both web UI and Telegram support a flow, docs must explain:
+- which surface is primary
+- what Telegram is suitable for
+- what should still be done in web UI
+- what safety/guardrails or visibility differences exist
+
+4.2. Surface-split requirement
+Surface split must be explicit, not assumed by operator habit.
+
+5. Problem-triage guidance
+
+5.1. Required triage coverage
+Operator guides must include:
+- what problem means
+- why it matters
+- where to inspect next
+- what action class is appropriate next
+
+5.2. Next-step linking rule
+Guides must support continuity between scenarios rather than isolated “single-page instructions.”
+
+6. API / interface families
+
+6.1. Interface boundary
+MF4 defines operator-facing usage guides and task runbooks. It does not replace domain reference docs or deep ops docs.
+
+6.2. Required interface families
+- domain operator guide artifact
+- task runbook artifact
+- problem triage guide artifact
+- web-vs-Telegram usage split artifact where relevant
+
+7. Validation rules
+
+7.1. Guide validation
+- every major operator domain must have a guide;
+- every guide must be task-oriented;
+- read vs action vs risky action distinction must be explicit.
+
+7.2. Surface validation
+- Telegram-supported flows must not remain undocumented;
+- web-vs-Telegram split must be explicit where relevant.
+
+8. Acceptance criteria
+
+MF4 is accepted if all of the following are true:
+- operator guides exist for major domains;
+- task-oriented runbooks exist;
+- problem triage guidance exists;
+- explicit guidance for web-vs-Telegram operator usage exists where relevant.
+
+9. Test plan
+
+9.1. Unit
+- guide-family validation
+- task-orientation validation
+- read/action/risk section validation
+- surface-split section validation
+
+9.2. Integration
+- consolidate planner operator guide
+- consolidate publish/manual handoff guide
+- consolidate visual workflow guide
+- consolidate analytics center guide
+- consolidate Telegram operator guide
+- consolidate problem triage guide
+
+9.3. Smoke
+- guides are operator-facing, not low-level reference docs
+- Telegram flows are documented
+- next-step continuity exists across operator scenarios
+
+10. Rollback / migration considerations
+
+10.1. Rollout posture
+MF4 must be additive and operator-knowledge-first.
+
+10.2. Safe fallback
+If some domains are still evolving, guides may reference canonical downstream artifacts, but the main operator pathways must remain documented.
+
+10.3. No scope drift rule
+MF4 must not absorb low-level API/reference or deep ops incident docs.
+
+11. Open questions / ambiguities
+
+11.1. Exact grouping of multiple guides into one handbook vs several artifacts is implementation detail so long as canonical operator knowledge remains clear and task-oriented.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 7 and MF4 are aligned on a unified operator knowledge layer with task-oriented guides and explicit web-vs-Telegram usage guidance.
+- Remaining uncertainty is packaging detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- mixing operator guides with API/reference content;
+- leaving Telegram flows undocumented after Epic 6A;
+- losing task-oriented structure.
+
+====================================================================
+SPEC_E7_MF5_OPERATIONS_DEPLOYMENT_AND_RECOVERY_RUNBOOK_CONSOLIDATION_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E7-MF5 introduces the canonical operations, deployment, verification, and recovery runbook layer for the project.
+
+Its purpose is to consolidate runtime-oriented knowledge for:
+- deployment;
+- service lifecycle;
+- monitoring/checks;
+- recovery procedures;
+- incident handling;
+- environment/config guidance;
+- production-smoke and verification pathways.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- deploy/update/start/stop runbooks;
+- ops-use environment/config reference;
+- monitoring/check/checklist docs;
+- incident/recovery procedures;
+- production smoke / verification guidance;
+- log/audit/troubleshooting pathways.
+
+2.2. Out of scope
+- performing runtime verification itself;
+- new ops functionality;
+- infrastructure-as-code rewrite.
+
+2.3. Boundary rules
+- MF5 must not pretend unresolved Epic 1 runtime tail is already closed;
+- runbooks must distinguish routine operation vs verification vs incident vs recovery;
+- ops docs must be actionable and ordered, not merely descriptive;
+- operator usage docs and ops incident docs must remain distinct.
+
+3. Canonical ops-runbook model
+
+3.1. Required runbook families
+MF5 must support at minimum:
+- DEPLOY_RUNBOOK
+- UPDATE_RUNBOOK
+- START_STOP_RUNBOOK
+- ENV_CONFIG_REFERENCE_OPS
+- MONITORING_CHECKLIST
+- INCIDENT_RESPONSE_RUNBOOK
+- RECOVERY_RUNBOOK
+- PRODUCTION_SMOKE_VERIFICATION_GUIDE
+- LOG_AUDIT_TROUBLESHOOTING_GUIDE
+
+3.2. Actionable-and-ordered rule
+Each ops artifact must provide ordered operational steps, not vague narrative description.
+
+3.3. Verification-honesty rule
+Verification guidance may describe what must be checked and how, but must not claim unresolved runtime follow-ups are already complete.
+
+4. Ops state distinction model
+
+MF5 must clearly distinguish:
+- routine operation
+- verification
+- incident response
+- recovery
+
+Rules:
+- these four modes must not be merged into one ambiguous runbook;
+- the operator/engineer must know which mode they are in.
+
+5. API / interface families
+
+5.1. Interface boundary
+MF5 defines ops/runtime-oriented documentation artifacts only. It does not add runtime functionality.
+
+5.2. Required interface families
+- deploy/update/start/stop artifact
+- ops config reference artifact
+- monitoring/checklist artifact
+- incident/recovery artifact
+- production smoke/verification artifact
+- troubleshooting artifact
+
+6. Validation rules
+
+6.1. Runbook validation
+- every included runbook must be actionable and ordered;
+- routine vs verification vs incident vs recovery must be distinguishable;
+- no competing main ops runbooks should remain.
+
+6.2. Runtime-tail validation
+- docs must not silently mark unresolved runtime tail as closed;
+- unresolved follow-up areas must be represented honestly.
+
+7. Acceptance criteria
+
+MF5 is accepted if all of the following are true:
+- canonical deploy/update/start/stop docs exist;
+- canonical recovery/incident docs exist;
+- production-smoke/verification guidance exists;
+- a consolidated ops/runbook layer exists without competing alternatives.
+
+8. Test plan
+
+8.1. Unit
+- runbook-family validation
+- mode-distinction validation
+- ordered-step validation
+- unresolved-runtime-tail honesty validation
+
+8.2. Integration
+- consolidate deploy/update/start/stop runbooks
+- consolidate incident/recovery runbooks
+- consolidate monitoring/checklists
+- consolidate production smoke/verification guidance
+- consolidate troubleshooting paths
+
+8.3. Smoke
+- ops docs are actionable
+- operator usage docs are not mixed into ops incident docs
+- runtime-tail honesty preserved
+
+9. Rollback / migration considerations
+
+9.1. Rollout posture
+MF5 must be additive and ops-runbook-first.
+
+9.2. Safe fallback
+If some runtime areas still need follow-up later, runbooks must still describe current known operating and troubleshooting practice without overclaiming closure.
+
+9.3. No scope drift rule
+MF5 must not become runtime-feature work or infrastructure rewrite.
+
+10. Open questions / ambiguities
+
+10.1. Exact split between one ops handbook vs several linked runbooks is implementation detail so long as the canonical ops layer remains explicit and non-competing.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 7 and MF5 are aligned on actionable, ordered, honest ops/deploy/recovery runbooks.
+- Remaining uncertainty is artifact packaging detail, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- silently marking Epic 1 runtime tail as closed through docs;
+- mixing operator usage guides with ops incident docs;
+- leaving competing ops runbooks in place.
+
+====================================================================
+SPEC_E7_MF6_DRIFT_CONTROL_DEPRECATION_AND_DOCUMENTATION_GOVERNANCE_v1.0
+====================================================================
+
+1. Overview / цель фичи
+
+E7-MF6 introduces the documentation governance layer that keeps project documentation canonical after Epic 7 is complete.
+
+Its purpose is to make documentation consolidation sustainable by defining:
+- drift-control rules;
+- doc update policy;
+- deprecation/archive policy;
+- review and approval expectations;
+- ownership model;
+- future-epic and future-fix documentation update obligations.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- drift-control rules;
+- doc update policy;
+- deprecation/archive policy;
+- review/approval expectations;
+- ownership/governance model;
+- future change doc-update obligations.
+
+2.2. Out of scope
+- automated doc generation as mandatory requirement;
+- heavy compliance program;
+- enterprise document management platform.
+
+2.3. Boundary rules
+- governance is mandatory, not optional polish;
+- archive/deprecate must be explicit, not implicit;
+- governance must have ownership;
+- Epic 7 must not close without future drift-control rules.
+
+3. Canonical governance model
+
+3.1. Required governance families
+MF6 must define at minimum:
+- DRIFT_CONTROL_RULES
+- DOC_UPDATE_POLICY
+- DEPRECATION_ARCHIVE_POLICY
+- REVIEW_APPROVAL_EXPECTATIONS
+- OWNERSHIP_GOVERNANCE_MODEL
+- FUTURE_CHANGE_DOC_UPDATE_OBLIGATIONS
+
+3.2. Future-change rule
+Any future product change affecting canonical docs must have explicit doc-update expectation.
+
+3.3. Explicit-resolution rule
+If drift appears between code, frozen REQ, and docs, there must be an explicit resolution path.
+
+4. Deprecation and archive model
+
+4.1. Required deprecation/archive statuses
+MF6 freezes the following lifecycle statuses for documentation governance use:
+- CANONICAL
+- SUBORDINATE
+- DEPRECATED
+- ARCHIVED
+
+These governance lifecycle statuses are the governance subset of the normalized Epic 7 documentation status model.
+
+4.2. Marking rule
+Deprecated docs must be explicitly marked.
+Archived docs must be explicitly marked.
+Implicit legacy status is invalid.
+
+4.3. Traceability rule
+Archive/deprecation must preserve traceability and must not silently delete project memory where traceability matters.
+
+5. Ownership and review model
+
+5.1. Ownership rule
+Canonical docs must have explicit ownership.
+
+5.2. Review/approval rule
+Governance must define when doc updates require review/approval and what evidence is expected for canonical doc changes.
+
+5.3. Evidence-backed update rule
+Canonical doc updates must be evidence-backed where the project rules require it.
+
+6. API / interface families
+
+6.1. Interface boundary
+MF6 defines governance rules and enforcement expectations at documentation layer only. It does not require a heavy document-management platform.
+
+6.2. Required interface families
+- governance rules artifact
+- update policy artifact
+- deprecation/archive artifact
+- ownership artifact
+- drift-resolution artifact
+- future-change obligation artifact
+
+7. Validation rules
+
+7.1. Governance validation
+- archive/deprecate must be explicit;
+- governance ownership must be explicit;
+- future change obligations must be explicit.
+
+7.2. Drift-control validation
+- there must be a documented path for resolving code vs frozen REQ vs docs drift;
+- governance must not leave drift handling implicit.
+
+8. Acceptance criteria
+
+MF6 is accepted if all of the following are true:
+- canonical documentation governance rules exist;
+- deprecation/archive rules exist;
+- drift-resolution rules exist;
+- ownership/update obligations for future changes exist;
+- documentation no longer remains an unmanaged set of files after Epic 7.
+
+9. Test plan
+
+9.1. Unit
+- governance-family validation
+- deprecation/archive status validation
+- ownership-rule validation
+- future-change obligation validation
+
+9.2. Integration
+- define governance ruleset
+- define update policy
+- define archive/deprecation policy
+- define drift-resolution path
+- define future epic/fix doc-update obligations
+
+9.3. Smoke
+- governance is explicit
+- archive/deprecate is explicit
+- future drift-control is not left undefined
+
+10. Rollback / migration considerations
+
+10.1. Rollout posture
+MF6 must be additive and governance-first.
+
+10.2. Safe fallback
+If not all docs are yet fully migrated, governance rules must still apply to canonical docs immediately and provide the path for finishing migration.
+
+10.3. No scope drift rule
+MF6 must not be treated as optional polish and must not be closed without future drift-control obligations.
+
+11. Open questions / ambiguities
+
+11.1. Exact enforcement mechanisms beyond documentation-level governance are implementation details and are not blockers as long as the governance layer is explicit and actionable.
+
+Ready for Dev? Yes
+
+Причины
+- Epic 7 and MF6 are aligned on governance as the mechanism that keeps the documentation set canonical after consolidation.
+- Remaining uncertainty is enforcement-detail packaging, not a product blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- archive/deprecate staying implicit;
+- governance left without ownership;
+- Epic 7 closed without future drift-control obligations.

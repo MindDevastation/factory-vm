@@ -1,0 +1,294 @@
+REQ_PRELAUNCH_STABILIZATION_P1_CODE_AUDIT_OPTIMIZATION_AND_BUG_FIX_PASS_v1.0
+
+1. Название
+
+Pre-Launch Stabilization — Punkt 1
+Repo-wide Code Audit, Safe Optimization, and Bug Fix Pass
+
+2. Цель
+
+Перед запуском проекта на VPS провести управляемый проход по кодовой базе, чтобы:
+- найти и исправить реальные баги;
+- убрать опасные inefficiencies;
+- укрепить runtime reliability;
+- не менять продуктовую логику;
+- не превращать работу в хаотичный repo-wide rewrite.
+
+3. Зачем делаем
+
+Прямой запуск "пройтись Codex по каждому файлу и улучшить всё" слишком рискован:
+- реальные баги и хрупкости часто лежат на стыке нескольких файлов;
+- пофайловый проход провоцирует локальные улучшения, которые ломают соседние контракты;
+- слишком легко получить большой diff, churn в тестах и скрытые поведенческие изменения;
+- перед VPS запуском приоритетом должна быть стабильность, а не косметический рефакторинг.
+
+Поэтому пункт 1 фиксируется как controlled repository audit and fix program, а не как literal file-by-file rewrite.
+
+4. Канонический подход
+
+4.1. Работа идет не "по одному файлу", а по:
+- подсистемам;
+- пакетам;
+- рабочим батчам файлов;
+- runtime-critical зонам.
+
+4.2. Работа делится на два режима:
+- Audit only
+- Apply fixes
+
+4.3. Сначала всегда выполняется repo-wide или subsystem-wide audit without code changes.
+Только после этого допускается APPLY по батчам.
+
+4.4. Любой APPLY делается:
+- по ограниченному батчу;
+- с TEST-IMPACT CHECK;
+- без массового redesign;
+- с подтверждаемыми причинами изменений.
+
+5. Scope
+
+В scope пункта 1 входит:
+
+5.1. Runtime-critical код проекта
+- services/
+- scripts/
+- planner/ и другие рабочие модули проекта
+- domain services
+- workers
+- orchestrators
+- API routers
+- operational helpers
+- UI templates / JS helpers, если они содержат рабочую логику или контрактную связку
+
+5.2. Тесты
+- только в той мере, в какой их нужно обновить из-за реального исправления кода или устранения stale assertions
+- тесты не являются самостоятельной целью оптимизации
+
+5.3. Контрактные связки между файлами
+- межмодульные инварианты
+- stale/idempotency/guard logic
+- error handling
+- runtime safety
+- API / UI / service consistency
+
+6. Exclusions
+
+Из scope пункта 1 исключаются:
+
+6.1. Документация
+- docs/
+- handoff docs
+- REQ/SPEC тексты
+- любые неисполняемые документационные артефакты
+
+6.2. Мусорные и generated артефакты
+- __pycache__/
+- .venv/
+- node_modules/
+- build artifacts
+- caches
+- temporary files
+- generated outputs
+- бинарные артефакты
+- lockfiles, если по ним не требуется отдельный осознанный fix
+
+6.3. Workflow / instruction files
+- AGENTS-like instructions
+- process-only files, если они не являются runtime code
+
+6.4. Старые миграции
+- существующие миграции не переписываются
+- новая additive migration допустима только если fix реально ее требует
+
+7. Что считается допустимой оптимизацией
+
+Допустимы только safe optimizations без изменения логики:
+
+7.1. Локальное устранение явного дублирования
+
+7.2. Упрощение ветвлений без изменения поведения
+
+7.3. Локальная оптимизация запросов, циклов, I/O или service glue
+
+7.4. Удаление мертвого кода, если это доказуемо
+
+7.5. Укрепление error handling
+
+7.6. Укрепление stale/idempotency/guard behavior
+
+7.7. Локальные micro-optimizations, если:
+- они подтверждаемы;
+- не меняют контракт;
+- не требуют cross-module redesign
+
+8. Что запрещено в рамках пункта 1
+
+8.1. Архитектурные переписывания
+
+8.2. Перенос доменной ответственности между модулями
+
+8.3. Массовые переименования API / DTO / field names
+
+8.4. Silent behavior changes "for consistency"
+
+8.5. Cosmetic churn without runtime value
+
+8.6. Переписывание тестов только ради подгонки под новый код
+
+8.7. Repo-wide refactor под видом оптимизации
+
+9. Что считается багом
+
+Багом в рамках пункта 1 считается только то, что подтверждается одним или несколькими из условий:
+
+9.1. Нарушение контракта между слоями или модулями
+
+9.2. Явная логическая ошибка в коде
+
+9.3. Unsafe or broken edge-case path
+
+9.4. Stale/invariant violation
+
+9.5. Некорректная обработка ошибок
+
+9.6. Reproducible runtime problem
+
+9.7. Несогласованность между кодом и существующими тестами/контрактами, если именно кодовая сторона доказуемо неверна
+
+Не считается багом:
+- просто более красивый альтернативный код;
+- желание "сделать по-другому";
+- непроверенная гипотеза без evidence
+
+10. Working model
+
+10.1. Phase A — Repo Audit Only
+Результат:
+- список подсистем/батчей;
+- список bug candidates;
+- список optimization candidates;
+- risk level;
+- test impact;
+- что трогать нельзя.
+
+10.2. Phase B — Batched Apply
+Для каждого батча:
+- /plan
+- TEST-IMPACT CHECK
+- узкий APPLY
+- targeted tests
+- handoff
+
+10.3. Phase C — Final Stabilization Pass
+После всех apply-батчей:
+- повторный audit only;
+- поиск проблем на стыках;
+- минимальные follow-up fixes.
+
+11. Порядок обхода подсистем
+
+Приоритет обработки:
+
+11.1. Core runtime / orchestrators / workers
+
+11.2. API / domain services
+
+11.3. Planner / publish / queue / recovery
+
+11.4. Telegram / operator surfaces
+
+11.5. Reports / exports / analytics-like modules
+
+11.6. UI templates / JS helpers
+
+11.7. Tests alignment
+
+12. TEST-IMPACT CHECK
+
+Для каждого apply-батча обязателен TEST-IMPACT CHECK перед APPLY:
+
+12.1. Проверить существующие тесты, фикстуры, contract assertions и UI smoke expectations
+
+12.2. Явно перечислить:
+- какие существующие тесты нужно обновить
+- какие новые тесты нужно добавить
+- какие stale assertions/fixtures/contracts нужно исправить
+
+12.3. Не оставлять устаревшие тесты после изменения поведения
+
+13. Definition of done
+
+Пункт 1 считается завершенным, если:
+
+13.1. Все runtime-critical подсистемы прошли audit
+
+13.2. Все подтвержденные bug/perf issues:
+- либо исправлены,
+- либо явно зафиксированы как отложенные с причиной
+
+13.3. Не было произведено repo-wide uncontrolled rewrite
+
+13.4. Изменения не меняют продуктовую логику без отдельного product decision
+
+13.5. Все затронутые участки прошли нужные targeted tests
+
+13.6. Проект после этих проходов готов к следующему шагу:
+- локальному запуску;
+- ручному QA;
+- сбору backlog на дополнительные фиксы
+
+14. Outputs
+
+На выходе пункта 1 должны быть:
+
+14.1. Repo audit summary
+
+14.2. Список батчей / подсистем
+
+14.3. Список подтвержденных bug candidates
+
+14.4. Список safe optimization candidates
+
+14.5. Apply results per batch
+
+14.6. Final stabilization summary
+
+14.7. Перечень knowingly deferred issues, если такие останутся
+
+15. Non-goals
+
+15.1. Не делаем полный архитектурный рефакторинг
+
+15.2. Не делаем redesign
+
+15.3. Не переписываем документацию
+
+15.4. Не решаем продуктовые вопросы, не подтвержденные кодом
+
+15.5. Не превращаем пункт 1 в бесконечную чистку "всего что можно улучшить"
+
+16. Что готово
+
+16.1. Зафиксирован audit-first подход
+
+16.2. Зафиксирован batched apply вместо буквального file-by-file rewrite
+
+16.3. Зафиксированы допустимые и запрещенные типы изменений
+
+16.4. Зафиксирован порядок обхода и TEST-IMPACT CHECK
+
+17. Чего не хватает
+
+17.1. Для REQ уровня пункта 1 критических пробелов не осталось
+
+17.2. Следующий шаг — запуск repo-wide audit only pass
+
+18. Риски двусмысленности
+
+18.1. Нельзя трактовать "оптимизацию" как право на скрытый redesign
+
+18.2. Нельзя возвращаться к буквальному пофайловому проходу без batching
+
+18.3. Нельзя смешивать audit-only и apply в один неконтролируемый проход
+
+READY FOR SPEC: YES
