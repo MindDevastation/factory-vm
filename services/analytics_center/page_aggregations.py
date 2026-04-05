@@ -75,6 +75,17 @@ def _apply_time_window(rows: list[dict[str, Any]], *, time_window: str | None) -
     return filtered
 
 
+def _row_freshness_state(row: dict[str, Any]) -> str:
+    created_at = row.get("created_at")
+    if created_at is None:
+        return "MISSING"
+    try:
+        age_seconds = max(0.0, time.time() - float(created_at))
+    except Exception:
+        return "MISSING"
+    return "STALE" if age_seconds > _FRESHNESS_STALE_AFTER_SECONDS else "FRESH"
+
+
 def compute_page_freshness(conn: Any, *, page_scope: str, scope_ref: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     canonical_scope_ref = canonicalize_scope_ref(conn, scope_type=page_scope, scope_ref=str(scope_ref or ""))
     entity_scope = {
@@ -166,7 +177,8 @@ def aggregate_overview(conn: Any, *, time_window: str | None = None, freshness: 
     if freshness:
         fresh = str(freshness).upper()
         if fresh in {"FRESH", "STALE", "PARTIAL", "MISSING"}:
-            anomaly_rows = [r for r in anomaly_rows if str(r.get("variance_class") or "").upper() == fresh or fresh in {"FRESH", "PARTIAL", "MISSING"}]
+            anomaly_rows = [r for r in anomaly_rows if _row_freshness_state(r) == fresh]
+            rec_rows = [r for r in rec_rows if _row_freshness_state(r) == fresh]
 
     summary_cards = [
         {"card": "channels_with_snapshots", "value": len(channel_rows)},
