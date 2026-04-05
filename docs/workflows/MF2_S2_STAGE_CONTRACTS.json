@@ -1,0 +1,77 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF2-S2",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "stage_contracts": [
+    {
+      "stage": "DISCOVERY",
+      "entry_gate": "problem_statement_exists",
+      "required_outputs": [
+        "discovery_summary",
+        "candidate_scope_statement",
+        "open_questions_list"
+      ],
+      "exit_gate": "candidate_scope_and_open_questions_explicit"
+    },
+    {
+      "stage": "REQ",
+      "entry_gate": "discovery_outputs_linked",
+      "required_outputs": [
+        "canonical_requirement_artifact",
+        "acceptance_criteria_draft"
+      ],
+      "exit_gate": "requirement_artifact_reviewable"
+    },
+    {
+      "stage": "SPEC",
+      "entry_gate": "requirement_artifact_exists",
+      "required_outputs": [
+        "canonical_spec_artifact",
+        "scope_boundaries",
+        "non_goals"
+      ],
+      "exit_gate": "spec_contract_bounded"
+    },
+    {
+      "stage": "DEV",
+      "entry_gate": "slice_scope_approved",
+      "required_outputs": [
+        "scoped_change_set",
+        "slice_commit",
+        "validation_evidence"
+      ],
+      "exit_gate": "changes_and_evidence_committed"
+    },
+    {
+      "stage": "REVIEW",
+      "entry_gate": "slice_commit_exists",
+      "required_outputs": [
+        "review_verdict",
+        "required_fixes_list"
+      ],
+      "exit_gate": "pass_or_actionable_followups"
+    },
+    {
+      "stage": "QA",
+      "entry_gate": "review_verdict_available",
+      "required_outputs": [
+        "qa_verdict",
+        "qa_evidence"
+      ],
+      "exit_gate": "pass_or_defect_report"
+    }
+  ],
+  "constraints": {
+    "normative_order": [
+      "DISCOVERY",
+      "REQ",
+      "SPEC",
+      "DEV",
+      "REVIEW",
+      "QA"
+    ],
+    "no_parallel_main_workflow_canon": true,
+    "no_mf2_s3_s4_s5_scope": true,
+    "mf1_crosslink_instead_of_duplication": true
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF4-S4",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "mode_taxonomy": ["READ", "ACTION", "RISKY_ACTION"],
+  "triage_map": [
+    {
+      "signal": "workflow_handoff_blocked",
+      "first_action": "check_mf2_handoff_requirements",
+      "next_step": "mf4_s2_publish_manual_handoff_guide"
+    },
+    {
+      "signal": "publish_manual_ambiguity",
+      "first_action": "check_channel_split_and_risk",
+      "next_step": "mf4_s3_telegram_or_web_path"
+    },
+    {
+      "signal": "analytics_anomaly",
+      "first_action": "validate_analytics_context",
+      "next_step": "mf4_s2_planner_or_visual_guides"
+    },
+    {
+      "signal": "boundary_conflict_unknown",
+      "first_action": "check_mf3_boundary_map",
+      "next_step": "escalate_via_workflow_review_path"
+    }
+  ],
+  "continuity_links": [
+    "docs/guides/MF4_S2_PLANNER_GUIDE.md",
+    "docs/guides/MF4_S2_PUBLISH_MANUAL_HANDOFF_GUIDE.md",
+    "docs/guides/MF4_S2_VISUAL_WORKFLOW_GUIDE.md",
+    "docs/guides/MF4_S2_ANALYTICS_CENTER_GUIDE.md",
+    "docs/guides/MF4_S3_TELEGRAM_OPERATOR_GUIDE.md"
+  ]
+}

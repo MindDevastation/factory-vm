@@ -1,0 +1,16 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF6-S3",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "explicit_statuses": [
+    "LEGACY_CANDIDATE",
+    "DEPRECATED",
+    "ARCHIVED"
+  ],
+  "rules": [
+    "status_must_be_explicit",
+    "replacement_link_required_when_available",
+    "traceability_after_transition_required",
+    "no_silent_deletion"
+  ]
+}

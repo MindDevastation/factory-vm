@@ -1,0 +1,602 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF1-S1",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "generated_on": "2026-04-04",
+  "discovery_scope": {
+    "include": [
+      "docs/**",
+      "root-level *.md|*.txt|*.rst"
+    ],
+    "exclude_default": [
+      "PR descriptions/comments",
+      "chat transcripts",
+      "external docs not stored in repo",
+      "generated build outputs"
+    ]
+  },
+  "record_schema": [
+    "artifact_path",
+    "candidate_topics",
+    "candidate_kind_hint",
+    "notes"
+  ],
+  "artifacts": [
+    {
+      "artifact_path": "docs/BACKUP_RESTORE_PR300_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/CTA_S7_HANDOFF_ROW_EXAMPLE.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/CTUX_S10_PR244_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/CTUX_S11_PR247_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/CTUX_S4_PR226_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/CTUX_S6_HANDOFF_PREVIEW_CONFIRM.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/CTUX_S7_PR234_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/CTUX_S8_HANDOFF_P1_RESPONSES.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/CTUX_S9_HANDOFF_P1_UI_HELP_REVIEW.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/E6A_FINAL_EVIDENCE_AUDIT_2026-04-03.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/EPIC3_MF3_MF6_PREFLIGHT_AUDIT_2026-04-02.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/EPIC3_PUBLISH_POLICY_ENGINE_CONTRACT_FREEZE.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/FVR_S10_PR215_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/FVR_S11_PR221_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/FVR_S2_FOLLOWUP_HANDOFF_ROW_SUMMARY.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/FVR_S6_FOLLOWUP_HANDOFF_SEED_ROUNDTRIP.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/LAUNCH_GUIDE.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/LOCAL_DEBUG.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/P0_S2_CANONICAL_REVIEW_REFERENCE.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P0_PR256_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P1_PR259_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P2_PR262_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P3_PR265_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P4_PR268_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P5_PR271_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P6_PR272_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P7_PR274_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_P8_PR276_HANDOFF.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/PLAYLIST_BUILDER_SPEC_REMEDIATION_BACKFILL.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/POSTGRES_PLAN.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/REQ_Epic_6A_Full_Pack.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/REQ_Epic_6_Full_Pack.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/SPEC_OPS_BACKUP_RESTORE_v1.0_FINAL_ACCEPTANCE.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/TRACK_ANALYZER_OUTPUT.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/TZ_v9.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ctux_s2_smoke.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/e6a_slice_commit_index.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/e6a_spec_traceability_matrix.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/epics/README.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/epics/epic5-visual-automation-pack.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/epics/epic5a-analytics-center.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/backup_restore.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/logging_retention.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/production_smoke.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/README.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/daily_checks.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/initial_setup_and_launch.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/monthly_batch_workflow.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/api_not_responding.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/api_unhealthy.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/backup_restore_verification_failure.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/disk_pressure_retention.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/low_disk_space.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/repeated_job_failures.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/smoke_check_failure.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/stale_or_stuck_jobs.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/token_or_integration_readiness_problem.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/worker_heartbeat_missing.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/playbooks/worker_stalled.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/post_deploy_verification.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/post_reboot_verification.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/post_restore_verification.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/recovery_console.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/after_deploy.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/after_reboot.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/after_restore.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/backup_and_restore_cli.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/before_batch_run.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/before_risky_maintenance.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/preflight_environment.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/service_control_and_logs.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/when_disk_warning_triggers.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/when_failed_or_stale_jobs_accumulate.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ops/runbook/sop/when_smoke_fails.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/req/REQ_Epic_6A_Full_Pack.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/req/REQ_Epic_6_Full_Pack.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/req/REQ_Epic_7_Full_Pack.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/scaling_channels.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/spec/EPIC_6A_SPEC_BUNDLE_v1.0.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/spec/EPIC_6_SPEC_BUNDLE_v1.1.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "docs/ssot/MF1_S1_DISCOVERY_AND_SCOPE_RULES.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": ".qa_api_tail200.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": ".qa_report.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": ".qa_texture_summary.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": ".qa_worker_tail.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": ".qa_worker_tail400.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "AGENTS.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "LOCAL_SETUP_WINDOWS.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "README.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "TESTING.md",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "requirements-all.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "requirements-dev.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "requirements-whisper.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "requirements-yamnet.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    },
+    {
+      "artifact_path": "requirements.txt",
+      "candidate_topics": [],
+      "candidate_kind_hint": null,
+      "notes": "S1 discovery record; classification deferred to MF1-S2/S3"
+    }
+  ]
+}

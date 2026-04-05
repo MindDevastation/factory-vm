@@ -1,0 +1,16 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF5-S3",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "artifacts": [
+    "docs/runbooks/MF5_S3_INCIDENT_RESPONSE_RUNBOOK.md",
+    "docs/runbooks/MF5_S3_RECOVERY_RUNBOOK.md",
+    "docs/runbooks/MF5_S3_TROUBLESHOOTING_GUIDE.md"
+  ],
+  "mode_separation": {
+    "routine": "docs/runbooks/MF5_S1_START_STOP_AND_ENV_RUNBOOK.md",
+    "deploy_update": "docs/runbooks/MF5_S2_DEPLOY_UPDATE_RUNBOOK.md",
+    "incident": "docs/runbooks/MF5_S3_INCIDENT_RESPONSE_RUNBOOK.md",
+    "recovery": "docs/runbooks/MF5_S3_RECOVERY_RUNBOOK.md"
+  }
+}

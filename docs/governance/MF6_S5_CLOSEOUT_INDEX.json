@@ -1,0 +1,21 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF6-S5",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "ownership_requirements": [
+    "canonical_artifact_owner_team_required",
+    "canonical_artifact_owner_role_required",
+    "ownership_handoff_update_required"
+  ],
+  "future_update_obligations": [
+    "identify_impacted_canonical_docs_pre_merge",
+    "update_same_slice_or_record_followup",
+    "maintain_subordinate_to_canonical_links"
+  ],
+  "closeout_assertions": [
+    "governance_vocabulary_explicit",
+    "deprecate_archive_path_explicit",
+    "drift_resolution_path_explicit",
+    "future_obligations_explicit"
+  ]
+}

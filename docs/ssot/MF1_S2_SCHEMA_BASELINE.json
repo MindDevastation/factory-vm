@@ -1,0 +1,41 @@
+{
+  "epic": "EPIC_7",
+  "slice": "MF1-S2",
+  "source_of_truth": "docs/spec/EPIC_7_SPEC_BUNDLE_v1.1.txt",
+  "primary_doc_classes": [
+    "NORMATIVE_PRODUCT_DOC",
+    "RUNBOOK",
+    "WORKFLOW_DOC",
+    "REFERENCE_DOC",
+    "GUIDE",
+    "ARCHIVE_RECORD"
+  ],
+  "status_model": [
+    "CANONICAL",
+    "SUBORDINATE",
+    "NON_CANONICAL",
+    "LEGACY_CANDIDATE",
+    "DEPRECATED",
+    "ARCHIVED"
+  ],
+  "ownership_required_fields": [
+    "owner_team",
+    "owner_role"
+  ],
+  "canonical_header_fields": [
+    "Owner",
+    "Primary doc class",
+    "Lifecycle/status",
+    "Canonical-for",
+    "Related canonical source",
+    "Last reviewed",
+    "Evidence note"
+  ],
+  "constraints": {
+    "single_primary_doc_class": true,
+    "single_status_literal": true,
+    "status_not_doc_class": true,
+    "canonical_requires_ownership": true,
+    "no_silent_legacy_deletion": true
+  }
+}
