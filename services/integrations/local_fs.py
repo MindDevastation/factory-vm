@@ -34,4 +34,10 @@ def load_meta(folder: Path) -> Optional[LocalRelease]:
 def resolve_asset_path(release_folder: Path, rel_path: str) -> Path:
     # rel_path from meta.json like "audio/track.wav"
     rel_path = rel_path.lstrip("/").replace("\\", "/")
-    return (release_folder / rel_path).resolve()
+    resolved = (release_folder / rel_path).resolve()
+    release_root = release_folder.resolve()
+    try:
+        resolved.relative_to(release_root)
+    except ValueError as exc:
+        raise ValueError(f"asset path escapes release folder: {rel_path}") from exc
+    return resolved

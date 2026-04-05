@@ -129,6 +129,9 @@ class PreviewStore:
                 self._entries.pop(preview_id, None)
 
     def _prune_to_capacity(self) -> None:
-        while len(self._entries) >= self._max_previews:
-            oldest_preview_id = min(self._entries.items(), key=lambda item: item[1].created_at)[0]
-            self._entries.pop(oldest_preview_id, None)
+        overflow = len(self._entries) - self._max_previews + 1
+        if overflow <= 0:
+            return
+        oldest_ids = sorted(self._entries.items(), key=lambda item: item[1].created_at)[:overflow]
+        for preview_id, _ in oldest_ids:
+            self._entries.pop(preview_id, None)

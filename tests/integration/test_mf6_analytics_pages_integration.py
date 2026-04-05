@@ -81,6 +81,29 @@ class TestMf6AnalyticsPagesIntegration(unittest.TestCase):
             self.assertEqual(body["freshness_summary"]["status"], "STALE")
             self.assertGreaterEqual(len(body["source_coverage_summary"]["stale_sources"]), 1)
 
+    def test_overview_freshness_stale_filter_uses_created_at_not_variance_class(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            conn = dbm.connect(env)
+            try:
+                seed_mf6_page_data(conn)
+                stale_ts = dbm.now_ts() - (10 * 86400.0)
+                conn.execute("UPDATE analytics_comparison_snapshots SET created_at = ? WHERE is_current = 1", (stale_ts,))
+                conn.execute("UPDATE analytics_recommendation_snapshots SET created_at = ? WHERE is_current = 1", (stale_ts,))
+            finally:
+                conn.close()
+
+            r = client.get("/v1/analytics/overview", params={"freshness": "STALE"}, headers=h)
+            self.assertEqual(r.status_code, 200)
+            body = r.json()
+            self.assertGreater(len(body["anomaly_risk_markers"]), 0)
+            self.assertTrue(
+                all(str(row["variance_class"]).upper() in {"ANOMALY", "RISK"} for row in body["anomaly_risk_markers"])
+            )
+            self.assertGreater(len(body["recommendation_summary"]), 0)
+
     def test_filter_restorable_behavior(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)

@@ -217,7 +217,10 @@
       tbody.innerHTML = `<tr><td colspan="13" class="muted">${esc(emptyPlannerMessage())}</td></tr>`;
       return;
     }
-    tbody.innerHTML = state.items.map((item) => `<tr data-row-id="${item.id}">
+    tbody.innerHTML = state.items.map((item) => {
+      const materializeState = materializeActionState(item);
+      const createJobState = createJobActionState(item);
+      return `<tr data-row-id="${item.id}">
       <td><input type="checkbox" data-select-id="${item.id}" ${state.selected.has(item.id) ? 'checked' : ''}></td>
       <td>${item.id}</td>
       <td>${esc(item.status)}</td>
@@ -225,12 +228,12 @@
       <td>${renderMaterializationSummary(item)}</td>
       <td>${renderJobCreationSummary(item)}</td>
       <td>
-        <button type="button" data-materialize-item="${item.id}" ${materializeActionState(item).disabled ? 'disabled' : ''}>Materialize</button>
-        <button type="button" data-create-job-item="${item.id}" ${createJobActionState(item).disabled ? 'disabled' : ''}>Create Job</button>
+        <button type="button" data-materialize-item="${item.id}" ${materializeState.disabled ? 'disabled' : ''}>Materialize</button>
+        <button type="button" data-create-job-item="${item.id}" ${createJobState.disabled ? 'disabled' : ''}>Create Job</button>
         <button type="button" data-materialization-detail="${item.id}">Details</button>
         <button type="button" data-job-creation-detail="${item.id}">Job details</button>
-        ${materializeActionState(item).disabled ? `<div class="muted">${esc(materializeActionState(item).reason)}</div>` : ''}
-        ${createJobActionState(item).disabled ? `<div class="muted">${esc(createJobActionState(item).reason)}</div>` : ''}
+        ${materializeState.disabled ? `<div class="muted">${esc(materializeState.reason)}</div>` : ''}
+        ${createJobState.disabled ? `<div class="muted">${esc(createJobState.reason)}</div>` : ''}
       </td>
       <td>${editableInput(item, 'channel_slug', item.channel_slug)}</td>
       <td>${editableInput(item, 'content_type', item.content_type)}</td>
@@ -238,7 +241,8 @@
       <td>${editableInput(item, 'publish_at', item.publish_at, 'text')}</td>
       <td>${editableInput(item, 'notes', item.notes)}</td>
       <td>${esc(item.updated_at)}</td>
-    </tr>`).join('');
+    </tr>`;
+    }).join('');
 
     tbody.querySelectorAll('input[data-select-id]').forEach((el) => {
       el.addEventListener('change', () => {
