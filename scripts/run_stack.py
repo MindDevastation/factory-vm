@@ -24,6 +24,23 @@ def _resolve_runtime_roles(*, profile: str, no_importer_flag: bool, with_bot_fla
     )
 
 
+def _reap_exited_processes(procs: List[subprocess.Popen]) -> None:
+    for p in list(procs):
+        code = p.poll()
+        if code is not None:
+            print(f"[WARN] process exited code={code}: {p.args}")
+            procs.remove(p)
+
+
+def _supervise_processes(procs: List[subprocess.Popen], *, poll_interval_seconds: float = 2.0) -> None:
+    while True:
+        _reap_exited_processes(procs)
+        if not procs:
+            print("[INFO] all managed processes exited; stopping stack supervisor.")
+            return
+        time.sleep(poll_interval_seconds)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", default="local", choices=["local", "prod"])
@@ -86,13 +103,7 @@ def main() -> None:
     print(f"Stack started (profile={args.profile}). Dashboard: http://{env.bind}:{env.port}/")
     print("Press Ctrl+C to stop.")
 
-    while True:
-        for p in list(procs):
-            code = p.poll()
-            if code is not None:
-                print(f"[WARN] process exited code={code}: {p.args}")
-                procs.remove(p)
-        time.sleep(2)
+    _supervise_processes(procs)
 
 
 if __name__ == "__main__":
