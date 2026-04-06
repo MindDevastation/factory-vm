@@ -120,6 +120,7 @@ class TestUiJobsApiSlice1(unittest.TestCase):
             )
             self.assertEqual(builder_resp.status_code, 200)
             job_id = int(builder_resp.json()["job_id"])
+            self.assertTrue(int(builder_resp.json()["release_id"]) > 0)
 
             conn2 = dbm.connect(env)
             try:
@@ -128,6 +129,58 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                 self.assertEqual(str(draft["audio_ids_text"]), "")
                 self.assertEqual(str(draft["background_name"]), "")
                 self.assertEqual(str(draft["background_ext"]), "")
+            finally:
+                conn2.close()
+
+    def test_create_form_rolls_back_when_preflight_fails(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                self.assertIsNotNone(ch)
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+
+            class _PreflightFail:
+                ok = False
+                field_errors = {"audio": ["audio id 999 matches=0"]}
+                resolved = {}
+
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id: _PreflightFail()
+
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            form = {
+                "channel_id": str(channel_id),
+                "title": "Draft should not persist",
+                "description": "",
+                "tags_csv": "",
+                "cover_name": "",
+                "cover_ext": "",
+                "background_name": "missing-bg",
+                "background_ext": "jpg",
+                "audio_ids_text": "999",
+            }
+            resp = client.post(
+                "/ui/jobs/create",
+                headers={**h, "Content-Type": "application/x-www-form-urlencoded"},
+                data=form,
+            )
+            self.assertEqual(resp.status_code, 422)
+            self.assertIn("audio id 999 matches=0", resp.text)
+
+            conn2 = dbm.connect(env)
+            try:
+                total = int(conn2.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"])
+                self.assertEqual(total, 0)
             finally:
                 conn2.close()
 
