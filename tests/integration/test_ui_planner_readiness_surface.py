@@ -219,6 +219,11 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn("/v1/planner/monthly-planning-templates/${templateId}/preview-apply", js)
         self.assertIn("/v1/planner/monthly-planning-templates/${templateId}/apply", js)
         self.assertIn("preview_fingerprint", js)
+        self.assertIn("Failed to load templates:", js)
+        self.assertIn("Use Reload templates to retry.", js)
+        self.assertIn("Bulk create validation failed: channel slug and content type are required.", js)
+        self.assertIn("Bulk create validation failed: count must be a positive integer.", js)
+        self.assertIn("Bulk create request submitted...", js)
 
     def test_mass_action_addons_are_presentation_only(self) -> None:
         html, js = self._load_ui_assets()
