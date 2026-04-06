@@ -26,7 +26,7 @@ from services.track_analyzer.analyze import (
     _validate_advanced_v1_payload,
     analyze_tracks,
 )
-from services.track_analyzer.yamnet import YAMNetUnavailableError
+from services.track_analyzer.yamnet import YAMNetRuntimeIncompatibleError, YAMNetUnavailableError
 
 
 class FakeDrive:
@@ -919,6 +919,47 @@ class TestTrackAnalyze(unittest.TestCase):
                         )
 
                 self.assertEqual(str(ctx.exception), "YAMNET_NOT_INSTALLED: install via UI button and retry")
+            finally:
+                conn.close()
+
+    def test_analyze_raises_deterministic_error_when_yamnet_runtime_incompatible(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = dbm.connect(type("E", (), {"db_path": f"{td}/db.sqlite3"})())
+            try:
+                dbm.migrate(conn)
+                conn.execute(
+                    "INSERT INTO channels(slug, display_name, kind, weight, render_profile, autopublish_enabled) VALUES(?,?,?,?,?,?)",
+                    ("darkwood-reverie", "Darkwood Reverie", "LONG", 1.0, "long_1080p24", 0),
+                )
+                conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
+                conn.execute(
+                    """
+                    INSERT INTO tracks(channel_slug, track_id, gdrive_file_id, source, filename, title, artist, duration_sec, discovered_at, analyzed_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    ("darkwood-reverie", "001", "fid-1", "GDRIVE", "001_A.wav", "A", None, None, dbm.now_ts(), None),
+                )
+
+                with mock.patch("services.track_analyzer.analyze.ffmpeg.ffprobe_json", return_value={"format": {"duration": "12.5"}}), mock.patch(
+                    "services.track_analyzer.analyze.ffmpeg.run",
+                    return_value=(0, "", "[Parsed_ebur128_0] Peak: -2.1 dB"),
+                ), mock.patch(
+                    "services.track_analyzer.analyze.yamnet.analyze_with_yamnet",
+                    side_effect=YAMNetRuntimeIncompatibleError("YAMNET_RUNTIME_INCOMPATIBLE"),
+                ):
+                    with self.assertRaises(AnalyzeError) as ctx:
+                        analyze_tracks(
+                            conn,
+                            FakeDrive(),
+                            channel_slug="darkwood-reverie",
+                            storage_root=td,
+                            job_id=102,
+                            scope="pending",
+                            force=False,
+                            max_tracks=10,
+                        )
+
+                self.assertEqual(str(ctx.exception), "YAMNET_RUNTIME_INCOMPATIBLE: reinstall YamNet deps via UI and retry")
             finally:
                 conn.close()
 

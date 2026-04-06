@@ -41,6 +41,7 @@ def track_jobs_cycle(*, env: Env, worker_id: str) -> None:
 
         job_id = int(job["id"])
         job_type = str(job.get("job_type") or "")
+        is_analyze_job = job_type in {"TRACK_ANALYZE", "ANALYZE_TRACKS"}
         channel_slug = str(job.get("channel_slug") or "").strip()
 
         tjdb.update_progress(conn, job_id=job_id, processed_count=0, total_count=1, last_message="job started")
@@ -58,7 +59,20 @@ def track_jobs_cycle(*, env: Env, worker_id: str) -> None:
             else:
                 raise ValueError(f"unsupported track job type: {job_type}")
 
-            tjdb.update_progress(conn, job_id=job_id, processed_count=1, total_count=1, last_message="job completed")
+            if is_analyze_job:
+                current_job = tjdb.get_job(conn, job_id)
+                payload = dbm.json_loads(current_job.get("payload_json") or "{}") if current_job and isinstance(current_job.get("payload_json"), str) else {}
+                processed_count = int(payload.get("processed_count") or 0)
+                total_count = int(payload.get("total_count") or 0)
+                tjdb.update_progress(
+                    conn,
+                    job_id=job_id,
+                    processed_count=processed_count,
+                    total_count=total_count,
+                    last_message="job completed",
+                )
+            else:
+                tjdb.update_progress(conn, job_id=job_id, processed_count=1, total_count=1, last_message="job completed")
             tjdb.finish_job(conn, job_id=job_id, status="DONE", last_message="DONE")
             tjdb.append_log(conn, job_id=job_id, level="INFO", message="job finished status=DONE")
         except Exception as e:
@@ -118,6 +132,16 @@ def _run_track_analyze(conn, *, env: Env, job: dict, job_id: int, channel_slug: 
     assert_yamnet_available(env)
 
     drive = _build_track_catalog_drive_client(env=env, channel_slug=channel_slug)
+
+    def _progress_cb(*, processed: int, total: int) -> None:
+        tjdb.update_progress(
+            conn,
+            job_id=job_id,
+            processed_count=processed,
+            total_count=total,
+            last_message=f"analyze progress {processed}/{total}",
+        )
+
     stats = analyze_tracks(
         conn,
         drive,
@@ -127,16 +151,8 @@ def _run_track_analyze(conn, *, env: Env, job: dict, job_id: int, channel_slug: 
         scope=scope,
         force=force,
         max_tracks=max_tracks,
+        progress_callback=_progress_cb,
     )
-
-    for processed in range(1, stats.processed + 1):
-        tjdb.update_progress(
-            conn,
-            job_id=job_id,
-            processed_count=processed,
-            total_count=stats.selected,
-            last_message=f"analyze progress {processed}/{stats.selected}",
-        )
 
     msg = (
         f"analyze done channel={channel_slug} selected={stats.selected} "
