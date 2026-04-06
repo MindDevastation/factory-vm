@@ -1,0 +1,429 @@
+SPEC_PRELAUNCH_STABILIZATION_P2_LOCAL_QA_ANALYSIS_AND_FIX_BACKLOG_v1.0
+
+1. Overview / цель
+
+Pre-Launch Stabilization — Punkt 2 defines a structured local pre-launch QA program and fix-backlog preparation pass for factory-vm.
+
+Its purpose is to:
+- confirm that the project actually starts locally;
+- verify critical operator flows;
+- identify P0 / P1 / P2 issues before VPS launch;
+- produce a structured fix backlog for the next implementation pass.
+
+This is not exploratory clicking, not redesign discovery, and not a feature wishlist exercise.
+
+2. Canonical operating model
+
+2.1. Punkt 2 is a structured local pre-launch QA pass.
+
+2.2. During QA, fixes are not applied.
+The required order is:
+- full structured QA pass
+- finding capture
+- prioritization
+- explicit backlog formation
+
+2.3. Findings must be separated into:
+- real defects
+- UX / operability improvements
+- new feature requests outside current pre-launch scope
+
+2.4. QA findings must not be mixed with future feature work.
+
+3. Scope / Non-goals
+
+3.1. In scope
+- local startup and service bring-up
+- env/config sanity
+- basic UI/API smoke
+- core operator flows:
+  - Planner
+  - release / materialization / job creation
+  - queue / render path
+  - publish-related path
+  - operator-critical flows
+- recovery / stale / edge behavior:
+  - repeated actions
+  - invalid inputs
+  - partial failures
+  - stale action handling
+  - operator-safe recovery behavior
+- reports / exports:
+  - report surfaces
+  - export surfaces
+  - empty-data and error behavior
+- Telegram local QA only if locally available
+
+3.2. Out of scope
+- redesign
+- visual polish for beauty
+- load testing
+- endless exploratory QA
+- automatic inclusion of all minor improvements into pre-launch fix pack
+- new features that are not findings from the local QA pass
+
+3.3. Telegram rule
+Telegram local QA is optional-if-available and is not a launch blocker if local setup interferes with core QA.
+
+4. QA level model
+
+4.1. Level A — Startup & viability
+Purpose:
+- confirm project starts locally
+- confirm no critical startup failures
+
+4.2. Level B — Core end-to-end flows
+Required scope:
+- Planner
+- release/job creation
+- queue/render
+- publish path
+- operator critical flows
+
+4.3. Level C — Recovery / stale / edge behavior
+Required scope:
+- invalid input handling
+- stale errors
+- preview/execute separation
+- recovery after partial failure
+- correct no-create behavior when validation fails
+
+4.4. Level D — Operability
+Required scope:
+- clarity of actions
+- intuitiveness of flows
+- operator friction
+- page overload
+- discoverability of primary actions
+
+5. Severity model
+
+5.1. P0 — launch blocker
+Definition:
+- project does not start
+- critical scenario does not pass
+- dangerous behavior
+- severe corruption risk
+
+5.2. P1 — production-significant defect
+Definition:
+- important operator scenario is broken
+- high probability of operator error
+- poor recoverability
+- important flow is unreliable
+
+5.3. P2 — important usability / workflow friction
+Definition:
+- does not block launch
+- but materially harms stable operation
+
+5.4. P3 — polish / nice-to-have
+Definition:
+- does not automatically enter pre-launch fix pack
+
+5.5. PASS
+Definition:
+- checked area passed the current QA scope
+
+6. Finding format contract
+
+Every finding must include:
+- ID
+- severity
+- where found
+- preconditions
+- exact reproduction steps
+- expected behavior
+- actual behavior
+- impact
+- suspected scope
+- proposed fix direction
+- must-fix-before-VPS: yes/no
+
+7. Frozen QA findings set
+
+7.1. Level A
+
+A-01
+- severity: PASS
+- area: startup & viability
+- result: project starts locally and baseline viability is confirmed
+
+7.2. Level B — Planner
+
+B-PL-01
+- severity: P1
+- area: Planner / Monthly Planning Templates
+- finding: Monthly Planning Templates remains stuck on "Loading templates..."
+- expected: templates load or a clear error is shown
+- actual: infinite loading
+- must-fix-before-VPS: yes
+
+B-PL-02
+- severity: P1
+- area: Planner / Bulk Create Series
+- finding: Bulk Create Series does not react to click
+- expected: action executes or explicit error/validation appears
+- actual: click yields no result
+- must-fix-before-VPS: yes
+
+B-PL-03
+- severity: P1
+- area: Planner overall
+- finding: Planner requires full additional follow-up verification
+- note: umbrella finding, not a standalone bug
+- fix direction: Planner must be in mandatory fix/QA follow-up subset
+- must-fix-before-VPS: yes
+
+7.3. Level B — Release / Job creation
+
+B-JC-01
+- severity: P1
+- area: Create Job / metadata generation
+- finding: Title Generator, Description Generator, and Video Tags Generator appear only after Job creation, but must be available before creation
+- must-fix-before-VPS: yes
+
+B-JC-02
+- severity: P2
+- area: Create Job / cover & background ext inputs
+- finding: ext part in Cover name and Background name should be a dropdown with:
+  - png
+  - jpg
+  - jpeg
+- expected: operator chooses allowed extension from list
+- actual: current behavior does not meet operator ergonomics expectation
+- must-fix-before-VPS: no
+
+B-JC-03
+- severity: P2
+- area: Create Job form layout
+- finding:
+  - Title and Tags fields should be 2.5x wider
+  - Description should be 3.5x wider and 3x higher
+  - Audio IDs field should match Description size
+- must-fix-before-VPS: no
+
+B-JC-04
+- severity: P2
+- area: Create Job fields
+- finding: add fields:
+  - Playlists: available playlists for selected channel, multi-select via checkboxes
+  - Audience:
+    1) Yes, this video is for kids
+    2) No, this video is not for kids
+    default = option 2
+  - Video language: default = English
+- note: change request / functional enhancement to create-job surface
+- must-fix-before-VPS: no
+
+7.4. Level B — Queue / Render path
+
+B-QR-01
+- severity: PASS
+- area: Create Job / Render
+- result: job creation and render succeeded
+
+B-QR-02
+- severity: P1
+- area: queue ordering
+- finding: under bulk job creation, IDs are assigned in bulk-list order; render and upload for multiple jobs must occur strictly by ascending job ID
+- expected: deterministic processing order by ascending job id
+- must-fix-before-VPS: yes
+
+7.5. Level B — Publish-related path
+
+B-PUB-01
+- severity: PASS
+- area: YouTube upload path
+- result: uploads to YouTube succeeded
+
+7.6. Level B — Operator critical flows
+
+B-OPS-01
+- severity: PASS
+- area: Publish Queue
+- result: works
+
+B-OPS-02
+- severity: PASS
+- area: Recovery Console
+- result: primary check showed no issue
+
+B-OPS-03
+- severity: PASS
+- area: TAGS import/export
+- result: import/export works
+
+B-OPS-04
+- severity: P1
+- area: Discover / Analyze Tracks
+- finding: Discover and Analyze Tracks must show execution progress
+- expected: operator sees job progress
+- actual: progress visibility is insufficient or absent
+- must-fix-before-VPS: yes
+
+B-OPS-05
+- severity: P0
+- area: Analyze Tracks
+- finding: Analyze Tracks job failed with incompatible/unknown tfhub model error
+- expected: Analyze Tracks succeeds or fails with correctly handled recoverable outcome
+- actual: runtime error blocks flow
+- must-fix-before-VPS: yes
+
+7.7. Level C — Edge / stale / validation behavior
+
+C-01
+- severity: P0
+- area: Create Job / playlist auto-generation preview
+- finding: pressing Preview in playlist auto-generation dialog creates a job
+- expected: Preview does not create a job
+- actual: job is created and required fields are ignored
+- must-fix-before-VPS: yes
+
+C-02
+- severity: P0
+- area: Create Job validation
+- finding: job is created even when required fields are invalid, for example missing background file
+- expected: error is shown and job is not created
+- actual: job is created
+- must-fix-before-VPS: yes
+
+C-03
+- severity: P1
+- area: Recent jobs overview / stale error state
+- finding: error display for a job does not disappear after the real fix
+- expected: stale error state clears after actual resolution
+- actual: error continues to display
+- must-fix-before-VPS: yes
+
+C-04
+- severity: P0
+- area: Create Job / Audio ID validation
+- finding: job is created with nonexistent Audio ID
+- expected: validation error and no job creation
+- actual: job is created
+- must-fix-before-VPS: yes
+
+7.8. Level D — Operability / UX friction
+
+D-01
+- severity: P2
+- area: Title creation / tags / planner UX
+- finding: title creation, tags, and Planner usage are too unclear and unintuitive
+- expected: operator flow should be more visually understandable and intuitive
+- actual: noticeable operator confusion and friction
+- fix direction: improve discoverability, primary action clarity, step clarity, and flow readability
+- must-fix-before-VPS: no
+
+D-02
+- severity: P2
+- area: Main page / navigation surfaces
+- findings:
+  - move Metadata · Title Templates, TAGS, Track Catalog · Analysis Report, Database from secondary surfaces into header
+  - rename Metadata · Title Templates -> Title Templates
+  - rename Track Catalog · Analysis Report -> Track Catalog
+  - declutter main page
+  - make Secondary surfaces a slide-out side list
+  - move Control Center Overview out of central dominant position
+  - add separate Channels button in header with modal channel management
+  - add separate Jobs · Bulk JSON Editor button in upper body with modal
+  - Recent jobs overview should be expanded by default
+- must-fix-before-VPS: no
+
+8. Explicit exclusions from pre-launch QA fix backlog
+
+The following are explicitly outside this QA backlog and must be treated separately:
+- YouTube performance metrics analyzer
+- Prompt storage for AI agents
+
+These are separate new features and not Punkt 2 findings.
+
+9. Must-fix-before-VPS list
+
+The required must-fix-before-VPS set is:
+- B-PL-01
+- B-PL-02
+- B-PL-03
+- B-JC-01
+- B-QR-02
+- B-OPS-04
+- B-OPS-05
+- C-01
+- C-02
+- C-03
+- C-04
+
+10. Postpone-after-launch list
+
+The allowed postpone-after-launch set is:
+- B-JC-02
+- B-JC-03
+- B-JC-04
+- D-01
+- D-02
+
+11. Output contract
+
+Punkt 2 must produce:
+- structured QA findings set
+- must-fix-before-VPS backlog
+- post-launch improvement backlog
+- basis for separate fix implementation pass
+
+12. Definition of done
+
+Punkt 2 is done only when all of the following are true:
+- Level A is confirmed
+- Levels B/C/D are covered sufficiently for pre-launch freeze
+- findings are split into defects / UX improvements / new features
+- must-fix-before-VPS list is formed
+- postpone-after-launch list is formed
+
+13. Validation rules
+
+13.1. QA process validation
+- fixes must not be applied during Punkt 2
+- findings capture must happen before prioritization
+- prioritization must happen before fix-pass planning
+
+13.2. Finding classification validation
+- real defects must not be mixed with new features
+- P2 UX items must not be auto-promoted into launch-blocking scope
+- umbrella findings must not be treated as closed until explicit follow-up coverage is complete
+
+13.3. Backlog validation
+- must-fix backlog must contain only pre-launch required items
+- post-launch backlog must contain only explicitly non-blocking items
+- excluded new-feature requests must remain outside Punkt 2 fix scope
+
+14. Rollback / containment principles
+
+14.1. QA containment rule
+Punkt 2 produces findings and backlog only. It does not mutate product behavior.
+
+14.2. Scope containment rule
+If an observation is a redesign request, exploratory wish, or new feature, it must be kept out of the must-fix QA backlog unless separately reclassified by product decision.
+
+14.3. Follow-up containment rule
+Planner umbrella finding B-PL-03 is not considered closed until a specific post-fix follow-up pass confirms closure.
+
+15. Open questions / ambiguities
+
+15.1. Exact document/artifact formatting for findings export is implementation detail as long as the frozen finding structure, must-fix list, and postponed list remain explicit.
+
+15.2. Exact local Telegram QA depth is implementation detail because Telegram is optional-if-available and not a launch blocker if local setup interferes with core QA.
+
+Ready for Dev? Yes
+
+Причины
+- REQ fully fixes the QA-pass goal, scope, level model, severity model, frozen findings set, launch-blocking list, postponed list, exclusions, outputs, and definition of done.
+- No critical REQ-level gaps remain.
+- Remaining uncertainty is artifact-format and optional-Telegram-depth detail, not a blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- mixing findings with new features
+- silently pulling P2 UX items into launch-blocking scope
+- treating Planner umbrella finding as closed without explicit re-check
