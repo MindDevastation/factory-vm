@@ -11,6 +11,7 @@
     .shell-brand { font-weight: 700; letter-spacing: 0.01em; }
     .shell-control-center a { color: #93c5fd; text-decoration: none; font-weight: 600; }
     .shell-control-center a:hover { text-decoration: underline; }
+    .shell-header-btn { background:#1f2937;color:#f9fafb;border:1px solid #374151;border-radius:999px;padding:6px 10px;cursor:pointer; }
     .shell-nav { max-width: 1240px; margin: 0 auto; padding: 0 20px 12px 20px; display: flex; flex-wrap: wrap; gap: 10px; }
     .shell-nav a { color: #d1d5db; text-decoration: none; border: 1px solid #374151; border-radius: 999px; padding: 4px 10px; font-size: 13px; }
     .shell-nav a:hover { color: #fff; border-color: #6b7280; }
@@ -48,6 +49,7 @@
       <div class="shell-brand">Factory VM</div>
       <div class="shell-control-center">
         <a href="{{ factory_control_center_entry.path }}">↩ {{ factory_control_center_entry.label }}</a>
+        <button type="button" id="header-channels-btn" class="shell-header-btn">Channels</button>
       </div>
     </div>
     <nav class="shell-nav" aria-label="Primary navigation">
