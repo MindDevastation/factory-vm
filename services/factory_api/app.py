@@ -256,6 +256,18 @@ def api_channels(_: bool = Depends(require_basic_auth(env))):
     return rows
 
 
+@app.get("/v1/channels/{channel_id}/playlists")
+def api_channel_playlists(channel_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        channel = dbm.get_channel_by_id(conn, channel_id)
+        if not channel:
+            raise HTTPException(404, "channel not found")
+        return {"channel_id": channel_id, "playlists": dbm.list_channel_playlists(conn, channel_id)}
+    finally:
+        conn.close()
+
+
 @app.post("/v1/releases/{release_id}/jobs/create-or-select")
 def api_release_jobs_create_or_select(release_id: int, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -5065,6 +5077,9 @@ class UiJobDraftPayload(BaseModel):
     title: str
     description: str = ""
     tags_csv: str = ""
+    playlist_ids: list[str] = Field(default_factory=list)
+    audience_is_for_kids: bool = False
+    video_language: str = "English"
     cover_name: str = ""
     cover_ext: str = ""
     background_name: str
@@ -5091,6 +5106,8 @@ class UiJobsBulkJsonPayload(BaseModel):
     mode: str
     items: list[dict[str, Any]]
 
+_ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg"}
+
 
 def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
     errors: Dict[str, List[str]] = {
@@ -5103,12 +5120,27 @@ def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
     }
     if payload.channel_id <= 0:
         errors["project"].append("project is required")
+    if any(not str(item).strip() for item in payload.playlist_ids):
+        errors["project"].append("playlist ids must not be empty")
+    if not payload.video_language.strip():
+        errors["project"].append("video language is required")
     if not payload.title.strip():
         errors["title"].append("title is required")
     if not payload.audio_ids_text.strip():
         errors["audio"].append("audio ids are required")
     if not payload.background_name.strip() or not payload.background_ext.strip():
         errors["background"].append("background name/ext are required")
+    background_ext = payload.background_ext.strip().lower()
+    if background_ext and background_ext not in _ALLOWED_IMAGE_EXTENSIONS:
+        errors["background"].append("background ext must be one of: png, jpg, jpeg")
+    cover_name = payload.cover_name.strip()
+    cover_ext = payload.cover_ext.strip().lower()
+    if cover_ext and cover_ext not in _ALLOWED_IMAGE_EXTENSIONS:
+        errors["cover"].append("cover ext must be one of: png, jpg, jpeg")
+    if cover_name and not cover_ext:
+        errors["cover"].append("cover ext is required when cover name is provided")
+    if cover_ext and not cover_name:
+        errors["cover"].append("cover name is required when cover ext is provided")
     if "#" in payload.tags_csv:
         errors["tags"].append("tags must not contain #")
     return {k: v for k, v in errors.items() if v}
@@ -5467,6 +5499,52 @@ def _parse_bulk_payload(payload: UiJobsBulkJsonPayload) -> tuple[str | None, JSO
     return mode, None
 
 
+def _create_ui_job_draft_with_preflight(
+    conn: Any,
+    *,
+    channel_id: int,
+    title: str,
+    description: str,
+    tags_csv: str,
+    playlist_ids: list[str],
+    audience_is_for_kids: bool,
+    video_language: str,
+    cover_name: str | None,
+    cover_ext: str | None,
+    background_name: str,
+    background_ext: str,
+    audio_ids_text: str,
+    drive: Any | None = None,
+) -> tuple[int | None, Any | None]:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        job_id = dbm.create_ui_job_draft(
+            conn,
+            channel_id=channel_id,
+            title=title,
+            description=description,
+            tags_csv=tags_csv,
+            playlists_json=json.dumps(playlist_ids, ensure_ascii=False),
+            audience_is_for_kids=1 if audience_is_for_kids else 0,
+            video_language=video_language.strip() or "English",
+            cover_name=cover_name,
+            cover_ext=cover_ext,
+            background_name=background_name,
+            background_ext=background_ext,
+            audio_ids_text=audio_ids_text,
+            job_type="UI",
+        )
+        preflight = run_preflight_for_job(conn, env, job_id, drive)
+        if not preflight.ok:
+            conn.execute("ROLLBACK")
+            return None, preflight
+        conn.execute("COMMIT")
+        return job_id, preflight
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -5601,12 +5679,28 @@ def _all_channels(conn) -> list:
     return conn.execute("SELECT id, slug, display_name FROM channels ORDER BY display_name ASC").fetchall()
 
 
+def _form_from_draft(draft: dict[str, Any]) -> dict[str, Any]:
+    form = dict(draft)
+    raw_playlists = form.get("playlists_json")
+    try:
+        playlist_ids = json.loads(raw_playlists) if raw_playlists else []
+    except Exception:
+        playlist_ids = []
+    form["playlist_ids"] = [str(x) for x in playlist_ids if str(x).strip()]
+    form["audience_is_for_kids"] = bool(int(form.get("audience_is_for_kids") or 0))
+    form["video_language"] = str(form.get("video_language") or "English")
+    return form
+
+
 def _build_ui_payload(
     *,
     channel_id: int,
     title: str,
     description: str,
     tags_csv: str,
+    playlist_ids: list[str],
+    audience_is_for_kids: bool,
+    video_language: str,
     cover_name: str,
     cover_ext: str,
     background_name: str,
@@ -5618,6 +5712,9 @@ def _build_ui_payload(
         title=title,
         description=description,
         tags_csv=tags_csv,
+        playlist_ids=playlist_ids,
+        audience_is_for_kids=audience_is_for_kids,
+        video_language=video_language,
         cover_name=cover_name,
         cover_ext=cover_ext,
         background_name=background_name,
@@ -6131,19 +6228,24 @@ def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basi
         ch = dbm.get_channel_by_id(conn, payload.channel_id)
         if not ch:
             raise HTTPException(422, {"field_errors": {"project": ["project does not exist"]}})
-        job_id = dbm.create_ui_job_draft(
+        job_id, preflight = _create_ui_job_draft_with_preflight(
             conn,
             channel_id=payload.channel_id,
             title=payload.title.strip(),
             description=payload.description.strip(),
             tags_csv=payload.tags_csv.strip(),
+            playlist_ids=payload.playlist_ids,
+            audience_is_for_kids=payload.audience_is_for_kids,
+            video_language=payload.video_language,
             cover_name=payload.cover_name.strip() or None,
             cover_ext=payload.cover_ext.strip() or None,
             background_name=payload.background_name.strip(),
             background_ext=payload.background_ext.strip(),
             audio_ids_text=payload.audio_ids_text.strip(),
-            job_type="UI",
         )
+        if preflight is not None and not preflight.ok:
+            raise HTTPException(422, {"field_errors": preflight.field_errors})
+        assert job_id is not None
     finally:
         conn.close()
     return {"ok": True, "job_id": job_id}
@@ -6204,7 +6306,15 @@ def api_ui_jobs_bulk_json_preview(payload: UiJobsBulkJsonPayload, _: bool = Depe
                 if playlist_error:
                     results.append({"index": index, "error": playlist_error})
                 else:
-                    result_item = {"index": index, "valid": True}
+                    result_item = {
+                        "index": index,
+                        "valid": True,
+                        "metadata": {
+                            "playlist_ids": parsed.playlist_ids,
+                            "audience_is_for_kids": parsed.audience_is_for_kids,
+                            "video_language": parsed.video_language.strip() or "English",
+                        },
+                    }
                     if playlist_preview is not None:
                         result_item["playlist_builder"] = playlist_preview
                     results.append(result_item)
@@ -6255,6 +6365,7 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
             validated.append((parsed, playlist_overrides))
 
         playlist_meta_by_job: dict[int, dict[str, Any]] = {}
+        drive = _create_drive_client(env)
         for index, (item, playlist_overrides) in enumerate(validated):
             job_id = dbm.create_ui_job_draft(
                 conn,
@@ -6262,6 +6373,9 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
                 title=item.title.strip(),
                 description=item.description.strip(),
                 tags_csv=item.tags_csv.strip(),
+                playlists_json=json.dumps(item.playlist_ids, ensure_ascii=False),
+                audience_is_for_kids=1 if item.audience_is_for_kids else 0,
+                video_language=item.video_language.strip() or "English",
                 cover_name=item.cover_name.strip() or None,
                 cover_ext=item.cover_ext.strip() or None,
                 background_name=item.background_name.strip(),
@@ -6269,6 +6383,15 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
                 audio_ids_text=item.audio_ids_text.strip(),
                 job_type="UI",
             )
+            preflight = run_preflight_for_job(conn, env, job_id, drive)
+            if not preflight.ok:
+                conn.execute("ROLLBACK")
+                tx_started = False
+                return {
+                    "mode": mode,
+                    "summary": {"requested": len(payload.items), "created": 0, "failed": 1},
+                    "results": [{"index": index, "job_id": str(job_id), "error": {"code": "UIJ_INVALID_INPUT", "field_errors": preflight.field_errors}}],
+                }
             playlist_meta, playlist_error = _bulk_apply_playlist_builder_for_job(
                 conn,
                 job_id=job_id,
@@ -6296,7 +6419,17 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
 
     create_results = []
     for idx, job_id in enumerate(created_job_ids):
-        item_result = {"index": idx, "job_id": str(job_id), "created": True}
+        item_payload = validated[idx][0]
+        item_result = {
+            "index": idx,
+            "job_id": str(job_id),
+            "created": True,
+            "metadata": {
+                "playlist_ids": item_payload.playlist_ids,
+                "audience_is_for_kids": item_payload.audience_is_for_kids,
+                "video_language": item_payload.video_language.strip() or "English",
+            },
+        }
         playlist_meta = playlist_meta_by_job.get(job_id)
         if playlist_meta is not None:
             item_result["playlist_builder"] = playlist_meta
@@ -6722,6 +6855,9 @@ def api_update_ui_job(job_id: int, payload: UiJobDraftPayload, _: bool = Depends
             title=payload.title.strip(),
             description=payload.description.strip(),
             tags_csv=payload.tags_csv.strip(),
+            playlists_json=json.dumps(payload.playlist_ids, ensure_ascii=False),
+            audience_is_for_kids=1 if payload.audience_is_for_kids else 0,
+            video_language=payload.video_language.strip() or "English",
             cover_name=payload.cover_name.strip() or None,
             cover_ext=payload.cover_ext.strip() or None,
             background_name=payload.background_name.strip(),
@@ -6761,7 +6897,7 @@ def ui_jobs_create_page(request: Request, _: bool = Depends(require_basic_auth(e
             "mode": "create",
             "channels": channels,
             "field_errors": {},
-            "form": {},
+            "form": {"playlist_ids": [], "audience_is_for_kids": False, "video_language": "English"},
             "job_id": None,
             "release_id": None,
             "locked": False,
@@ -6794,6 +6930,9 @@ async def ui_jobs_create_submit(
     title = getv("title")
     description = getv("description")
     tags_csv = getv("tags_csv")
+    playlist_ids = [v.strip() for v in raw.get("playlist_ids", []) if str(v).strip()]
+    audience_is_for_kids = getv("audience_is_for_kids") == "yes"
+    video_language = getv("video_language") or "English"
     cover_name = getv("cover_name")
     cover_ext = getv("cover_ext")
     background_name = getv("background_name")
@@ -6805,6 +6944,9 @@ async def ui_jobs_create_submit(
         title=title,
         description=description,
         tags_csv=tags_csv,
+        playlist_ids=playlist_ids,
+        audience_is_for_kids=audience_is_for_kids,
+        video_language=video_language,
         cover_name=cover_name,
         cover_ext=cover_ext,
         background_name=background_name,
@@ -6856,6 +6998,9 @@ async def ui_jobs_create_submit(
                 title=payload.title.strip(),
                 description=payload.description.strip(),
                 tags_csv=payload.tags_csv.strip(),
+                playlists_json=json.dumps(payload.playlist_ids, ensure_ascii=False),
+                audience_is_for_kids=1 if payload.audience_is_for_kids else 0,
+                video_language=payload.video_language.strip() or "English",
                 cover_name=payload.cover_name.strip() or None,
                 cover_ext=payload.cover_ext.strip() or None,
                 background_name=payload.background_name.strip(),
@@ -6924,7 +7069,7 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
             "mode": "edit",
             "channels": channels,
             "field_errors": {},
-            "form": draft,
+            "form": _form_from_draft(draft),
             "job_id": job_id,
             "release_id": release_id,
             "locked": locked,
@@ -6956,6 +7101,9 @@ async def ui_jobs_edit_submit(
     title = getv("title")
     description = getv("description")
     tags_csv = getv("tags_csv")
+    playlist_ids = [v.strip() for v in raw.get("playlist_ids", []) if str(v).strip()]
+    audience_is_for_kids = getv("audience_is_for_kids") == "yes"
+    video_language = getv("video_language") or "English"
     cover_name = getv("cover_name")
     cover_ext = getv("cover_ext")
     background_name = getv("background_name")
@@ -6966,6 +7114,9 @@ async def ui_jobs_edit_submit(
         title=title,
         description=description,
         tags_csv=tags_csv,
+        playlist_ids=playlist_ids,
+        audience_is_for_kids=audience_is_for_kids,
+        video_language=video_language,
         cover_name=cover_name,
         cover_ext=cover_ext,
         background_name=background_name,
@@ -7024,6 +7175,9 @@ async def ui_jobs_edit_submit(
             title=payload.title.strip(),
             description=payload.description.strip(),
             tags_csv=payload.tags_csv.strip(),
+            playlists_json=json.dumps(payload.playlist_ids, ensure_ascii=False),
+            audience_is_for_kids=1 if payload.audience_is_for_kids else 0,
+            video_language=payload.video_language.strip() or "English",
             cover_name=payload.cover_name.strip() or None,
             cover_ext=payload.cover_ext.strip() or None,
             background_name=payload.background_name.strip(),
