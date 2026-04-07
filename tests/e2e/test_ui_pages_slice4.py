@@ -1173,7 +1173,7 @@ class TestUiPagesSlice4(unittest.TestCase):
                 expected_audio_ids = str(draft["audio_ids_text"])
             finally:
                 conn2.close()
-            self.assertIn(f'value="{expected_audio_ids}"', r.text)
+            self.assertIn(f'name="audio_ids_text" rows="6" style="width:86ch;" >{expected_audio_ids}</textarea>', r.text)
 
 
     def test_tags_editor_manual_fields_override_stale_json(self) -> None:
