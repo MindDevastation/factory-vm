@@ -768,6 +768,13 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('channelSlug = resolveSelectedChannelSlug();', r.text)
             self.assertIn('name="background_name"', r.text)
             self.assertIn('name="background_ext"', r.text)
+            self.assertIn('<select name="cover_ext"', r.text)
+            self.assertIn('<select name="background_ext"', r.text)
+            self.assertIn('<option value="png"', r.text)
+            self.assertIn('<option value="jpg"', r.text)
+            self.assertIn('<option value="jpeg"', r.text)
+            self.assertIn('name="description" rows="6" style="width:86ch;"', r.text)
+            self.assertIn('name="audio_ids_text" rows="6" style="width:86ch;"', r.text)
 
             r = client.get("/", headers=h)
             self.assertEqual(r.status_code, 200)

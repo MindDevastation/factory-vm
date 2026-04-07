@@ -12,6 +12,9 @@
 </details>
 
 {% if locked %}<p style="color:#b91c1c"><b>Editing is disabled: job is not in DRAFT.</b></p>{% endif %}
+{% set allowed_exts = ['png', 'jpg', 'jpeg'] %}
+{% set form_cover_ext = (form.cover_ext|default('')|lower) %}
+{% set form_background_ext = (form.background_ext|default('')|lower) %}
 
 <form method="post" action="{% if mode == 'create' %}/ui/jobs/create{% else %}/ui/jobs/{{ job_id }}/edit{% endif %}">
   <h3>A) YouTube metadata</h3>
@@ -26,7 +29,7 @@
   </p>
   {% if field_errors.project %}<p style="color:#b91c1c">{{ field_errors.project|join('; ') }}</p>{% endif %}
 
-  <p><label>Title* <input name="title" value="{{ form.title|default('') }}" {% if locked %}disabled{% endif %}></label></p>
+  <p><label>Title* <input name="title" style="width:62ch;" value="{{ form.title|default('') }}" {% if locked %}disabled{% endif %}></label></p>
   {% if field_errors.title %}<p style="color:#b91c1c">{{ field_errors.title|join('; ') }}</p>{% endif %}
   <fieldset id="titlegen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
     <legend><strong>Title Generator (single release)</strong></legend>
@@ -53,7 +56,7 @@
     <p class="muted">Apply changes only <code>release.title</code>. This does not update channel defaults or template configuration.</p>
   </fieldset>
 
-  <p><label>Description <textarea name="description" {% if locked %}disabled{% endif %}>{{ form.description|default('') }}</textarea></label></p>
+  <p><label>Description <textarea name="description" rows="6" style="width:86ch;" {% if locked %}disabled{% endif %}>{{ form.description|default('') }}</textarea></label></p>
   <fieldset id="descriptiongen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
     <legend><strong>Description Generator (single release)</strong></legend>
     <p class="muted">Generation does not change the release description until you apply.</p>
@@ -199,23 +202,43 @@
     <pre id="visual-workflow-output" style="white-space:pre-wrap; background:#f8fafc; border:1px solid #e2e8f0; padding:8px; max-height:240px; overflow:auto;">—</pre>
   </fieldset>
   {% endif %}
-  <p><label>Tags (comma-separated, no #) <input name="tags_csv" value="{{ form.tags_csv|default('') }}" {% if locked %}disabled{% endif %}></label></p>
+  <p><label>Tags (comma-separated, no #) <input name="tags_csv" style="width:62ch;" value="{{ form.tags_csv|default('') }}" {% if locked %}disabled{% endif %}></label></p>
   {% if field_errors.tags %}<p style="color:#b91c1c">{{ field_errors.tags|join('; ') }}</p>{% endif %}
 
   <p><label>Cover name <input name="cover_name" value="{{ form.cover_name|default('') }}" {% if locked %}disabled{% endif %}></label>
-     <label>ext <input name="cover_ext" value="{{ form.cover_ext|default('') }}" {% if locked %}disabled{% endif %}></label></p>
+     <label>ext
+       <select name="cover_ext" {% if locked %}disabled{% endif %}>
+         <option value="">—</option>
+         {% for ext in allowed_exts %}
+         <option value="{{ ext }}" {% if form_cover_ext == ext %}selected{% endif %}>{{ ext }}</option>
+         {% endfor %}
+         {% if form_cover_ext and form_cover_ext not in allowed_exts %}
+         <option value="{{ form_cover_ext }}" selected>{{ form_cover_ext }}</option>
+         {% endif %}
+       </select>
+     </label></p>
   {% if field_errors.cover %}<p style="color:#b91c1c">{{ field_errors.cover|join('; ') }}</p>{% endif %}
 
   <h3>B) Render inputs</h3>
   <p>
-    <label>Audio IDs* (space-separated) <input id="audio-ids-input" name="audio_ids_text" value="{{ form.audio_ids_text|default('') }}" {% if locked %}disabled{% endif %}></label>
+    <label>Audio IDs* (space-separated) <textarea id="audio-ids-input" name="audio_ids_text" rows="6" style="width:86ch;" {% if locked %}disabled{% endif %}>{{ form.audio_ids_text|default('') }}</textarea></label>
     <button id="playlist-builder-open-btn" type="button" {% if locked %}disabled{% endif %}>Generate Automatically</button>
   </p>
   <p id="playlist-overwrite-warning" style="color:#92400e; {% if not form.audio_ids_text %}display:none;{% endif %}"><b>Warning:</b> existing playlist will be replaced only after Apply.</p>
   {% if field_errors.audio %}<p style="color:#b91c1c">{{ field_errors.audio|join('; ') }}</p>{% endif %}
 
   <p><label>Background name* <input name="background_name" value="{{ form.background_name|default('') }}" {% if locked %}disabled{% endif %}></label>
-     <label>ext* <input name="background_ext" value="{{ form.background_ext|default('') }}" {% if locked %}disabled{% endif %}></label></p>
+     <label>ext*
+       <select name="background_ext" {% if locked %}disabled{% endif %}>
+         <option value="">—</option>
+         {% for ext in allowed_exts %}
+         <option value="{{ ext }}" {% if form_background_ext == ext %}selected{% endif %}>{{ ext }}</option>
+         {% endfor %}
+         {% if form_background_ext and form_background_ext not in allowed_exts %}
+         <option value="{{ form_background_ext }}" selected>{{ form_background_ext }}</option>
+         {% endif %}
+       </select>
+     </label></p>
   {% if field_errors.background %}<p style="color:#b91c1c">{{ field_errors.background|join('; ') }}</p>{% endif %}
 
   {% if not locked %}<p><button type="submit">Save DRAFT</button></p>{% endif %}

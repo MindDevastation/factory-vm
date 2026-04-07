@@ -5091,6 +5091,8 @@ class UiJobsBulkJsonPayload(BaseModel):
     mode: str
     items: list[dict[str, Any]]
 
+_ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg"}
+
 
 def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
     errors: Dict[str, List[str]] = {
@@ -5109,6 +5111,17 @@ def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
         errors["audio"].append("audio ids are required")
     if not payload.background_name.strip() or not payload.background_ext.strip():
         errors["background"].append("background name/ext are required")
+    background_ext = payload.background_ext.strip().lower()
+    if background_ext and background_ext not in _ALLOWED_IMAGE_EXTENSIONS:
+        errors["background"].append("background ext must be one of: png, jpg, jpeg")
+    cover_name = payload.cover_name.strip()
+    cover_ext = payload.cover_ext.strip().lower()
+    if cover_ext and cover_ext not in _ALLOWED_IMAGE_EXTENSIONS:
+        errors["cover"].append("cover ext must be one of: png, jpg, jpeg")
+    if cover_name and not cover_ext:
+        errors["cover"].append("cover ext is required when cover name is provided")
+    if cover_ext and not cover_name:
+        errors["cover"].append("cover name is required when cover ext is provided")
     if "#" in payload.tags_csv:
         errors["tags"].append("tags must not contain #")
     return {k: v for k, v in errors.items() if v}

@@ -269,6 +269,39 @@ class TestUiJobsApiSlice1(unittest.TestCase):
             ru = client.post(f"/v1/ui/jobs/{job_id}", json=payload, headers=h)
             self.assertEqual(ru.status_code, 409)
 
+    def test_ext_validation_rejects_unsupported_values(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                self.assertIsNotNone(ch)
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            payload = {
+                "channel_id": channel_id,
+                "title": "Bad ext",
+                "description": "",
+                "tags_csv": "",
+                "cover_name": "cover",
+                "cover_ext": "gif",
+                "background_name": "bg",
+                "background_ext": "bmp",
+                "audio_ids_text": "001",
+            }
+            resp = client.post("/v1/ui/jobs", json=payload, headers=h)
+            self.assertEqual(resp.status_code, 422)
+            errors = resp.json()["detail"]["field_errors"]
+            self.assertIn("cover", errors)
+            self.assertIn("background", errors)
+
 
 if __name__ == "__main__":
     unittest.main()
