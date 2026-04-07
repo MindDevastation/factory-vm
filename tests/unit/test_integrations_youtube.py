@@ -123,3 +123,46 @@ class TestYouTubeIntegrationMocked(unittest.TestCase):
             part="status",
             body={"id": "VID", "status": {"privacyStatus": "public"}},
         )
+
+    def test_list_playlists_collects_pages(self):
+        from services.integrations import youtube as ytm
+
+        yt = SimpleNamespace()
+        playlists_api = Mock()
+        playlists_api.list = Mock(
+            side_effect=[
+                SimpleNamespace(
+                    execute=Mock(
+                        return_value={
+                            "items": [{"id": "PL_1", "snippet": {"title": "One"}}],
+                            "nextPageToken": "p2",
+                        }
+                    )
+                ),
+                SimpleNamespace(
+                    execute=Mock(
+                        return_value={
+                            "items": [{"id": "PL_2", "snippet": {"title": "Two"}}],
+                        }
+                    )
+                ),
+            ]
+        )
+        yt.playlists = Mock(return_value=playlists_api)
+
+        with (
+            patch.object(ytm, "_GOOGLE_IMPORT_ERROR", None),
+            patch.object(ytm, "Credentials", SimpleNamespace(from_authorized_user_file=Mock(return_value=SimpleNamespace(valid=True)))),
+            patch.object(ytm, "build", Mock(return_value=yt)),
+        ):
+            c = ytm.YouTubeClient(client_secret_json="client.json", token_json="token.json")
+            c._yt = yt
+            items = c.list_playlists()
+
+        self.assertEqual(
+            items,
+            [
+                {"playlist_id": "PL_1", "playlist_title": "One"},
+                {"playlist_id": "PL_2", "playlist_title": "Two"},
+            ],
+        )

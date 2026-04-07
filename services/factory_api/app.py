@@ -88,6 +88,8 @@ from services.track_analysis_report.report_service import (
 from services.track_analysis_report.xlsx_export import export_report_to_xlsx_bytes, sanitize_sheet_name
 from services.track_analyzer import track_jobs_db
 from services.integrations.gdrive import DriveClient
+from services.integrations.youtube import YouTubeClient
+from services.common.youtube_token_resolver import resolve_channel_token_path
 from services.custom_tags import assignment_service, bulk_bindings_service, bulk_rules_service, catalog_service, reassign_service, rules_service, taxonomy_service
 from services.metadata import (
     channel_visual_style_template_service,
@@ -263,7 +265,32 @@ def api_channel_playlists(channel_id: int, _: bool = Depends(require_basic_auth(
         channel = dbm.get_channel_by_id(conn, channel_id)
         if not channel:
             raise HTTPException(404, "channel not found")
-        return {"channel_id": channel_id, "playlists": dbm.list_channel_playlists(conn, channel_id)}
+        sync_status = "cached"
+        sync_error = None
+        try:
+            if env.upload_backend == "youtube":
+                token_json = resolve_channel_token_path(channel_slug=str(channel["slug"]), tokens_dir=env.yt_tokens_dir)
+                if not env.yt_client_secret_json:
+                    raise RuntimeError("YT_CLIENT_SECRET_JSON is required for YouTube playlist sync")
+                yt = YouTubeClient(client_secret_json=env.yt_client_secret_json, token_json=token_json)
+                playlists = yt.list_playlists()
+                dbm.replace_channel_playlists_snapshot(conn, channel_id=channel_id, playlists=playlists)
+                sync_status = "synced"
+        except Exception as exc:
+            sync_status = "unavailable"
+            sync_error = str(exc)
+            logger.warning(
+                "channel.playlists.sync_failed",
+                extra={"channel_id": int(channel_id), "channel_slug": str(channel.get("slug") or ""), "error": sync_error},
+            )
+
+        playlists = dbm.list_channel_playlists(conn, channel_id)
+        return {
+            "channel_id": channel_id,
+            "playlists": playlists,
+            "load_status": sync_status,
+            "load_error": sync_error,
+        }
     finally:
         conn.close()
 

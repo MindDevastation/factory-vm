@@ -2041,6 +2041,10 @@ const hasTagsPicker =
     }
     const payload = await resp.json();
     const items = Array.isArray(payload.playlists) ? payload.playlists : [];
+    if (payload.load_status === 'unavailable') {
+      playlistContainer.textContent = 'Playlists unavailable: sync failed. Check YouTube credentials and retry.';
+      return;
+    }
     if (!items.length) {
       playlistContainer.textContent = 'No playlists available for selected channel.';
       return;

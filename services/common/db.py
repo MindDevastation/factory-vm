@@ -2857,6 +2857,48 @@ def list_channel_playlists(conn: sqlite3.Connection, channel_id: int) -> List[Di
     return [dict(row) for row in rows]
 
 
+def replace_channel_playlists_snapshot(conn: sqlite3.Connection, *, channel_id: int, playlists: List[Dict[str, Any]]) -> None:
+    ts = now_ts()
+    normalized: list[tuple[str, str]] = []
+    seen_ids: set[str] = set()
+    for item in playlists:
+        playlist_id = str(item.get("playlist_id") or "").strip()
+        playlist_title = str(item.get("playlist_title") or "").strip()
+        if not playlist_id or not playlist_title or playlist_id in seen_ids:
+            continue
+        seen_ids.add(playlist_id)
+        normalized.append((playlist_id, playlist_title))
+
+    for playlist_id, playlist_title in normalized:
+        conn.execute(
+            """
+            INSERT INTO channel_playlists(channel_id, playlist_id, playlist_title, is_active, created_at, updated_at)
+            VALUES(?, ?, ?, 1, ?, ?)
+            ON CONFLICT(channel_id, playlist_id)
+            DO UPDATE SET playlist_title = excluded.playlist_title, is_active = 1, updated_at = excluded.updated_at
+            """,
+            (channel_id, playlist_id, playlist_title, ts, ts),
+        )
+
+    if normalized:
+        placeholders = ",".join("?" for _ in normalized)
+        params: list[Any] = [ts, channel_id, *[playlist_id for playlist_id, _ in normalized]]
+        conn.execute(
+            f"""
+            UPDATE channel_playlists
+            SET is_active = 0, updated_at = ?
+            WHERE channel_id = ?
+              AND playlist_id NOT IN ({placeholders})
+            """,
+            params,
+        )
+    else:
+        conn.execute(
+            "UPDATE channel_playlists SET is_active = 0, updated_at = ? WHERE channel_id = ?",
+            (ts, channel_id),
+        )
+
+
 def get_channel_by_youtube_channel_id(conn: sqlite3.Connection, youtube_channel_id: str) -> Optional[Dict[str, Any]]:
     cur = conn.execute("SELECT * FROM channels WHERE youtube_channel_id = ?", (youtube_channel_id,))
     return cur.fetchone()

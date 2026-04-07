@@ -20,7 +20,10 @@ except Exception as e:  # ImportError in most cases
     Request = None  # type: ignore[assignment]
     Credentials = None  # type: ignore[assignment]
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube",
+]
 
 
 @dataclass(frozen=True)
@@ -87,3 +90,25 @@ class YouTubeClient:
             raise ValueError("privacy_status must be one of: private, public, unlisted")
         body = {"id": str(video_id), "status": {"privacyStatus": normalized}}
         self._yt.videos().update(part="status", body=body).execute()
+
+    def list_playlists(self) -> list[dict[str, str]]:
+        items: list[dict[str, str]] = []
+        next_page_token: str | None = None
+        while True:
+            response = (
+                self._yt.playlists()
+                .list(part="snippet", mine=True, maxResults=50, pageToken=next_page_token)
+                .execute()
+            )
+            raw_items = response.get("items") or []
+            for item in raw_items:
+                playlist_id = str(item.get("id") or "").strip()
+                snippet = item.get("snippet") or {}
+                playlist_title = str(snippet.get("title") or "").strip()
+                if playlist_id and playlist_title:
+                    items.append({"playlist_id": playlist_id, "playlist_title": playlist_title})
+            token = response.get("nextPageToken")
+            next_page_token = str(token) if token else None
+            if not next_page_token:
+                break
+        return items
