@@ -6306,7 +6306,15 @@ def api_ui_jobs_bulk_json_preview(payload: UiJobsBulkJsonPayload, _: bool = Depe
                 if playlist_error:
                     results.append({"index": index, "error": playlist_error})
                 else:
-                    result_item = {"index": index, "valid": True}
+                    result_item = {
+                        "index": index,
+                        "valid": True,
+                        "metadata": {
+                            "playlist_ids": parsed.playlist_ids,
+                            "audience_is_for_kids": parsed.audience_is_for_kids,
+                            "video_language": parsed.video_language.strip() or "English",
+                        },
+                    }
                     if playlist_preview is not None:
                         result_item["playlist_builder"] = playlist_preview
                     results.append(result_item)
@@ -6411,7 +6419,17 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
 
     create_results = []
     for idx, job_id in enumerate(created_job_ids):
-        item_result = {"index": idx, "job_id": str(job_id), "created": True}
+        item_payload = validated[idx][0]
+        item_result = {
+            "index": idx,
+            "job_id": str(job_id),
+            "created": True,
+            "metadata": {
+                "playlist_ids": item_payload.playlist_ids,
+                "audience_is_for_kids": item_payload.audience_is_for_kids,
+                "video_language": item_payload.video_language.strip() or "English",
+            },
+        }
         playlist_meta = playlist_meta_by_job.get(job_id)
         if playlist_meta is not None:
             item_result["playlist_builder"] = playlist_meta

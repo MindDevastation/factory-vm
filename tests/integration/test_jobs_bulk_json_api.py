@@ -64,6 +64,9 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             "title": title,
             "description": "desc",
             "tags_csv": "one,two",
+            "playlist_ids": ["PL_ONE"],
+            "audience_is_for_kids": False,
+            "video_language": "English",
             "cover_name": "cover",
             "cover_ext": "png",
             "background_name": "bg",
@@ -115,7 +118,20 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                 json={"mode": "create_draft_jobs", "items": [self._create_item(channel_id)]},
             )
             self.assertEqual(a_preview.status_code, 200)
-            self.assertEqual(a_preview.json(), {"mode": "create_draft_jobs", "summary": {"requested": 1, "valid": 1, "failed": 0}, "results": [{"index": 0, "valid": True}]})
+            self.assertEqual(
+                a_preview.json(),
+                {
+                    "mode": "create_draft_jobs",
+                    "summary": {"requested": 1, "valid": 1, "failed": 0},
+                    "results": [
+                        {
+                            "index": 0,
+                            "valid": True,
+                            "metadata": {"playlist_ids": ["PL_ONE"], "audience_is_for_kids": False, "video_language": "English"},
+                        }
+                    ],
+                },
+            )
 
             b_preview = client.post(
                 "/v1/ui/jobs/bulk-json/preview",
@@ -300,6 +316,74 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                 self.assertEqual(total, 0)
             finally:
                 conn2.close()
+
+    def test_bulk_preview_execute_persists_metadata_fields_and_keeps_compat_defaults(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch is not None
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod, client = self._new_client()
+            mod._create_drive_client = lambda _env: object()
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            preview = client.post(
+                "/v1/ui/jobs/bulk-json/preview",
+                headers=h,
+                json={"mode": "create_draft_jobs", "items": [self._create_item(channel_id)]},
+            )
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json()["summary"]["valid"], 1)
+            self.assertEqual(preview.json()["results"][0]["metadata"]["playlist_ids"], ["PL_ONE"])
+            self.assertEqual(preview.json()["results"][0]["metadata"]["audience_is_for_kids"], False)
+            self.assertEqual(preview.json()["results"][0]["metadata"]["video_language"], "English")
+
+            execute = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={"mode": "create_draft_jobs", "items": [self._create_item(channel_id)]},
+            )
+            self.assertEqual(execute.status_code, 200)
+            self.assertEqual(execute.json()["results"][0]["metadata"]["playlist_ids"], ["PL_ONE"])
+            created_job_id = int(execute.json()["results"][0]["job_id"])
+
+            conn2 = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn2, created_job_id)
+                self.assertEqual(draft["playlists_json"], '["PL_ONE"]')
+                self.assertEqual(int(draft["audience_is_for_kids"]), 0)
+                self.assertEqual(draft["video_language"], "English")
+            finally:
+                conn2.close()
+
+            compat_item = self._create_item(channel_id)
+            compat_item.pop("playlist_ids")
+            compat_item.pop("audience_is_for_kids")
+            compat_item.pop("video_language")
+            execute_compat = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={"mode": "create_draft_jobs", "items": [compat_item]},
+            )
+            self.assertEqual(execute_compat.status_code, 200)
+            self.assertEqual(execute_compat.json()["results"][0]["metadata"]["playlist_ids"], [])
+            compat_job_id = int(execute_compat.json()["results"][0]["job_id"])
+            conn3 = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn3, compat_job_id)
+                self.assertEqual(draft["playlists_json"], "[]")
+                self.assertEqual(int(draft["audience_is_for_kids"]), 0)
+                self.assertEqual(draft["video_language"], "English")
+            finally:
+                conn3.close()
     def test_execute_mode_c_runtime_exception_converted_to_item_error(self) -> None:
         with temp_env() as (_, env):
             os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
