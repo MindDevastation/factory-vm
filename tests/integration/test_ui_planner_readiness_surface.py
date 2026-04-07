@@ -224,6 +224,7 @@ class TestUiPlannerReadinessSurface(unittest.TestCase):
         self.assertIn("Bulk create validation failed: channel slug and content type are required.", js)
         self.assertIn("Bulk create validation failed: count must be a positive integer.", js)
         self.assertIn("Bulk create request submitted...", js)
+        self.assertIn("}).join('') : previewPlaceholder('No rows.');", js)
 
     def test_mass_action_addons_are_presentation_only(self) -> None:
         html, js = self._load_ui_assets()
