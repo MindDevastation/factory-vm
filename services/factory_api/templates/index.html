@@ -15,11 +15,22 @@
     <button type="submit">Render All</button>
   </form>
   <a href="/ui/jobs/create">Create Job</a>
+  <button type="button" id="jobs-bulk-open-btn">Jobs · Bulk JSON Editor</button>
+  <button type="button" id="secondary-surfaces-open-btn">Secondary surfaces</button>
 </p>
-<p class="muted">Secondary surfaces: <a href="/ui/publish/blocked">Publish Blocked</a> · <a href="/ui/publish/manual">Publish Manual</a> · <a href="/ui/publish/health">Publish Health</a> · <a href="/ui/metadata/title-templates">Metadata · Title Templates</a> · <a href="/ui/track-catalog/custom-tags">TAGS</a> · <a href="/ui/track-catalog/analysis-report">Track Catalog · Analysis Report</a> · <a href="/ui/db-viewer">Database</a></p>
+<div id="secondary-surfaces-backdrop" class="secondary-drawer-backdrop" hidden></div>
+<aside id="secondary-surfaces-drawer" class="secondary-drawer" aria-hidden="true">
+  <h3>Secondary surfaces</h3>
+  <ul>
+    <li><a href="/ui/publish/blocked">Publish Blocked</a></li>
+    <li><a href="/ui/publish/manual">Publish Manual</a></li>
+    <li><a href="/ui/publish/health">Publish Health</a></li>
+  </ul>
+  <p><button type="button" id="secondary-surfaces-close-btn">Close</button></p>
+</aside>
 
-<section style="margin:16px 0 20px 0;">
-  <h2>Control Center Overview</h2>
+<details style="margin:16px 0 20px 0;">
+  <summary><strong>Control Center Overview</strong></summary>
   {% set cc = control_center %}
   <div class="grid">
     <div><strong>Factory summary</strong><div class="muted">Jobs total: {{ cc.factory_summary.jobs_total }}</div></div>
@@ -32,7 +43,7 @@
     <a href="{{ route.route }}">{{ route.intent }}</a>{% if not loop.last %} · {% endif %}
   {% endfor %}
   </p>
-</section>
+</details>
 
 <section style="margin:0 0 18px 0;">
   <h3>Attention routing</h3>
@@ -61,6 +72,7 @@
   </ul>
 </section>
 
+<dialog id="channels-modal" style="width:min(900px,95vw);">
 <h2>Channels</h2>
 <p>
   <button type="button" id="channel-add-btn">Add Channel (YouTube OAuth)</button>
@@ -81,6 +93,7 @@
     </tr>
   </tbody>
 </table>
+</dialog>
 
 <h2>OAuth Tokens</h2>
 <p>
@@ -103,6 +116,7 @@
   </tbody>
 </table>
 
+<dialog id="jobs-bulk-modal" style="width:min(960px,95vw);">
 <h2>Jobs · Bulk JSON Editor</h2>
 <p class="muted">Preview and execute bulk job operations via existing UI contracts.</p>
 <p class="muted">Example item: <code>{"channel_slug":"deep-space","release_title":"Night Ride"}</code></p>
@@ -135,8 +149,10 @@
     <tr><td colspan="3" class="muted">No data.</td></tr>
   </tbody>
 </table>
+<p><button type="button" id="jobs-bulk-close-btn">Close</button></p>
+</dialog>
 
-<details style="margin:12px 0;">
+<details open style="margin:12px 0;">
   <summary><strong>Recent jobs overview (expand for table)</strong></summary>
 
 <p>
@@ -198,6 +214,28 @@
   .row-failed {
     background-color: #fef2f2;
   }
+  .secondary-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 24, 39, 0.35);
+    z-index: 40;
+  }
+  .secondary-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: min(420px, 92vw);
+    background: #ffffff;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+    padding: 16px;
+    z-index: 50;
+    transform: translateX(100%);
+    transition: transform 180ms ease-in-out;
+  }
+  .secondary-drawer.open {
+    transform: translateX(0);
+  }
 </style>
 
 <script>
@@ -221,6 +259,15 @@
   const jobsSelectAllVisible = document.getElementById('jobs-select-all-visible');
   const jobsTableBody = document.querySelector('#jobs-table tbody');
   const jobsBulkMode = document.getElementById('jobs-bulk-mode');
+  const jobsBulkOpenBtn = document.getElementById('jobs-bulk-open-btn');
+  const jobsBulkModal = document.getElementById('jobs-bulk-modal');
+  const jobsBulkCloseBtn = document.getElementById('jobs-bulk-close-btn');
+  const channelsModal = document.getElementById('channels-modal');
+  const headerChannelsBtn = document.getElementById('header-channels-btn');
+  const secondarySurfacesOpenBtn = document.getElementById('secondary-surfaces-open-btn');
+  const secondarySurfacesBackdrop = document.getElementById('secondary-surfaces-backdrop');
+  const secondarySurfacesDrawer = document.getElementById('secondary-surfaces-drawer');
+  const secondarySurfacesCloseBtn = document.getElementById('secondary-surfaces-close-btn');
   const jobsBulkJson = document.getElementById('jobs-bulk-json');
   const jobsBulkPreviewBtn = document.getElementById('jobs-bulk-preview-btn');
   const jobsBulkExecuteBtn = document.getElementById('jobs-bulk-execute-btn');
@@ -232,6 +279,24 @@
   let jobsStatusSource = [];
   let allJobs = [];
   let pollCount = 0;
+  if (jobsBulkOpenBtn && jobsBulkModal) jobsBulkOpenBtn.addEventListener('click', () => jobsBulkModal.showModal());
+  if (jobsBulkCloseBtn && jobsBulkModal) jobsBulkCloseBtn.addEventListener('click', () => jobsBulkModal.close());
+  if (headerChannelsBtn && channelsModal) headerChannelsBtn.addEventListener('click', () => channelsModal.showModal());
+  function openSecondaryDrawer() {
+    if (!secondarySurfacesDrawer || !secondarySurfacesBackdrop) return;
+    secondarySurfacesDrawer.classList.add('open');
+    secondarySurfacesDrawer.setAttribute('aria-hidden', 'false');
+    secondarySurfacesBackdrop.hidden = false;
+  }
+  function closeSecondaryDrawer() {
+    if (!secondarySurfacesDrawer || !secondarySurfacesBackdrop) return;
+    secondarySurfacesDrawer.classList.remove('open');
+    secondarySurfacesDrawer.setAttribute('aria-hidden', 'true');
+    secondarySurfacesBackdrop.hidden = true;
+  }
+  if (secondarySurfacesOpenBtn && secondarySurfacesDrawer) secondarySurfacesOpenBtn.addEventListener('click', openSecondaryDrawer);
+  if (secondarySurfacesCloseBtn && secondarySurfacesDrawer) secondarySurfacesCloseBtn.addEventListener('click', closeSecondaryDrawer);
+  if (secondarySurfacesBackdrop) secondarySurfacesBackdrop.addEventListener('click', closeSecondaryDrawer);
 
   function parseStatusesFromQuery(sourceStatuses) {
     const validStatuses = new Set(sourceStatuses);

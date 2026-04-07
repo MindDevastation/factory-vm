@@ -29,10 +29,10 @@ ROUTE_METADATA_REGISTRY: tuple[RouteMetadata, ...] = (
     RouteMetadata("UI_JOB_EDIT", "/ui/jobs/", "Edit Job", "entities", "legacy_bridge", parent_route_key="PUBLISH_QUEUE"),
     RouteMetadata("LEGACY_JOB_DETAIL", "/jobs/", "Job Detail (Legacy)", "entities", "legacy_bridge", parent_route_key="PUBLISH_QUEUE"),
     RouteMetadata("RECOVERY", "/ui/ops/recovery", "Recovery", "ops", "legacy_bridge", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
-    RouteMetadata("DB_VIEWER", "/ui/db-viewer", "Database", "ops", "legacy_bridge", parent_route_key="CONTROL_CENTER"),
-    RouteMetadata("METADATA_TITLE_TEMPLATES", "/ui/metadata/title-templates", "Title Templates", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER"),
-    RouteMetadata("TRACK_ANALYSIS_REPORT", "/ui/track-catalog/analysis-report", "Track Analysis", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER"),
-    RouteMetadata("CUSTOM_TAGS", "/ui/track-catalog/custom-tags", "Custom Tags", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER"),
+    RouteMetadata("DB_VIEWER", "/ui/db-viewer", "Database", "ops", "legacy_bridge", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
+    RouteMetadata("METADATA_TITLE_TEMPLATES", "/ui/metadata/title-templates", "Title Templates", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
+    RouteMetadata("TRACK_ANALYSIS_REPORT", "/ui/track-catalog/analysis-report", "Track Catalog", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
+    RouteMetadata("CUSTOM_TAGS", "/ui/track-catalog/custom-tags", "TAGS", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
     RouteMetadata("CUSTOM_TAGS_DASHBOARD", "/ui/track-catalog/custom-tags/dashboard", "Tag Dashboard", "entities", "entity_drilldown", parent_route_key="CUSTOM_TAGS"),
 )
 

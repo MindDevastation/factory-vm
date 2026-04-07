@@ -647,7 +647,7 @@ class TestUiPagesSlice4(unittest.TestCase):
 
             page = client.get("/ui/metadata/title-templates", headers=h)
             self.assertEqual(page.status_code, 200)
-            self.assertIn("Metadata · Title Templates", page.text)
+            self.assertIn("Title Templates", page.text)
             self.assertIn('href="/"', page.text)
             self.assertIn('id="mtb-channel"', page.text)
             self.assertIn('id="mtb-template-name"', page.text)
@@ -768,6 +768,18 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('channelSlug = resolveSelectedChannelSlug();', r.text)
             self.assertIn('name="background_name"', r.text)
             self.assertIn('name="background_ext"', r.text)
+            self.assertIn('<select name="cover_ext"', r.text)
+            self.assertIn('<select name="background_ext"', r.text)
+            self.assertIn('<option value="png"', r.text)
+            self.assertIn('<option value="jpg"', r.text)
+            self.assertIn('<option value="jpeg"', r.text)
+            self.assertIn('name="description" rows="6" style="width:86ch;"', r.text)
+            self.assertIn('name="audio_ids_text" rows="6" style="width:86ch;"', r.text)
+            self.assertIn('name="audience_is_for_kids" value="yes"', r.text)
+            self.assertIn('name="audience_is_for_kids" value="no" checked', r.text)
+            self.assertIn('name="video_language" value="English"', r.text)
+            self.assertIn('id="playlist-checkboxes"', r.text)
+            self.assertIn('/v1/channels/${channelId}/playlists', r.text)
 
             r = client.get("/", headers=h)
             self.assertEqual(r.status_code, 200)
@@ -779,6 +791,16 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn("setJobsStatusFilterUnavailable(true);", r.text)
             self.assertIn('id="channel-add-btn"', r.text)
             self.assertIn('id="channels-table"', r.text)
+            self.assertIn('id="header-channels-btn"', r.text)
+            self.assertIn('id="channels-modal"', r.text)
+            self.assertIn('id="jobs-bulk-open-btn"', r.text)
+            self.assertIn('id="jobs-bulk-modal"', r.text)
+            self.assertIn('id="secondary-surfaces-drawer"', r.text)
+            self.assertIn('class="secondary-drawer"', r.text)
+            self.assertIn('id="secondary-surfaces-backdrop"', r.text)
+            self.assertIn('secondarySurfacesDrawer.classList.add(\'open\')', r.text)
+            self.assertNotIn('secondarySurfacesDrawer.showModal()', r.text)
+            self.assertIn('details open style="margin:12px 0;"', r.text)
             self.assertIn('href="/ui/db-viewer"', r.text)
             self.assertIn('href="/ui/planner"', r.text)
             self.assertIn('href="/ui/metadata/title-templates"', r.text)
@@ -887,7 +909,7 @@ class TestUiPagesSlice4(unittest.TestCase):
 
             r = client.get("/ui/metadata/title-templates", headers=h)
             self.assertEqual(r.status_code, 200)
-            self.assertIn("Metadata · Title Templates", r.text)
+            self.assertIn("Title Templates", r.text)
             self.assertIn('id="mtb-table"', r.text)
             self.assertIn('id="mtb-preview-btn"', r.text)
             self.assertIn('id="mtb-save-btn"', r.text)
@@ -916,7 +938,7 @@ class TestUiPagesSlice4(unittest.TestCase):
 
             r = client.get("/ui/track-catalog/analysis-report", headers=h)
             self.assertEqual(r.status_code, 200)
-            self.assertIn("Track Catalog · Analysis Report", r.text)
+            self.assertIn("Track Catalog", r.text)
             self.assertIn('id="tar-channel-select"', r.text)
             self.assertIn('id="tar-export-btn"', r.text)
             self.assertIn('id="tar-table"', r.text)
@@ -1155,7 +1177,7 @@ class TestUiPagesSlice4(unittest.TestCase):
                 expected_audio_ids = str(draft["audio_ids_text"])
             finally:
                 conn2.close()
-            self.assertIn(f'value="{expected_audio_ids}"', r.text)
+            self.assertIn(f'name="audio_ids_text" rows="6" style="width:86ch;" >{expected_audio_ids}</textarea>', r.text)
 
 
     def test_tags_editor_manual_fields_override_stale_json(self) -> None:

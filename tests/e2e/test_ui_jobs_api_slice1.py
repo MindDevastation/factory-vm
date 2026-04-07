@@ -27,6 +27,11 @@ class TestUiJobsApiSlice1(unittest.TestCase):
 
             mod = importlib.import_module("services.factory_api.app")
             importlib.reload(mod)
+            class _PreflightOk:
+                ok = True
+                field_errors = {}
+                resolved = {}
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _PreflightOk()
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
@@ -35,6 +40,9 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                 "title": "My First",
                 "description": "desc",
                 "tags_csv": "one,two",
+                "playlist_ids": ["PL_A", "PL_B"],
+                "audience_is_for_kids": True,
+                "video_language": "English",
                 "cover_name": "cover",
                 "cover_ext": "png",
                 "background_name": "bg",
@@ -62,6 +70,10 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                 self.assertEqual(job["state"], "DRAFT")
                 self.assertEqual(job["job_type"], "UI")
                 self.assertEqual(job["release_title"], "Updated")
+                release = conn2.execute("SELECT playlists_json, audience_is_for_kids, video_language FROM releases WHERE id = ?", (job["release_id"],)).fetchone()
+                self.assertEqual(release["playlists_json"], '["PL_A", "PL_B"]')
+                self.assertEqual(int(release["audience_is_for_kids"]), 1)
+                self.assertEqual(release["video_language"], "English")
             finally:
                 conn2.close()
 
@@ -81,6 +93,11 @@ class TestUiJobsApiSlice1(unittest.TestCase):
 
             mod = importlib.import_module("services.factory_api.app")
             importlib.reload(mod)
+            class _PreflightOk:
+                ok = True
+                field_errors = {}
+                resolved = {}
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _PreflightOk()
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
@@ -184,6 +201,53 @@ class TestUiJobsApiSlice1(unittest.TestCase):
             finally:
                 conn2.close()
 
+    def test_create_api_blocks_persist_when_background_preflight_fails(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                self.assertIsNotNone(ch)
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+
+            class _BackgroundFail:
+                ok = False
+                field_errors = {"background": ["background 'missing-bg.jpg' matches=0"]}
+                resolved = {}
+
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _BackgroundFail()
+
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            payload = {
+                "channel_id": channel_id,
+                "title": "Background gate",
+                "description": "",
+                "tags_csv": "",
+                "cover_name": "",
+                "cover_ext": "",
+                "background_name": "missing-bg",
+                "background_ext": "jpg",
+                "audio_ids_text": "001",
+            }
+            resp = client.post("/v1/ui/jobs", json=payload, headers=h)
+            self.assertEqual(resp.status_code, 422)
+            self.assertIn("background", resp.json()["detail"]["field_errors"])
+
+            conn2 = dbm.connect(env)
+            try:
+                total = int(conn2.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"])
+                self.assertEqual(total, 0)
+            finally:
+                conn2.close()
+
     def test_project_immutable_on_update(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
@@ -200,6 +264,11 @@ class TestUiJobsApiSlice1(unittest.TestCase):
 
             mod = importlib.import_module("services.factory_api.app")
             importlib.reload(mod)
+            class _PreflightOk:
+                ok = True
+                field_errors = {}
+                resolved = {}
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _PreflightOk()
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
@@ -221,6 +290,39 @@ class TestUiJobsApiSlice1(unittest.TestCase):
             payload["channel_id"] = ch2
             ru = client.post(f"/v1/ui/jobs/{job_id}", json=payload, headers=h)
             self.assertEqual(ru.status_code, 409)
+
+    def test_ext_validation_rejects_unsupported_values(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                self.assertIsNotNone(ch)
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            payload = {
+                "channel_id": channel_id,
+                "title": "Bad ext",
+                "description": "",
+                "tags_csv": "",
+                "cover_name": "cover",
+                "cover_ext": "gif",
+                "background_name": "bg",
+                "background_ext": "bmp",
+                "audio_ids_text": "001",
+            }
+            resp = client.post("/v1/ui/jobs", json=payload, headers=h)
+            self.assertEqual(resp.status_code, 422)
+            errors = resp.json()["detail"]["field_errors"]
+            self.assertIn("cover", errors)
+            self.assertIn("background", errors)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,12 @@ class _PreflightOk:
         }
 
 
+class _PreflightBackgroundFail:
+    ok = False
+    field_errors = {"background": ["background 'bg.jpg' matches=0"]}
+    resolved = {}
+
+
 class TestJobsBulkJsonApi(unittest.TestCase):
     def _new_client(self):
         mod = importlib.import_module("services.factory_api.app")
@@ -58,6 +64,9 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             "title": title,
             "description": "desc",
             "tags_csv": "one,two",
+            "playlist_ids": ["PL_ONE"],
+            "audience_is_for_kids": False,
+            "video_language": "English",
             "cover_name": "cover",
             "cover_ext": "png",
             "background_name": "bg",
@@ -109,7 +118,20 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                 json={"mode": "create_draft_jobs", "items": [self._create_item(channel_id)]},
             )
             self.assertEqual(a_preview.status_code, 200)
-            self.assertEqual(a_preview.json(), {"mode": "create_draft_jobs", "summary": {"requested": 1, "valid": 1, "failed": 0}, "results": [{"index": 0, "valid": True}]})
+            self.assertEqual(
+                a_preview.json(),
+                {
+                    "mode": "create_draft_jobs",
+                    "summary": {"requested": 1, "valid": 1, "failed": 0},
+                    "results": [
+                        {
+                            "index": 0,
+                            "valid": True,
+                            "metadata": {"playlist_ids": ["PL_ONE"], "audience_is_for_kids": False, "video_language": "English"},
+                        }
+                    ],
+                },
+            )
 
             b_preview = client.post(
                 "/v1/ui/jobs/bulk-json/preview",
@@ -259,84 +281,109 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             self.assertTrue(payload_preview_ok["results"][0]["playlist_builder"]["ok"])
             self.assertIsInstance(payload_preview_ok["results"][0]["playlist_builder"].get("summary"), dict)
 
-            preview_fail = client.post(
-                "/v1/ui/jobs/bulk-json/preview",
-                headers=h,
-                json={
-                    "mode": "create_draft_jobs",
-                    "items": [
-                        {**self._create_item(channel_id, title="PB Bad"), "playlist_builder": {"unknown": 1}}
-                    ],
-                },
-            )
-            self.assertEqual(preview_fail.status_code, 200)
-            self.assertEqual(preview_fail.json()["summary"], {"requested": 1, "valid": 0, "failed": 1})
-            self.assertEqual(preview_fail.json()["results"][0]["error"]["code"], "UIJ_INVALID_INPUT")
-
-            execute_draft = client.post(
-                "/v1/ui/jobs/bulk-json/execute",
-                headers=h,
-                json={
-                    "mode": "create_draft_jobs",
-                    "items": [
-                        {
-                            **self._create_item(channel_id, title="PB Draft"),
-                            "playlist_builder": {"generation_mode": "safe", "min_duration_min": 10, "max_duration_min": 15},
-                        }
-                    ],
-                },
-            )
-            self.assertEqual(execute_draft.status_code, 200)
-            execute_draft_payload = execute_draft.json()
-            self.assertEqual(execute_draft_payload["summary"], {"requested": 1, "created": 1, "failed": 0})
-            draft_job_id = int(execute_draft_payload["results"][0]["job_id"])
-            self.assertTrue(execute_draft_payload["results"][0]["playlist_builder"]["ok"])
+    def test_bulk_execute_rolls_back_when_background_preflight_fails(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
 
             conn = dbm.connect(env)
             try:
-                draft = dbm.get_ui_job_draft(conn, draft_job_id)
-                self.assertIsNotNone(draft)
-                self.assertNotEqual(str(draft["audio_ids_text"]).strip(), "1")
-                self.assertIn('"generation_mode": "safe"', str(draft["playlist_builder_override_json"]))
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch is not None
+                channel_id = int(ch["id"])
             finally:
                 conn.close()
 
-            execute_enqueue = client.post(
+            mod, client = self._new_client()
+            mod._create_drive_client = lambda _env: object()
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightBackgroundFail()
+
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.post(
                 "/v1/ui/jobs/bulk-json/execute",
                 headers=h,
-                json={
-                    "mode": "create_and_enqueue",
-                    "items": [
-                        {
-                            **self._create_item(channel_id, title="PB Enqueue"),
-                            "playlist_builder": True,
-                        }
-                    ],
-                },
+                json={"mode": "create_draft_jobs", "items": [self._create_item(channel_id)]},
             )
-            self.assertEqual(execute_enqueue.status_code, 200)
-            execute_enqueue_payload = execute_enqueue.json()
-            self.assertEqual(execute_enqueue_payload["summary"], {"requested": 1, "created": 1, "enqueued": 1, "noop": 0, "failed": 0})
-            self.assertTrue(execute_enqueue_payload["results"][0]["playlist_builder"]["ok"])
+            self.assertEqual(resp.status_code, 200)
+            payload = resp.json()
+            self.assertEqual(payload["summary"]["created"], 0)
+            self.assertEqual(payload["summary"]["failed"], 1)
+            self.assertIn("background", payload["results"][0]["error"]["field_errors"])
 
-            execute_fail = client.post(
+            conn2 = dbm.connect(env)
+            try:
+                total = int(conn2.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"])
+                self.assertEqual(total, 0)
+            finally:
+                conn2.close()
+
+    def test_bulk_preview_execute_persists_metadata_fields_and_keeps_compat_defaults(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch is not None
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod, client = self._new_client()
+            mod._create_drive_client = lambda _env: object()
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            preview = client.post(
+                "/v1/ui/jobs/bulk-json/preview",
+                headers=h,
+                json={"mode": "create_draft_jobs", "items": [self._create_item(channel_id)]},
+            )
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json()["summary"]["valid"], 1)
+            self.assertEqual(preview.json()["results"][0]["metadata"]["playlist_ids"], ["PL_ONE"])
+            self.assertEqual(preview.json()["results"][0]["metadata"]["audience_is_for_kids"], False)
+            self.assertEqual(preview.json()["results"][0]["metadata"]["video_language"], "English")
+
+            execute = client.post(
                 "/v1/ui/jobs/bulk-json/execute",
                 headers=h,
-                json={
-                    "mode": "create_draft_jobs",
-                    "items": [
-                        {
-                            **self._create_item(channel_id, title="PB Execute Fail"),
-                            "playlist_builder": {"generation_mode": "safe", "required_tags": ["no-match-tag"]},
-                        }
-                    ],
-                },
+                json={"mode": "create_draft_jobs", "items": [self._create_item(channel_id)]},
             )
-            self.assertEqual(execute_fail.status_code, 200)
-            self.assertEqual(execute_fail.json()["summary"], {"requested": 1, "created": 0, "failed": 1})
-            self.assertEqual(execute_fail.json()["results"][0]["error"]["code"], "PLB_NO_CANDIDATES")
+            self.assertEqual(execute.status_code, 200)
+            self.assertEqual(execute.json()["results"][0]["metadata"]["playlist_ids"], ["PL_ONE"])
+            created_job_id = int(execute.json()["results"][0]["job_id"])
 
+            conn2 = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn2, created_job_id)
+                self.assertEqual(draft["playlists_json"], '["PL_ONE"]')
+                self.assertEqual(int(draft["audience_is_for_kids"]), 0)
+                self.assertEqual(draft["video_language"], "English")
+            finally:
+                conn2.close()
 
+            compat_item = self._create_item(channel_id)
+            compat_item.pop("playlist_ids")
+            compat_item.pop("audience_is_for_kids")
+            compat_item.pop("video_language")
+            execute_compat = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={"mode": "create_draft_jobs", "items": [compat_item]},
+            )
+            self.assertEqual(execute_compat.status_code, 200)
+            self.assertEqual(execute_compat.json()["results"][0]["metadata"]["playlist_ids"], [])
+            compat_job_id = int(execute_compat.json()["results"][0]["job_id"])
+            conn3 = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn3, compat_job_id)
+                self.assertEqual(draft["playlists_json"], "[]")
+                self.assertEqual(int(draft["audience_is_for_kids"]), 0)
+                self.assertEqual(draft["video_language"], "English")
+            finally:
+                conn3.close()
     def test_execute_mode_c_runtime_exception_converted_to_item_error(self) -> None:
         with temp_env() as (_, env):
             os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
