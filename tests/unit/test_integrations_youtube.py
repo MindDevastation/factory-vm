@@ -166,3 +166,16 @@ class TestYouTubeIntegrationMocked(unittest.TestCase):
                 {"playlist_id": "PL_2", "playlist_title": "Two"},
             ],
         )
+
+    def test_resolve_or_create_playlist_ambiguous_raises(self):
+        from services.integrations import youtube as ytm
+
+        with (
+            patch.object(ytm, "_GOOGLE_IMPORT_ERROR", None),
+            patch.object(ytm, "Credentials", SimpleNamespace(from_authorized_user_file=Mock(return_value=SimpleNamespace(valid=True)))),
+            patch.object(ytm, "build", Mock(return_value=SimpleNamespace())),
+        ):
+            c = ytm.YouTubeClient(client_secret_json="client.json", token_json="token.json")
+            c.list_playlists = Mock(return_value=[{"playlist_id": "A", "playlist_title": "X"}, {"playlist_id": "B", "playlist_title": "X"}])
+            with self.assertRaises(RuntimeError):
+                c.resolve_or_create_playlist(title="X")

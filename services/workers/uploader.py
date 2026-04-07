@@ -25,6 +25,74 @@ from services.publish_runtime.schedule import evaluate_publish_schedule
 log = get_logger("uploader")
 
 
+def _resolve_playlist_targets(conn: Any, *, job_id: int) -> tuple[list[str], str | None]:
+    row = conn.execute(
+        """
+        SELECT COALESCE(r.playlists_json, '[]') AS playlists_json, r.playlist_create_title
+        FROM jobs j
+        JOIN releases r ON r.id = j.release_id
+        WHERE j.id = ?
+        """,
+        (job_id,),
+    ).fetchone()
+    if not row:
+        return [], None
+    try:
+        playlist_ids = json.loads(str(row.get("playlists_json") or "[]"))
+    except Exception:
+        playlist_ids = []
+    normalized_ids: list[str] = []
+    seen: set[str] = set()
+    for raw in playlist_ids if isinstance(playlist_ids, list) else []:
+        playlist_id = str(raw or "").strip()
+        if playlist_id and playlist_id not in seen:
+            seen.add(playlist_id)
+            normalized_ids.append(playlist_id)
+    title = str(row.get("playlist_create_title") or "").strip() or None
+    return normalized_ids, title
+
+
+def _assign_video_to_playlists(conn: Any, *, job: dict[str, Any], video_id: str, yt: YouTubeClient) -> None:
+    playlist_ids, playlist_create_title = _resolve_playlist_targets(conn, job_id=int(job["id"]))
+    resolved_ids: list[str] = list(playlist_ids)
+    if playlist_create_title:
+        resolved_id, _created = yt.resolve_or_create_playlist(title=playlist_create_title)
+        conn.execute(
+            """
+            UPDATE releases SET playlist_create_title = ? WHERE id = ?
+            """,
+            (playlist_create_title, int(job["release_id"])),
+        )
+        conn.execute(
+            """
+            UPDATE ui_job_drafts SET playlist_create_title = ? WHERE job_id = ?
+            """,
+            (playlist_create_title, int(job["id"])),
+        )
+        if resolved_id not in resolved_ids:
+            resolved_ids.append(resolved_id)
+    for playlist_id in resolved_ids:
+        yt.add_video_to_playlist(playlist_id=playlist_id, video_id=video_id)
+
+
+def _handle_upload_step_failure(conn: Any, *, env: Env, job_id: int, error_text: str, worker_id: str) -> None:
+    attempt = dbm.increment_attempt(conn, job_id)
+    dbm.set_youtube_error(conn, job_id, error_text)
+    if attempt < env.max_upload_attempts:
+        dbm.schedule_retry(
+            conn,
+            job_id,
+            next_state="UPLOADING",
+            stage="UPLOAD",
+            error_reason=f"attempt={attempt} retry: {error_text}",
+            backoff_sec=env.retry_backoff_sec,
+        )
+    else:
+        dbm.update_job_state(conn, job_id, state="UPLOAD_FAILED", stage="UPLOAD", error_reason=error_text)
+        dbm.clear_retry(conn, job_id)
+    dbm.release_lock(conn, job_id, worker_id)
+
+
 def _load_global_controls(conn: Any) -> dict[str, Any]:
     row = conn.execute(
         "SELECT auto_publish_paused, reason FROM publish_global_controls WHERE singleton_key = 1"
@@ -444,6 +512,17 @@ def uploader_cycle(*, env: Env, worker_id: str) -> None:
         # Idempotency: if already uploaded, do not re-upload.
         existing = conn.execute("SELECT video_id, url, studio_url FROM youtube_uploads WHERE job_id = ?", (job_id,)).fetchone()
         if existing and existing.get("video_id"):
+            if env.upload_backend == "youtube":
+                try:
+                    channel_slug = str(job.get("channel_slug") or "").strip()
+                    token_json = resolve_channel_token_path(channel_slug=channel_slug, tokens_dir=env.yt_tokens_dir)
+                    if not env.yt_client_secret_json:
+                        raise YouTubeTokenResolutionError("YT_CLIENT_SECRET_JSON is required for YouTube uploads")
+                    yt = YouTubeClient(client_secret_json=env.yt_client_secret_json, token_json=token_json)
+                    _assign_video_to_playlists(conn, job=job, video_id=str(existing["video_id"]), yt=yt)
+                except Exception as exc:
+                    _handle_upload_step_failure(conn, env=env, job_id=job_id, error_text=str(exc), worker_id=worker_id)
+                    return
             dbm.update_job_state(conn, job_id, state="WAIT_APPROVAL", stage="APPROVAL", progress_text="already uploaded (private)")
             _initialize_publish_runtime_after_private_upload(conn, job_id=job_id)
             dbm.clear_retry(conn, job_id)
@@ -521,6 +600,11 @@ def uploader_cycle(*, env: Env, worker_id: str) -> None:
         video_id = res.video_id
         url = f"https://www.youtube.com/watch?v={video_id}"
         studio_url = f"https://studio.youtube.com/video/{video_id}/edit"
+        conn_upload = dbm.connect(env)
+        try:
+            dbm.set_youtube_upload(conn_upload, job_id, video_id=video_id, url=url, studio_url=studio_url, privacy="private")
+        finally:
+            conn_upload.close()
     except Exception as e:
         conn = dbm.connect(env)
         try:
@@ -554,7 +638,12 @@ def uploader_cycle(*, env: Env, worker_id: str) -> None:
 
     conn = dbm.connect(env)
     try:
-        dbm.set_youtube_upload(conn, job_id, video_id=video_id, url=url, studio_url=studio_url, privacy="private")
+        if env.upload_backend == "youtube":
+            try:
+                _assign_video_to_playlists(conn, job=job, video_id=video_id, yt=yt)
+            except Exception as exc:
+                _handle_upload_step_failure(conn, env=env, job_id=job_id, error_text=str(exc), worker_id=worker_id)
+                return
         dbm.update_job_state(conn, job_id, state="WAIT_APPROVAL", stage="APPROVAL", progress_text="uploaded (private)")
         _initialize_publish_runtime_after_private_upload(conn, job_id=job_id)
         dbm.clear_retry(conn, job_id)
