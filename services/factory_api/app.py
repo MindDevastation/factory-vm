@@ -5467,6 +5467,46 @@ def _parse_bulk_payload(payload: UiJobsBulkJsonPayload) -> tuple[str | None, JSO
     return mode, None
 
 
+def _create_ui_job_draft_with_preflight(
+    conn: Any,
+    *,
+    channel_id: int,
+    title: str,
+    description: str,
+    tags_csv: str,
+    cover_name: str | None,
+    cover_ext: str | None,
+    background_name: str,
+    background_ext: str,
+    audio_ids_text: str,
+    drive: Any | None = None,
+) -> tuple[int | None, Any | None]:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        job_id = dbm.create_ui_job_draft(
+            conn,
+            channel_id=channel_id,
+            title=title,
+            description=description,
+            tags_csv=tags_csv,
+            cover_name=cover_name,
+            cover_ext=cover_ext,
+            background_name=background_name,
+            background_ext=background_ext,
+            audio_ids_text=audio_ids_text,
+            job_type="UI",
+        )
+        preflight = run_preflight_for_job(conn, env, job_id, drive)
+        if not preflight.ok:
+            conn.execute("ROLLBACK")
+            return None, preflight
+        conn.execute("COMMIT")
+        return job_id, preflight
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -6131,7 +6171,7 @@ def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basi
         ch = dbm.get_channel_by_id(conn, payload.channel_id)
         if not ch:
             raise HTTPException(422, {"field_errors": {"project": ["project does not exist"]}})
-        job_id = dbm.create_ui_job_draft(
+        job_id, preflight = _create_ui_job_draft_with_preflight(
             conn,
             channel_id=payload.channel_id,
             title=payload.title.strip(),
@@ -6142,8 +6182,10 @@ def api_create_ui_job(payload: UiJobDraftPayload, _: bool = Depends(require_basi
             background_name=payload.background_name.strip(),
             background_ext=payload.background_ext.strip(),
             audio_ids_text=payload.audio_ids_text.strip(),
-            job_type="UI",
         )
+        if preflight is not None and not preflight.ok:
+            raise HTTPException(422, {"field_errors": preflight.field_errors})
+        assert job_id is not None
     finally:
         conn.close()
     return {"ok": True, "job_id": job_id}
@@ -6255,6 +6297,7 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
             validated.append((parsed, playlist_overrides))
 
         playlist_meta_by_job: dict[int, dict[str, Any]] = {}
+        drive = _create_drive_client(env)
         for index, (item, playlist_overrides) in enumerate(validated):
             job_id = dbm.create_ui_job_draft(
                 conn,
@@ -6269,6 +6312,15 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
                 audio_ids_text=item.audio_ids_text.strip(),
                 job_type="UI",
             )
+            preflight = run_preflight_for_job(conn, env, job_id, drive)
+            if not preflight.ok:
+                conn.execute("ROLLBACK")
+                tx_started = False
+                return {
+                    "mode": mode,
+                    "summary": {"requested": len(payload.items), "created": 0, "failed": 1},
+                    "results": [{"index": index, "job_id": str(job_id), "error": {"code": "UIJ_INVALID_INPUT", "field_errors": preflight.field_errors}}],
+                }
             playlist_meta, playlist_error = _bulk_apply_playlist_builder_for_job(
                 conn,
                 job_id=job_id,

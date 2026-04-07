@@ -184,6 +184,53 @@ class TestUiJobsApiSlice1(unittest.TestCase):
             finally:
                 conn2.close()
 
+    def test_create_api_blocks_persist_when_background_preflight_fails(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                self.assertIsNotNone(ch)
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+
+            class _BackgroundFail:
+                ok = False
+                field_errors = {"background": ["background 'missing-bg.jpg' matches=0"]}
+                resolved = {}
+
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _BackgroundFail()
+
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            payload = {
+                "channel_id": channel_id,
+                "title": "Background gate",
+                "description": "",
+                "tags_csv": "",
+                "cover_name": "",
+                "cover_ext": "",
+                "background_name": "missing-bg",
+                "background_ext": "jpg",
+                "audio_ids_text": "001",
+            }
+            resp = client.post("/v1/ui/jobs", json=payload, headers=h)
+            self.assertEqual(resp.status_code, 422)
+            self.assertIn("background", resp.json()["detail"]["field_errors"])
+
+            conn2 = dbm.connect(env)
+            try:
+                total = int(conn2.execute("SELECT COUNT(*) AS c FROM jobs").fetchone()["c"])
+                self.assertEqual(total, 0)
+            finally:
+                conn2.close()
+
     def test_project_immutable_on_update(self) -> None:
         with temp_env() as (_, _):
             env = Env.load()
