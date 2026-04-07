@@ -182,6 +182,7 @@ def analyze_tracks(
     scope: str = "pending",
     force: bool = False,
     max_tracks: int = 200,
+    progress_callback: Any | None = None,
 ) -> AnalyzeStats:
     _require_thresholds(conn, channel_slug)
 
@@ -214,6 +215,8 @@ def analyze_tracks(
                 yamnet_payload = yamnet.analyze_with_yamnet(local_path)
             except yamnet.YAMNetUnavailableError as exc:
                 raise AnalyzeError("YAMNET_NOT_INSTALLED: install via UI button and retry") from exc
+            except yamnet.YAMNetRuntimeIncompatibleError as exc:
+                raise AnalyzeError("YAMNET_RUNTIME_INCOMPATIBLE: reinstall YamNet deps via UI and retry") from exc
 
             try:
                 texture_meta = _analyze_texture(local_path)
@@ -442,6 +445,8 @@ def analyze_tracks(
             else:
                 conn.execute("COMMIT")
             processed += 1
+            if callable(progress_callback):
+                progress_callback(processed=processed, total=selected)
         except Exception:
             failed += 1
             track_failed = True

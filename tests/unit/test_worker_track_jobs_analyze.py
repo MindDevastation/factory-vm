@@ -54,8 +54,8 @@ class TestTrackJobsWorkerAnalyze(unittest.TestCase):
                 assert job is not None
                 payload = dbm.json_loads(job["payload_json"])
                 self.assertEqual(job["status"], "DONE")
-                self.assertEqual(payload.get("processed_count"), 1)
-                self.assertEqual(payload.get("total_count"), 1)
+                self.assertEqual(payload.get("processed_count"), 2)
+                self.assertEqual(payload.get("total_count"), 2)
                 self.assertEqual(payload.get("last_message"), "DONE")
 
                 logs = tjdb.list_logs(conn, job_id=job_id)
@@ -149,6 +149,60 @@ class TestTrackJobsWorkerAnalyze(unittest.TestCase):
                 payload = dbm.json_loads(job["payload_json"])
                 self.assertEqual(job["status"], "FAILED")
                 self.assertIn("YAMNET_NOT_INSTALLED", str(payload.get("last_message") or ""))
+            finally:
+                conn.close()
+
+    def test_track_analyze_reports_in_flight_progress_via_callback(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = "/secure/gdrive/client_secret.json"
+            os.environ["GDRIVE_TOKENS_DIR"] = str(Path(env.storage_root) / "gdrive_tokens")
+            env = Env.load()
+            seed_minimal_db(env)
+            token_path = Path(env.gdrive_tokens_dir) / "darkwood-reverie" / "token.json"
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
+            conn = dbm.connect(env)
+            try:
+                conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
+                for idx in range(1, 3):
+                    conn.execute(
+                        """
+                        INSERT INTO tracks(channel_slug, track_id, gdrive_file_id, source, filename, title, artist, duration_sec, discovered_at, analyzed_at)
+                        VALUES(?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        ("darkwood-reverie", f"{idx:03d}", f"fid-{idx}", "GDRIVE", f"{idx:03d}_A.wav", "A", None, None, dbm.now_ts(), None),
+                    )
+                job_id = tjdb.enqueue_job(
+                    conn,
+                    job_type="ANALYZE_TRACKS",
+                    channel_slug="darkwood-reverie",
+                    payload={"scope": "pending", "force": False, "max_tracks": 2},
+                )
+            finally:
+                conn.close()
+
+            def _analyze_side_effect(*_args, **kwargs):
+                cb = kwargs.get("progress_callback")
+                assert callable(cb)
+                cb(processed=1, total=2)
+                cb(processed=2, total=2)
+                return type("S", (), {"selected": 2, "processed": 2, "failed": 0})()
+
+            with mock.patch("services.workers.track_jobs.assert_yamnet_available", return_value="data/pydeps"), mock.patch("services.workers.track_jobs.DriveClient"), mock.patch(
+                "services.workers.track_jobs.analyze_tracks",
+                side_effect=_analyze_side_effect,
+            ):
+                track_jobs_cycle(env=env, worker_id="t-track-jobs-analyze-progress")
+
+            conn = dbm.connect(env)
+            try:
+                job = tjdb.get_job(conn, job_id)
+                assert job is not None
+                payload = dbm.json_loads(job["payload_json"])
+                self.assertEqual(payload.get("processed_count"), 2)
+                self.assertEqual(payload.get("total_count"), 2)
+                logs = tjdb.list_logs(conn, job_id=job_id)
+                self.assertTrue(any("job finished status=DONE" in (row.get("message") or "") for row in logs))
             finally:
                 conn.close()
 

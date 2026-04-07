@@ -38,6 +38,22 @@ class TestDbMoreCoverage(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_update_job_state_clears_stale_error_reason_on_real_resolution(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            job_id = insert_release_and_job(env, state="RENDER_FAILED", stage="RENDER")
+            conn = dbm.connect(env)
+            try:
+                dbm.update_job_state(conn, job_id, state="RENDER_FAILED", stage="RENDER", error_reason="ffmpeg failed")
+                failed = dbm.get_job(conn, job_id)
+                self.assertEqual(str(failed["error_reason"]), "ffmpeg failed")
+
+                dbm.update_job_state(conn, job_id, state="READY_FOR_RENDER", stage="FETCH")
+                resolved = dbm.get_job(conn, job_id)
+                self.assertIsNone(resolved["error_reason"])
+            finally:
+                conn.close()
+
     def test_set_youtube_error_upsert(self):
         with temp_env() as (_td, env):
             seed_minimal_db(env)

@@ -39,7 +39,15 @@ class TestDbClaimJob(unittest.TestCase):
     def tearDown(self) -> None:
         self.td.cleanup()
 
-    def _insert_job(self, *, state: str, locked: bool = False, locked_at: float | None = None, retry_at: float | None = None) -> int:
+    def _insert_job(
+        self,
+        *,
+        state: str,
+        locked: bool = False,
+        locked_at: float | None = None,
+        retry_at: float | None = None,
+        priority: int = 1,
+    ) -> int:
         conn = dbm.connect(self.env)
         try:
             ts = dbm.now_ts()
@@ -49,7 +57,7 @@ class TestDbClaimJob(unittest.TestCase):
                 job_type="RENDER_LONG",
                 state=state,
                 stage="FETCH",
-                priority=1,
+                priority=priority,
                 attempt=0,
                 created_at=ts,
                 updated_at=ts,
@@ -94,3 +102,21 @@ class TestDbClaimJob(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(got, ok_jid)
+
+    def test_claim_ready_for_render_can_use_strict_id_order_policy(self) -> None:
+        high_priority_newer = self._insert_job(state="READY_FOR_RENDER", priority=10)
+        low_priority_older = self._insert_job(state="READY_FOR_RENDER", priority=1)
+        self.assertLess(high_priority_newer, low_priority_older)
+
+        conn = dbm.connect(self.env)
+        try:
+            got = dbm.claim_job(
+                conn,
+                want_state="READY_FOR_RENDER",
+                worker_id="x",
+                lock_ttl_sec=3600,
+                order_policy="id_asc",
+            )
+        finally:
+            conn.close()
+        self.assertEqual(got, high_priority_newer)

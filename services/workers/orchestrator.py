@@ -133,7 +133,13 @@ def orchestrator_cycle(*, env: Env, worker_id: str) -> None:
             max_attempts=env.max_render_attempts,
         )
 
-        job_id = dbm.claim_job(conn, want_state="READY_FOR_RENDER", worker_id=worker_id, lock_ttl_sec=env.job_lock_ttl_sec)
+        job_id = dbm.claim_job(
+            conn,
+            want_state="READY_FOR_RENDER",
+            worker_id=worker_id,
+            lock_ttl_sec=env.job_lock_ttl_sec,
+            order_policy="id_asc",
+        )
         if not job_id:
             return
 

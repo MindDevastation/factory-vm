@@ -19,6 +19,10 @@ class YAMNetUnavailableError(RuntimeError):
     pass
 
 
+class YAMNetRuntimeIncompatibleError(RuntimeError):
+    pass
+
+
 _YAMNET_HANDLE = "https://tfhub.dev/google/yamnet/1"
 _YAMNET_MODEL: Any | None = None
 _YAMNET_CLASS_NAMES: list[str] | None = None
@@ -38,7 +42,12 @@ def _load_model() -> Any:
     global _YAMNET_MODEL
     _require_available()
     if _YAMNET_MODEL is None:
-        _YAMNET_MODEL = hub.load(_YAMNET_HANDLE)
+        try:
+            _YAMNET_MODEL = hub.load(_YAMNET_HANDLE)
+        except Exception as exc:  # pragma: no cover - runtime/environment dependent
+            raise YAMNetRuntimeIncompatibleError(
+                "YAMNET_RUNTIME_INCOMPATIBLE: model load failed; reinstall via UI Install Yamnet and retry"
+            ) from exc
     return _YAMNET_MODEL
 
 
@@ -49,14 +58,19 @@ def _load_class_names() -> list[str]:
         return _YAMNET_CLASS_NAMES
 
     model = _load_model()
-    class_map_path = model.class_map_path().numpy().decode("utf-8")
-    names: list[str] = []
-    with tf.io.gfile.GFile(class_map_path) as f:
-        _ = f.readline()
-        for line in f:
-            cols = line.strip().split(",")
-            if len(cols) >= 3:
-                names.append(cols[2])
+    try:
+        class_map_path = model.class_map_path().numpy().decode("utf-8")
+        names: list[str] = []
+        with tf.io.gfile.GFile(class_map_path) as f:
+            _ = f.readline()
+            for line in f:
+                cols = line.strip().split(",")
+                if len(cols) >= 3:
+                    names.append(cols[2])
+    except Exception as exc:  # pragma: no cover - runtime/environment dependent
+        raise YAMNetRuntimeIncompatibleError(
+            "YAMNET_RUNTIME_INCOMPATIBLE: class map load failed; reinstall via UI Install Yamnet and retry"
+        ) from exc
 
     _YAMNET_CLASS_NAMES = names
     return names
@@ -80,8 +94,13 @@ def analyze_with_yamnet(wav_path: str | Path, *, top_k: int = YAMNET_TOP_N) -> d
     sample_rate = int(sample_rate.numpy())
     waveform_16k = _resample_to_16k_mono(waveform, sample_rate)
 
-    scores, _embeddings, _spectrogram = model(waveform_16k)
-    mean_scores = tf.reduce_mean(scores, axis=0).numpy()
+    try:
+        scores, _embeddings, _spectrogram = model(waveform_16k)
+        mean_scores = tf.reduce_mean(scores, axis=0).numpy()
+    except Exception as exc:  # pragma: no cover - runtime/environment dependent
+        raise YAMNetRuntimeIncompatibleError(
+            "YAMNET_RUNTIME_INCOMPATIBLE: model execution failed; reinstall via UI Install Yamnet and retry"
+        ) from exc
 
     top_n = max(1, int(top_k))
     top_indices = mean_scores.argsort()[-top_n:][::-1]

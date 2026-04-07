@@ -1,0 +1,410 @@
+REQ_PRELAUNCH_STABILIZATION_P2_LOCAL_QA_ANALYSIS_AND_FIX_BACKLOG_v1.0
+
+1. Название
+
+Pre-Launch Stabilization — Punkt 2
+Local Structured QA Analysis and Additional Fix Backlog
+
+2. Цель
+
+Локально поднять проект, провести структурированный ручной QA и по его итогам собрать формализованный backlog дополнительных фиксов перед запуском на VPS.
+
+3. Зачем делаем
+
+Цель пункта 2 — не "покликать проект" и не собрать wishlist, а:
+- подтвердить, что проект реально поднимается локально;
+- проверить критические операторские сценарии;
+- выявить P0 / P1 / P2 проблемы до VPS запуска;
+- сформировать структурированное ТЗ на дополнительные фиксы.
+
+4. Канонический подход
+
+4.1. Пункт 2 фиксируется как structured local pre-launch QA pass.
+
+4.2. Во время QA фиксы не вносятся.
+Сначала:
+- выполняется полный проход;
+- findings фиксируются;
+- проводится приоритизация.
+Только потом формируется отдельный fix backlog.
+
+4.3. Findings нельзя смешивать с новыми фичами.
+По итогам QA отдельно существуют:
+- реальные defects;
+- UX / operability improvements;
+- new feature requests вне текущего pre-launch scope.
+
+5. Scope
+
+В scope пункта 2 входит:
+
+5.1. Startup & environment sanity
+- локальный запуск проекта;
+- старт сервисов;
+- env/config sanity;
+- базовый smoke по UI/API.
+
+5.2. Core operator flows
+- Planner;
+- release / materialization / job creation;
+- queue / render path;
+- publish-related path;
+- operator critical flows.
+
+5.3. Recovery / stale / edge behavior
+- повторные действия;
+- invalid inputs;
+- partial failures;
+- stale action handling;
+- operator-safe recovery behavior.
+
+5.4. Reports / exports
+- отчеты;
+- export surfaces;
+- поведение при отсутствии данных / ошибках.
+
+5.5. Telegram local QA
+- optional-if-available;
+- не является launch blocker, если локальная настройка мешает основному QA.
+
+6. Non-goals
+
+В пункт 2 не входит:
+- redesign;
+- визуальная полировка ради красоты;
+- нагрузочное тестирование;
+- бесконечный exploratory QA;
+- автоматическое включение всех minor improvements в pre-launch fix pack;
+- новые фичи, не являющиеся findings локального QA.
+
+7. QA Levels
+
+7.1. Level A — Startup & viability
+Проверяется:
+- проект поднимается;
+- критичных стартовых проблем нет.
+
+Status:
+- works.
+
+7.2. Level B — Core end-to-end flows
+Проверяются:
+- Planner;
+- release/job creation;
+- queue/render;
+- publish path;
+- operator critical flows.
+
+7.3. Level C — Recovery / stale / edge behavior
+Проверяются:
+- invalid input handling;
+- stale errors;
+- preview/execute separation;
+- recovery after partial failure;
+- correct no-create behavior when validation fails.
+
+7.4. Level D — Operability
+Проверяются:
+- понятность действий;
+- интуитивность flows;
+- operator friction;
+- перегруз страниц;
+- discoverability primary actions.
+
+8. Severity model
+
+8.1. P0 — launch blocker
+- проект не стартует;
+- критический сценарий не проходит;
+- опасное поведение;
+- severe corruption risk.
+
+8.2. P1 — production-significant defect
+- важный операторский сценарий сломан;
+- высокая вероятность operator error;
+- плохая recoverability;
+- важный flow ненадежен.
+
+8.3. P2 — important usability / workflow friction
+- не блокирует запуск;
+- но заметно мешает стабильной эксплуатации.
+
+8.4. P3 — polish / nice-to-have
+- не входит автоматически в предзапусковый пакет фиксов.
+
+9. Findings format
+
+Для каждого finding фиксируется:
+- ID
+- severity
+- where found
+- preconditions
+- exact reproduction steps
+- expected behavior
+- actual behavior
+- impact
+- suspected scope
+- proposed fix direction
+- must-fix-before-VPS: yes/no
+
+10. Frozen QA findings
+
+10.1. Level A
+
+A-01
+- severity: PASS
+- area: startup & viability
+- result: проект поднимается локально и базовая жизнеспособность подтверждена.
+
+10.2. Level B — Planner
+
+B-PL-01
+- severity: P1
+- area: Planner / Monthly Planning Templates
+- finding: Monthly Planning Templates бесконечно висит на состоянии "Loading templates..."
+- expected: templates загружаются либо показывается понятная ошибка
+- actual: бесконечный loading
+- must-fix-before-VPS: yes
+
+B-PL-02
+- severity: P1
+- area: Planner / Bulk Create Series
+- finding: Bulk Create Series не реагирует на нажатие
+- expected: действие выполняется либо показывается ошибка/валидация
+- actual: нажатие не дает результата
+- must-fix-before-VPS: yes
+
+B-PL-03
+- severity: P1
+- area: Planner overall
+- finding: Planner требует полной дополнительной проверки
+- note: это umbrella finding, не отдельный баг
+- fix direction: включить Planner в обязательный fix/QA follow-up subset
+- must-fix-before-VPS: yes
+
+10.3. Level B — Release / Job creation
+
+B-JC-01
+- severity: P1
+- area: Create Job / metadata generation
+- finding: Title Generator, Description Generator и Video Tags Generator появляются только после создания Job, хотя должны быть доступны до создания
+- must-fix-before-VPS: yes
+
+B-JC-02
+- severity: P2
+- area: Create Job / cover & background ext inputs
+- finding: часть с ext в Cover name и Background name должна быть dropdown со значениями:
+  - png
+  - jpg
+  - jpeg
+- expected: operator выбирает допустимое расширение из списка
+- actual: текущее поведение не соответствует ожидаемой operator ergonomics
+- must-fix-before-VPS: no
+
+B-JC-03
+- severity: P2
+- area: Create Job form layout
+- finding:
+  - поля Title и Tags сделать в 2.5 раза шире
+  - поле Description сделать в 3.5 раза шире и в 3 раза выше
+  - поле Audio IDs сделать таким же как Description
+- must-fix-before-VPS: no
+
+B-JC-04
+- severity: P2
+- area: Create Job fields
+- finding: нужно добавить поля:
+  - Playlists: подтягивать доступные плейлисты выбранного канала, множественный выбор через чекбоксы
+  - Audience: выбор
+    1) Да, это видео для детей
+    2) Нет, это видео не для детей
+    default = option 2
+  - Video language: default = English
+- note: это change request / functional enhancement по create-job surface
+- must-fix-before-VPS: no
+
+10.4. Level B — Queue / Render path
+
+B-QR-01
+- severity: PASS
+- area: Create Job / Render
+- result: создание job и render прошли успешно
+
+B-QR-02
+- severity: P1
+- area: queue ordering
+- finding: при bulk создании jobs ID назначаются в порядке bulk списка; render и upload нескольких jobs должны происходить строго в порядке возрастания ID jobs
+- expected: deterministic processing order by ascending job id
+- must-fix-before-VPS: yes
+
+10.5. Level B — Publish-related path
+
+B-PUB-01
+- severity: PASS
+- area: YouTube upload path
+- result: аплоады на YouTube прошли успешно
+
+10.6. Level B — Operator critical flows
+
+B-OPS-01
+- severity: PASS
+- area: Publish Queue
+- result: работает
+
+B-OPS-02
+- severity: PASS
+- area: Recovery Console
+- result: первичная проверка не показала проблем
+
+B-OPS-03
+- severity: PASS
+- area: TAGS import/export
+- result: импорт/экспорт работают
+
+B-OPS-04
+- severity: P1
+- area: Discover / Analyze Tracks
+- finding: для Discover и Analyze Tracks нужно отображение прогресса выполнения задачи
+- expected: оператор видит прогресс выполнения
+- actual: progress visibility недостаточна/отсутствует
+- must-fix-before-VPS: yes
+
+B-OPS-05
+- severity: P0
+- area: Analyze Tracks
+- finding: Analyze Tracks job упал с ошибкой incompatible/unknown tfhub model:
+  "Trying to load a model of incompatible/unknown type ... contains neither saved_model.pb nor saved_model.pbtxt"
+- expected: Analyze Tracks выполняется успешно или падает с корректно обработанным/понятным recoverable outcome
+- actual: runtime error blocks flow
+- must-fix-before-VPS: yes
+
+10.7. Level C — Edge / stale / validation behavior
+
+C-01
+- severity: P0
+- area: Create Job / playlist auto-generation preview
+- finding: при нажатии Preview в окне автогенерации плейлистов создается job
+- expected: Preview не создает job
+- actual: job создается, при этом обязательные поля игнорируются
+- must-fix-before-VPS: yes
+
+C-02
+- severity: P0
+- area: Create Job validation
+- finding: job создается даже если есть ошибки обязательных полей, например не найден указанный файл фона
+- expected: показывается ошибка, job не создается
+- actual: job создается
+- must-fix-before-VPS: yes
+
+C-03
+- severity: P1
+- area: Recent jobs overview / stale error state
+- finding: отображение ошибки у job не пропадает даже после ее фикса
+- expected: stale error state очищается после реального исправления
+- actual: ошибка продолжает отображаться
+- must-fix-before-VPS: yes
+
+C-04
+- severity: P0
+- area: Create Job / Audio ID validation
+- finding: job создается с несуществующим Audio ID
+- expected: ошибка валидации, job не создается
+- actual: job создается
+- must-fix-before-VPS: yes
+
+10.8. Level D — Operability / UX friction
+
+D-01
+- severity: P2
+- area: Title creation / tags / planner UX
+- finding: создание title, tags и работа с Planner слишком непонятны и неинтуитивны
+- expected: operator flow должен быть визуально более понятным и интуитивным
+- actual: заметная operator confusion/friction
+- fix direction: improve discoverability, primary actions clarity, step clarity and flow readability
+- must-fix-before-VPS: no
+
+D-02
+- severity: P2
+- area: Main page / navigation surfaces
+- findings:
+  - кнопки Metadata · Title Templates, TAGS, Track Catalog · Analysis Report, Database перенести из Secondary surfaces в шапку
+  - переименовать Metadata · Title Templates -> Title Templates
+  - переименовать Track Catalog · Analysis Report -> Track Catalog
+  - разгрузить главную страницу
+  - Secondary surfaces сделать выдвигающимся списком сбоку
+  - Control Center Overview сместить из центрального доминирующего положения
+  - сделать отдельную кнопку Channels в шапке с модальным окном управления каналами
+  - сделать отдельную кнопку Jobs · Bulk JSON Editor в body верхней части страницы с модальным окном
+  - Recent jobs overview должен быть expand по умолчанию
+- must-fix-before-VPS: no
+
+11. Items explicitly excluded from this QA backlog
+
+Следующие пункты не входят в этот pre-launch QA fix backlog как findings и должны рассматриваться отдельно:
+
+11.1. YouTube performance metrics analyzer
+- это отдельная новая фича
+
+11.2. Prompt storage for AI agents
+- это отдельная новая фича
+
+12. Must-fix-before-VPS list
+
+Обязательные фиксы до VPS запуска:
+- B-PL-01
+- B-PL-02
+- B-PL-03
+- B-JC-01
+- B-QR-02
+- B-OPS-04
+- B-OPS-05
+- C-01
+- C-02
+- C-03
+- C-04
+
+13. Postpone-after-launch / not mandatory for launch
+
+Можно отложить после VPS запуска:
+- B-JC-02
+- B-JC-03
+- B-JC-04
+- D-01
+- D-02
+
+14. Output of Punkt 2
+
+Результатом пункта 2 является:
+- structured QA findings set;
+- must-fix-before-VPS backlog;
+- post-launch improvement backlog;
+- база для отдельного fix implementation pass.
+
+15. Definition of done
+
+Пункт 2 считается завершенным, если:
+- Level A подтвержден;
+- Levels B/C/D пройдены достаточно для pre-launch freeze;
+- findings разделены на defects / UX improvements / new features;
+- сформирован must-fix-before-VPS список;
+- сформирован postpone-after-launch список.
+
+16. Что готово
+
+16.1. Structured local QA pass проведен.
+16.2. Найден набор critical defects и UX frictions.
+16.3. New feature requests отделены от QA backlog.
+16.4. Есть clear must-fix-before-VPS list.
+
+17. Чего не хватает
+
+17.1. Для REQ уровня пункта 2 критических пробелов не осталось.
+17.2. Следующий шаг — отдельный fix implementation pass по must-fix backlog.
+
+18. Риски двусмысленности
+
+18.1. Нельзя смешивать QA findings и новые фичи.
+18.2. Нельзя автоматически тянуть P2 UX items в launch-blocking scope.
+18.3. Нельзя считать Planner umbrella finding закрытым без полного follow-up прохода после фиксов.
+
+READY FOR SPEC: YES
