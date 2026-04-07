@@ -18,7 +18,8 @@
   <button type="button" id="jobs-bulk-open-btn">Jobs · Bulk JSON Editor</button>
   <button type="button" id="secondary-surfaces-open-btn">Secondary surfaces</button>
 </p>
-<dialog id="secondary-surfaces-drawer" style="width:min(520px,92vw);">
+<div id="secondary-surfaces-backdrop" class="secondary-drawer-backdrop" hidden></div>
+<aside id="secondary-surfaces-drawer" class="secondary-drawer" aria-hidden="true">
   <h3>Secondary surfaces</h3>
   <ul>
     <li><a href="/ui/publish/blocked">Publish Blocked</a></li>
@@ -26,7 +27,7 @@
     <li><a href="/ui/publish/health">Publish Health</a></li>
   </ul>
   <p><button type="button" id="secondary-surfaces-close-btn">Close</button></p>
-</dialog>
+</aside>
 
 <details style="margin:16px 0 20px 0;">
   <summary><strong>Control Center Overview</strong></summary>
@@ -213,6 +214,28 @@
   .row-failed {
     background-color: #fef2f2;
   }
+  .secondary-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 24, 39, 0.35);
+    z-index: 40;
+  }
+  .secondary-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: min(420px, 92vw);
+    background: #ffffff;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+    padding: 16px;
+    z-index: 50;
+    transform: translateX(100%);
+    transition: transform 180ms ease-in-out;
+  }
+  .secondary-drawer.open {
+    transform: translateX(0);
+  }
 </style>
 
 <script>
@@ -242,6 +265,7 @@
   const channelsModal = document.getElementById('channels-modal');
   const headerChannelsBtn = document.getElementById('header-channels-btn');
   const secondarySurfacesOpenBtn = document.getElementById('secondary-surfaces-open-btn');
+  const secondarySurfacesBackdrop = document.getElementById('secondary-surfaces-backdrop');
   const secondarySurfacesDrawer = document.getElementById('secondary-surfaces-drawer');
   const secondarySurfacesCloseBtn = document.getElementById('secondary-surfaces-close-btn');
   const jobsBulkJson = document.getElementById('jobs-bulk-json');
@@ -258,8 +282,21 @@
   if (jobsBulkOpenBtn && jobsBulkModal) jobsBulkOpenBtn.addEventListener('click', () => jobsBulkModal.showModal());
   if (jobsBulkCloseBtn && jobsBulkModal) jobsBulkCloseBtn.addEventListener('click', () => jobsBulkModal.close());
   if (headerChannelsBtn && channelsModal) headerChannelsBtn.addEventListener('click', () => channelsModal.showModal());
-  if (secondarySurfacesOpenBtn && secondarySurfacesDrawer) secondarySurfacesOpenBtn.addEventListener('click', () => secondarySurfacesDrawer.showModal());
-  if (secondarySurfacesCloseBtn && secondarySurfacesDrawer) secondarySurfacesCloseBtn.addEventListener('click', () => secondarySurfacesDrawer.close());
+  function openSecondaryDrawer() {
+    if (!secondarySurfacesDrawer || !secondarySurfacesBackdrop) return;
+    secondarySurfacesDrawer.classList.add('open');
+    secondarySurfacesDrawer.setAttribute('aria-hidden', 'false');
+    secondarySurfacesBackdrop.hidden = false;
+  }
+  function closeSecondaryDrawer() {
+    if (!secondarySurfacesDrawer || !secondarySurfacesBackdrop) return;
+    secondarySurfacesDrawer.classList.remove('open');
+    secondarySurfacesDrawer.setAttribute('aria-hidden', 'true');
+    secondarySurfacesBackdrop.hidden = true;
+  }
+  if (secondarySurfacesOpenBtn && secondarySurfacesDrawer) secondarySurfacesOpenBtn.addEventListener('click', openSecondaryDrawer);
+  if (secondarySurfacesCloseBtn && secondarySurfacesDrawer) secondarySurfacesCloseBtn.addEventListener('click', closeSecondaryDrawer);
+  if (secondarySurfacesBackdrop) secondarySurfacesBackdrop.addEventListener('click', closeSecondaryDrawer);
 
   function parseStatusesFromQuery(sourceStatuses) {
     const validStatuses = new Set(sourceStatuses);
