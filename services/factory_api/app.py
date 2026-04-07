@@ -6173,9 +6173,11 @@ def api_create_ui_job_for_playlist_builder(payload: UiPlaylistBuilderDraftPayloa
             audio_ids_text="",
             job_type="UI",
         )
+        created_job = dbm.get_job(conn, job_id)
+        release_id = int(created_job["release_id"]) if created_job and created_job.get("release_id") is not None else None
     finally:
         conn.close()
-    return {"ok": True, "job_id": job_id}
+    return {"ok": True, "job_id": job_id, "release_id": release_id}
 
 
 @app.post("/v1/ui/jobs/bulk-json/preview")
@@ -6846,21 +6848,44 @@ async def ui_jobs_create_submit(
                 status_code=422,
             )
 
-        job_id = dbm.create_ui_job_draft(
-            conn,
-            channel_id=payload.channel_id,
-            title=payload.title.strip(),
-            description=payload.description.strip(),
-            tags_csv=payload.tags_csv.strip(),
-            cover_name=payload.cover_name.strip() or None,
-            cover_ext=payload.cover_ext.strip() or None,
-            background_name=payload.background_name.strip(),
-            background_ext=payload.background_ext.strip(),
-            audio_ids_text=payload.audio_ids_text.strip(),
-        )
-        created_job = dbm.get_job(conn, job_id)
-        release_id = int(created_job["release_id"]) if created_job and created_job.get("release_id") is not None else None
-        preflight = run_preflight_for_job(conn, env, job_id)
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            job_id = dbm.create_ui_job_draft(
+                conn,
+                channel_id=payload.channel_id,
+                title=payload.title.strip(),
+                description=payload.description.strip(),
+                tags_csv=payload.tags_csv.strip(),
+                cover_name=payload.cover_name.strip() or None,
+                cover_ext=payload.cover_ext.strip() or None,
+                background_name=payload.background_name.strip(),
+                background_ext=payload.background_ext.strip(),
+                audio_ids_text=payload.audio_ids_text.strip(),
+            )
+            created_job = dbm.get_job(conn, job_id)
+            release_id = int(created_job["release_id"]) if created_job and created_job.get("release_id") is not None else None
+            preflight = run_preflight_for_job(conn, env, job_id)
+            if preflight.ok:
+                conn.execute("COMMIT;")
+            else:
+                conn.execute("ROLLBACK;")
+                return templates.TemplateResponse(
+                    "ui_job_form.html",
+                    {
+                        "request": request,
+                        "mode": "create",
+                        "channels": channels,
+                        "field_errors": preflight.field_errors,
+                        "form": payload.model_dump(),
+                        "job_id": None,
+                        "release_id": None,
+                        "locked": False,
+                    },
+                    status_code=422,
+                )
+        except Exception:
+            conn.execute("ROLLBACK;")
+            raise
     finally:
         conn.close()
 

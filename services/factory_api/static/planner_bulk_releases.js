@@ -482,20 +482,49 @@
 
   async function submitBulkCreate(mode) {
     const form = $('bulk-create-form');
-    const data = Object.fromEntries(new FormData(form).entries());
-    Object.keys(data).forEach((k) => {
-      if (typeof data[k] === 'string' && data[k].trim() === '') delete data[k];
-    });
-    data.count = Number(data.count || 1);
-    data.mode = mode || 'strict';
-    const res = await fetch(apiUrl('/v1/planner/releases/bulk-create'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
-    });
-    if (!res.ok) throw new Error(await parseError(res));
-    const out = await res.json();
-    $('bulk-create-modal').close();
-    setNote(`Created ${out.created_count || 0} release(s).`);
-    await loadList();
+    const strictBtn = $('bulk-create-strict');
+    const replaceBtn = $('bulk-create-replace');
+    const cancelBtn = $('bulk-create-cancel');
+    const previousStrictLabel = strictBtn ? strictBtn.textContent : '';
+    const previousReplaceLabel = replaceBtn ? replaceBtn.textContent : '';
+    if (strictBtn) strictBtn.disabled = true;
+    if (replaceBtn) replaceBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (strictBtn) strictBtn.textContent = 'Submitting...';
+    if (replaceBtn) replaceBtn.textContent = 'Submitting...';
+    try {
+      const data = Object.fromEntries(new FormData(form).entries());
+      Object.keys(data).forEach((k) => {
+        if (typeof data[k] === 'string' && data[k].trim() === '') delete data[k];
+      });
+      const channelSlug = String(data.channel_slug || '').trim();
+      const contentType = String(data.content_type || '').trim();
+      if (!channelSlug || !contentType) {
+        throw new Error('Bulk create validation failed: channel slug and content type are required.');
+      }
+      data.count = Number(data.count || 1);
+      if (!Number.isInteger(data.count) || data.count <= 0) {
+        throw new Error('Bulk create validation failed: count must be a positive integer.');
+      }
+      data.channel_slug = channelSlug;
+      data.content_type = contentType;
+      data.mode = mode || 'strict';
+      setNote('Bulk create request submitted...');
+      const res = await fetch(apiUrl('/v1/planner/releases/bulk-create'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error(await parseError(res));
+      const out = await res.json();
+      $('bulk-create-modal').close();
+      setNote(`Created ${out.created_count || 0} release(s).`);
+      await loadList();
+    } finally {
+      if (strictBtn) strictBtn.disabled = false;
+      if (replaceBtn) replaceBtn.disabled = false;
+      if (cancelBtn) cancelBtn.disabled = false;
+      if (strictBtn) strictBtn.textContent = previousStrictLabel || 'Create (strict)';
+      if (replaceBtn) replaceBtn.textContent = previousReplaceLabel || 'Replace conflicts';
+    }
   }
 
   async function previewImport() {
@@ -875,6 +904,8 @@
   }
 
   async function loadMonthlyTemplates() {
+    const tbody = $('mpt-list-body');
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">Loading templates...</td></tr>';
     const p = new URLSearchParams();
     const channel = String($('mpt-channel-id').value || '').trim();
     const status = String($('mpt-status').value || '').trim();
@@ -882,40 +913,48 @@
     if (channel) p.set('channel_id', channel);
     if (status) p.set('status', status);
     if (q) p.set('q', q);
-    const res = await fetch(apiUrl(`/v1/planner/monthly-planning-templates?${p.toString()}`));
-    if (!res.ok) throw new Error(await parseError(res));
-    const body = await res.json();
-    state.monthlyTemplates.items = body.items || [];
-    const rows = state.monthlyTemplates.items;
-    const tbody = $('mpt-list-body');
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="muted">No templates in scope.</td></tr>';
-      renderMonthlyTemplateDetail();
-      return;
-    }
-    tbody.innerHTML = rows.map((item) => `<tr>
-      <td>${esc(item.id)}</td>
-      <td>${esc(item.template_name)}</td>
-      <td>${esc(item.channel_id)}</td>
-      <td>${esc(item.status)}</td>
-      <td>${esc(item.item_count)}</td>
-      <td>${esc(item.updated_at || '-')}</td>
-      <td><pre style="white-space:pre-wrap; margin:0;">apply_run_count=${esc(item.apply_run_count ?? 0)}
+    try {
+      const res = await fetch(apiUrl(`/v1/planner/monthly-planning-templates?${p.toString()}`));
+      if (!res.ok) throw new Error(await parseError(res));
+      const body = await res.json();
+      state.monthlyTemplates.items = body.items || [];
+      const rows = state.monthlyTemplates.items;
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="muted">No templates in scope.</td></tr>';
+        renderMonthlyTemplateDetail();
+        return;
+      }
+      tbody.innerHTML = rows.map((item) => `<tr>
+        <td>${esc(item.id)}</td>
+        <td>${esc(item.template_name)}</td>
+        <td>${esc(item.channel_id)}</td>
+        <td>${esc(item.status)}</td>
+        <td>${esc(item.item_count)}</td>
+        <td>${esc(item.updated_at || '-')}</td>
+        <td><pre style="white-space:pre-wrap; margin:0;">apply_run_count=${esc(item.apply_run_count ?? 0)}
 last_applied_target_month=${esc(item.last_applied_target_month || '-')}
 last_applied_at=${esc(item.last_applied_at || '-')}</pre></td>
-      <td><button type="button" data-mpt-open="${esc(item.id)}">Open</button></td>
-    </tr>`).join('');
-    tbody.querySelectorAll('button[data-mpt-open]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = Number(btn.getAttribute('data-mpt-open'));
-        if (!Number.isInteger(id) || id <= 0) return;
-        try {
-          await loadMonthlyTemplateDetail(id);
-        } catch (e) {
-          setNote(`Template load failed: ${e.message}`);
-        }
+        <td><button type="button" data-mpt-open="${esc(item.id)}">Open</button></td>
+      </tr>`).join('');
+      tbody.querySelectorAll('button[data-mpt-open]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = Number(btn.getAttribute('data-mpt-open'));
+          if (!Number.isInteger(id) || id <= 0) return;
+          try {
+            await loadMonthlyTemplateDetail(id);
+          } catch (e) {
+            setNote(`Template load failed: ${e.message}`);
+          }
+        });
       });
-    });
+    } catch (e) {
+      state.monthlyTemplates.items = [];
+      state.monthlyTemplates.activeTemplate = null;
+      state.monthlyTemplates.activeTemplateId = null;
+      tbody.innerHTML = `<tr><td colspan="8" style="color:#b91c1c;">Failed to load templates: ${esc(e.message)}. Use Reload templates to retry.</td></tr>`;
+      renderMonthlyTemplateDetail();
+      setNote(`Monthly templates load failed: ${e.message}`);
+    }
   }
 
   async function runMonthlyTemplatePreview() {

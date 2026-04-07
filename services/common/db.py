@@ -4273,6 +4273,7 @@ def claim_job(
     want_state: str,
     worker_id: str,
     lock_ttl_sec: int,
+    order_policy: str = "priority_created",
 ) -> Optional[int]:
     """Claim one job atomically.
 
@@ -4300,13 +4301,18 @@ def claim_job(
         (ts, want_state, expiry),
     )
 
+    if order_policy == "id_asc":
+        order_clause = "ORDER BY id ASC"
+    else:
+        order_clause = "ORDER BY priority DESC, created_at ASC, id ASC"
+
     row = conn.execute(
-        """
+        f"""
         SELECT id FROM jobs
         WHERE state = ?
           AND locked_by IS NULL
           AND (retry_at IS NULL OR retry_at <= ?)
-        ORDER BY priority DESC, created_at ASC
+        {order_clause}
         LIMIT 1
         """,
         (want_state, ts),
@@ -4512,6 +4518,19 @@ def update_job_state(
     published_at: Optional[float] = None,
     delete_mp4_at: Optional[float] = None,
 ) -> None:
+    success_like_states = {
+        "DRAFT",
+        "WAITING_INPUTS",
+        "FETCHING_INPUTS",
+        "READY_FOR_RENDER",
+        "RENDERING",
+        "QA_RUNNING",
+        "UPLOADING",
+        "WAIT_APPROVAL",
+        "APPROVED",
+        "PUBLISHED",
+        "CLEANED",
+    }
     ts = now_ts()
     fields: List[str] = ["state = ?", "updated_at = ?"]
     vals: List[Any] = [state, ts]
@@ -4522,6 +4541,8 @@ def update_job_state(
     if error_reason is not None:
         fields.append("error_reason = ?")
         vals.append(error_reason)
+    elif state in success_like_states:
+        fields.append("error_reason = NULL")
     if progress_pct is not None:
         fields.append("progress_pct = ?")
         vals.append(progress_pct)

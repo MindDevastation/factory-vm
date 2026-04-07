@@ -28,7 +28,6 @@
 
   <p><label>Title* <input name="title" value="{{ form.title|default('') }}" {% if locked %}disabled{% endif %}></label></p>
   {% if field_errors.title %}<p style="color:#b91c1c">{{ field_errors.title|join('; ') }}</p>{% endif %}
-  {% if mode == 'edit' and job_id %}
   <fieldset id="titlegen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
     <legend><strong>Title Generator (single release)</strong></legend>
     <p class="muted">Generation does not change the release title until you apply.</p>
@@ -53,14 +52,12 @@
     </p>
     <p class="muted">Apply changes only <code>release.title</code>. This does not update channel defaults or template configuration.</p>
   </fieldset>
-  {% endif %}
 
   <p><label>Description <textarea name="description" {% if locked %}disabled{% endif %}>{{ form.description|default('') }}</textarea></label></p>
-  {% if mode == 'edit' and release_id %}
   <fieldset id="descriptiongen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
     <legend><strong>Description Generator (single release)</strong></legend>
     <p class="muted">Generation does not change the release description until you apply.</p>
-    <p><b>Target release:</b> <span id="descriptiongen-release-id">#{{ release_id }}</span></p>
+    <p><b>Target release:</b> <span id="descriptiongen-release-id">{% if release_id %}#{{ release_id }}{% else %}—{% endif %}</span></p>
     <p><b>Current release description:</b></p>
     <pre id="descriptiongen-current-description" style="white-space:pre-wrap; background:#f8fafc; border:1px solid #e2e8f0; padding:8px;">{{ form.description|default('') }}</pre>
     <p><b>Default channel template:</b> <span id="descriptiongen-default-template">Loading...</span></p>
@@ -87,12 +84,11 @@
     </p>
     <p class="muted">Apply changes only <code>release.description</code>. This does not update channel defaults or template configuration.</p>
   </fieldset>
-  {% endif %}
-  {% if mode == 'edit' and release_id %}
+
   <fieldset id="videotagsgen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
     <legend><strong>Video Tags Generator (single release)</strong></legend>
     <p class="muted">Generation does not change the release tags until you apply.</p>
-    <p><b>Target release:</b> <span id="videotagsgen-release-id">#{{ release_id }}</span></p>
+    <p><b>Target release:</b> <span id="videotagsgen-release-id">{% if release_id %}#{{ release_id }}{% else %}—{% endif %}</span></p>
     <p><b>Current release.tags_json:</b> <span id="videotagsgen-current-tags-json">{{ form.tags_csv|default('') }}</span></p>
     <p><b>Default channel preset:</b> <span id="videotagsgen-default-preset">Loading...</span></p>
     <p>
@@ -119,7 +115,7 @@
     </p>
     <p class="muted">Apply changes only <code>release.tags_json</code>. This does not update channel defaults or preset configuration.</p>
   </fieldset>
-  {% endif %}
+  
   {% if mode == 'edit' and release_id %}
   <fieldset id="mpa-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
     <legend><strong>Unified Metadata Preview / Apply (single release)</strong></legend>
@@ -227,7 +223,7 @@
 
 <dialog id="playlist-builder-modal" style="width:min(980px,95vw)">
   <h3>Playlist Builder</h3>
-  <p id="playlist-builder-save-first" style="color:#92400e; display:none;"><b>Draft will be auto-created on first Preview.</b> You can generate/apply playlist in Create flow without manual save first.</p>
+  <p id="playlist-builder-save-first" style="color:#92400e; display:none;"><b>Save draft first.</b> Playlist Preview must not create a job in Create flow.</p>
 
   <fieldset>
     <legend>Mode</legend>
@@ -339,6 +335,7 @@
   const audioIdsInput = document.getElementById('audio-ids-input');
 const titleInput = document.querySelector('input[name="title"]');
 const titlegenSection = document.getElementById('titlegen-section');
+const titlegenReleaseIdLabel = document.getElementById('titlegen-release-id');
 const titlegenStatus = document.getElementById('titlegen-status');
 const titlegenDefaultTemplate = document.getElementById('titlegen-default-template');
 const titlegenTemplateSelect = document.getElementById('titlegen-template-select');
@@ -352,6 +349,7 @@ const titlegenApplyBtn = document.getElementById('titlegen-apply-btn');
 const descriptionInput = document.querySelector('textarea[name="description"]');
 const tagsCsvInput = document.querySelector('input[name="tags_csv"]');
 const descriptiongenSection = document.getElementById('descriptiongen-section');
+const descriptiongenReleaseIdLabel = document.getElementById('descriptiongen-release-id');
 const descriptiongenStatus = document.getElementById('descriptiongen-status');
 const descriptiongenDefaultTemplate = document.getElementById('descriptiongen-default-template');
 const descriptiongenTemplateSelect = document.getElementById('descriptiongen-template-select');
@@ -365,6 +363,7 @@ const descriptiongenGenerateBtn = document.getElementById('descriptiongen-genera
 const descriptiongenRegenerateBtn = document.getElementById('descriptiongen-regenerate-btn');
 const descriptiongenApplyBtn = document.getElementById('descriptiongen-apply-btn');
 const videotagsgenSection = document.getElementById('videotagsgen-section');
+const videotagsgenReleaseIdLabel = document.getElementById('videotagsgen-release-id');
 const videotagsgenStatus = document.getElementById('videotagsgen-status');
 const videotagsgenDefaultPreset = document.getElementById('videotagsgen-default-preset');
 const videotagsgenPresetSelect = document.getElementById('videotagsgen-preset-select');
@@ -573,7 +572,34 @@ const hasTagsPicker =
 
   async function ensureJobIdForPlaylistBuilder() {
     if (canRun()) return activeJobId;
-    status.textContent = 'Creating draft...';
+    status.textContent = 'Save draft first. Preview must not create a job.';
+    return null;
+  }
+
+  function updateMetadataReleaseLabels() {
+    const text = Number.isInteger(activeReleaseId) ? `#${activeReleaseId}` : '—';
+    if (titlegenReleaseIdLabel) titlegenReleaseIdLabel.textContent = text;
+    if (descriptiongenReleaseIdLabel) descriptiongenReleaseIdLabel.textContent = text;
+    if (videotagsgenReleaseIdLabel) videotagsgenReleaseIdLabel.textContent = text;
+  }
+
+  function applyDraftCreationErrorToStatus(statusEl, detail) {
+    const fieldErrors = detail && detail.field_errors ? detail.field_errors : null;
+    const firstFieldError = fieldErrors
+      ? Object.values(fieldErrors).find((messages) => Array.isArray(messages) && messages.length > 0)
+      : null;
+    if (Array.isArray(firstFieldError) && firstFieldError.length > 0) {
+      statusEl.textContent = `Draft creation failed: ${firstFieldError[0]}`;
+    } else if (detail && detail.message) {
+      statusEl.textContent = `Draft creation failed: ${detail.message}`;
+    } else {
+      statusEl.textContent = 'Draft creation failed. Check required fields (project/title) and retry.';
+    }
+  }
+
+  async function ensureMetadataReleaseId(statusEl) {
+    if (Number.isInteger(activeReleaseId)) return activeReleaseId;
+    statusEl.textContent = 'Creating draft for metadata generators...';
     const createResp = await fetch('/v1/ui/jobs/playlist-builder-draft', {
       method: 'POST',
       credentials: 'same-origin',
@@ -582,29 +608,20 @@ const hasTagsPicker =
     });
     const createPayload = await createResp.json();
     if (!createResp.ok) {
-      const detail = createPayload && createPayload.detail ? createPayload.detail : null;
-      const fieldErrors = detail && detail.field_errors ? detail.field_errors : null;
-      const firstFieldError = fieldErrors
-        ? Object.values(fieldErrors).find((messages) => Array.isArray(messages) && messages.length > 0)
-        : null;
-      if (Array.isArray(firstFieldError) && firstFieldError.length > 0) {
-        status.textContent = `Draft creation failed: ${firstFieldError[0]}`;
-      } else if (detail && detail.message) {
-        status.textContent = `Draft creation failed: ${detail.message}`;
-      } else {
-        status.textContent = 'Draft creation failed. Check required fields (project/title) and retry Preview.';
-      }
+      applyDraftCreationErrorToStatus(statusEl, createPayload && createPayload.detail ? createPayload.detail : null);
       return null;
     }
     activeJobId = Number(createPayload.job_id);
-    if (!canRun()) {
-      status.textContent = 'Draft creation failed. Retry Preview.';
+    activeReleaseId = Number(createPayload.release_id);
+    if (!Number.isInteger(activeJobId) || !Number.isInteger(activeReleaseId)) {
+      statusEl.textContent = 'Draft creation failed. Retry.';
       return null;
     }
+    updateMetadataReleaseLabels();
     if (window.history && typeof window.history.replaceState === 'function') {
       window.history.replaceState(null, '', `/ui/jobs/${activeJobId}/edit`);
     }
-    return activeJobId;
+    return activeReleaseId;
   }
 
   const previewStateInputIds = [
@@ -824,7 +841,10 @@ const hasTagsPicker =
   }
 
   async function generateTitle() {
-    if (!titlegenSection || !Number.isInteger(activeReleaseId) || !titlegenStatus) return;
+    if (!titlegenSection || !titlegenStatus) return;
+    const ensuredReleaseId = await ensureMetadataReleaseId(titlegenStatus);
+    if (!Number.isInteger(ensuredReleaseId)) return;
+    if (!titlegenContext) await loadTitlegenContext();
     const templateId = selectedTemplateIdOrNull();
     if (!titlegenContext || !titlegenContext.default_template && templateId === null) {
       titlegenStatus.textContent = 'Select a template before generating preview.';
@@ -965,7 +985,10 @@ const hasTagsPicker =
   }
 
   async function generateDescription() {
-    if (!descriptiongenSection || !Number.isInteger(activeReleaseId) || !descriptiongenStatus) return;
+    if (!descriptiongenSection || !descriptiongenStatus) return;
+    const ensuredReleaseId = await ensureMetadataReleaseId(descriptiongenStatus);
+    if (!Number.isInteger(ensuredReleaseId)) return;
+    if (!descriptiongenContext) await loadDescriptiongenContext();
     const templateId = selectedDescriptionTemplateIdOrNull();
     if (!descriptiongenContext || !descriptiongenContext.default_template && templateId === null) {
       descriptiongenStatus.textContent = 'Select a template before generating preview.';
@@ -1119,7 +1142,10 @@ const hasTagsPicker =
   }
 
   async function generateVideoTags() {
-    if (!videotagsgenSection || !Number.isInteger(activeReleaseId) || !videotagsgenStatus) return;
+    if (!videotagsgenSection || !videotagsgenStatus) return;
+    const ensuredReleaseId = await ensureMetadataReleaseId(videotagsgenStatus);
+    if (!Number.isInteger(ensuredReleaseId)) return;
+    if (!videotagsgenContext) await loadVideotagsgenContext();
     const presetId = selectedPresetIdOrNull();
     if (!videotagsgenContext || !videotagsgenContext.default_preset && presetId === null) {
       videotagsgenStatus.textContent = 'Select a preset before generating preview.';
@@ -1848,6 +1874,7 @@ const hasTagsPicker =
   if (visualBatchPreviewBtn) visualBatchPreviewBtn.addEventListener('click', runVisualBatchPreviewEntry);
   if (visualBatchExecuteBtn) visualBatchExecuteBtn.addEventListener('click', runVisualBatchExecuteEntry);
 
+  updateMetadataReleaseLabels();
   loadTitlegenContext();
   loadDescriptiongenContext();
   loadVideotagsgenContext();
