@@ -26,24 +26,23 @@
     <li><a href="/ui/publish/manual">Publish Manual</a></li>
     <li><a href="/ui/publish/health">Publish Health</a></li>
   </ul>
+  <details style="margin:16px 0 20px 0;">
+    <summary><strong>Control Center Overview</strong></summary>
+    {% set cc = control_center %}
+    <div class="grid">
+      <div><strong>Factory summary</strong><div class="muted">Jobs total: {{ cc.factory_summary.jobs_total }}</div></div>
+      <div><strong>Attention summary</strong><div class="muted">Failed jobs: {{ cc.attention_summary.failed_jobs }}</div></div>
+      <div><strong>Channel summary</strong><div class="muted">Channels total: {{ cc.channel_summary.channels_total }}</div></div>
+      <div><strong>Batch/Month summary</strong><div class="muted">Active batches: {{ cc.batch_month_summary.batch_month_total }}</div></div>
+    </div>
+    <p style="margin-top:10px;"><strong>Task routing:</strong>
+    {% for route in cc.task_routing %}
+      <a href="{{ route.route }}">{{ route.intent }}</a>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+    </p>
+  </details>
   <p><button type="button" id="secondary-surfaces-close-btn">Close</button></p>
 </aside>
-
-<details style="margin:16px 0 20px 0;">
-  <summary><strong>Control Center Overview</strong></summary>
-  {% set cc = control_center %}
-  <div class="grid">
-    <div><strong>Factory summary</strong><div class="muted">Jobs total: {{ cc.factory_summary.jobs_total }}</div></div>
-    <div><strong>Attention summary</strong><div class="muted">Failed jobs: {{ cc.attention_summary.failed_jobs }}</div></div>
-    <div><strong>Channel summary</strong><div class="muted">Channels total: {{ cc.channel_summary.channels_total }}</div></div>
-    <div><strong>Batch/Month summary</strong><div class="muted">Active batches: {{ cc.batch_month_summary.batch_month_total }}</div></div>
-  </div>
-  <p style="margin-top:10px;"><strong>Task routing:</strong>
-  {% for route in cc.task_routing %}
-    <a href="{{ route.route }}">{{ route.intent }}</a>{% if not loop.last %} · {% endif %}
-  {% endfor %}
-  </p>
-</details>
 
 <section style="margin:0 0 18px 0;">
   <h3>Attention routing</h3>
@@ -77,6 +76,7 @@
 <p>
   <button type="button" id="channel-add-btn">Add Channel (YouTube OAuth)</button>
   <button type="button" id="channels-refresh-btn">Refresh channels</button>
+  <button type="button" id="channels-close-btn">Close</button>
   <span class="muted" id="channel-note"></span>
 </p>
 <table id="channels-table">
@@ -93,9 +93,7 @@
     </tr>
   </tbody>
 </table>
-</dialog>
-
-<h2>OAuth Tokens</h2>
+<h3>OAuth Tokens</h3>
 <p>
   <button type="button" id="oauth-refresh-btn">Refresh status</button>
   <span class="muted" id="oauth-refresh-note"></span>
@@ -115,6 +113,7 @@
     </tr>
   </tbody>
 </table>
+</dialog>
 
 <dialog id="jobs-bulk-modal" style="width:min(960px,95vw);">
 <h2>Jobs · Bulk JSON Editor</h2>
@@ -263,6 +262,7 @@
   const jobsBulkModal = document.getElementById('jobs-bulk-modal');
   const jobsBulkCloseBtn = document.getElementById('jobs-bulk-close-btn');
   const channelsModal = document.getElementById('channels-modal');
+  const channelsCloseBtn = document.getElementById('channels-close-btn');
   const headerChannelsBtn = document.getElementById('header-channels-btn');
   const secondarySurfacesOpenBtn = document.getElementById('secondary-surfaces-open-btn');
   const secondarySurfacesBackdrop = document.getElementById('secondary-surfaces-backdrop');
@@ -282,6 +282,7 @@
   if (jobsBulkOpenBtn && jobsBulkModal) jobsBulkOpenBtn.addEventListener('click', () => jobsBulkModal.showModal());
   if (jobsBulkCloseBtn && jobsBulkModal) jobsBulkCloseBtn.addEventListener('click', () => jobsBulkModal.close());
   if (headerChannelsBtn && channelsModal) headerChannelsBtn.addEventListener('click', () => channelsModal.showModal());
+  if (channelsCloseBtn && channelsModal) channelsCloseBtn.addEventListener('click', () => channelsModal.close());
   function openSecondaryDrawer() {
     if (!secondarySurfacesDrawer || !secondarySurfacesBackdrop) return;
     secondarySurfacesDrawer.classList.add('open');

@@ -29,6 +29,11 @@ class TestE6Mf3S2ControlCenterOverview(unittest.TestCase):
             self.assertIn("Recent jobs overview (expand for table)", html)
             self.assertIn("Continue current work", html)
             self.assertIn("Recently changed", html)
+            drawer_start = html.index('id="secondary-surfaces-drawer"')
+            overview_idx = html.index("Control Center Overview")
+            drawer_close_idx = html.index('id="secondary-surfaces-close-btn"')
+            self.assertGreater(overview_idx, drawer_start)
+            self.assertLess(overview_idx, drawer_close_idx)
 
 
     def test_dashboard_shows_return_to_context_when_token_valid(self) -> None:
