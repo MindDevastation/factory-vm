@@ -20,7 +20,10 @@ except Exception as e:  # ImportError in most cases
     Request = None  # type: ignore[assignment]
     Credentials = None  # type: ignore[assignment]
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube",
+]
 
 
 @dataclass(frozen=True)
@@ -87,3 +90,76 @@ class YouTubeClient:
             raise ValueError("privacy_status must be one of: private, public, unlisted")
         body = {"id": str(video_id), "status": {"privacyStatus": normalized}}
         self._yt.videos().update(part="status", body=body).execute()
+
+    def list_playlists(self) -> list[dict[str, str]]:
+        items: list[dict[str, str]] = []
+        next_page_token: str | None = None
+        while True:
+            response = (
+                self._yt.playlists()
+                .list(part="snippet", mine=True, maxResults=50, pageToken=next_page_token)
+                .execute()
+            )
+            raw_items = response.get("items") or []
+            for item in raw_items:
+                playlist_id = str(item.get("id") or "").strip()
+                snippet = item.get("snippet") or {}
+                playlist_title = str(snippet.get("title") or "").strip()
+                if playlist_id and playlist_title:
+                    items.append({"playlist_id": playlist_id, "playlist_title": playlist_title})
+            token = response.get("nextPageToken")
+            next_page_token = str(token) if token else None
+            if not next_page_token:
+                break
+        return items
+
+    def resolve_or_create_playlist(self, *, title: str) -> tuple[str, bool]:
+        wanted = str(title or "").strip()
+        if not wanted:
+            raise ValueError("playlist title is required")
+        existing = [item for item in self.list_playlists() if str(item.get("playlist_title") or "").strip() == wanted]
+        if len(existing) > 1:
+            raise RuntimeError(f"ambiguous playlist title match: {wanted}")
+        if len(existing) == 1:
+            return str(existing[0]["playlist_id"]), False
+        response = self._yt.playlists().insert(
+            part="snippet,status",
+            body={"snippet": {"title": wanted}, "status": {"privacyStatus": "public"}},
+        ).execute()
+        playlist_id = str(response.get("id") or "").strip()
+        if not playlist_id:
+            raise RuntimeError("failed to create playlist")
+        return playlist_id, True
+
+    def playlist_contains_video(self, *, playlist_id: str, video_id: str) -> bool:
+        next_page_token: str | None = None
+        target = str(video_id)
+        while True:
+            response = (
+                self._yt.playlistItems()
+                .list(part="snippet", playlistId=str(playlist_id), maxResults=50, pageToken=next_page_token)
+                .execute()
+            )
+            for item in response.get("items") or []:
+                snippet = item.get("snippet") or {}
+                resource = snippet.get("resourceId") or {}
+                if str(resource.get("kind") or "") == "youtube#video" and str(resource.get("videoId") or "") == target:
+                    return True
+            token = response.get("nextPageToken")
+            next_page_token = str(token) if token else None
+            if not next_page_token:
+                break
+        return False
+
+    def add_video_to_playlist(self, *, playlist_id: str, video_id: str) -> None:
+        if self.playlist_contains_video(playlist_id=playlist_id, video_id=video_id):
+            return
+        self._yt.playlistItems().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "playlistId": str(playlist_id),
+                    "resourceId": {"kind": "youtube#video", "videoId": str(video_id)},
+                }
+            },
+        ).execute()

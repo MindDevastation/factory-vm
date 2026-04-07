@@ -214,6 +214,11 @@
     <legend><strong>Publishing metadata</strong></legend>
     <p><strong>Playlists</strong></p>
     <div id="playlist-checkboxes" class="muted">Loading playlists…</div>
+    <p>
+      <label>Create new playlist title (optional)
+        <input name="playlist_create_title" style="width:48ch;" value="{{ form.playlist_create_title|default('') }}" {% if locked %}disabled{% endif %}>
+      </label>
+    </p>
     <p><strong>Audience</strong></p>
     <label><input type="radio" name="audience_is_for_kids" value="yes" {% if form.audience_is_for_kids %}checked{% endif %} {% if locked %}disabled{% endif %}> Yes, this video is for kids</label><br>
     <label><input type="radio" name="audience_is_for_kids" value="no" {% if not form.audience_is_for_kids %}checked{% endif %} {% if locked %}disabled{% endif %}> No, this video is not for kids</label>
@@ -2041,6 +2046,10 @@ const hasTagsPicker =
     }
     const payload = await resp.json();
     const items = Array.isArray(payload.playlists) ? payload.playlists : [];
+    if (payload.load_status === 'unavailable') {
+      playlistContainer.textContent = 'Playlists unavailable: sync failed. Check YouTube credentials and retry.';
+      return;
+    }
     if (!items.length) {
       playlistContainer.textContent = 'No playlists available for selected channel.';
       return;
