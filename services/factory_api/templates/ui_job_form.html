@@ -31,8 +31,9 @@
 
   <p><label>Title* <input name="title" style="width:62ch;" value="{{ form.title|default('') }}" {% if locked %}disabled{% endif %}></label></p>
   {% if field_errors.title %}<p style="color:#b91c1c">{{ field_errors.title|join('; ') }}</p>{% endif %}
+  <details id="titlegen-collapsible" style="margin:10px 0;">
+    <summary><strong>Title Generator (single release)</strong></summary>
   <fieldset id="titlegen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
-    <legend><strong>Title Generator (single release)</strong></legend>
     <p class="muted">Generation does not change the release title until you apply.</p>
     <p><b>Target release:</b> <span id="titlegen-release-id">{% if release_id %}#{{ release_id }}{% else %}—{% endif %}</span></p>
     <p><b>Current release title:</b> <span id="titlegen-current-title">{{ form.title|default('') }}</span></p>
@@ -55,10 +56,12 @@
     </p>
     <p class="muted">Apply changes only <code>release.title</code>. This does not update channel defaults or template configuration.</p>
   </fieldset>
+  </details>
 
   <p><label>Description <textarea name="description" rows="6" style="width:86ch;" {% if locked %}disabled{% endif %}>{{ form.description|default('') }}</textarea></label></p>
+  <details id="descriptiongen-collapsible" style="margin:10px 0;">
+    <summary><strong>Description Generator (single release)</strong></summary>
   <fieldset id="descriptiongen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
-    <legend><strong>Description Generator (single release)</strong></legend>
     <p class="muted">Generation does not change the release description until you apply.</p>
     <p><b>Target release:</b> <span id="descriptiongen-release-id">{% if release_id %}#{{ release_id }}{% else %}—{% endif %}</span></p>
     <p><b>Current release description:</b></p>
@@ -87,9 +90,11 @@
     </p>
     <p class="muted">Apply changes only <code>release.description</code>. This does not update channel defaults or template configuration.</p>
   </fieldset>
+  </details>
 
+  <details id="videotagsgen-collapsible" style="margin:10px 0;">
+    <summary><strong>Video Tags Generator (single release)</strong></summary>
   <fieldset id="videotagsgen-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">
-    <legend><strong>Video Tags Generator (single release)</strong></legend>
     <p class="muted">Generation does not change the release tags until you apply.</p>
     <p><b>Target release:</b> <span id="videotagsgen-release-id">{% if release_id %}#{{ release_id }}{% else %}—{% endif %}</span></p>
     <p><b>Current release.tags_json:</b> <span id="videotagsgen-current-tags-json">{{ form.tags_csv|default('') }}</span></p>
@@ -118,6 +123,7 @@
     </p>
     <p class="muted">Apply changes only <code>release.tags_json</code>. This does not update channel defaults or preset configuration.</p>
   </fieldset>
+  </details>
   
   {% if mode == 'edit' and release_id %}
   <fieldset id="mpa-section" style="margin:10px 0; border:1px solid #ddd; padding:10px;">

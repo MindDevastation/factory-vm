@@ -549,7 +549,8 @@
       const rowClass = errors.length ? 'preview-row-error' : (r.conflict ? 'preview-row-conflict' : '');
       return `<tr${rowClass ? ` class="${rowClass}"` : ''}>
       <td>${esc(r.row_num)}</td><td>${esc(n.channel_slug)}</td><td>${esc(n.content_type)}</td><td>${esc(n.title)}</td><td>${esc(n.publish_at)}</td><td>${esc(n.notes)}</td><td>${esc(err)}</td><td>${esc(conflict)}</td>
-    </tr>`).join('') : previewPlaceholder('No rows.');
+    </tr>`;
+    }).join('') : previewPlaceholder('No rows.');
   }
 
   async function confirmImport(mode) {
