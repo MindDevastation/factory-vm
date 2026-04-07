@@ -127,7 +127,7 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                         {
                             "index": 0,
                             "valid": True,
-                            "metadata": {"playlist_ids": ["PL_ONE"], "audience_is_for_kids": False, "video_language": "English"},
+                            "metadata": {"playlist_ids": ["PL_ONE"], "playlist_create_title": "", "audience_is_for_kids": False, "video_language": "English"},
                         }
                     ],
                 },
@@ -343,6 +343,7 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             self.assertEqual(preview.status_code, 200)
             self.assertEqual(preview.json()["summary"]["valid"], 1)
             self.assertEqual(preview.json()["results"][0]["metadata"]["playlist_ids"], ["PL_ONE"])
+            self.assertEqual(preview.json()["results"][0]["metadata"]["playlist_create_title"], "")
             self.assertEqual(preview.json()["results"][0]["metadata"]["audience_is_for_kids"], False)
             self.assertEqual(preview.json()["results"][0]["metadata"]["video_language"], "English")
 
@@ -353,6 +354,7 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             )
             self.assertEqual(execute.status_code, 200)
             self.assertEqual(execute.json()["results"][0]["metadata"]["playlist_ids"], ["PL_ONE"])
+            self.assertEqual(execute.json()["results"][0]["metadata"]["playlist_create_title"], "")
             created_job_id = int(execute.json()["results"][0]["job_id"])
 
             conn2 = dbm.connect(env)
@@ -375,6 +377,7 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             )
             self.assertEqual(execute_compat.status_code, 200)
             self.assertEqual(execute_compat.json()["results"][0]["metadata"]["playlist_ids"], [])
+            self.assertEqual(execute_compat.json()["results"][0]["metadata"]["playlist_create_title"], "")
             compat_job_id = int(execute_compat.json()["results"][0]["job_id"])
             conn3 = dbm.connect(env)
             try:
@@ -384,6 +387,39 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                 self.assertEqual(draft["video_language"], "English")
             finally:
                 conn3.close()
+
+    def test_bulk_create_accepts_playlist_create_title_and_union_metadata(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch is not None
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod, client = self._new_client()
+            mod._create_drive_client = lambda _env: object()
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            item = self._create_item(channel_id)
+            item["playlist_create_title"] = "  Fresh Mix  "
+            preview = client.post("/v1/ui/jobs/bulk-json/preview", headers=h, json={"mode": "create_draft_jobs", "items": [item]})
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json()["results"][0]["metadata"]["playlist_ids"], ["PL_ONE"])
+            self.assertEqual(preview.json()["results"][0]["metadata"]["playlist_create_title"], "Fresh Mix")
+
+            execute = client.post("/v1/ui/jobs/bulk-json/execute", headers=h, json={"mode": "create_draft_jobs", "items": [item]})
+            self.assertEqual(execute.status_code, 200)
+            created_job_id = int(execute.json()["results"][0]["job_id"])
+            conn2 = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn2, created_job_id)
+                self.assertEqual(str(draft["playlist_create_title"]), "Fresh Mix")
+            finally:
+                conn2.close()
     def test_execute_mode_c_runtime_exception_converted_to_item_error(self) -> None:
         with temp_env() as (_, env):
             os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
