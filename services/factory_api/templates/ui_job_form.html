@@ -204,6 +204,19 @@
   {% endif %}
   <p><label>Tags (comma-separated, no #) <input name="tags_csv" style="width:62ch;" value="{{ form.tags_csv|default('') }}" {% if locked %}disabled{% endif %}></label></p>
   {% if field_errors.tags %}<p style="color:#b91c1c">{{ field_errors.tags|join('; ') }}</p>{% endif %}
+  <fieldset style="margin:10px 0; border:1px solid #ddd; padding:10px;">
+    <legend><strong>Publishing metadata</strong></legend>
+    <p><strong>Playlists</strong></p>
+    <div id="playlist-checkboxes" class="muted">Loading playlists…</div>
+    <p><strong>Audience</strong></p>
+    <label><input type="radio" name="audience_is_for_kids" value="yes" {% if form.audience_is_for_kids %}checked{% endif %} {% if locked %}disabled{% endif %}> Yes, this video is for kids</label><br>
+    <label><input type="radio" name="audience_is_for_kids" value="no" {% if not form.audience_is_for_kids %}checked{% endif %} {% if locked %}disabled{% endif %}> No, this video is not for kids</label>
+    <p>
+      <label>Video language
+        <input name="video_language" value="{{ form.video_language|default('English') }}" {% if locked %}disabled{% endif %}>
+      </label>
+    </p>
+  </fieldset>
 
   <p><label>Cover name <input name="cover_name" value="{{ form.cover_name|default('') }}" {% if locked %}disabled{% endif %}></label>
      <label>ext
@@ -2004,6 +2017,36 @@ const hasTagsPicker =
     document.getElementById('playlist-overwrite-warning').style.display = audioIdsInput.value.trim() ? 'block' : 'none';
     status.textContent = `Applied. Draft history #${applyPayload.draft_history_id}`;
   });
+})();
+
+(function () {
+  const projectSelect = document.querySelector('select[name="channel_id"]');
+  const playlistContainer = document.getElementById('playlist-checkboxes');
+  if (!playlistContainer || !projectSelect) return;
+  const selected = {{ form.playlist_ids|default([])|tojson }};
+  const isLocked = {{ 'true' if locked else 'false' }};
+  async function loadPlaylists() {
+    const channelId = Number(projectSelect.value || 0);
+    if (!channelId) return;
+    const resp = await fetch(`/v1/channels/${channelId}/playlists`, { credentials: 'same-origin' });
+    if (!resp.ok) {
+      playlistContainer.textContent = 'Failed to load playlists';
+      return;
+    }
+    const payload = await resp.json();
+    const items = Array.isArray(payload.playlists) ? payload.playlists : [];
+    if (!items.length) {
+      playlistContainer.textContent = 'No playlists available for selected channel.';
+      return;
+    }
+    playlistContainer.innerHTML = items.map((it) => {
+      const checked = selected.includes(String(it.playlist_id)) ? 'checked' : '';
+      const disabled = isLocked ? 'disabled' : '';
+      return `<label><input type="checkbox" name="playlist_ids" value="${it.playlist_id}" ${checked} ${disabled}> ${it.playlist_title}</label><br>`;
+    }).join('');
+  }
+  projectSelect.addEventListener('change', loadPlaylists);
+  loadPlaylists();
 })();
 </script>
 {% endblock %}

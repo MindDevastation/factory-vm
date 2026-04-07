@@ -775,6 +775,11 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('<option value="jpeg"', r.text)
             self.assertIn('name="description" rows="6" style="width:86ch;"', r.text)
             self.assertIn('name="audio_ids_text" rows="6" style="width:86ch;"', r.text)
+            self.assertIn('name="audience_is_for_kids" value="yes"', r.text)
+            self.assertIn('name="audience_is_for_kids" value="no" checked', r.text)
+            self.assertIn('name="video_language" value="English"', r.text)
+            self.assertIn('id="playlist-checkboxes"', r.text)
+            self.assertIn('/v1/channels/${channelId}/playlists', r.text)
 
             r = client.get("/", headers=h)
             self.assertEqual(r.status_code, 200)

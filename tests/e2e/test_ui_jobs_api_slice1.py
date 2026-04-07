@@ -27,6 +27,11 @@ class TestUiJobsApiSlice1(unittest.TestCase):
 
             mod = importlib.import_module("services.factory_api.app")
             importlib.reload(mod)
+            class _PreflightOk:
+                ok = True
+                field_errors = {}
+                resolved = {}
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _PreflightOk()
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
@@ -35,6 +40,9 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                 "title": "My First",
                 "description": "desc",
                 "tags_csv": "one,two",
+                "playlist_ids": ["PL_A", "PL_B"],
+                "audience_is_for_kids": True,
+                "video_language": "English",
                 "cover_name": "cover",
                 "cover_ext": "png",
                 "background_name": "bg",
@@ -62,6 +70,10 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                 self.assertEqual(job["state"], "DRAFT")
                 self.assertEqual(job["job_type"], "UI")
                 self.assertEqual(job["release_title"], "Updated")
+                release = conn2.execute("SELECT playlists_json, audience_is_for_kids, video_language FROM releases WHERE id = ?", (job["release_id"],)).fetchone()
+                self.assertEqual(release["playlists_json"], '["PL_A", "PL_B"]')
+                self.assertEqual(int(release["audience_is_for_kids"]), 1)
+                self.assertEqual(release["video_language"], "English")
             finally:
                 conn2.close()
 
@@ -81,6 +93,11 @@ class TestUiJobsApiSlice1(unittest.TestCase):
 
             mod = importlib.import_module("services.factory_api.app")
             importlib.reload(mod)
+            class _PreflightOk:
+                ok = True
+                field_errors = {}
+                resolved = {}
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _PreflightOk()
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
@@ -247,6 +264,11 @@ class TestUiJobsApiSlice1(unittest.TestCase):
 
             mod = importlib.import_module("services.factory_api.app")
             importlib.reload(mod)
+            class _PreflightOk:
+                ok = True
+                field_errors = {}
+                resolved = {}
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _PreflightOk()
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
