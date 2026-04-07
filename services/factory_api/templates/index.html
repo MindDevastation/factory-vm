@@ -77,6 +77,7 @@
 <p>
   <button type="button" id="channel-add-btn">Add Channel (YouTube OAuth)</button>
   <button type="button" id="channels-refresh-btn">Refresh channels</button>
+  <button type="button" id="channels-close-btn">Close</button>
   <span class="muted" id="channel-note"></span>
 </p>
 <table id="channels-table">
@@ -93,9 +94,7 @@
     </tr>
   </tbody>
 </table>
-</dialog>
-
-<h2>OAuth Tokens</h2>
+<h3>OAuth Tokens</h3>
 <p>
   <button type="button" id="oauth-refresh-btn">Refresh status</button>
   <span class="muted" id="oauth-refresh-note"></span>
@@ -115,6 +114,7 @@
     </tr>
   </tbody>
 </table>
+</dialog>
 
 <dialog id="jobs-bulk-modal" style="width:min(960px,95vw);">
 <h2>Jobs · Bulk JSON Editor</h2>
@@ -263,6 +263,7 @@
   const jobsBulkModal = document.getElementById('jobs-bulk-modal');
   const jobsBulkCloseBtn = document.getElementById('jobs-bulk-close-btn');
   const channelsModal = document.getElementById('channels-modal');
+  const channelsCloseBtn = document.getElementById('channels-close-btn');
   const headerChannelsBtn = document.getElementById('header-channels-btn');
   const secondarySurfacesOpenBtn = document.getElementById('secondary-surfaces-open-btn');
   const secondarySurfacesBackdrop = document.getElementById('secondary-surfaces-backdrop');
@@ -282,6 +283,7 @@
   if (jobsBulkOpenBtn && jobsBulkModal) jobsBulkOpenBtn.addEventListener('click', () => jobsBulkModal.showModal());
   if (jobsBulkCloseBtn && jobsBulkModal) jobsBulkCloseBtn.addEventListener('click', () => jobsBulkModal.close());
   if (headerChannelsBtn && channelsModal) headerChannelsBtn.addEventListener('click', () => channelsModal.showModal());
+  if (channelsCloseBtn && channelsModal) channelsCloseBtn.addEventListener('click', () => channelsModal.close());
   function openSecondaryDrawer() {
     if (!secondarySurfacesDrawer || !secondarySurfacesBackdrop) return;
     secondarySurfacesDrawer.classList.add('open');
