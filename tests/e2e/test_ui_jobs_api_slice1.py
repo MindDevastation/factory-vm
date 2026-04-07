@@ -324,6 +324,58 @@ class TestUiJobsApiSlice1(unittest.TestCase):
             self.assertIn("cover", errors)
             self.assertIn("background", errors)
 
+    def test_playlist_create_title_persists_and_trims(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                self.assertIsNotNone(ch)
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+
+            class _PreflightOk:
+                ok = True
+                field_errors = {}
+                resolved = {}
+
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _PreflightOk()
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            payload = {
+                "channel_id": channel_id,
+                "title": "Playlist Create",
+                "description": "",
+                "tags_csv": "",
+                "playlist_ids": [],
+                "playlist_create_title": "  New Playlist  ",
+                "cover_name": "",
+                "cover_ext": "",
+                "background_name": "bg",
+                "background_ext": "jpg",
+                "audio_ids_text": "001",
+            }
+            rc = client.post("/v1/ui/jobs", json=payload, headers=h)
+            self.assertEqual(rc.status_code, 200)
+            job_id = int(rc.json()["job_id"])
+
+            conn2 = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn2, job_id)
+                self.assertEqual(str(draft["playlist_create_title"]), "New Playlist")
+                release_title = conn2.execute(
+                    "SELECT playlist_create_title FROM releases WHERE id = (SELECT release_id FROM jobs WHERE id = ?)",
+                    (job_id,),
+                ).fetchone()
+                self.assertEqual(str(release_title["playlist_create_title"]), "New Playlist")
+            finally:
+                conn2.close()
+
 
 if __name__ == "__main__":
     unittest.main()

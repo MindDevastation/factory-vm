@@ -93,6 +93,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             description TEXT NOT NULL,
             tags_json TEXT NOT NULL,
             playlists_json TEXT NOT NULL DEFAULT '[]',
+            playlist_create_title TEXT,
             audience_is_for_kids INTEGER NOT NULL DEFAULT 0,
             video_language TEXT NOT NULL DEFAULT 'English',
             planned_at TEXT,
@@ -774,6 +775,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             description TEXT NOT NULL,
             tags_csv TEXT NOT NULL,
             playlists_json TEXT NOT NULL DEFAULT '[]',
+            playlist_create_title TEXT,
             audience_is_for_kids INTEGER NOT NULL DEFAULT 0,
             video_language TEXT NOT NULL DEFAULT 'English',
             cover_name TEXT,
@@ -2710,6 +2712,9 @@ def _ensure_ui_job_drafts_columns(conn: sqlite3.Connection) -> None:
     if "playlists_json" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE ui_job_drafts ADD COLUMN playlists_json TEXT NOT NULL DEFAULT '[]';")
+    if "playlist_create_title" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE ui_job_drafts ADD COLUMN playlist_create_title TEXT;")
     if "audience_is_for_kids" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE ui_job_drafts ADD COLUMN audience_is_for_kids INTEGER NOT NULL DEFAULT 0;")
@@ -2723,6 +2728,9 @@ def _ensure_releases_columns(conn: sqlite3.Connection) -> None:
     if "playlists_json" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE releases ADD COLUMN playlists_json TEXT NOT NULL DEFAULT '[]';")
+    if "playlist_create_title" not in cols:
+        with suppress(Exception):
+            conn.execute("ALTER TABLE releases ADD COLUMN playlist_create_title TEXT;")
     if "audience_is_for_kids" not in cols:
         with suppress(Exception):
             conn.execute("ALTER TABLE releases ADD COLUMN audience_is_for_kids INTEGER NOT NULL DEFAULT 0;")
@@ -4276,6 +4284,7 @@ def create_ui_job_draft(
     description: str,
     tags_csv: str,
     playlists_json: str = "[]",
+    playlist_create_title: str | None = None,
     audience_is_for_kids: int = 0,
     video_language: str = "English",
     cover_name: Optional[str] = None,
@@ -4291,12 +4300,12 @@ def create_ui_job_draft(
         """
         INSERT INTO releases(
             channel_id, title, description, tags_json,
-            playlists_json, audience_is_for_kids, video_language,
+            playlists_json, playlist_create_title, audience_is_for_kids, video_language,
             planned_at, origin_release_folder_id, origin_meta_file_id, created_at
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)
         """,
-        (channel_id, title, description, json_dumps(tags), playlists_json, int(audience_is_for_kids), video_language, ts),
+        (channel_id, title, description, json_dumps(tags), playlists_json, playlist_create_title, int(audience_is_for_kids), video_language, ts),
     )
     release_id = int(cur.lastrowid)
     job_id = insert_job_with_lineage_defaults(
@@ -4313,10 +4322,10 @@ def create_ui_job_draft(
     conn.execute(
         """
         INSERT INTO ui_job_drafts(
-            job_id, channel_id, title, description, tags_csv, playlists_json, audience_is_for_kids, video_language,
+            job_id, channel_id, title, description, tags_csv, playlists_json, playlist_create_title, audience_is_for_kids, video_language,
             cover_name, cover_ext, background_name, background_ext,
             audio_ids_text, created_at, updated_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             job_id,
@@ -4325,6 +4334,7 @@ def create_ui_job_draft(
             description,
             tags_csv,
             playlists_json,
+            playlist_create_title,
             int(audience_is_for_kids),
             video_language,
             cover_name,
@@ -4347,6 +4357,7 @@ def update_ui_job_draft(
     description: str,
     tags_csv: str,
     playlists_json: str,
+    playlist_create_title: str | None,
     audience_is_for_kids: int,
     video_language: str,
     cover_name: Optional[str],
@@ -4360,19 +4371,19 @@ def update_ui_job_draft(
     conn.execute(
         """
         UPDATE ui_job_drafts
-        SET title=?, description=?, tags_csv=?, playlists_json=?, audience_is_for_kids=?, video_language=?, cover_name=?, cover_ext=?,
+        SET title=?, description=?, tags_csv=?, playlists_json=?, playlist_create_title=?, audience_is_for_kids=?, video_language=?, cover_name=?, cover_ext=?,
             background_name=?, background_ext=?, audio_ids_text=?, updated_at=?
         WHERE job_id = ?
         """,
-        (title, description, tags_csv, playlists_json, int(audience_is_for_kids), video_language, cover_name, cover_ext, background_name, background_ext, audio_ids_text, ts, job_id),
+        (title, description, tags_csv, playlists_json, playlist_create_title, int(audience_is_for_kids), video_language, cover_name, cover_ext, background_name, background_ext, audio_ids_text, ts, job_id),
     )
     conn.execute(
         """
         UPDATE releases
-        SET title=?, description=?, tags_json=?, playlists_json=?, audience_is_for_kids=?, video_language=?
+        SET title=?, description=?, tags_json=?, playlists_json=?, playlist_create_title=?, audience_is_for_kids=?, video_language=?
         WHERE id = (SELECT release_id FROM jobs WHERE id = ?)
         """,
-        (title, description, json_dumps(tags), playlists_json, int(audience_is_for_kids), video_language, job_id),
+        (title, description, json_dumps(tags), playlists_json, playlist_create_title, int(audience_is_for_kids), video_language, job_id),
     )
 
 
