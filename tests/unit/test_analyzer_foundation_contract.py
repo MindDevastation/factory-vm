@@ -18,6 +18,20 @@ class TestAnalyzerFoundationContract(unittest.TestCase):
         self.assertEqual(model["default_mutation_policy"], "NO_AUTO_APPLY")
         self.assertEqual(model["refresh_selector_values"], ["HOURLY", "EVERY_12_HOURS", "DAILY"])
 
+        registry = contract["profile_registry_contract"]
+        self.assertEqual(registry["core_analyzer_mode"], "ONE_ANALYZER_MANY_PROFILES")
+        self.assertEqual(registry["foundations_affected"], ["weighting", "baseline", "prediction", "recommendation", "planning"])
+
+        sample = contract["sample_profile_effects"]
+        self.assertEqual(sample["channel_strategy_profile"], "LONG_FORM_BACKGROUND_MUSIC")
+        self.assertEqual(sample["format_profile"], "LONG_FORM")
+        self.assertIn("retention", sample["weighting_hooks"])
+        self.assertIn("window_bias", sample["baseline_hooks"])
+        self.assertIn("primary_target", sample["prediction_hooks"])
+        self.assertIn("priority_theme", sample["recommendation_hooks"])
+        self.assertIn("cadence_mode", sample["planning_hooks"])
+        self.assertTrue(sample["hook_fingerprint"])
+
         coverage = contract["mandatory_scope_coverage"]
         self.assertEqual(coverage["analytics_domain_snapshot_foundation"]["status"], "READY")
         self.assertEqual(coverage["one_analyzer_many_profiles_foundation_hooks"]["status"], "READY")

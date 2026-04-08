@@ -9,6 +9,12 @@ from services.analytics_center.literals import (
     ANALYZER_REFRESH_SELECTOR_VALUES,
     ANALYZER_REQUIRED_METRIC_DIMENSIONS,
 )
+from services.analytics_center.profile_registry import (
+    CORE_ANALYZER_MODE,
+    build_profile_registry_contract,
+    profile_hook_fingerprint,
+    resolve_profile_bundle,
+)
 
 
 def _status(ok: bool, *, note: str) -> dict[str, Any]:
@@ -25,6 +31,11 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
     implemented_metric_dimensions = tuple(sorted(set(METRIC_FAMILY_ALIASES.values())))
     missing_required_metrics = tuple(
         metric for metric in ANALYZER_REQUIRED_METRIC_DIMENSIONS if metric not in implemented_metric_dimensions
+    )
+
+    sample_profile_bundle = resolve_profile_bundle(
+        channel_strategy_profile="LONG_FORM_BACKGROUND_MUSIC",
+        format_profile="LONG_FORM",
     )
 
     scope_coverage = {
@@ -61,7 +72,7 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
     return {
         "contract_version": "MF1-S1",
         "analyzer_model": {
-            "core_mode": "ONE_ANALYZER_MANY_PROFILES",
+            "core_mode": CORE_ANALYZER_MODE,
             "profile_axes": list(ANALYZER_PROFILE_AXES),
             "default_mutation_policy": ANALYZER_DEFAULT_MUTATION_POLICY,
             "refresh_selector_values": list(ANALYZER_REFRESH_SELECTOR_VALUES),
@@ -70,6 +81,17 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
         "implemented_metric_dimensions": list(implemented_metric_dimensions),
         "missing_required_metric_dimensions": list(missing_required_metrics),
         "mandatory_scope_coverage": scope_coverage,
+        "profile_registry_contract": build_profile_registry_contract(),
+        "sample_profile_effects": {
+            "channel_strategy_profile": sample_profile_bundle.channel_strategy_profile,
+            "format_profile": sample_profile_bundle.format_profile,
+            "weighting_hooks": sample_profile_bundle.weighting_hooks,
+            "baseline_hooks": sample_profile_bundle.baseline_hooks,
+            "prediction_hooks": sample_profile_bundle.prediction_hooks,
+            "recommendation_hooks": sample_profile_bundle.recommendation_hooks,
+            "planning_hooks": sample_profile_bundle.planning_hooks,
+            "hook_fingerprint": profile_hook_fingerprint(sample_profile_bundle),
+        },
         "completeness": "FOUNDATION_ONLY",
         "non_goals_in_this_slice": [
             "telegram implementation",

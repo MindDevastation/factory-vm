@@ -108,6 +108,13 @@ __all__ = [
     "group_recommendations",
     "validate_lifecycle_transition",
     "build_analyzer_foundation_contract",
+    "build_profile_registry_contract",
+    "profile_hook_fingerprint",
+    "resolve_profile_bundle",
+    "AnalyzerProfileBundle",
+    "FORMAT_PROFILES",
+    "CHANNEL_STRATEGY_PROFILES",
+    "CORE_ANALYZER_MODE",
 ]
 
 from .errors import AnalyticsDomainError
@@ -190,3 +197,13 @@ from .mf4_runtime import (
 )
 
 from .analyzer_foundation import build_analyzer_foundation_contract
+
+from .profile_registry import (
+    CORE_ANALYZER_MODE,
+    CHANNEL_STRATEGY_PROFILES,
+    FORMAT_PROFILES,
+    AnalyzerProfileBundle,
+    resolve_profile_bundle,
+    profile_hook_fingerprint,
+    build_profile_registry_contract,
+)
