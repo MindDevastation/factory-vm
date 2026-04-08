@@ -1,0 +1,310 @@
+REQ_YOUTUBE_PERFORMANCE_METRICS_ANALYZER_v1.0
+
+1. Название
+
+YouTube Performance Metrics Analyzer
+
+2. Цель
+
+Добавить в factory-vm полноценный YouTube Performance Metrics Analyzer, который:
+- подтягивает внешние метрики YouTube для каналов и видео/релизов;
+- хранит историю и выполняет backfill старых данных;
+- строит красивые аналитические dashboards и анимированные графики;
+- считает baselines, comparisons, trends, anomalies и risks;
+- делает умные explainable predictions;
+- выдает explainable recommendations;
+- включает planning assistant для недельного, месячного и квартального планирования;
+- предоставляет полноценную Telegram surface;
+- ничего не изменяет автоматически по умолчанию.
+
+3. Зачем делаем
+
+Сейчас в проекте нет полноценного слоя внешней YouTube performance analytics. Существуют внутренние operational analytics, readiness/recovery/publish summaries, reports и exports, но отсутствует обязательный для growth-анализа ingestion внешних YouTube performance metrics.
+
+Этот эпик нужен, чтобы оператор видел:
+- как реально растут или проседают каналы и релизы;
+- какие форматы работают лучше;
+- где проблемы с CTR, retention, watch time и growth;
+- какие действия могут ускорить рост;
+- как спланировать контент на неделю, месяц и квартал.
+
+4. Зафиксированный архитектурный контекст
+
+4.1. Analyzer является отдельной продуктовой фичей и не смешивается с pre-launch QA backlog.
+
+4.2. Analyzer использует единый core analyzer, а не отдельный анализатор под каждый тип канала.
+
+4.3. Разные типы каналов и форматов поддерживаются через profile-based analysis:
+- channel strategy profile;
+- format profile;
+- разные веса сигналов, baselines, forecast rules и recommendation logic.
+
+4.4. Analyzer по умолчанию ничего не меняет автоматически в соседних доменах.
+
+4.5. Planning assistant входит в v1, но работает как recommendation/scenario/planning layer с linked actions, а не как silent auto-apply engine.
+
+4.6. Все перечисленные элементы этого REQ обязательны к реализации. В этом REQ нет необязательных, желательных или опциональных пунктов.
+
+5. Scope
+
+В scope analyzer входят:
+- external YouTube metrics ingestion;
+- historical backfill;
+- scheduled and manual refresh;
+- analytics data model and historical snapshots;
+- overview dashboard;
+- channel page;
+- release/video page;
+- portfolio/project summary;
+- beautiful animated charts;
+- compare periods;
+- date filters;
+- exports;
+- explainable predictions;
+- explainable recommendations;
+- planning assistant;
+- full Telegram surface.
+
+6. Канонический аналитический охват
+
+Analyzer покрывает все уровни:
+- channel-level analytics;
+- release/video-level analytics;
+- portfolio/project-level analytics.
+
+Также analyzer обязан учитывать format/channel strategy profiles для разных типов каналов, включая:
+- long-form background music;
+- daily single-track releases;
+- будущие другие форматы.
+
+7. Обязательные метрики
+
+Analyzer обязан поддерживать полный набор метрик, включая:
+- views;
+- impressions;
+- CTR;
+- watch time;
+- average view duration;
+- retention;
+- subscribers gained/lost;
+- revenue/RPM и другие monetization metrics, когда источник и права доступа это позволяют;
+- unique viewers;
+- new / casual / regular / returning viewers;
+- traffic sources;
+- YouTube search terms;
+- when your viewers are on YouTube;
+- key moments for audience retention;
+- typical retention benchmark;
+- top geographies;
+- subscriber conversion context.
+
+8. Исторический backfill и обновление данных
+
+8.1. Analyzer обязан поддерживать historical backfill старых данных.
+
+8.2. Analyzer обязан поддерживать автоматическое обновление метрик.
+
+8.3. Частота автоматического обновления выбирается оператором на странице analyzer и должна поддерживать значения:
+- раз в час;
+- раз в 12 часов;
+- раз в день.
+
+8.4. Analyzer обязан поддерживать принудительное ручное обновление по кнопке на странице.
+
+8.5. Analyzer обязан показывать freshness / status sync / coverage данных.
+
+9. UI / UX surfaces
+
+9.1. Analyzer обязан иметь кнопку входа в шапке.
+
+9.2. Analyzer обязан иметь следующие основные surfaces:
+- overview page;
+- channel page;
+- release/video page.
+
+9.3. Analyzer обязан иметь красивые графики.
+
+9.4. Analyzer обязан иметь анимации графиков.
+
+9.5. Analyzer обязан поддерживать сравнение периодов.
+
+9.6. Analyzer обязан поддерживать фильтры по диапазону дат.
+
+9.7. Analyzer обязан поддерживать exports.
+
+9.8. Analyzer обязан показывать:
+- current period;
+- previous period;
+- baseline comparison;
+- trend direction;
+- anomalies;
+- growth opportunities.
+
+10. Дополнительные обязательные аналитические блоки
+
+Analyzer обязан включать:
+- segment comparison by traffic source;
+- segment comparison by geography;
+- segment comparison by available audience segments;
+- format split analytics;
+- release cohort comparison для первых 24 часов, 72 часов, 7 дней и 28 дней;
+- alerting layer для резких просадок и ускорений;
+- weekly / monthly / quarterly planning views.
+
+11. Predictions
+
+11.1. Analyzer обязан делать все ключевые предсказания:
+- прогноз роста просмотров;
+- прогноз роста watch time;
+- прогноз CTR;
+- прогноз сильного/слабого релиза;
+- прогноз лучшего окна публикации;
+- прогноз тренда канала;
+- прогноз рисков аномалий и просадок.
+
+11.2. Predictions должны быть умными и explainable.
+
+11.3. Predictions обязаны содержать:
+- predicted outcome/risk;
+- confidence class or confidence band;
+- key reasons/signals;
+- comparison basis;
+- next recommended operator action.
+
+11.4. Predictions должны учитывать profile-based analysis для разных типов каналов и форматов.
+
+12. Recommendations
+
+12.1. Analyzer обязан выдавать все ключевые рекомендации:
+- publish timing suggestions;
+- weak release attention suggestions;
+- title/metadata improvement suggestions;
+- visual improvement suggestions;
+- channel growth / decline suggestions;
+- operational suggestions;
+- anomaly / risk alerts;
+- content planning suggestions.
+
+12.2. Recommendations должны быть explainable.
+
+12.3. Recommendations должны использовать linked actions там, где это полезно и безопасно.
+
+12.4. Recommendations не должны автоматически мутировать соседние домены по умолчанию.
+
+13. Planning assistant
+
+13.1. Planning assistant входит в v1.
+
+13.2. Planning assistant обязан поддерживать planning scenarios для:
+- недели;
+- месяца;
+- квартала.
+
+13.3. Planning assistant обязан использовать:
+- channel profile;
+- format profile;
+- historical performance;
+- audience behavior;
+- publish windows;
+- cadence patterns;
+- risk signals.
+
+13.4. Planning assistant обязан выдавать:
+- recommended release schedule;
+- recommended mix by format;
+- recommended priority for releases;
+- expected outcome/risk narrative;
+- linked actions into planning surfaces.
+
+13.5. Planning assistant не должен автоматически применять план по умолчанию.
+
+14. Strategy profile model
+
+14.1. Analyzer обязан использовать единый core analyzer.
+
+14.2. Analyzer обязан поддерживать channel/format strategy profiles.
+
+14.3. Strategy profiles обязаны менять:
+- signal weighting;
+- baseline logic;
+- prediction logic;
+- recommendation logic;
+- planning logic.
+
+14.4. Analyzer не должен создавать отдельный независимый analyzer под каждый тип канала.
+
+15. Telegram surface
+
+15.1. Analyzer обязан иметь полноценную Telegram surface.
+
+15.2. Telegram surface обязана поддерживать:
+- summaries;
+- alerts;
+- channel snapshots;
+- release/video snapshots;
+- recommendation summaries;
+- planning summaries;
+- linked actions / deep-links where appropriate.
+
+15.3. Telegram surface не должна подменять основной web UI, но обязана быть полноценным рабочим операторским интерфейсом analyzer.
+
+16. Behavior by default
+
+16.1. По умолчанию analyzer ничего не меняет автоматически.
+
+16.2. Любые linked actions должны вести в канонические соседние surfaces.
+
+16.3. Silent auto-apply behavior по умолчанию запрещен.
+
+17. Exports
+
+17.1. Analyzer обязан поддерживать export данных.
+
+17.2. Analyzer обязан поддерживать экспорт в пригодном для работы формате отчетов.
+
+17.3. Export должен покрывать:
+- channel-level analytics;
+- release/video-level analytics;
+- planning outputs;
+- comparison outputs.
+
+18. Acceptance criteria
+
+Фича считается успешно закрытой на уровне REQ, если:
+- analyzer подтягивает полный набор внешних YouTube performance metrics;
+- работает historical backfill;
+- работает автоматическое обновление по расписанию с выбором оператором частоты;
+- работает ручное обновление по кнопке;
+- доступны overview, channel и release/video surfaces;
+- есть красивые анимированные графики;
+- работают period comparisons и date filters;
+- есть exports;
+- predictions умные и explainable;
+- recommendations explainable и дают полезные linked actions;
+- planning assistant работает для недели, месяца и квартала;
+- analyzer использует profile-based analysis для разных типов каналов;
+- Telegram surface полноценна;
+- по умолчанию analyzer ничего не меняет автоматически.
+
+19. Что готово
+
+19.1. Product scope зафиксирован.
+19.2. Все элементы scope обязательны.
+19.3. Planning assistant включен в v1.
+19.4. Auto refresh policy зафиксирована.
+19.5. Стратегический подход “one analyzer + many profiles” зафиксирован.
+
+20. Чего не хватает
+
+20.1. Для уровня REQ критических пробелов не осталось.
+20.2. Следующий шаг — переход к спецификации.
+
+21. Риски двусмысленности
+
+21.1. Нельзя quietly сузить analyzer до internal-only analytics.
+21.2. Нельзя quietly убрать profile-based analysis.
+21.3. Нельзя quietly убрать planning assistant из v1.
+21.4. Нельзя quietly превратить analyzer в auto-apply engine по умолчанию.
+21.5. Нельзя quietly убрать Telegram surface из обязательного scope.
+
+READY FOR SPEC: YES
