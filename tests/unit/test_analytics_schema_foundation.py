@@ -3,6 +3,10 @@ from __future__ import annotations
 import unittest
 
 from services.analytics_center.literals import (
+    ANALYZER_DEFAULT_MUTATION_POLICY,
+    ANALYZER_PROFILE_AXES,
+    ANALYZER_REFRESH_SELECTOR_VALUES,
+    ANALYZER_REQUIRED_METRIC_DIMENSIONS,
     ANALYTICS_EXTERNAL_PROVIDER_NAMES,
     ANALYTICS_EXTERNAL_RUN_MODES,
     ANALYTICS_EXTERNAL_SYNC_STATES,
@@ -45,6 +49,35 @@ from tests._helpers import seed_minimal_db, temp_env
 
 class TestAnalyticsSchemaFoundation(unittest.TestCase):
     def test_literals_match_frozen_contract(self) -> None:
+        self.assertEqual(
+            ANALYZER_PROFILE_AXES,
+            ("CHANNEL_STRATEGY_PROFILE", "FORMAT_PROFILE"),
+        )
+        self.assertEqual(ANALYZER_DEFAULT_MUTATION_POLICY, "NO_AUTO_APPLY")
+        self.assertEqual(ANALYZER_REFRESH_SELECTOR_VALUES, ("HOURLY", "EVERY_12_HOURS", "DAILY"))
+        self.assertEqual(
+            ANALYZER_REQUIRED_METRIC_DIMENSIONS,
+            (
+                "views",
+                "impressions",
+                "ctr",
+                "watch_time",
+                "average_view_duration",
+                "retention",
+                "subscribers",
+                "monetization",
+                "unique_viewers",
+                "new_casual_regular_returning_viewers",
+                "traffic_sources",
+                "youtube_search_terms",
+                "viewers_when_on_youtube",
+                "retention_key_moments",
+                "retention_typical_benchmark",
+                "top_geographies",
+                "subscriber_conversion_context",
+            ),
+        )
+
         self.assertEqual(
             ANALYTICS_ENTITY_TYPES,
             ("CHANNEL", "RELEASE", "BATCH", "JOB_RUNTIME", "PORTFOLIO"),

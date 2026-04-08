@@ -1,0 +1,33 @@
+from __future__ import annotations
+
+import unittest
+
+from services.analytics_center.analyzer_foundation import build_analyzer_foundation_contract
+
+
+class TestAnalyzerFoundationContract(unittest.TestCase):
+    def test_contract_exposes_foundation_and_gap_boundaries(self) -> None:
+        contract = build_analyzer_foundation_contract()
+
+        self.assertEqual(contract["contract_version"], "MF1-S1")
+        self.assertEqual(contract["completeness"], "FOUNDATION_ONLY")
+
+        model = contract["analyzer_model"]
+        self.assertEqual(model["core_mode"], "ONE_ANALYZER_MANY_PROFILES")
+        self.assertEqual(model["profile_axes"], ["CHANNEL_STRATEGY_PROFILE", "FORMAT_PROFILE"])
+        self.assertEqual(model["default_mutation_policy"], "NO_AUTO_APPLY")
+        self.assertEqual(model["refresh_selector_values"], ["HOURLY", "EVERY_12_HOURS", "DAILY"])
+
+        coverage = contract["mandatory_scope_coverage"]
+        self.assertEqual(coverage["analytics_domain_snapshot_foundation"]["status"], "READY")
+        self.assertEqual(coverage["one_analyzer_many_profiles_foundation_hooks"]["status"], "READY")
+
+        self.assertEqual(coverage["required_metrics_breadth"]["status"], "GAP")
+        self.assertEqual(coverage["refresh_selector_exactness"]["status"], "GAP")
+        self.assertEqual(coverage["planning_assistant_v1_surface"]["status"], "GAP")
+        self.assertEqual(coverage["telegram_analyzer_surface"]["status"], "GAP")
+
+        missing = set(contract["missing_required_metric_dimensions"])
+        self.assertIn("unique_viewers", missing)
+        self.assertIn("traffic_sources", missing)
+        self.assertNotIn("views", missing)
