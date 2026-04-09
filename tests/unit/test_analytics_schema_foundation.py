@@ -182,10 +182,13 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                 "PUBLISH_TIMING_SUGGESTION",
                 "CADENCE_BATCH_HEALTH_SUGGESTION",
                 "WEAK_RELEASE_ATTENTION",
+                "TITLE_METADATA_IMPROVEMENT",
+                "VISUAL_IMPROVEMENT",
                 "OPERATIONAL_REMEDIATION",
                 "CHANNEL_OPTIMIZATION",
                 "ANOMALY_RISK_ALERT",
                 "CONTENT_PACKAGING_SUGGESTION",
+                "CONTENT_PLANNING_SUGGESTION",
             ),
         )
         self.assertEqual(ANALYTICS_MF5_TARGET_DOMAINS, ("PUBLISH", "METADATA", "VISUALS", "PLANNER", "OPERATIONAL_TROUBLESHOOTING"))

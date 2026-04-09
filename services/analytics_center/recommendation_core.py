@@ -136,21 +136,21 @@ def persist_recommendation_snapshot(conn: Any, *, recommendation: Recommendation
 
 def _build_recommendation_from_prediction(row: dict[str, Any]) -> RecommendationOutput:
     family_map = {
-        "VIEW_GROWTH_PREDICTION": "CHANNEL_OPTIMIZATION",
-        "WATCH_TIME_GROWTH_PREDICTION": "CONTENT_PACKAGING_SUGGESTION",
-        "CTR_PREDICTION": "CONTENT_PACKAGING_SUGGESTION",
-        "STRONG_WEAK_RELEASE_PREDICTION": "WEAK_RELEASE_ATTENTION",
-        "BEST_PUBLISH_WINDOW_PREDICTION": "PUBLISH_TIMING_SUGGESTION",
-        "CHANNEL_TREND_PREDICTION": "CHANNEL_OPTIMIZATION",
-        "ANOMALY_DROP_RISK_PREDICTION": "ANOMALY_RISK_ALERT",
+        "VIEW_GROWTH_PREDICTION": ("CHANNEL_OPTIMIZATION", "PUBLISH", "Review growth context and release cadence."),
+        "WATCH_TIME_GROWTH_PREDICTION": ("CONTENT_PLANNING_SUGGESTION", "PLANNER", "Open planning surface and rebalance format mix."),
+        "CTR_PREDICTION": ("TITLE_METADATA_IMPROVEMENT", "METADATA", "Review title/metadata packaging for discovery."),
+        "STRONG_WEAK_RELEASE_PREDICTION": ("WEAK_RELEASE_ATTENTION", "PUBLISH", "Review weak release for manual intervention."),
+        "BEST_PUBLISH_WINDOW_PREDICTION": ("PUBLISH_TIMING_SUGGESTION", "PUBLISH", "Adjust publish timing window before next run."),
+        "CHANNEL_TREND_PREDICTION": ("CHANNEL_OPTIMIZATION", "PUBLISH", "Inspect channel trend and prioritize growth candidates."),
+        "ANOMALY_DROP_RISK_PREDICTION": ("ANOMALY_RISK_ALERT", "OPERATIONAL_TROUBLESHOOTING", "Inspect risk indicators and mitigation queue."),
     }
     prediction_family = str(row["prediction_family"])
-    rec_family = family_map[prediction_family]
+    rec_family, target_domain, next_action = family_map[prediction_family]
     variance = str(row["variance_class"])
     severity = "CRITICAL" if variance == "RISK" else ("WARNING" if variance == "ANOMALY" else "INFO")
     confidence = str(row["confidence_class"])
     source_refs = json.loads(str(row["source_snapshot_refs_json"]))
-    pointer = build_target_domain_pointer(target_domain="PUBLISH", scope_type=str(row["scope_type"]), scope_ref=str(row["scope_ref"]), context_ref=prediction_family)
+    pointer = build_target_domain_pointer(target_domain=target_domain, scope_type=str(row["scope_type"]), scope_ref=str(row["scope_ref"]), context_ref=prediction_family)
     explainability = build_explainability_payload(
         primary_reason_code=f"PRED::{prediction_family}",
         primary_reason_text=f"Prediction suggests {prediction_family}",
@@ -158,8 +158,8 @@ def _build_recommendation_from_prediction(row: dict[str, Any]) -> Recommendation
         comparison_context_json=json.loads(str(row["comparison_basis_json"])),
         confidence_class=confidence,
         severity_class=severity,
-        next_action_hint="Review recommendation details before mutating downstream systems.",
-        target_domain="PUBLISH",
+        next_action_hint=next_action,
+        target_domain=target_domain,
         target_pointer_payload_json=pointer,
         source_snapshot_refs_json=source_refs,
     )
@@ -172,7 +172,7 @@ def _build_recommendation_from_prediction(row: dict[str, Any]) -> Recommendation
         summary_text=f"{prediction_family} classified as {variance.lower()}.",
         severity_class=severity,
         confidence_class=confidence,
-        target_domain="PUBLISH",
+        target_domain=target_domain,
         target_pointer_payload=pointer,
         explainability_payload=explainability,
         source_snapshot_refs=source_refs,
@@ -191,7 +191,10 @@ def _build_recommendation_from_comparison(row: dict[str, Any]) -> Recommendation
         severity = "CRITICAL"
         confidence = "HIGH"
     source_refs = json.loads(str(row["source_snapshot_refs_json"]))
-    pointer = build_target_domain_pointer(target_domain="METADATA", scope_type=str(row["scope_type"]), scope_ref=str(row["scope_ref"]), context_ref=str(row["comparison_family"]))
+    family = "VISUAL_IMPROVEMENT" if str(row.get("comparison_family")) == "RELEASE_VS_CHANNEL_BASELINE" else "CONTENT_PACKAGING_SUGGESTION"
+    target_domain = "VISUALS" if family == "VISUAL_IMPROVEMENT" else "METADATA"
+    next_action = "Inspect visual packaging context." if family == "VISUAL_IMPROVEMENT" else "Inspect metadata and packaging context."
+    pointer = build_target_domain_pointer(target_domain=target_domain, scope_type=str(row["scope_type"]), scope_ref=str(row["scope_ref"]), context_ref=str(row["comparison_family"]))
     explainability = build_explainability_payload(
         primary_reason_code=f"CMP::{row['comparison_family']}",
         primary_reason_text="Comparison variance requires packaging attention.",
@@ -199,21 +202,21 @@ def _build_recommendation_from_comparison(row: dict[str, Any]) -> Recommendation
         comparison_context_json=json.loads(str(row["comparison_basis_json"])),
         confidence_class=confidence,
         severity_class=severity,
-        next_action_hint="Inspect metadata and packaging context.",
-        target_domain="METADATA",
+        next_action_hint=next_action,
+        target_domain=target_domain,
         target_pointer_payload_json=pointer,
         source_snapshot_refs_json=source_refs,
     )
     return RecommendationOutput(
         scope_type=str(row["scope_type"]),
         scope_ref=str(row["scope_ref"]),
-        recommendation_family="CONTENT_PACKAGING_SUGGESTION",
+        recommendation_family=family,
         issue_key=f"{row['comparison_family']}:{variance}",
         title_text="Content packaging suggestion",
         summary_text=f"Comparison {row['comparison_family']} is {variance.lower()}.",
         severity_class=severity,
         confidence_class=confidence,
-        target_domain="METADATA",
+        target_domain=target_domain,
         target_pointer_payload=pointer,
         explainability_payload=explainability,
         source_snapshot_refs=source_refs,
