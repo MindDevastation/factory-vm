@@ -31,6 +31,7 @@
   .telegram-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
   .telegram-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
   .telegram-row input { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; min-width:170px; }
+  .telegram-row select { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
   .telegram-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
   #telegram-output { margin-top:8px; border:1px solid #e5e7eb; border-radius:8px; padding:8px; background:#f9fafb; }
   #telegram-output ul { margin:6px 0 0 18px; }
@@ -132,6 +133,11 @@
     <input id="telegram-channel" type="text" value="darkwood-reverie" />
     <label for="telegram-release">Release/video ref</label>
     <input id="telegram-release" type="text" value="latest" />
+    <label for="telegram-delivery-mode">Delivery</label>
+    <select id="telegram-delivery-mode">
+      <option value="DRY_RUN">Dry run</option>
+      <option value="LIVE">Live send</option>
+    </select>
     <button id="telegram-generate" type="button">Generate Telegram surface</button>
     <span id="telegram-status" class="muted">Idle</span>
   </div>
@@ -157,6 +163,7 @@
     const planningOutputEl = document.getElementById('planning-output');
     const telegramChannelEl = document.getElementById('telegram-channel');
     const telegramReleaseEl = document.getElementById('telegram-release');
+    const telegramDeliveryModeEl = document.getElementById('telegram-delivery-mode');
     const telegramGenerateEl = document.getElementById('telegram-generate');
     const telegramStatusEl = document.getElementById('telegram-status');
     const telegramOutputEl = document.getElementById('telegram-output');
@@ -465,15 +472,17 @@
     async function generateTelegramSurface() {
       const channelSlug = String(telegramChannelEl.value || '').trim() || 'all';
       const releaseRef = String(telegramReleaseEl.value || '').trim() || 'latest';
+      const dryRun = telegramDeliveryModeEl.value !== 'LIVE';
       telegramGenerateEl.disabled = true;
       telegramStatusEl.textContent = 'Generating…';
       try {
-        const resp = await fetch('/v1/analytics/telegram/surface', {
+        const resp = await fetch('/v1/analytics/telegram/dispatch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
           body: JSON.stringify({
             channel_slug: channelSlug,
             release_id: releaseRef,
+            dry_run: dryRun,
             recommendation_items: [
               {
                 recommendation_family: 'ANOMALY_RISK_ALERT',
@@ -491,8 +500,8 @@
           telegramOutputEl.textContent = JSON.stringify(payload, null, 2);
           return;
         }
-        telegramStatusEl.textContent = 'Telegram operator surface ready';
-        renderTelegramSurface(payload);
+        telegramStatusEl.textContent = dryRun ? 'Telegram dry-run preview ready' : 'Telegram live dispatch completed';
+        renderTelegramSurface(payload.surface || {});
       } catch (err) {
         telegramStatusEl.textContent = 'Failed (network/runtime error)';
         telegramOutputEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);

@@ -117,21 +117,24 @@
     {
       "id": "B6",
       "name": "real Telegram analyzer operator surface",
-      "status": "CLOSED_SLICE_G",
+      "status": "CLOSED_SLICE_G2",
       "tests": [
         "tests/unit/test_mf7_telegram_surface.py::TestMf7TelegramSurface",
-        "tests/integration/test_mf7_planning_telegram_api.py::TestMf7PlanningTelegramApi::test_telegram_surface_endpoint_contract",
+        "tests/unit/test_mf7_telegram_delivery.py::TestMf7TelegramDelivery",
+        "tests/integration/test_mf7_planning_telegram_api.py::TestMf7PlanningTelegramApi::test_telegram_dispatch_operator_workflow_dry_run_and_live",
         "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
         "python -m unittest discover -s tests -v"
       ],
       "artifacts": [
         "services/analytics_center/telegram_surface.py",
+        "services/analytics_center/telegram_delivery.py",
+        "services/factory_api/app.py",
         "services/factory_api/templates/analyzer_surface.html"
       ],
       "closure_criteria": [
-        "Telegram analyzer is exposed as a real operator-facing UI surface with actionable deep-links",
-        "Surface includes summaries, alerts, channel/release snapshots, recommendation/planning summaries, and linked actions",
-        "Linked actions preserve explicit auto_apply=false and mutation=false defaults"
+        "Telegram analyzer supports real operator dispatch workflow with dry-run and live transport paths",
+        "Surface includes summaries, alerts, channel/release snapshots, recommendation/planning summaries, and linked actions/deep-links",
+        "Linked actions and defaults preserve auto_apply=false and mutation=false invariants"
       ]
     },
     {

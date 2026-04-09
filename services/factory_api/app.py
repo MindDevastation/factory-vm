@@ -7708,6 +7708,32 @@ def api_analytics_telegram_surface(payload: Dict[str, Any], _: bool = Depends(re
     return surface
 
 
+@app.post("/v1/analytics/telegram/dispatch")
+def api_analytics_telegram_dispatch(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    from services.analytics_center.telegram_surface import build_telegram_analyzer_surface
+    from services.analytics_center.telegram_delivery import deliver_telegram_operator_surface
+
+    surface = build_telegram_analyzer_surface(
+        channel_slug=payload.get("channel_slug"),
+        release_id=None if payload.get("release_id") is None else str(payload.get("release_id")),
+        recommendation_items=list(payload.get("recommendation_items") or []),
+        planning_summary=dict(payload.get("planning_summary") or {}),
+    )
+    dry_run = bool(payload.get("dry_run", True))
+    chat_id = int(payload.get("chat_id") or env.tg_admin_chat_id or 0)
+    delivery = deliver_telegram_operator_surface(
+        surface=surface,
+        bot_token=str(payload.get("bot_token") or env.tg_bot_token or ""),
+        chat_id=chat_id,
+        dry_run=dry_run,
+    )
+    return {
+        "surface": surface,
+        "delivery": delivery,
+        "default_behavior": {"auto_apply": False, "mutation": False},
+    }
+
+
 
 
 def _external_sync_http_status(code: str) -> int:

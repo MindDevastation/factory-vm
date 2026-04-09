@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -102,6 +103,49 @@ class TestMf7PlanningTelegramApi(unittest.TestCase):
             self.assertTrue(all(action.get("mutation") is False for action in body["linked_actions"]))
             self.assertIn("deep_link", body["alerts"][0])
             self.assertFalse(body["default_behavior"]["auto_apply"])
+
+    def test_telegram_dispatch_operator_workflow_dry_run_and_live(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            dry = client.post(
+                "/v1/analytics/telegram/dispatch",
+                headers=h,
+                json={
+                    "channel_slug": "darkwood-reverie",
+                    "release_id": 101,
+                    "dry_run": True,
+                    "recommendation_items": [{"recommendation_family": "ANOMALY_RISK_ALERT", "severity_class": "CRITICAL"}],
+                    "planning_summary": {"scenario": "WEEK", "status": "READY"},
+                },
+            )
+            self.assertEqual(dry.status_code, 200)
+            dry_body = dry.json()
+            self.assertEqual(dry_body["delivery"]["delivery_mode"], "DRY_RUN")
+            self.assertFalse(dry_body["delivery"]["delivered"])
+            self.assertIn("message_preview", dry_body["delivery"])
+            self.assertFalse(dry_body["default_behavior"]["auto_apply"])
+
+            with patch("services.analytics_center.telegram_delivery._telegram_send_message_http", return_value={"ok": True, "result": {"message_id": 1}}):
+                live = client.post(
+                    "/v1/analytics/telegram/dispatch",
+                    headers=h,
+                    json={
+                        "channel_slug": "darkwood-reverie",
+                        "release_id": 101,
+                        "dry_run": False,
+                        "bot_token": "unit-test-token",
+                        "chat_id": 999123,
+                        "recommendation_items": [{"recommendation_family": "ANOMALY_RISK_ALERT", "severity_class": "CRITICAL"}],
+                        "planning_summary": {"scenario": "WEEK", "status": "READY"},
+                    },
+                )
+            self.assertEqual(live.status_code, 200)
+            live_body = live.json()
+            self.assertEqual(live_body["delivery"]["delivery_mode"], "LIVE")
+            self.assertTrue(live_body["delivery"]["delivered"])
 
 
 if __name__ == "__main__":
