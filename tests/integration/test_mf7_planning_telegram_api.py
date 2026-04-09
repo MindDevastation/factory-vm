@@ -35,6 +35,34 @@ class TestMf7PlanningTelegramApi(unittest.TestCase):
             self.assertEqual(body["scenario"], "MONTH")
             self.assertFalse(body["default_behavior"]["auto_apply"])
             self.assertIn("recommended_release_schedule", body["outputs"])
+            self.assertEqual(body["outputs"]["planning_horizon_days"], 30)
+            self.assertGreaterEqual(len(body["outputs"]["execution_checklist"]), 1)
+            self.assertTrue(all(action.get("auto_apply") is False for action in body["outputs"]["linked_actions"]))
+            self.assertTrue(all(action.get("mutation") is False for action in body["outputs"]["linked_actions"]))
+
+    def test_planning_assistant_supports_week_month_quarter_behavior(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            expected = {"WEEK": 3, "MONTH": 8, "QUARTER": 12}
+            for scenario, slot_count in expected.items():
+                resp = client.post(
+                    "/v1/analytics/planning-assistant",
+                    headers=h,
+                    json={
+                        "scenario": scenario,
+                        "channel_strategy_profile": "LONG_FORM_BACKGROUND_MUSIC",
+                        "format_profile": "LONG_FORM",
+                        "publish_windows": ["weekday_evening", "weekend_morning"],
+                        "risk_signals": [{"signal": "cadence_drop"}],
+                    },
+                )
+                self.assertEqual(resp.status_code, 200)
+                body = resp.json()
+                self.assertEqual(body["scenario"], scenario)
+                self.assertEqual(len(body["outputs"]["recommended_release_schedule"]), slot_count)
 
     def test_telegram_surface_endpoint_contract(self) -> None:
         with temp_env() as (_, env):
@@ -71,4 +99,3 @@ class TestMf7PlanningTelegramApi(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

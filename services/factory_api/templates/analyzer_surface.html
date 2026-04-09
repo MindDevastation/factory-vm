@@ -20,6 +20,14 @@
   .backfill-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
   .backfill-row button:disabled { opacity:.6; cursor:not-allowed; }
   #backfill-runtime { margin-top:8px; font-size:12px; color:#374151; }
+  .planning-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .planning-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+  .planning-row select, .planning-row input { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
+  .planning-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  #planning-status { margin-top:8px; }
+  #planning-output { margin-top:8px; border:1px solid #e5e7eb; border-radius:8px; padding:8px; background:#f9fafb; }
+  #planning-output table { width:100%; border-collapse:collapse; font-size:12px; margin-top:6px; }
+  #planning-output th, #planning-output td { border:1px solid #d1d5db; padding:4px 6px; text-align:left; }
   .chart-meta { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
   .chart-chip { font-size:12px; border-radius:999px; padding:3px 8px; border:1px solid #d1d5db; background:#f9fafb; }
   .chart-chip.up { border-color:#16a34a; color:#166534; background:#dcfce7; }
@@ -93,6 +101,23 @@
 <section id="analyzer-data-view" aria-live="polite">
   <pre id="analyzer-data-json">{}</pre>
 </section>
+<section class="planning-panel" id="analyzer-planning-panel">
+  <h3>Planning assistant (Week / Month / Quarter)</h3>
+  <p class="muted">User-facing planning flow. Outputs are review-first with linked actions and no auto-apply defaults.</p>
+  <div class="planning-row">
+    <label for="planning-scenario">Scenario</label>
+    <select id="planning-scenario">
+      <option value="WEEK">Week</option>
+      <option value="MONTH">Month</option>
+      <option value="QUARTER">Quarter</option>
+    </select>
+    <label for="planning-windows">Publish windows</label>
+    <input id="planning-windows" type="text" value="weekday_evening,weekend_morning" />
+    <button id="planning-generate" type="button">Generate plan</button>
+    <span id="planning-status" class="muted">Idle</span>
+  </div>
+  <div id="planning-output" data-planning-surface>Awaiting planning request.</div>
+</section>
 
 <script>
   (function () {
@@ -106,6 +131,11 @@
     const backfillTriggerEl = document.getElementById('backfill-trigger');
     const backfillStatusEl = document.getElementById('backfill-status');
     const backfillRuntimeEl = document.getElementById('backfill-runtime');
+    const planningScenarioEl = document.getElementById('planning-scenario');
+    const planningWindowsEl = document.getElementById('planning-windows');
+    const planningGenerateEl = document.getElementById('planning-generate');
+    const planningStatusEl = document.getElementById('planning-status');
+    const planningOutputEl = document.getElementById('planning-output');
 
     function extractNumericValues(obj) {
       if (!obj || typeof obj !== 'object') return [];
@@ -331,7 +361,66 @@
       }
     }
 
+    function renderPlanningOutput(payload) {
+      const outputs = (payload && payload.outputs) || {};
+      const schedule = Array.isArray(outputs.recommended_release_schedule) ? outputs.recommended_release_schedule : [];
+      const linked = Array.isArray(outputs.linked_actions) ? outputs.linked_actions : [];
+      const rows = schedule
+        .slice(0, 12)
+        .map((item) => `<tr><td>${item.slot}</td><td>${item.window || ''}</td><td>${item.priority || ''}</td><td>${item.focus || ''}</td></tr>`)
+        .join('');
+      const linkedRows = linked
+        .map((item) => `<li>${item.target_domain}: ${item.action} (<code>${item.path}</code>) auto_apply=${String(item.auto_apply)} mutation=${String(item.mutation)}</li>`)
+        .join('');
+      planningOutputEl.innerHTML = `
+        <div><strong>Scenario:</strong> ${payload.scenario || 'unknown'} · <strong>Horizon:</strong> ${outputs.planning_horizon_days || '-'} days</div>
+        <div><strong>Narrative:</strong> ${outputs.expected_outcome_risk_narrative || 'n/a'}</div>
+        <table>
+          <thead><tr><th>Slot</th><th>Window</th><th>Priority</th><th>Focus</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="4">No schedule rows</td></tr>'}</tbody>
+        </table>
+        <div style="margin-top:8px;"><strong>Linked actions</strong><ul>${linkedRows || '<li>None</li>'}</ul></div>
+      `;
+    }
+
+    async function generatePlanning() {
+      const scenario = planningScenarioEl.value;
+      const windows = String(planningWindowsEl.value || '')
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+      planningGenerateEl.disabled = true;
+      planningStatusEl.textContent = 'Generating…';
+      try {
+        const resp = await fetch('/v1/analytics/planning-assistant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            scenario,
+            channel_strategy_profile: 'LONG_FORM_BACKGROUND_MUSIC',
+            format_profile: 'LONG_FORM',
+            publish_windows: windows,
+            risk_signals: [{ signal: 'cadence_drop_risk' }],
+          }),
+        });
+        const payload = await resp.json();
+        if (!resp.ok) {
+          planningStatusEl.textContent = `Failed (${resp.status})`;
+          planningOutputEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        planningStatusEl.textContent = `Plan ready (${scenario})`;
+        renderPlanningOutput(payload);
+      } catch (err) {
+        planningStatusEl.textContent = 'Failed (network/runtime error)';
+        planningOutputEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      } finally {
+        planningGenerateEl.disabled = false;
+      }
+    }
+
     backfillTriggerEl.addEventListener('click', triggerBackfill);
+    planningGenerateEl.addEventListener('click', generatePlanning);
     loadSurface();
   })();
 </script>

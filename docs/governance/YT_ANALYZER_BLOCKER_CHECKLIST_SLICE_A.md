@@ -14,7 +14,7 @@ This checklist is a tracking scaffold for blocker-closure execution. It intentio
 | B2 | real user-facing charts and animated charts | CLOSED (Slice C) | Screenshot/video evidence + deterministic UI tests proving chart data and animation hooks. |
 | B3 | full required external YouTube metrics breadth | CLOSED (Slice D re-apply) | Contract and integration evidence for complete required metric set, alias normalization, and explicit coverage-state visibility. |
 | B4 | real historical backfill feature flow | CLOSED (Slice E) | End-to-end operator flow evidence for explicit backfill trigger, runtime contract visibility, processing, and persisted history windows. |
-| B5 | real planning assistant feature surface | OPEN | API + UI/consumer evidence for planning assistant behavior with production-shaped payloads. |
+| B5 | real planning assistant feature surface | CLOSED (Slice F) | User-facing planning surface evidence for week/month/quarter scenarios with actionable outputs and non-auto-apply linked actions. |
 | B6 | real Telegram analyzer operator surface | OPEN | API + operator surface evidence validating Telegram output contract and behavior. |
 | B7 | truthful export coverage for planning outputs and comparison outputs | OPEN | Export fixture diff evidence proving planning/comparison outputs are represented faithfully. |
 | B8 | full automated evidence for the completed feature set | OPEN | Repeatable automation matrix with pass/fail outcomes and artifact links for all blockers. |

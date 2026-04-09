@@ -97,12 +97,21 @@
     {
       "id": "B5",
       "name": "real planning assistant feature surface",
-      "status": "OPEN",
-      "tests": [],
-      "artifacts": [],
+      "status": "CLOSED_SLICE_F",
+      "tests": [
+        "tests/unit/test_mf7_planning_assistant.py::TestMf7PlanningAssistant",
+        "tests/integration/test_mf7_planning_telegram_api.py::TestMf7PlanningTelegramApi::test_planning_assistant_supports_week_month_quarter_behavior",
+        "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "services/analytics_center/planning_assistant.py",
+        "services/factory_api/templates/analyzer_surface.html"
+      ],
       "closure_criteria": [
-        "Planning surface contracts are exercised by automated tests",
-        "Review evidence shows production-shaped response behavior"
+        "Planning assistant is a real user-facing analyzer surface for week/month/quarter scenarios",
+        "Planning outputs include actionable schedule rows and linked actions with explicit non-auto-apply defaults",
+        "Automated tests cover unit, API integration, and UI-surface evidence"
       ]
     },
     {
