@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block body %}
+<style>
+  .analyzer-tabs { display:flex; flex-wrap:wrap; gap:8px; margin: 10px 0 14px 0; }
+  .analyzer-tab { text-decoration:none; border:1px solid #d1d5db; border-radius:999px; padding:6px 10px; font-size:13px; color:#1f2937; }
+  .analyzer-tab.active { background:#111827; color:#fff; border-color:#111827; }
+  .analyzer-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:10px; margin: 10px 0 14px 0; }
+  .analyzer-card { border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .analyzer-card h3 { margin:0 0 6px 0; font-size:15px; }
+  .analyzer-card p { margin:0; color:#4b5563; font-size:13px; }
+  #analyzer-status { margin:8px 0 12px 0; }
+  #analyzer-data-view { border:1px solid #e5e7eb; border-radius:8px; padding:12px; background:#fff; }
+  #analyzer-data-view pre { margin:0; white-space:pre-wrap; word-break:break-word; }
+</style>
+
+<h1>Analyzer · Surface Family</h1>
+<p class="muted">
+  Real user-facing entry for the YouTube Performance Metrics Analyzer. This surface family is profile-compatible and does not auto-apply actions.
+</p>
+
+<nav class="analyzer-tabs" aria-label="Analyzer surface family navigation">
+  {% for item in surface_items %}
+    <a class="analyzer-tab{% if item.ui_path.endswith('/' ~ active_surface) %} active{% endif %}" href="{{ item.ui_path }}" data-analyzer-nav="{{ item.key }}">{{ item.label }}</a>
+  {% endfor %}
+</nav>
+
+<div class="analyzer-grid" id="analyzer-surface-family-cards">
+  <section class="analyzer-card">
+    <h3>One analyzer + many profiles</h3>
+    <p>Profile-aware operation is preserved. Surface rendering is read-first and does not mutate analyzer outcomes.</p>
+  </section>
+  <section class="analyzer-card">
+    <h3>Default non-auto-apply behavior</h3>
+    <p>This UI entry does not auto-apply recommendations or planning actions.</p>
+  </section>
+  <section class="analyzer-card">
+    <h3>Surface selected</h3>
+    <p><strong id="analyzer-selected-surface">{{ active_surface }}</strong> · Source: <code id="analyzer-active-api">{{ active_api_path }}</code></p>
+  </section>
+</div>
+
+<p id="analyzer-status" class="muted">Loading analyzer surface data…</p>
+<section id="analyzer-data-view" aria-live="polite">
+  <pre id="analyzer-data-json">{}</pre>
+</section>
+
+<script>
+  (function () {
+    const activeApiPath = {{ active_api_path | tojson }};
+    const statusEl = document.getElementById('analyzer-status');
+    const dataEl = document.getElementById('analyzer-data-json');
+
+    function toSummary(data) {
+      if (!data || typeof data !== 'object') return 'No data payload available.';
+      const scope = String(data.page_scope || data.scope || 'unknown');
+      const freshness = data.freshness_summary && data.freshness_summary.status ? String(data.freshness_summary.status) : 'unknown';
+      const completeness = String(data.data_completeness || 'unknown');
+      return `Surface loaded · scope=${scope} · freshness=${freshness} · completeness=${completeness}`;
+    }
+
+    async function loadSurface() {
+      try {
+        const resp = await fetch(activeApiPath, { headers: { 'Accept': 'application/json' } });
+        const text = await resp.text();
+        let payload;
+        try {
+          payload = JSON.parse(text);
+        } catch (_) {
+          payload = { raw: text };
+        }
+        if (!resp.ok) {
+          statusEl.textContent = `Analyzer surface unavailable (${resp.status}).`;
+          dataEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        statusEl.textContent = toSummary(payload);
+        dataEl.textContent = JSON.stringify(payload, null, 2);
+      } catch (err) {
+        statusEl.textContent = `Analyzer surface unavailable (network/runtime error).`;
+        dataEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      }
+    }
+
+    loadSurface();
+  })();
+</script>
+{% endblock %}

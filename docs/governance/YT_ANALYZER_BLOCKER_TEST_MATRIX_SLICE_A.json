@@ -18,9 +18,16 @@
     {
       "id": "B1",
       "name": "analyzer header entry + real analyzer UI surface family",
-      "status": "OPEN",
-      "tests": [],
-      "artifacts": [],
+      "status": "CLOSED_SLICE_B",
+      "tests": [
+        "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
+        "tests/integration/test_mf6_analytics_surface_foundation.py::TestMf6AnalyticsSurfaceFoundation::test_ui_analyzer_surface_family_is_reachable"
+      ],
+      "artifacts": [
+        "services/factory_api/templates/analyzer_surface.html",
+        "services/factory_api/ux_registry.py",
+        "services/factory_api/app.py"
+      ],
       "closure_criteria": [
         "UI surface route and header entry are present and exercised",
         "Automated checks pass and evidence artifacts are attached"

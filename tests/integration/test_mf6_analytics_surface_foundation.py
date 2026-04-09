@@ -61,6 +61,30 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 self.assertIn(body["source_coverage_summary"]["status"], {"NO_DATA", "PARTIAL", "FULL"})
                 self.assertEqual(body["data_completeness"], "PARTIAL")
 
+    def test_ui_analyzer_surface_family_is_reachable(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            paths = [
+                "/ui/analyzer",
+                "/ui/analyzer/overview",
+                "/ui/analyzer/channels",
+                "/ui/analyzer/releases",
+                "/ui/analyzer/batches",
+                "/ui/analyzer/portfolio",
+                "/ui/analyzer/anomalies",
+                "/ui/analyzer/recommendations",
+                "/ui/analyzer/reports",
+            ]
+            for path in paths:
+                r = client.get(path, headers=headers)
+                self.assertEqual(r.status_code, 200)
+                self.assertIn("Analyzer · Surface Family", r.text)
+                self.assertIn("data-analyzer-nav=", r.text)
+                self.assertIn("id=\"analyzer-status\"", r.text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,7 @@ This checklist is a tracking scaffold for blocker-closure execution. It intentio
 ## Blocker tracker
 | ID | Blocker | Current status | Evidence contract (required before closure) |
 | --- | --- | --- | --- |
-| B1 | analyzer header entry + real analyzer UI surface family | OPEN | UI/API evidence pack showing real entrypoint wiring, route availability, and parity tests. |
+| B1 | analyzer header entry + real analyzer UI surface family | CLOSED (Slice B) | UI/API evidence pack showing real entrypoint wiring, route availability, and parity tests. |
 | B2 | real user-facing charts and animated charts | OPEN | Screenshot/video evidence + deterministic UI tests proving chart data and animation hooks. |
 | B3 | full required external YouTube metrics breadth | OPEN | Contract and integration evidence for complete required metric set and schema presence. |
 | B4 | real historical backfill feature flow | OPEN | End-to-end flow evidence for backfill trigger, processing, and persisted history windows. |

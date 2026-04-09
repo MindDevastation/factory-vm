@@ -5646,6 +5646,39 @@ def ui_planner_page(request: Request, _: bool = Depends(require_basic_auth(env))
     return templates.TemplateResponse("planner_bulk_releases.html", {"request": request})
 
 
+_ANALYZER_SURFACE_API_PATHS: dict[str, str] = {
+    "overview": "/v1/analytics/overview",
+    "channels": "/v1/analytics/channels",
+    "releases": "/v1/analytics/releases",
+    "batches": "/v1/analytics/batches",
+    "portfolio": "/v1/analytics/portfolio",
+    "anomalies": "/v1/analytics/anomalies",
+    "recommendations": "/v1/analytics/recommendations",
+    "reports": "/v1/analytics/reports",
+}
+
+
+@app.get("/ui/analyzer", response_class=HTMLResponse)
+@app.get("/ui/analyzer/{surface}", response_class=HTMLResponse)
+def ui_analyzer_page(request: Request, surface: str = "overview", _: bool = Depends(require_basic_auth(env))):
+    normalized_surface = str(surface or "overview").strip().lower()
+    if normalized_surface not in _ANALYZER_SURFACE_API_PATHS:
+        normalized_surface = "overview"
+    surface_items = [
+        {"key": key.upper(), "label": key.replace("_", " ").title(), "ui_path": f"/ui/analyzer/{key}", "api_path": api_path}
+        for key, api_path in _ANALYZER_SURFACE_API_PATHS.items()
+    ]
+    return templates.TemplateResponse(
+        "analyzer_surface.html",
+        {
+            "request": request,
+            "active_surface": normalized_surface,
+            "active_api_path": _ANALYZER_SURFACE_API_PATHS[normalized_surface],
+            "surface_items": surface_items,
+        },
+    )
+
+
 @app.get("/ui/publish/queue", response_class=HTMLResponse)
 def ui_publish_queue_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "queue"})
