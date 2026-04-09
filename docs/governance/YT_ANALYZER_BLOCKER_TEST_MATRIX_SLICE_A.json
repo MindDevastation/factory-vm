@@ -36,9 +36,14 @@
     {
       "id": "B2",
       "name": "real user-facing charts and animated charts",
-      "status": "OPEN",
-      "tests": [],
-      "artifacts": [],
+      "status": "CLOSED_SLICE_C",
+      "tests": [
+        "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
+        "tests/integration/test_mf6_analytics_surface_foundation.py::TestMf6AnalyticsSurfaceFoundation::test_ui_analyzer_surface_family_is_reachable"
+      ],
+      "artifacts": [
+        "services/factory_api/templates/analyzer_surface.html"
+      ],
       "closure_criteria": [
         "Chart data rendering is proven with deterministic tests",
         "Animation behavior evidence exists in captured artifacts"

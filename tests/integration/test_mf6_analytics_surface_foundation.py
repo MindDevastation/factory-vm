@@ -84,6 +84,10 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 self.assertIn("Analyzer · Surface Family", r.text)
                 self.assertIn("data-analyzer-nav=", r.text)
                 self.assertIn("id=\"analyzer-status\"", r.text)
+                self.assertIn("id=\"analyzer-line-chart\"", r.text)
+                self.assertIn("id=\"analyzer-bar-chart\"", r.text)
+                self.assertIn("animateLinePath", r.text)
+                self.assertIn("requestAnimationFrame", r.text)
 
 
 if __name__ == "__main__":
