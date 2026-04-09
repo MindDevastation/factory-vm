@@ -93,6 +93,7 @@ def compute_page_freshness(conn: Any, *, page_scope: str, scope_ref: str | None 
         "CHANNEL": ("CHANNEL", canonical_scope_ref),
         "RELEASE": ("RELEASE", str(scope_ref or "")),
         "BATCH_MONTH": ("BATCH", str(scope_ref or "")),
+        "PORTFOLIO": ("PORTFOLIO", str(scope_ref or "")),
     }.get(page_scope)
 
     if entity_scope is None:

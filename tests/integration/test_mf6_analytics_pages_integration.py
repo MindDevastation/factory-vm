@@ -31,6 +31,7 @@ class TestMf6AnalyticsPagesIntegration(unittest.TestCase):
                 f"/v1/analytics/channels/{seeded['channel_slug']}": "CHANNEL",
                 f"/v1/analytics/releases/{seeded['release_id']}": "RELEASE",
                 f"/v1/analytics/batches/{seeded['batch_month']}": "BATCH_MONTH",
+                "/v1/analytics/portfolio": "PORTFOLIO",
                 "/v1/analytics/anomalies": "ANOMALIES",
                 "/v1/analytics/recommendations": "RECOMMENDATIONS",
                 "/v1/analytics/reports": "REPORTS_EXPORTS",
@@ -52,12 +53,18 @@ class TestMf6AnalyticsPagesIntegration(unittest.TestCase):
                     "export_report_actions",
                     "navigation",
                     "filter_state_token",
+                    "period_semantics",
+                    "semantic_filter_contract",
+                    "chart_blocks",
                 ):
                     self.assertIn(req, body)
                 self.assertIn(body["freshness_summary"]["status"], {"FRESH", "PARTIAL", "STALE", "MISSING"})
                 self.assertIn(body["source_coverage_summary"]["status"], {"FULL", "PARTIAL", "NO_DATA"})
-                if scope in {"OVERVIEW", "CHANNEL", "RELEASE", "BATCH_MONTH", "ANOMALIES", "RECOMMENDATIONS"}:
+                if scope in {"OVERVIEW", "CHANNEL", "RELEASE", "BATCH_MONTH", "PORTFOLIO", "ANOMALIES", "RECOMMENDATIONS"}:
                     self.assertGreaterEqual(len(body["detail_blocks"]), 1)
+                self.assertTrue(all(bool(c.get("animated")) for c in body["chart_blocks"]))
+                self.assertIn("current_period", body["period_semantics"])
+                self.assertIn("baseline_comparison", body["period_semantics"])
 
     def test_stale_persisted_source_data_is_reported_as_stale(self) -> None:
         with temp_env() as (_, env):

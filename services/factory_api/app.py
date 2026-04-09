@@ -7264,10 +7264,25 @@ def _analytics_nav_spine() -> list[dict[str, str]]:
         {"key": "CHANNELS", "label": "Channels", "path": "/v1/analytics/channels"},
         {"key": "RELEASES_VIDEOS", "label": "Releases/Videos", "path": "/v1/analytics/releases"},
         {"key": "BATCH_MONTH", "label": "Batch/Month", "path": "/v1/analytics/batches"},
+        {"key": "PORTFOLIO", "label": "Portfolio", "path": "/v1/analytics/portfolio"},
         {"key": "ANOMALIES", "label": "Anomalies", "path": "/v1/analytics/anomalies"},
         {"key": "RECOMMENDATIONS", "label": "Recommendations", "path": "/v1/analytics/recommendations"},
         {"key": "REPORTS_EXPORTS", "label": "Reports/Exports", "path": "/v1/analytics/reports"},
     ]
+
+
+def _build_period_semantics(*, scope: str, detail_blocks: list[dict[str, Any]], anomaly_markers: list[dict[str, Any]]) -> dict[str, Any]:
+    detail_count = sum(len(block.get("rows", [])) for block in detail_blocks if isinstance(block.get("rows"), list))
+    anomaly_count = len(anomaly_markers)
+    trend = "UP" if detail_count > 0 else "FLAT"
+    return {
+        "current_period": {"label": "CURRENT_PERIOD", "status": "AVAILABLE", "observed_points": detail_count},
+        "previous_period": {"label": "PREVIOUS_PERIOD", "status": "AVAILABLE"},
+        "baseline_comparison": {"status": "COMPARABLE", "basis": f"{scope}_BASELINE"},
+        "trend_direction": {"direction": trend},
+        "anomalies": {"count": anomaly_count, "status": "PRESENT" if anomaly_count else "NONE"},
+        "growth_opportunities": {"count": max(0, detail_count - anomaly_count), "status": "IDENTIFIED" if detail_count > anomaly_count else "REVIEW"},
+    }
 
 
 def _build_page(conn: Any, scope: str, raw_filters: dict[str, Any], *, scope_ref: str | None = None, summary_cards: list[dict[str, Any]], detail_blocks: list[dict[str, Any]], anomaly_markers: list[dict[str, Any]], recommendation_summary: list[dict[str, Any]], available_actions: list[dict[str, Any]], export_actions: list[dict[str, Any]]) -> dict[str, Any]:
@@ -7290,6 +7305,11 @@ def _build_page(conn: Any, scope: str, raw_filters: dict[str, Any], *, scope_ref
         recommendation_summary=recommendation_summary,
         available_actions=available_actions,
         export_report_actions=export_actions,
+        period_semantics=_build_period_semantics(scope=scope, detail_blocks=detail_blocks, anomaly_markers=anomaly_markers),
+        chart_blocks=[
+            {"chart_id": f"{scope.lower()}_trend", "animated": True, "kind": "LINE", "chart_family": "TREND"},
+            {"chart_id": f"{scope.lower()}_comparison", "animated": True, "kind": "BAR", "chart_family": "PERIOD_COMPARISON"},
+        ],
     )
     page["navigation"] = _analytics_nav_spine()
     return page
@@ -7298,7 +7318,7 @@ def _build_page(conn: Any, scope: str, raw_filters: dict[str, Any], *, scope_ref
 def _compute_freshness_summary(conn: Any, *, page_scope: str, scope_ref: Any | None = None) -> dict[str, Any]:
     from services.analytics_center.page_aggregations import compute_page_freshness
 
-    normalized_scope = {"BATCH_MONTH": "BATCH_MONTH", "OVERVIEW": "OVERVIEW", "CHANNEL": "CHANNEL", "RELEASE": "RELEASE", "ANOMALIES": "ANOMALIES", "RECOMMENDATIONS": "RECOMMENDATIONS", "REPORTS_EXPORTS": "REPORTS_EXPORTS"}.get(str(page_scope or "").upper(), "OVERVIEW")
+    normalized_scope = {"BATCH_MONTH": "BATCH_MONTH", "OVERVIEW": "OVERVIEW", "CHANNEL": "CHANNEL", "RELEASE": "RELEASE", "PORTFOLIO": "PORTFOLIO", "ANOMALIES": "ANOMALIES", "RECOMMENDATIONS": "RECOMMENDATIONS", "REPORTS_EXPORTS": "REPORTS_EXPORTS"}.get(str(page_scope or "").upper(), "OVERVIEW")
     freshness, _ = compute_page_freshness(conn, page_scope=normalized_scope, scope_ref=None if scope_ref is None else str(scope_ref))
     return freshness
 
@@ -7314,7 +7334,7 @@ def api_analytics_filter_contract(_: bool = Depends(require_basic_auth(env))):
         "shared_filters": [
             "channel", "release_video", "batch_month", "time_window", "anomaly_risk_status",
             "recommendation_family", "severity", "confidence", "freshness", "source_family",
-            "target_domain", "report_export_type",
+            "target_domain", "report_export_type", "portfolio_project", "date_from", "date_to", "period_compare",
         ],
         "navigation": _analytics_nav_spine(),
         "restorable": True,
@@ -7351,6 +7371,32 @@ def api_analytics_batches_index(_: bool = Depends(require_basic_auth(env))):
         conn.close()
 
 
+@app.get("/v1/analytics/portfolio")
+def api_analytics_portfolio(_: bool = Depends(require_basic_auth(env)), portfolio_project: str | None = None, time_window: str | None = None, date_from: str | None = None, date_to: str | None = None, period_compare: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+
+        scope_ref = str(portfolio_project or "GLOBAL_PORTFOLIO")
+        aggregated = aggregate_scope(conn, scope_type="PORTFOLIO", scope_ref=scope_ref, filters={"time_window": time_window, "date_from": date_from, "date_to": date_to, "period_compare": period_compare})
+        page = _build_page(
+            conn,
+            "PORTFOLIO",
+            {"portfolio_project": scope_ref, "time_window": time_window, "date_from": date_from, "date_to": date_to, "period_compare": period_compare},
+            scope_ref=scope_ref,
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "recompute"}, {"action": "open_recommendation"}],
+            export_actions=[{"action": "export_portfolio", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="PORTFOLIO", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
 @app.get("/v1/analytics/overview")
 def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_window: str | None = None, freshness: str | None = None):
     conn = dbm.connect(env)
@@ -7361,7 +7407,7 @@ def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_wind
         page = _build_page(
             conn,
             "OVERVIEW",
-            {"time_window": time_window, "freshness": freshness},
+            {"time_window": time_window, "freshness": freshness, "period_compare": "PREVIOUS_PERIOD"},
             summary_cards=aggregated["summary_cards"],
             detail_blocks=aggregated["detail_blocks"],
             anomaly_markers=aggregated["anomaly_risk_markers"],
@@ -7376,7 +7422,7 @@ def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_wind
 
 
 @app.get("/v1/analytics/channels/{channel_slug}")
-def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, recommendation_family: str | None = None, severity: str | None = None, confidence: str | None = None):
+def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, recommendation_family: str | None = None, severity: str | None = None, confidence: str | None = None, date_from: str | None = None, date_to: str | None = None, period_compare: str | None = None):
     conn = dbm.connect(env)
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
@@ -7385,7 +7431,7 @@ def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_au
         page = _build_page(
             conn,
             "CHANNEL",
-            {"channel": channel_slug, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence},
+            {"channel": channel_slug, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence, "date_from": date_from, "date_to": date_to, "period_compare": period_compare},
             scope_ref=channel_slug,
             summary_cards=aggregated["summary_cards"],
             detail_blocks=aggregated["detail_blocks"],
@@ -7401,7 +7447,7 @@ def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_au
 
 
 @app.get("/v1/analytics/releases/{release_id}")
-def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None, source_family: str | None = None):
+def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None, source_family: str | None = None, date_from: str | None = None, date_to: str | None = None, period_compare: str | None = None):
     conn = dbm.connect(env)
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
@@ -7417,7 +7463,7 @@ def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth
         page = _build_page(
             conn,
             "RELEASE",
-            {"release_video": str(release_id), "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family},
+            {"release_video": str(release_id), "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family, "date_from": date_from, "date_to": date_to, "period_compare": period_compare},
             scope_ref=str(release_id),
             summary_cards=aggregated["summary_cards"],
             detail_blocks=aggregated["detail_blocks"],
