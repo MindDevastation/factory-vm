@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from services.analytics_center.external_sync import METRIC_FAMILY_ALIASES
+from services.analytics_center.analyzer_ingestion_interface import build_analyzer_ingestion_contract
 from services.analytics_center.analyzer_service_foundation import ANALYZER_SYNC_STATES
 from services.analytics_center.freshness_state_model import ANALYZER_COVERAGE_STATES
 from services.analytics_center.literals import (
@@ -83,6 +84,7 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
         "implemented_metric_dimensions": list(implemented_metric_dimensions),
         "missing_required_metric_dimensions": list(missing_required_metrics),
         "mandatory_scope_coverage": scope_coverage,
+        "ingestion_interface_contract": build_analyzer_ingestion_contract(),
         "service_boundary_contract": {
             "write_service": "write_analyzer_snapshot",
             "read_service": "read_analyzer_snapshots",

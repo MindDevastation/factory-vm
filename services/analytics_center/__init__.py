@@ -123,6 +123,13 @@ __all__ = [
     "AnalyzerSnapshotWriteRequest",
     "AnalyzerSnapshotReadRequest",
     "ANALYZER_SYNC_STATES",
+    "build_analyzer_ingestion_contract",
+    "normalize_ingestion_response",
+    "normalize_ingestion_request",
+    "AnalyzerExternalMetricsProvider",
+    "AnalyzerIngestionResponse",
+    "AnalyzerIngestionRequest",
+    "INGESTION_SCOPE_TYPES",
 ]
 
 from .errors import AnalyticsDomainError
@@ -228,4 +235,14 @@ from .analyzer_service_foundation import (
     AnalyzerSnapshotWriteRequest,
     read_analyzer_snapshots,
     write_analyzer_snapshot,
+)
+
+from .analyzer_ingestion_interface import (
+    INGESTION_SCOPE_TYPES,
+    AnalyzerIngestionRequest,
+    AnalyzerIngestionResponse,
+    AnalyzerExternalMetricsProvider,
+    normalize_ingestion_request,
+    normalize_ingestion_response,
+    build_analyzer_ingestion_contract,
 )
