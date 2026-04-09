@@ -1,5 +1,39 @@
 from __future__ import annotations
 
+
+ANALYZER_PROFILE_AXES: tuple[str, ...] = (
+    "CHANNEL_STRATEGY_PROFILE",
+    "FORMAT_PROFILE",
+)
+
+ANALYZER_DEFAULT_MUTATION_POLICY: str = "NO_AUTO_APPLY"
+
+ANALYZER_REFRESH_SELECTOR_VALUES: tuple[str, ...] = (
+    "HOURLY",
+    "EVERY_12_HOURS",
+    "DAILY",
+)
+
+ANALYZER_REQUIRED_METRIC_DIMENSIONS: tuple[str, ...] = (
+    "views",
+    "impressions",
+    "ctr",
+    "watch_time",
+    "average_view_duration",
+    "retention",
+    "subscribers",
+    "monetization",
+    "unique_viewers",
+    "new_casual_regular_returning_viewers",
+    "traffic_sources",
+    "youtube_search_terms",
+    "viewers_when_on_youtube",
+    "retention_key_moments",
+    "retention_typical_benchmark",
+    "top_geographies",
+    "subscriber_conversion_context",
+)
+
 ANALYTICS_ENTITY_TYPES: tuple[str, ...] = (
     "CHANNEL",
     "RELEASE",
