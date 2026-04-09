@@ -292,6 +292,49 @@ def build_manual_refresh_runtime_contract(
     }
 
 
+def build_backfill_action_contract() -> dict[str, Any]:
+    return {
+        "action": "HISTORICAL_BACKFILL",
+        "run_mode": "INITIAL_BACKFILL",
+        "backfill_days_default": 30,
+        "backfill_days_min": 1,
+        "backfill_days_max": 365,
+        "visibility_surfaces": {
+            "sync_status_reader": "get_sync_status",
+            "coverage_reader": "get_coverage_report",
+            "run_history_reader": "list_sync_runs",
+            "run_detail_reader": "get_sync_run_detail",
+        },
+        "invariants": [
+            "explicit_operator_action",
+            "historical_truth_preserved",
+            "default_no_auto_apply",
+            "freshness_sync_coverage_visible",
+        ],
+    }
+
+
+def build_backfill_runtime_contract(
+    *,
+    backfill_days: int,
+    observed_to: float | None,
+) -> dict[str, Any]:
+    days = int(backfill_days)
+    if days < 1 or days > 365:
+        raise AnalyticsDomainError(code=E5A_INVALID_REFRESH_MODE, message="backfill_days must be within 1..365")
+    end_ts = float(observed_to) if observed_to is not None else now_ts()
+    start_ts = end_ts - float(days) * 86400.0
+    return {
+        "action": "HISTORICAL_BACKFILL",
+        "run_mode": "INITIAL_BACKFILL",
+        "backfill_days": days,
+        "observed_from": start_ts,
+        "observed_to": end_ts,
+        "freshness_basis": "historical_backfill_window",
+        "backfill_contract": build_backfill_action_contract(),
+    }
+
+
 def create_sync_run(
     conn: sqlite3.Connection,
     *,
@@ -399,6 +442,29 @@ def request_scheduled_refresh(
         observed_from=observed_start,
         observed_to=observed_end,
         freshness_basis=f"scheduled_selector:{selector.lower()}",
+    )
+
+
+def request_historical_backfill(
+    conn: sqlite3.Connection,
+    *,
+    target_scope_type: str,
+    target_scope_ref: str,
+    backfill_days: int = 30,
+    metrics_subset: list[str] | None = None,
+    observed_to: float | None = None,
+) -> int:
+    runtime = build_backfill_runtime_contract(backfill_days=backfill_days, observed_to=observed_to)
+    return create_sync_run(
+        conn,
+        provider_name="YOUTUBE",
+        target_scope_type=target_scope_type,
+        target_scope_ref=target_scope_ref,
+        run_mode="INITIAL_BACKFILL",
+        metric_families_requested=metrics_subset or list(DEFAULT_REQUIRED_METRIC_FAMILIES),
+        observed_from=float(runtime["observed_from"]),
+        observed_to=float(runtime["observed_to"]),
+        freshness_basis=str(runtime["freshness_basis"]),
     )
 
 

@@ -75,12 +75,23 @@
     {
       "id": "B4",
       "name": "real historical backfill feature flow",
-      "status": "OPEN",
-      "tests": [],
-      "artifacts": [],
+      "status": "CLOSED_SLICE_E",
+      "tests": [
+        "tests/unit/test_analytics_external_sync.py::TestAnalyticsExternalSyncUnit",
+        "tests/integration/test_analytics_mf2_api_surface.py::TestAnalyticsMf2ApiSurface::test_historical_backfill_operator_flow_contract_and_observability",
+        "tests/integration/test_analytics_external_sync_service.py::TestAnalyticsExternalSyncService::test_initial_backfill_writes_external_snapshot",
+        "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "services/analytics_center/external_sync.py",
+        "services/factory_api/app.py",
+        "services/factory_api/templates/analyzer_surface.html"
+      ],
       "closure_criteria": [
-        "Backfill flow is executable and persisted outputs are verifiable",
-        "Automated tests cover trigger, processing, and readback"
+        "Historical backfill is exposed as an explicit operator action and runtime contract",
+        "Backfill run mode/status are visible in run history and detail APIs",
+        "Historical snapshot truth semantics remain preserved while sync/coverage visibility remains explicit"
       ]
     },
     {

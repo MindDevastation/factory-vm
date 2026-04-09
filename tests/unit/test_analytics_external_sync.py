@@ -6,6 +6,8 @@ import unittest
 from services.analytics_center.errors import AnalyticsDomainError
 from services.analytics_center.external_sync import (
     DEFAULT_REQUIRED_METRIC_FAMILIES,
+    build_backfill_action_contract,
+    build_backfill_runtime_contract,
     build_manual_refresh_action_contract,
     build_manual_refresh_runtime_contract,
     build_scheduled_refresh_control_contract,
@@ -199,6 +201,26 @@ class TestAnalyticsExternalSyncUnit(unittest.TestCase):
                 observed_from=None,
                 observed_to=None,
             )
+
+    def test_backfill_action_runtime_contract_is_explicit(self) -> None:
+        contract = build_backfill_action_contract()
+        self.assertEqual(contract["action"], "HISTORICAL_BACKFILL")
+        self.assertEqual(contract["run_mode"], "INITIAL_BACKFILL")
+        self.assertIn("historical_truth_preserved", contract["invariants"])
+        self.assertIn("freshness_sync_coverage_visible", contract["invariants"])
+
+        runtime = build_backfill_runtime_contract(backfill_days=21, observed_to=200.0)
+        self.assertEqual(runtime["action"], "HISTORICAL_BACKFILL")
+        self.assertEqual(runtime["run_mode"], "INITIAL_BACKFILL")
+        self.assertEqual(runtime["backfill_days"], 21)
+        self.assertEqual(runtime["freshness_basis"], "historical_backfill_window")
+        self.assertIn("backfill_contract", runtime)
+
+    def test_backfill_runtime_contract_rejects_invalid_days(self) -> None:
+        with self.assertRaises(AnalyticsDomainError):
+            build_backfill_runtime_contract(backfill_days=0, observed_to=None)
+        with self.assertRaises(AnalyticsDomainError):
+            build_backfill_runtime_contract(backfill_days=366, observed_to=None)
 
 
 if __name__ == "__main__":

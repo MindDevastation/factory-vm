@@ -7812,6 +7812,51 @@ def api_analytics_external_scheduled_refresh(payload: Dict[str, Any], _: bool = 
         conn.close()
 
 
+@app.post("/v1/analytics/external/backfill")
+def api_analytics_external_backfill(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import (
+            build_backfill_runtime_contract,
+            request_historical_backfill,
+        )
+        from services.analytics_center.errors import AnalyticsDomainError
+
+        target_scope_type = str(payload.get("target_scope_type") or "CHANNEL")
+        target_scope_ref = str(payload.get("target_scope_ref") or "")
+        backfill_days = int(payload.get("backfill_days", 30))
+        metrics_subset = payload.get("metrics_subset")
+        runtime = build_backfill_runtime_contract(
+            backfill_days=backfill_days,
+            observed_to=None,
+        )
+        run_id = request_historical_backfill(
+            conn,
+            target_scope_type=target_scope_type,
+            target_scope_ref=target_scope_ref,
+            backfill_days=backfill_days,
+            metrics_subset=metrics_subset if isinstance(metrics_subset, list) else None,
+        )
+        row = conn.execute("SELECT * FROM analytics_external_sync_runs WHERE id = ?", (int(run_id),)).fetchone()
+        assert row is not None
+        return {
+            "run_id": int(run_id),
+            "provider_name": "YOUTUBE",
+            "target_scope_type": target_scope_type,
+            "target_scope_ref": target_scope_ref,
+            "run_mode": str(row["run_mode"]),
+            "sync_state": str(row["sync_state"]),
+            "historical_backfill_contract": runtime,
+        }
+    except Exception as exc:
+        from services.analytics_center.errors import AnalyticsDomainError
+        if isinstance(exc, AnalyticsDomainError):
+            raise HTTPException(status_code=_external_sync_http_status(exc.code), detail={"code": exc.code, "message": exc.message})
+        raise
+    finally:
+        conn.close()
+
+
 @app.get("/v1/analytics/external/status")
 def api_analytics_external_status(target_scope_type: str, target_scope_ref: str, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)

@@ -14,6 +14,12 @@
   .chart-layout { display:grid; grid-template-columns: 2fr 1fr; gap:12px; margin: 10px 0; }
   .chart-card { border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
   .chart-card h3 { margin:0 0 8px 0; font-size:14px; }
+  .backfill-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .backfill-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+  .backfill-row input { width:90px; padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
+  .backfill-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  .backfill-row button:disabled { opacity:.6; cursor:not-allowed; }
+  #backfill-runtime { margin-top:8px; font-size:12px; color:#374151; }
   .chart-meta { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
   .chart-chip { font-size:12px; border-radius:999px; padding:3px 8px; border:1px solid #d1d5db; background:#f9fafb; }
   .chart-chip.up { border-color:#16a34a; color:#166534; background:#dcfce7; }
@@ -60,6 +66,18 @@
   </section>
 </div>
 
+<section class="backfill-panel" id="analyzer-backfill-panel">
+  <h3>Historical backfill (operator action)</h3>
+  <p class="muted">Creates an explicit INITIAL_BACKFILL sync run with historical-truth preserved. No auto-apply behavior.</p>
+  <div class="backfill-row">
+    <label for="backfill-days">Backfill days</label>
+    <input id="backfill-days" type="number" min="1" max="365" value="30" />
+    <button id="backfill-trigger" type="button">Run backfill</button>
+    <span id="backfill-status" class="muted">Idle</span>
+  </div>
+  <div id="backfill-runtime" data-backfill-contract>Awaiting operator trigger.</div>
+</section>
+
 <p id="analyzer-status" class="muted">Loading analyzer surface data…</p>
 <section class="chart-layout" id="analyzer-chart-layout">
   <article class="chart-card">
@@ -84,6 +102,10 @@
     const lineChartEl = document.getElementById('analyzer-line-chart');
     const barChartEl = document.getElementById('analyzer-bar-chart');
     const chipsEl = document.getElementById('analyzer-semantic-chips');
+    const backfillDaysEl = document.getElementById('backfill-days');
+    const backfillTriggerEl = document.getElementById('backfill-trigger');
+    const backfillStatusEl = document.getElementById('backfill-status');
+    const backfillRuntimeEl = document.getElementById('backfill-runtime');
 
     function extractNumericValues(obj) {
       if (!obj || typeof obj !== 'object') return [];
@@ -279,6 +301,37 @@
       }
     }
 
+    async function triggerBackfill() {
+      const days = Number(backfillDaysEl.value || 30);
+      backfillTriggerEl.disabled = true;
+      backfillStatusEl.textContent = 'Submitting…';
+      try {
+        const resp = await fetch('/v1/analytics/external/backfill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            target_scope_type: 'CHANNEL',
+            target_scope_ref: 'darkwood-reverie',
+            backfill_days: days,
+          }),
+        });
+        const payload = await resp.json();
+        if (!resp.ok) {
+          backfillStatusEl.textContent = `Failed (${resp.status})`;
+          backfillRuntimeEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        backfillStatusEl.textContent = `Submitted run #${payload.run_id}`;
+        backfillRuntimeEl.textContent = JSON.stringify(payload.historical_backfill_contract || payload, null, 2);
+      } catch (err) {
+        backfillStatusEl.textContent = 'Failed (network/runtime error)';
+        backfillRuntimeEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      } finally {
+        backfillTriggerEl.disabled = false;
+      }
+    }
+
+    backfillTriggerEl.addEventListener('click', triggerBackfill);
     loadSurface();
   })();
 </script>

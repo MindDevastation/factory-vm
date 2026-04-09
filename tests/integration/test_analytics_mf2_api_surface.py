@@ -107,6 +107,47 @@ class TestAnalyticsMf2ApiSurface(unittest.TestCase):
             self.assertEqual(rejected.status_code, 422)
             self.assertEqual(rejected.json()["detail"]["code"], "E5A_INVALID_REFRESH_MODE")
 
+    def test_historical_backfill_operator_flow_contract_and_observability(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            created = client.post(
+                "/v1/analytics/external/backfill",
+                headers=h,
+                json={
+                    "target_scope_type": "CHANNEL",
+                    "target_scope_ref": "darkwood-reverie",
+                    "backfill_days": 14,
+                    "metrics_subset": ["views", "impressions", "ctr"],
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            body = created.json()
+            self.assertEqual(body["run_mode"], "INITIAL_BACKFILL")
+            self.assertEqual(body["sync_state"], "RUNNING")
+            self.assertEqual(body["historical_backfill_contract"]["action"], "HISTORICAL_BACKFILL")
+            self.assertEqual(body["historical_backfill_contract"]["run_mode"], "INITIAL_BACKFILL")
+            self.assertEqual(body["historical_backfill_contract"]["backfill_days"], 14)
+            self.assertIn(
+                "historical_truth_preserved",
+                body["historical_backfill_contract"]["backfill_contract"]["invariants"],
+            )
+            run_id = int(body["run_id"])
+
+            listed = client.get(
+                "/v1/analytics/external/runs",
+                headers=h,
+                params={"target_scope_type": "CHANNEL", "target_scope_ref": "darkwood-reverie"},
+            )
+            self.assertEqual(listed.status_code, 200)
+            self.assertTrue(any(int(item["id"]) == run_id and item["run_mode"] == "INITIAL_BACKFILL" for item in listed.json()["items"]))
+
+            detail = client.get(f"/v1/analytics/external/runs/{run_id}", headers=h)
+            self.assertEqual(detail.status_code, 200)
+            self.assertEqual(detail.json()["run_mode"], "INITIAL_BACKFILL")
+
     def test_status_and_coverage_semantics_not_yet_synced_and_partial_stale(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
