@@ -159,7 +159,15 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
         self.assertEqual(ANALYTICS_MF4_VARIANCE_CLASSES, ("NORMAL", "ANOMALY", "RISK"))
         self.assertEqual(
             ANALYTICS_MF4_PREDICTION_FAMILIES,
-            ("WEAK_RELEASE_RISK", "PUBLISH_WINDOW_QUALITY", "CHANNEL_MOMENTUM", "CADENCE_DEGRADATION_RISK", "OPERATIONAL_ANOMALY_RISK"),
+            (
+                "VIEW_GROWTH_PREDICTION",
+                "WATCH_TIME_GROWTH_PREDICTION",
+                "CTR_PREDICTION",
+                "STRONG_WEAK_RELEASE_PREDICTION",
+                "BEST_PUBLISH_WINDOW_PREDICTION",
+                "CHANNEL_TREND_PREDICTION",
+                "ANOMALY_DROP_RISK_PREDICTION",
+            ),
         )
         self.assertEqual(ANALYTICS_MF4_CONFIDENCE_CLASSES, ("LOW", "MEDIUM", "HIGH"))
         self.assertEqual(

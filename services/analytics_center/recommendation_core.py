@@ -136,11 +136,13 @@ def persist_recommendation_snapshot(conn: Any, *, recommendation: Recommendation
 
 def _build_recommendation_from_prediction(row: dict[str, Any]) -> RecommendationOutput:
     family_map = {
-        "WEAK_RELEASE_RISK": "WEAK_RELEASE_ATTENTION",
-        "PUBLISH_WINDOW_QUALITY": "PUBLISH_TIMING_SUGGESTION",
-        "CHANNEL_MOMENTUM": "CHANNEL_OPTIMIZATION",
-        "CADENCE_DEGRADATION_RISK": "CADENCE_BATCH_HEALTH_SUGGESTION",
-        "OPERATIONAL_ANOMALY_RISK": "ANOMALY_RISK_ALERT",
+        "VIEW_GROWTH_PREDICTION": "CHANNEL_OPTIMIZATION",
+        "WATCH_TIME_GROWTH_PREDICTION": "CONTENT_PACKAGING_SUGGESTION",
+        "CTR_PREDICTION": "CONTENT_PACKAGING_SUGGESTION",
+        "STRONG_WEAK_RELEASE_PREDICTION": "WEAK_RELEASE_ATTENTION",
+        "BEST_PUBLISH_WINDOW_PREDICTION": "PUBLISH_TIMING_SUGGESTION",
+        "CHANNEL_TREND_PREDICTION": "CHANNEL_OPTIMIZATION",
+        "ANOMALY_DROP_RISK_PREDICTION": "ANOMALY_RISK_ALERT",
     }
     prediction_family = str(row["prediction_family"])
     rec_family = family_map[prediction_family]

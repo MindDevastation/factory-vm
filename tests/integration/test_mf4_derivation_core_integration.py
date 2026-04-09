@@ -68,14 +68,16 @@ class TestMf4DerivationCoreIntegration(unittest.TestCase):
                 predictions = derive_predictions(conn, comparisons=comparisons)
                 counts = persist_mf4_derivation(conn, baselines=baselines, comparisons=comparisons, predictions=predictions)
                 families = {p.prediction_family for p in predictions}
-                self.assertIn("WEAK_RELEASE_RISK", families)
-                self.assertIn("PUBLISH_WINDOW_QUALITY", families)
-                self.assertIn("CHANNEL_MOMENTUM", families)
-                self.assertIn("CADENCE_DEGRADATION_RISK", families)
-                self.assertIn("OPERATIONAL_ANOMALY_RISK", families)
-                self.assertEqual(counts["prediction_count"], 5)
+                self.assertIn("VIEW_GROWTH_PREDICTION", families)
+                self.assertIn("WATCH_TIME_GROWTH_PREDICTION", families)
+                self.assertIn("CTR_PREDICTION", families)
+                self.assertIn("STRONG_WEAK_RELEASE_PREDICTION", families)
+                self.assertIn("BEST_PUBLISH_WINDOW_PREDICTION", families)
+                self.assertIn("CHANNEL_TREND_PREDICTION", families)
+                self.assertIn("ANOMALY_DROP_RISK_PREDICTION", families)
+                self.assertEqual(counts["prediction_count"], 7)
                 row = conn.execute("SELECT COUNT(*) AS c FROM analytics_prediction_snapshots WHERE is_current = 1").fetchone()
-                self.assertEqual(int(row["c"]), 5)
+                self.assertEqual(int(row["c"]), 7)
             finally:
                 conn.close()
 
