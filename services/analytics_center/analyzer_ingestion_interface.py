@@ -9,6 +9,16 @@ from services.analytics_center.profile_registry import CORE_ANALYZER_MODE, resol
 
 INGESTION_SCOPE_TYPES: tuple[str, ...] = ("CHANNEL", "RELEASE_VIDEO")
 
+METRIC_DIMENSION_ALIASES: dict[str, str] = {
+    "subscribers": "subscribers_gained_lost",
+    "subscriber_change": "subscribers_gained_lost",
+    "monetization": "revenue_rpm",
+    "revenue": "revenue_rpm",
+    "rpm": "revenue_rpm",
+    "new_casual_regular_returning_viewers": "viewer_segments_new_casual_regular_returning",
+    "new_casual_regular_returning": "viewer_segments_new_casual_regular_returning",
+}
+
 
 @dataclass(frozen=True)
 class AnalyzerIngestionRequest:
@@ -44,17 +54,24 @@ def _normalize_scope_type(value: str) -> str:
     return normalized
 
 
+def _normalize_metric_dimension(value: str) -> str:
+    key = str(value or "").strip().lower()
+    if not key:
+        return ""
+    return METRIC_DIMENSION_ALIASES.get(key, key)
+
+
 def _normalize_metric_dimensions(values: tuple[str, ...] | list[str]) -> tuple[str, ...]:
     out: list[str] = []
     required = set(ANALYZER_REQUIRED_METRIC_DIMENSIONS)
     for value in values:
-        key = str(value or "").strip().lower()
-        if not key:
+        canonical = _normalize_metric_dimension(value)
+        if not canonical:
             continue
-        if key not in required:
+        if canonical not in required:
             raise ValueError(f"unsupported metric dimension for analyzer contract: {value}")
-        if key not in out:
-            out.append(key)
+        if canonical not in out:
+            out.append(canonical)
     if not out:
         raise ValueError("metric_dimensions is required")
     return tuple(out)
@@ -117,7 +134,9 @@ def build_analyzer_ingestion_contract() -> dict[str, Any]:
             "unavailable_metrics_subset_of_requested",
             "coverage_state_explicit",
             "permission_limited_visibility_explicit",
+            "availability_limited_visibility_explicit",
             "profile_context_required",
+            "canonical_metric_alias_normalization",
             "no_auto_apply",
         ],
         "execution_scope": "INTERFACE_FOUNDATION_ONLY",

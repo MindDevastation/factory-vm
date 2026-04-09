@@ -20,6 +20,8 @@ class TestAnalyzerIngestionInterface(unittest.TestCase):
         self.assertIn("unique_viewers", contract["required_metric_dimensions"])
         self.assertIn("PERMISSION_LIMITED", contract["coverage_states"])
         self.assertIn("permission_limited_visibility_explicit", contract["invariants"])
+        self.assertIn("availability_limited_visibility_explicit", contract["invariants"])
+        self.assertIn("canonical_metric_alias_normalization", contract["invariants"])
         self.assertEqual(contract["execution_scope"], "INTERFACE_FOUNDATION_ONLY")
 
     def test_request_requires_profile_context_and_supported_metrics(self) -> None:
@@ -27,7 +29,7 @@ class TestAnalyzerIngestionInterface(unittest.TestCase):
             AnalyzerIngestionRequest(
                 scope_type="channel",
                 scope_ref="demo",
-                metric_dimensions=("views", "watch_time"),
+                metric_dimensions=("views", "watch_time", "monetization", "subscribers"),
                 channel_strategy_profile="LONG_FORM_BACKGROUND_MUSIC",
                 format_profile="LONG_FORM",
                 observed_from=1.0,
@@ -35,7 +37,7 @@ class TestAnalyzerIngestionInterface(unittest.TestCase):
             )
         )
         self.assertEqual(req.scope_type, "CHANNEL")
-        self.assertEqual(req.metric_dimensions, ("views", "watch_time"))
+        self.assertEqual(req.metric_dimensions, ("views", "watch_time", "revenue_rpm", "subscribers_gained_lost"))
 
         with self.assertRaises(ValueError):
             normalize_ingestion_request(
@@ -55,15 +57,16 @@ class TestAnalyzerIngestionInterface(unittest.TestCase):
             AnalyzerIngestionResponse(
                 scope_type="channel",
                 scope_ref="demo",
-                metric_dimensions_requested=("views", "watch_time", "unique_viewers"),
+                metric_dimensions_requested=("views", "watch_time", "unique_viewers", "monetization"),
                 metric_dimensions_returned=("views", "watch_time"),
-                metric_dimensions_unavailable=("unique_viewers",),
+                metric_dimensions_unavailable=("unique_viewers", "monetization"),
                 coverage_state="permission_limited",
                 freshness_basis="provider",
                 payload={"ok": True},
             )
         )
         self.assertEqual(response.coverage_state, "PERMISSION_LIMITED")
+        self.assertIn("revenue_rpm", response.metric_dimensions_unavailable)
 
         with self.assertRaises(ValueError):
             normalize_ingestion_response(

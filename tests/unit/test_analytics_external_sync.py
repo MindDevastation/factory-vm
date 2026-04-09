@@ -5,6 +5,7 @@ import unittest
 
 from services.analytics_center.errors import AnalyticsDomainError
 from services.analytics_center.external_sync import (
+    DEFAULT_REQUIRED_METRIC_FAMILIES,
     build_manual_refresh_action_contract,
     build_manual_refresh_runtime_contract,
     build_scheduled_refresh_control_contract,
@@ -19,8 +20,46 @@ from services.analytics_center.external_sync import (
 class TestAnalyticsExternalSyncUnit(unittest.TestCase):
     def test_required_metric_family_recognition(self) -> None:
         self.assertEqual(
-            normalize_metric_families(["views", "impressions", "CTR", "watch_time", "average_view_duration", "retention", "subscribers", "monetization"]),
-            ("views", "impressions", "ctr", "watch_time", "average_view_duration", "retention", "subscribers", "monetization"),
+            normalize_metric_families(
+                [
+                    "views",
+                    "impressions",
+                    "CTR",
+                    "watch_time",
+                    "average_view_duration",
+                    "retention",
+                    "subscribers",
+                    "monetization",
+                    "unique_viewers",
+                    "new_casual_regular_returning_viewers",
+                    "traffic_sources",
+                    "youtube_search_terms",
+                    "viewers_when_on_youtube",
+                    "retention_key_moments",
+                    "retention_typical_benchmark",
+                    "top_geographies",
+                    "subscriber_conversion_context",
+                ]
+            ),
+            (
+                "views",
+                "impressions",
+                "ctr",
+                "watch_time",
+                "average_view_duration",
+                "retention",
+                "subscribers_gained_lost",
+                "revenue_rpm",
+                "unique_viewers",
+                "viewer_segments_new_casual_regular_returning",
+                "traffic_sources",
+                "youtube_search_terms",
+                "viewers_when_on_youtube",
+                "retention_key_moments",
+                "retention_typical_benchmark",
+                "top_geographies",
+                "subscriber_conversion_context",
+            ),
         )
 
     def test_invalid_metric_family_validation(self) -> None:
@@ -40,6 +79,10 @@ class TestAnalyticsExternalSyncUnit(unittest.TestCase):
         self.assertIn("metric_families_requested", body)
         self.assertIn("metric_families_returned", body)
         self.assertIn("metric_families_unavailable", body)
+        self.assertIn("missing_metric_families", body)
+        self.assertIn("permission_limited_metric_families", body)
+        self.assertIn("availability_limited_metric_families", body)
+        self.assertIn("stale_metric_families", body)
         self.assertIn("covered_window", body)
         self.assertIn("incomplete_backfill", body)
         self.assertIn("freshness_basis", body)
@@ -87,6 +130,30 @@ class TestAnalyticsExternalSyncUnit(unittest.TestCase):
                 partial=True,
             ),
             "PARTIAL",
+        )
+
+    def test_default_required_metric_breadth_is_full(self) -> None:
+        self.assertEqual(
+            DEFAULT_REQUIRED_METRIC_FAMILIES,
+            (
+                "views",
+                "impressions",
+                "ctr",
+                "watch_time",
+                "average_view_duration",
+                "retention",
+                "subscribers_gained_lost",
+                "revenue_rpm",
+                "unique_viewers",
+                "viewer_segments_new_casual_regular_returning",
+                "traffic_sources",
+                "youtube_search_terms",
+                "viewers_when_on_youtube",
+                "retention_key_moments",
+                "retention_typical_benchmark",
+                "top_geographies",
+                "subscriber_conversion_context",
+            ),
         )
 
     def test_scheduled_refresh_selector_contract_is_closed_exact_set(self) -> None:

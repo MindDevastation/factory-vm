@@ -52,12 +52,24 @@
     {
       "id": "B3",
       "name": "full required external YouTube metrics breadth",
-      "status": "OPEN",
-      "tests": [],
-      "artifacts": [],
+      "status": "CLOSED_SLICE_D_REAPPLY",
+      "tests": [
+        "tests/unit/test_analytics_external_sync.py::TestAnalyticsExternalSyncUnit",
+        "tests/unit/test_analyzer_ingestion_interface.py::TestAnalyzerIngestionInterface",
+        "tests/unit/test_analytics_schema_foundation.py::TestAnalyticsSchemaFoundation",
+        "tests/unit/test_analytics_external_interfaces_hardening.py::TestAnalyticsExternalInterfacesHardening",
+        "tests/unit/test_analyzer_foundation_contract.py::TestAnalyzerFoundationContract",
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "services/analytics_center/literals.py",
+        "services/analytics_center/analyzer_ingestion_interface.py",
+        "services/analytics_center/external_sync.py"
+      ],
       "closure_criteria": [
-        "All required YouTube metrics are represented in contracts",
-        "Integration evidence validates metric breadth end-to-end"
+        "Required metric families are canonicalized across analyzer contracts and sync defaults",
+        "Coverage visibility explicitly distinguishes missing, permission-limited, availability-limited, and stale metric families",
+        "Foundation/hardening tests assert B3 READY and pass in full suite"
       ]
     },
     {

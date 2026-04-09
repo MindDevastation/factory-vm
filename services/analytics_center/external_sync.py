@@ -18,6 +18,7 @@ from services.analytics_center.errors import (
 from services.analytics_center.helpers import validate_json_payload
 from services.analytics_center.literals import (
     ANALYZER_REFRESH_SELECTOR_VALUES,
+    ANALYZER_REQUIRED_METRIC_DIMENSIONS,
     ANALYTICS_EXTERNAL_RUN_MODES,
     ANALYTICS_EXTERNAL_SYNC_STATES,
     ANALYTICS_EXTERNAL_TARGET_SCOPE_TYPES,
@@ -37,9 +38,23 @@ METRIC_FAMILY_ALIASES: dict[str, str] = {
     "watch_time": "watch_time",
     "average_view_duration": "average_view_duration",
     "retention": "retention",
-    "subscribers": "subscribers",
-    "subscribers_gained_lost": "subscribers",
-    "monetization": "monetization",
+    "subscribers": "subscribers_gained_lost",
+    "subscribers_gained_lost": "subscribers_gained_lost",
+    "subscriber_change": "subscribers_gained_lost",
+    "monetization": "revenue_rpm",
+    "revenue": "revenue_rpm",
+    "rpm": "revenue_rpm",
+    "revenue_rpm": "revenue_rpm",
+    "unique_viewers": "unique_viewers",
+    "new_casual_regular_returning_viewers": "viewer_segments_new_casual_regular_returning",
+    "viewer_segments_new_casual_regular_returning": "viewer_segments_new_casual_regular_returning",
+    "traffic_sources": "traffic_sources",
+    "youtube_search_terms": "youtube_search_terms",
+    "viewers_when_on_youtube": "viewers_when_on_youtube",
+    "retention_key_moments": "retention_key_moments",
+    "retention_typical_benchmark": "retention_typical_benchmark",
+    "top_geographies": "top_geographies",
+    "subscriber_conversion_context": "subscriber_conversion_context",
 }
 
 SCHEDULED_REFRESH_SELECTOR_INTERVAL_SECONDS: dict[str, int] = {
@@ -55,6 +70,29 @@ MANUAL_REFRESH_RUNTIME_MODES: tuple[str, ...] = (
     "INITIAL_BACKFILL",
 )
 
+DEFAULT_REQUIRED_METRIC_FAMILIES: tuple[str, ...] = tuple(ANALYZER_REQUIRED_METRIC_DIMENSIONS)
+
+
+def _classify_coverage_metric_families(
+    *,
+    requested: tuple[str, ...],
+    returned: tuple[str, ...],
+    unavailable: tuple[str, ...],
+    permission_limited: bool = False,
+    source_unavailable: bool = False,
+    stale: bool = False,
+) -> dict[str, tuple[str, ...]]:
+    unavailable_set = set(unavailable)
+    missing = tuple(m for m in requested if m not in returned and m not in unavailable_set)
+    permission_limited_metrics = tuple(unavailable) if permission_limited else tuple()
+    availability_limited_metrics = tuple(unavailable) if source_unavailable else tuple()
+    stale_metrics = tuple(requested) if stale else tuple()
+    return {
+        "missing_metric_families": missing,
+        "permission_limited_metric_families": permission_limited_metrics,
+        "availability_limited_metric_families": availability_limited_metrics,
+        "stale_metric_families": stale_metrics,
+    }
 
 @dataclass(frozen=True)
 class SyncTarget:
@@ -119,10 +157,19 @@ def build_coverage_payload(
         raise AnalyticsDomainError(code=E5A_INVALID_COVERAGE_PAYLOAD, message="unavailable metrics must be subset of requested")
     if covered_window.get("from") is None and covered_window.get("to") is None:
         raise AnalyticsDomainError(code=E5A_INVALID_COVERAGE_PAYLOAD, message="covered window required")
+    coverage_buckets = _classify_coverage_metric_families(
+        requested=requested,
+        returned=returned,
+        unavailable=unavailable,
+    )
     payload: dict[str, Any] = {
         "metric_families_requested": requested,
         "metric_families_returned": returned,
         "metric_families_unavailable": unavailable,
+        "missing_metric_families": coverage_buckets["missing_metric_families"],
+        "permission_limited_metric_families": coverage_buckets["permission_limited_metric_families"],
+        "availability_limited_metric_families": coverage_buckets["availability_limited_metric_families"],
+        "stale_metric_families": coverage_buckets["stale_metric_families"],
         "covered_window": {"from": covered_window.get("from"), "to": covered_window.get("to")},
         "incomplete_backfill": bool(incomplete_backfill),
         "freshness_basis": freshness_basis,
@@ -348,7 +395,7 @@ def request_scheduled_refresh(
         target_scope_ref=target_scope_ref,
         run_mode="SCHEDULED_SYNC",
         metric_families_requested=metrics_subset
-        or ["views", "impressions", "ctr", "watch_time", "average_view_duration", "retention", "subscribers", "monetization"],
+        or list(DEFAULT_REQUIRED_METRIC_FAMILIES),
         observed_from=observed_start,
         observed_to=observed_end,
         freshness_basis=f"scheduled_selector:{selector.lower()}",
@@ -386,14 +433,28 @@ def transition_sync_run(
             )
         )
     )
+    returned_metrics = normalize_metric_families(metric_families_returned)
+    unavailable_metrics = normalize_metric_families(metric_families_unavailable)
     coverage_payload = build_coverage_payload(
         metric_families_requested=requested,
-        metric_families_returned=metric_families_returned,
-        metric_families_unavailable=metric_families_unavailable,
+        metric_families_returned=returned_metrics,
+        metric_families_unavailable=unavailable_metrics,
         covered_window={"from": run["observed_from"], "to": run["observed_to"]},
         incomplete_backfill=incomplete_backfill,
         freshness_basis=freshness_basis,
     )
+    coverage = json.loads(coverage_payload)
+    coverage.update(
+        _classify_coverage_metric_families(
+            requested=requested,
+            returned=returned_metrics,
+            unavailable=unavailable_metrics,
+            permission_limited=permission_limited,
+            source_unavailable=source_unavailable,
+            stale=freshness_status.upper() == "STALE",
+        )
+    )
+    coverage_payload = validate_json_payload(coverage, field_name="coverage_payload_json")
     completed = now_ts()
     conn.execute(
         """
@@ -876,7 +937,7 @@ def request_manual_refresh(
         target_scope_type=target_scope_type,
         target_scope_ref=target_scope_ref,
         run_mode=str(runtime["run_mode"]),
-        metric_families_requested=metrics_subset or ["views", "impressions", "ctr", "watch_time", "average_view_duration", "retention", "subscribers", "monetization"],
+        metric_families_requested=metrics_subset or list(DEFAULT_REQUIRED_METRIC_FAMILIES),
         observed_from=float(runtime["observed_from"]),
         observed_to=float(runtime["observed_to"]),
         freshness_basis=str(runtime["freshness_basis"]),
@@ -906,6 +967,9 @@ def get_sync_status(conn: sqlite3.Connection, *, target_scope_type: str, target_
             "covered_windows": None,
             "incomplete_backfill": False,
             "missing_metric_families": [],
+            "permission_limited_metric_families": [],
+            "availability_limited_metric_families": [],
+            "stale_metric_families": [],
             "source_availability_status": "NOT_YET_SYNCED",
         }
     coverage = json.loads(str(row["coverage_payload_json"]))
@@ -919,7 +983,10 @@ def get_sync_status(conn: sqlite3.Connection, *, target_scope_type: str, target_
         "sync_state": row["sync_state"],
         "covered_windows": coverage.get("covered_window"),
         "incomplete_backfill": bool(coverage.get("incomplete_backfill", False)),
-        "missing_metric_families": list(coverage.get("metric_families_unavailable", [])),
+        "missing_metric_families": list(coverage.get("missing_metric_families", coverage.get("metric_families_unavailable", []))),
+        "permission_limited_metric_families": list(coverage.get("permission_limited_metric_families", [])),
+        "availability_limited_metric_families": list(coverage.get("availability_limited_metric_families", [])),
+        "stale_metric_families": list(coverage.get("stale_metric_families", [])),
         "source_availability_status": row["availability_status"],
     }
 
@@ -933,6 +1000,10 @@ def get_coverage_report(conn: sqlite3.Connection, *, target_scope_type: str, tar
             "historical_range_coverage": None,
             "incomplete_windows": [],
             "unavailable_by_permission": [],
+            "missing_metric_families": [],
+            "permission_limited_metric_families": [],
+            "availability_limited_metric_families": [],
+            "stale_metric_families": [],
             "not_yet_synced": True,
         }
     row = conn.execute(
@@ -953,6 +1024,10 @@ def get_coverage_report(conn: sqlite3.Connection, *, target_scope_type: str, tar
         "metric_family_coverage": {k: (k in returned) for k in requested},
         "historical_range_coverage": coverage.get("covered_window"),
         "incomplete_windows": [coverage.get("covered_window")] if coverage.get("incomplete_backfill", False) else [],
+        "missing_metric_families": list(coverage.get("missing_metric_families", [])),
+        "permission_limited_metric_families": list(coverage.get("permission_limited_metric_families", [])),
+        "availability_limited_metric_families": list(coverage.get("availability_limited_metric_families", [])),
+        "stale_metric_families": list(coverage.get("stale_metric_families", [])),
         "unavailable_by_permission": unavailable if status["source_availability_status"] == "PERMISSION_LIMITED" else [],
         "not_yet_synced": False,
     }
