@@ -526,6 +526,8 @@ def run_external_youtube_ingestion(
                 entity_type="CHANNEL",
                 entity_ref=str(channel["id"]),
                 run_mode=str(run["run_mode"]),
+                observed_from=run["observed_from"],
+                observed_to=run["observed_to"],
                 provider_payload=provider_payload,
             )
         else:
@@ -552,6 +554,8 @@ def run_external_youtube_ingestion(
                 entity_type="RELEASE",
                 entity_ref=str(link["release_id"]),
                 run_mode=str(run["run_mode"]),
+                observed_from=run["observed_from"],
+                observed_to=run["observed_to"],
                 provider_payload=provider_payload,
             )
 
@@ -691,13 +695,19 @@ def _persist_external_snapshot(
     entity_type: str,
     entity_ref: str,
     run_mode: str,
+    observed_from: float | None,
+    observed_to: float | None,
     provider_payload: dict[str, Any],
 ) -> int:
     unavailable = normalize_metric_families(tuple(provider_payload.get("metric_families_unavailable", ())))
     source_unavailable = bool(provider_payload.get("source_unavailable", False))
     incomplete_backfill = bool(provider_payload.get("incomplete_backfill", False))
-    status = "FAILED" if source_unavailable else ("PARTIAL" if unavailable or incomplete_backfill else "CURRENT")
+    mode = str(run_mode or "").strip().upper()
+    is_initial_backfill = mode == "INITIAL_BACKFILL"
+    status = "FAILED" if source_unavailable else ("PARTIAL" if unavailable or incomplete_backfill else ("HISTORICAL" if is_initial_backfill else "CURRENT"))
     freshness_status = str(provider_payload.get("freshness_status", "FRESH")).upper()
+    window_start_ts = provider_payload.get("window_start_ts", observed_from)
+    window_end_ts = provider_payload.get("window_end_ts", observed_to)
     snapshot = SnapshotWriteInput(
         entity_type=entity_type,
         entity_ref=entity_ref,
@@ -707,10 +717,17 @@ def _persist_external_snapshot(
         freshness_status=freshness_status if freshness_status in {"FRESH", "STALE", "PARTIAL", "UNKNOWN"} else "UNKNOWN",
         payload_json=provider_payload.get("metrics", {}),
         explainability_json={"provider": "YOUTUBE", "run_mode": run_mode},
-        lineage_json={"source": "youtube_analytics_provider", "channel_slug": provider_payload.get("channel_slug")},
+        lineage_json={
+            "source": "youtube_analytics_provider",
+            "channel_slug": provider_payload.get("channel_slug"),
+            "historical_truth_preserved": bool(is_initial_backfill),
+            "observed_window": {"from": window_start_ts, "to": window_end_ts},
+        },
         anomaly_markers_json=provider_payload.get("metric_families_unavailable", []),
         captured_at=now_ts(),
-        is_current=not source_unavailable,
+        is_current=(not source_unavailable) and (not is_initial_backfill),
+        window_start_ts=window_start_ts,
+        window_end_ts=window_end_ts,
     )
     return write_snapshot(conn, snapshot)
 
