@@ -7642,6 +7642,39 @@ def api_analytics_report_download(report_record_id: int, _: bool = Depends(requi
         conn.close()
 
 
+@app.post("/v1/analytics/planning-assistant")
+def api_analytics_planning_assistant(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    from services.analytics_center.planning_assistant import build_planning_assistant_summary
+
+    scenario = str(payload.get("scenario") or "WEEK")
+    channel_strategy_profile = str(payload.get("channel_strategy_profile") or "LONG_FORM_BACKGROUND_MUSIC")
+    format_profile = str(payload.get("format_profile") or "LONG_FORM")
+    summary = build_planning_assistant_summary(
+        scenario=scenario,
+        channel_strategy_profile=channel_strategy_profile,
+        format_profile=format_profile,
+        historical_performance=dict(payload.get("historical_performance") or {}),
+        audience_behavior=dict(payload.get("audience_behavior") or {}),
+        publish_windows=list(payload.get("publish_windows") or []),
+        cadence_patterns=dict(payload.get("cadence_patterns") or {}),
+        risk_signals=list(payload.get("risk_signals") or []),
+    )
+    return summary
+
+
+@app.post("/v1/analytics/telegram/surface")
+def api_analytics_telegram_surface(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    from services.analytics_center.telegram_surface import build_telegram_analyzer_surface
+
+    surface = build_telegram_analyzer_surface(
+        channel_slug=payload.get("channel_slug"),
+        release_id=None if payload.get("release_id") is None else str(payload.get("release_id")),
+        recommendation_items=list(payload.get("recommendation_items") or []),
+        planning_summary=dict(payload.get("planning_summary") or {}),
+    )
+    return surface
+
+
 
 
 def _external_sync_http_status(code: str) -> int:

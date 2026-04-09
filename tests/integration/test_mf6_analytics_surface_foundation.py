@@ -27,7 +27,7 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
             nav_keys = [item["key"] for item in body["navigation"]]
             self.assertEqual(
                 nav_keys,
-                ["OVERVIEW", "CHANNELS", "RELEASES_VIDEOS", "BATCH_MONTH", "ANOMALIES", "RECOMMENDATIONS", "REPORTS_EXPORTS"],
+                ["OVERVIEW", "CHANNELS", "RELEASES_VIDEOS", "BATCH_MONTH", "PORTFOLIO", "ANOMALIES", "RECOMMENDATIONS", "REPORTS_EXPORTS"],
             )
             for item in body["navigation"]:
                 r = client.get(item["path"], headers=headers)
@@ -44,6 +44,7 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 "/v1/analytics/channels/darkwood-reverie",
                 "/v1/analytics/releases/1",
                 "/v1/analytics/batches/2026-04",
+                "/v1/analytics/portfolio",
                 "/v1/analytics/anomalies",
                 "/v1/analytics/recommendations",
                 "/v1/analytics/reports",

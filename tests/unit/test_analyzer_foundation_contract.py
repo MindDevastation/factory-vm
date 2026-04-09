@@ -57,8 +57,8 @@ class TestAnalyzerFoundationContract(unittest.TestCase):
 
         self.assertEqual(coverage["required_metrics_breadth"]["status"], "GAP")
         self.assertEqual(coverage["refresh_selector_exactness"]["status"], "READY")
-        self.assertEqual(coverage["planning_assistant_v1_surface"]["status"], "GAP")
-        self.assertEqual(coverage["telegram_analyzer_surface"]["status"], "GAP")
+        self.assertEqual(coverage["planning_assistant_v1_surface"]["status"], "READY")
+        self.assertEqual(coverage["telegram_analyzer_surface"]["status"], "READY")
 
         missing = set(contract["missing_required_metric_dimensions"])
         self.assertIn("unique_viewers", missing)

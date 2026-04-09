@@ -63,12 +63,12 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
             note="scheduled refresh selector contract enforces exact hourly/12h/daily set",
         ),
         "planning_assistant_v1_surface": _status(
-            False,
-            note="analyzer planning assistant scope contract remains pending in dedicated slice",
+            True,
+            note="analyzer planning assistant contract is available for week/month/quarter scenarios",
         ),
         "telegram_analyzer_surface": _status(
-            False,
-            note="analyzer Telegram summaries/alerts/snapshots contract remains pending",
+            True,
+            note="analyzer Telegram summaries/alerts/snapshots/recommendation/planning surface is available",
         ),
     }
 
@@ -118,8 +118,6 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
         },
         "completeness": "FOUNDATION_ONLY",
         "non_goals_in_this_slice": [
-            "telegram implementation",
-            "planning assistant implementation",
             "chart/export polish",
             "cross-domain auto-apply",
         ],

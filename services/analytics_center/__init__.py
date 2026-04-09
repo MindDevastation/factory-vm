@@ -135,6 +135,8 @@ __all__ = [
     "build_scheduled_refresh_control_contract",
     "build_manual_refresh_action_contract",
     "build_manual_refresh_runtime_contract",
+    "build_planning_assistant_summary",
+    "build_telegram_analyzer_surface",
 ]
 
 from .errors import AnalyticsDomainError
@@ -220,6 +222,8 @@ from .mf4_runtime import (
     read_mf4_predictions,
     recompute_mf4,
 )
+from .planning_assistant import build_planning_assistant_summary
+from .telegram_surface import build_telegram_analyzer_surface
 
 from .analyzer_foundation import build_analyzer_foundation_contract
 
