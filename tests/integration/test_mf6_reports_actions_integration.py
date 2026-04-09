@@ -82,6 +82,7 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
             structured_body = json.loads(Path(structured_ref).read_text(encoding="utf-8"))
             self.assertGreaterEqual(int(structured_body["dataset_counts"]["operational_kpis"]), 1)
             self.assertGreaterEqual(int(structured_body["dataset_counts"]["recommendations"]), 1)
+            self.assertGreaterEqual(int(structured_body["dataset_counts"]["planning_outputs"]), 1)
             self.assertIn("dataset", structured_body)
             api_payload = dict(payload)
             api_payload["artifact_type"] = "API_REPORT"

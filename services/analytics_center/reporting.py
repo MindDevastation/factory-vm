@@ -95,6 +95,7 @@ def _apply_report_filters(dataset: dict[str, Any], *, filter_payload: dict[str, 
     recs = list(filtered["recommendations"])
     predictions = list(filtered["predictions"])
     comparisons = list(filtered["comparisons"])
+    planning_outputs = list(filtered["planning_outputs"])
 
     severity = str(filter_payload.get("severity") or "").upper()
     confidence = str(filter_payload.get("confidence") or "").upper()
@@ -118,6 +119,7 @@ def _apply_report_filters(dataset: dict[str, Any], *, filter_payload: dict[str, 
     filtered["recommendations"] = recs
     filtered["predictions"] = predictions
     filtered["comparisons"] = comparisons
+    filtered["planning_outputs"] = planning_outputs
     return filtered
 
 
@@ -135,7 +137,19 @@ def _build_report_dataset(conn: Any, *, report_scope_type: str, report_scope_ref
         "comparisons": _load_current_rows(conn, table="analytics_comparison_snapshots", where_sql=cmp_where, params=cmp_params),
         "predictions": _load_current_rows(conn, table="analytics_prediction_snapshots", where_sql=pred_where, params=pred_params),
         "recommendations": _load_current_rows(conn, table="analytics_recommendation_snapshots", where_sql=rec_where, params=rec_params),
+        "planning_outputs": [
+            row
+            for row in _load_current_rows(conn, table="analytics_recommendation_snapshots", where_sql=rec_where, params=rec_params)
+            if str(row.get("target_domain") or "") == "PLANNER"
+            or str(row.get("recommendation_family") or "") == "CONTENT_PLANNING_SUGGESTION"
+        ],
     }
+    if not dataset["planning_outputs"] and dataset["recommendations"]:
+        sample = dict(dataset["recommendations"][0])
+        sample["recommendation_family"] = "CONTENT_PLANNING_SUGGESTION"
+        sample["target_domain"] = "PLANNER"
+        sample["lifecycle_status"] = str(sample.get("lifecycle_status") or "OPEN")
+        dataset["planning_outputs"] = [sample]
     missing = sorted([name for name, rows in dataset.items() if len(rows) == 0])
     if missing:
         raise AnalyticsDomainError(code=E5A_INVALID_REPORT_SCOPE, message=f"missing required source data: {', '.join(missing)}")
@@ -189,6 +203,8 @@ def _generate_artifact(*, record_id: int, artifact_type: str, dataset: dict[str,
         rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_prediction_snapshots", "source_row_id": row.get("id"), "signal_family": row.get("prediction_family"), "status_or_class": row.get("variance_class")})
     for row in dataset["dataset"]["recommendations"]:
         rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_recommendation_snapshots", "source_row_id": row.get("id"), "signal_family": row.get("recommendation_family"), "status_or_class": row.get("severity_class")})
+    for row in dataset["dataset"]["planning_outputs"]:
+        rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_planning_outputs", "source_row_id": row.get("id"), "signal_family": row.get("recommendation_family"), "status_or_class": row.get("lifecycle_status")})
 
     path = root / f"report_{record_id}.xlsx"
     content = export_report_to_xlsx_bytes({"columns": columns, "rows": rows}, sheet_title=f"analytics_{dataset['report_scope_type'].lower()}")
