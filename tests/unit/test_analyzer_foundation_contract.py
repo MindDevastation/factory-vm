@@ -32,6 +32,13 @@ class TestAnalyzerFoundationContract(unittest.TestCase):
         self.assertIn("cadence_mode", sample["planning_hooks"])
         self.assertTrue(sample["hook_fingerprint"])
 
+        state_model = contract["state_model_contract"]
+        self.assertEqual(state_model["coverage_states"], ["MISSING", "PARTIAL", "PERMISSION_LIMITED", "STALE", "REFRESHED"])
+        self.assertEqual(
+            state_model["visibility_guarantees"],
+            ["missing", "partial", "permission-limited", "stale", "refreshed"],
+        )
+
         coverage = contract["mandatory_scope_coverage"]
         self.assertEqual(coverage["analytics_domain_snapshot_foundation"]["status"], "READY")
         self.assertEqual(coverage["one_analyzer_many_profiles_foundation_hooks"]["status"], "READY")

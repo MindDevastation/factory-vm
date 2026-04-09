@@ -115,6 +115,9 @@ __all__ = [
     "FORMAT_PROFILES",
     "CHANNEL_STRATEGY_PROFILES",
     "CORE_ANALYZER_MODE",
+    "summarize_coverage_states",
+    "normalize_coverage_state",
+    "ANALYZER_COVERAGE_STATES",
 ]
 
 from .errors import AnalyticsDomainError
@@ -206,4 +209,10 @@ from .profile_registry import (
     resolve_profile_bundle,
     profile_hook_fingerprint,
     build_profile_registry_contract,
+)
+
+from .freshness_state_model import (
+    ANALYZER_COVERAGE_STATES,
+    normalize_coverage_state,
+    summarize_coverage_states,
 )

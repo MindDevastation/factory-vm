@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from services.analytics_center.external_sync import METRIC_FAMILY_ALIASES
+from services.analytics_center.freshness_state_model import ANALYZER_COVERAGE_STATES
 from services.analytics_center.literals import (
     ANALYZER_DEFAULT_MUTATION_POLICY,
     ANALYZER_PROFILE_AXES,
@@ -81,6 +82,16 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
         "implemented_metric_dimensions": list(implemented_metric_dimensions),
         "missing_required_metric_dimensions": list(missing_required_metrics),
         "mandatory_scope_coverage": scope_coverage,
+        "state_model_contract": {
+            "coverage_states": list(ANALYZER_COVERAGE_STATES),
+            "visibility_guarantees": [
+                "missing",
+                "partial",
+                "permission-limited",
+                "stale",
+                "refreshed",
+            ],
+        },
         "profile_registry_contract": build_profile_registry_contract(),
         "sample_profile_effects": {
             "channel_strategy_profile": sample_profile_bundle.channel_strategy_profile,
