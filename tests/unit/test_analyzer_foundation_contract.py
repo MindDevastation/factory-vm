@@ -36,6 +36,7 @@ class TestAnalyzerFoundationContract(unittest.TestCase):
         self.assertEqual(ingestion["execution_scope"], "INTERFACE_FOUNDATION_ONLY")
         self.assertIn("RELEASE_VIDEO", ingestion["supported_scope_types"])
         self.assertIn("coverage_state_explicit", ingestion["invariants"])
+        self.assertIn("permission_limited_visibility_explicit", ingestion["invariants"])
 
         service_boundary = contract["service_boundary_contract"]
         self.assertEqual(service_boundary["write_service"], "write_analyzer_snapshot")

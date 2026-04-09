@@ -19,6 +19,7 @@ class TestAnalyzerIngestionInterface(unittest.TestCase):
         self.assertIn("views", contract["required_metric_dimensions"])
         self.assertIn("unique_viewers", contract["required_metric_dimensions"])
         self.assertIn("PERMISSION_LIMITED", contract["coverage_states"])
+        self.assertIn("permission_limited_visibility_explicit", contract["invariants"])
         self.assertEqual(contract["execution_scope"], "INTERFACE_FOUNDATION_ONLY")
 
     def test_request_requires_profile_context_and_supported_metrics(self) -> None:

@@ -116,6 +116,7 @@ def build_analyzer_ingestion_contract() -> dict[str, Any]:
             "returned_metrics_subset_of_requested",
             "unavailable_metrics_subset_of_requested",
             "coverage_state_explicit",
+            "permission_limited_visibility_explicit",
             "profile_context_required",
             "no_auto_apply",
         ],
