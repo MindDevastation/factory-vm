@@ -7610,7 +7610,10 @@ def _external_sync_http_status(code: str) -> int:
 def api_analytics_external_manual_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
-        from services.analytics_center.external_sync import request_manual_refresh
+        from services.analytics_center.external_sync import (
+            build_manual_refresh_runtime_contract,
+            request_manual_refresh,
+        )
         from services.analytics_center.errors import AnalyticsDomainError
 
         provider_name = "YOUTUBE"
@@ -7619,6 +7622,12 @@ def api_analytics_external_manual_refresh(payload: Dict[str, Any], _: bool = Dep
         refresh_mode = str(payload.get("refresh_mode") or "MANUAL_REFRESH")
         force = bool(payload.get("force", False))
         metrics_subset = payload.get("metrics_subset")
+        runtime_contract = build_manual_refresh_runtime_contract(
+            refresh_mode=refresh_mode,
+            force=force,
+            observed_from=None,
+            observed_to=None,
+        )
         run_id = request_manual_refresh(
             conn,
             target_scope_type=target_scope_type,
@@ -7635,6 +7644,7 @@ def api_analytics_external_manual_refresh(payload: Dict[str, Any], _: bool = Dep
             "target_scope_ref": target_scope_ref,
             "run_mode": str(row["run_mode"]),
             "sync_state": str(row["sync_state"]),
+            "manual_refresh_contract": runtime_contract,
         }
     except Exception as exc:
         from services.analytics_center.errors import AnalyticsDomainError

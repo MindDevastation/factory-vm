@@ -48,6 +48,13 @@ SCHEDULED_REFRESH_SELECTOR_INTERVAL_SECONDS: dict[str, int] = {
     "DAILY": 86400,
 }
 
+MANUAL_REFRESH_RUNTIME_MODES: tuple[str, ...] = (
+    "MANUAL_REFRESH",
+    "PARTIAL_REFRESH",
+    "STALE_RESYNC",
+    "INITIAL_BACKFILL",
+)
+
 
 @dataclass(frozen=True)
 class SyncTarget:
@@ -179,6 +186,62 @@ def build_scheduled_refresh_control_contract() -> dict[str, Any]:
             "explicit_sync_visibility",
             "default_no_auto_apply",
         ],
+    }
+
+
+def build_manual_refresh_action_contract() -> dict[str, Any]:
+    return {
+        "action": "MANUAL_REFRESH",
+        "allowed_run_modes": list(MANUAL_REFRESH_RUNTIME_MODES),
+        "default_run_mode": "MANUAL_REFRESH",
+        "force_window_seconds": {
+            "default": 86400,
+            "force": 259200,
+        },
+        "visibility_surfaces": {
+            "sync_status_reader": "get_sync_status",
+            "coverage_reader": "get_coverage_report",
+            "run_history_reader": "list_sync_runs",
+        },
+        "coverage_state_guarantees": [
+            "missing",
+            "partial",
+            "permission-limited",
+            "stale",
+            "refreshed",
+        ],
+        "invariants": [
+            "explicit_operator_action",
+            "not_scheduled_selector_alias",
+            "default_no_auto_apply",
+            "historical_truth_preserved",
+            "freshness_sync_coverage_visible",
+        ],
+    }
+
+
+def build_manual_refresh_runtime_contract(
+    *,
+    refresh_mode: str,
+    force: bool,
+    observed_from: float | None,
+    observed_to: float | None,
+) -> dict[str, Any]:
+    mode = _validate_run_mode(refresh_mode)
+    if mode not in MANUAL_REFRESH_RUNTIME_MODES:
+        raise AnalyticsDomainError(code=E5A_INVALID_REFRESH_MODE, message="unsupported manual refresh mode")
+    end_ts = observed_to if observed_to is not None else now_ts()
+    window_seconds = 259200.0 if force else 86400.0
+    start_ts = observed_from if observed_from is not None else (end_ts - window_seconds)
+    return {
+        "action": "MANUAL_REFRESH",
+        "run_mode": mode,
+        "force": bool(force),
+        "observed_from": float(start_ts),
+        "observed_to": float(end_ts),
+        "window_seconds": int(float(end_ts) - float(start_ts)),
+        "freshness_basis": "manual_refresh_force" if force else "manual_refresh",
+        "manual_refresh_contract": build_manual_refresh_action_contract(),
     }
 
 
@@ -801,19 +864,22 @@ def request_manual_refresh(
     observed_to: float | None = None,
     force: bool = False,
 ) -> int:
-    mode = _validate_run_mode(refresh_mode)
-    if mode not in {"MANUAL_REFRESH", "PARTIAL_REFRESH", "STALE_RESYNC", "INITIAL_BACKFILL"}:
-        raise AnalyticsDomainError(code=E5A_INVALID_REFRESH_MODE, message="unsupported manual refresh mode")
+    runtime = build_manual_refresh_runtime_contract(
+        refresh_mode=refresh_mode,
+        force=force,
+        observed_from=observed_from,
+        observed_to=observed_to,
+    )
     return create_sync_run(
         conn,
         provider_name="YOUTUBE",
         target_scope_type=target_scope_type,
         target_scope_ref=target_scope_ref,
-        run_mode=mode,
+        run_mode=str(runtime["run_mode"]),
         metric_families_requested=metrics_subset or ["views", "impressions", "ctr", "watch_time", "average_view_duration", "retention", "subscribers", "monetization"],
-        observed_from=observed_from if observed_from is not None else now_ts() - (86400.0 if not force else 259200.0),
-        observed_to=observed_to if observed_to is not None else now_ts(),
-        freshness_basis="manual_refresh_force" if force else "manual_refresh",
+        observed_from=float(runtime["observed_from"]),
+        observed_to=float(runtime["observed_to"]),
+        freshness_basis=str(runtime["freshness_basis"]),
     )
 
 

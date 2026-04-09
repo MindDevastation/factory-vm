@@ -133,6 +133,8 @@ __all__ = [
     "normalize_refresh_selector",
     "request_scheduled_refresh",
     "build_scheduled_refresh_control_contract",
+    "build_manual_refresh_action_contract",
+    "build_manual_refresh_runtime_contract",
 ]
 
 from .errors import AnalyticsDomainError
@@ -142,6 +144,8 @@ from .read_service import SnapshotReadFilters, normalize_read_filters, read_link
 from .external_sync import (
     SyncTarget,
     build_scheduled_refresh_control_contract,
+    build_manual_refresh_action_contract,
+    build_manual_refresh_runtime_contract,
     build_coverage_payload,
     classify_external_availability,
     create_or_update_youtube_video_link,

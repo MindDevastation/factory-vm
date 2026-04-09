@@ -5,6 +5,8 @@ import unittest
 
 from services.analytics_center.errors import AnalyticsDomainError
 from services.analytics_center.external_sync import (
+    build_manual_refresh_action_contract,
+    build_manual_refresh_runtime_contract,
     build_scheduled_refresh_control_contract,
     build_coverage_payload,
     classify_external_availability,
@@ -99,6 +101,37 @@ class TestAnalyticsExternalSyncUnit(unittest.TestCase):
         self.assertEqual(normalize_refresh_selector("hourly"), "HOURLY")
         with self.assertRaises(AnalyticsDomainError):
             normalize_refresh_selector("every_6_hours")
+
+    def test_manual_refresh_action_runtime_contract_is_explicit(self) -> None:
+        control = build_manual_refresh_action_contract()
+        self.assertEqual(control["action"], "MANUAL_REFRESH")
+        self.assertEqual(
+            control["allowed_run_modes"],
+            ["MANUAL_REFRESH", "PARTIAL_REFRESH", "STALE_RESYNC", "INITIAL_BACKFILL"],
+        )
+        self.assertIn("not_scheduled_selector_alias", control["invariants"])
+        self.assertIn("freshness_sync_coverage_visible", control["invariants"])
+
+        runtime = build_manual_refresh_runtime_contract(
+            refresh_mode="MANUAL_REFRESH",
+            force=True,
+            observed_from=10.0,
+            observed_to=30.0,
+        )
+        self.assertEqual(runtime["action"], "MANUAL_REFRESH")
+        self.assertEqual(runtime["run_mode"], "MANUAL_REFRESH")
+        self.assertTrue(runtime["force"])
+        self.assertEqual(runtime["window_seconds"], 20)
+        self.assertEqual(runtime["freshness_basis"], "manual_refresh_force")
+
+    def test_manual_refresh_runtime_rejects_scheduled_sync_alias(self) -> None:
+        with self.assertRaises(AnalyticsDomainError):
+            build_manual_refresh_runtime_contract(
+                refresh_mode="SCHEDULED_SYNC",
+                force=False,
+                observed_from=None,
+                observed_to=None,
+            )
 
 
 if __name__ == "__main__":

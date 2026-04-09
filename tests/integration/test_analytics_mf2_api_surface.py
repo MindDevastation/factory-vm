@@ -56,6 +56,9 @@ class TestAnalyticsMf2ApiSurface(unittest.TestCase):
             body = created.json()
             self.assertEqual(body["sync_state"], "RUNNING")
             self.assertEqual(body["target_scope_type"], "CHANNEL")
+            self.assertEqual(body["manual_refresh_contract"]["action"], "MANUAL_REFRESH")
+            self.assertEqual(body["manual_refresh_contract"]["run_mode"], "MANUAL_REFRESH")
+            self.assertIn("not_scheduled_selector_alias", body["manual_refresh_contract"]["manual_refresh_contract"]["invariants"])
             run_id = int(body["run_id"])
 
             listed = client.get("/v1/analytics/external/runs", headers=h, params={"target_scope_type": "CHANNEL", "target_scope_ref": "darkwood-reverie"})
