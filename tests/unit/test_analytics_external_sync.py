@@ -5,9 +5,11 @@ import unittest
 
 from services.analytics_center.errors import AnalyticsDomainError
 from services.analytics_center.external_sync import (
+    build_scheduled_refresh_control_contract,
     build_coverage_payload,
     classify_external_availability,
     normalize_metric_families,
+    normalize_refresh_selector,
     plan_fetch_targets,
 )
 
@@ -84,6 +86,19 @@ class TestAnalyticsExternalSyncUnit(unittest.TestCase):
             ),
             "PARTIAL",
         )
+
+    def test_scheduled_refresh_selector_contract_is_closed_exact_set(self) -> None:
+        contract = build_scheduled_refresh_control_contract()
+        self.assertEqual(contract["run_mode"], "SCHEDULED_SYNC")
+        self.assertEqual(contract["allowed_refresh_selectors"], ["HOURLY", "EVERY_12_HOURS", "DAILY"])
+        self.assertEqual(contract["selector_to_interval_seconds"]["HOURLY"], 3600)
+        self.assertEqual(contract["selector_to_interval_seconds"]["EVERY_12_HOURS"], 43200)
+        self.assertEqual(contract["selector_to_interval_seconds"]["DAILY"], 86400)
+
+    def test_scheduled_refresh_selector_rejects_unsupported_intervals(self) -> None:
+        self.assertEqual(normalize_refresh_selector("hourly"), "HOURLY")
+        with self.assertRaises(AnalyticsDomainError):
+            normalize_refresh_selector("every_6_hours")
 
 
 if __name__ == "__main__":

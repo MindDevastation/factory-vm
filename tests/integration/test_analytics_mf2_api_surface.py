@@ -66,6 +66,44 @@ class TestAnalyticsMf2ApiSurface(unittest.TestCase):
             self.assertEqual(detail.status_code, 200)
             self.assertEqual(int(detail.json()["id"]), run_id)
 
+    def test_scheduled_refresh_selector_contract_and_rejection(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            created = client.post(
+                "/v1/analytics/external/scheduled-refresh",
+                headers=h,
+                json={
+                    "target_scope_type": "CHANNEL",
+                    "target_scope_ref": "darkwood-reverie",
+                    "refresh_selector": "EVERY_12_HOURS",
+                    "metrics_subset": ["views", "impressions"],
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            body = created.json()
+            self.assertEqual(body["run_mode"], "SCHEDULED_SYNC")
+            self.assertEqual(body["refresh_selector"], "EVERY_12_HOURS")
+            self.assertEqual(int(body["refresh_interval_seconds"]), 43200)
+            self.assertEqual(
+                body["scheduled_refresh_contract"]["allowed_refresh_selectors"],
+                ["HOURLY", "EVERY_12_HOURS", "DAILY"],
+            )
+
+            rejected = client.post(
+                "/v1/analytics/external/scheduled-refresh",
+                headers=h,
+                json={
+                    "target_scope_type": "CHANNEL",
+                    "target_scope_ref": "darkwood-reverie",
+                    "refresh_selector": "EVERY_6_HOURS",
+                },
+            )
+            self.assertEqual(rejected.status_code, 422)
+            self.assertEqual(rejected.json()["detail"]["code"], "E5A_INVALID_REFRESH_MODE")
+
     def test_status_and_coverage_semantics_not_yet_synced_and_partial_stale(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)

@@ -17,6 +17,7 @@ from services.analytics_center.errors import (
 )
 from services.analytics_center.helpers import validate_json_payload
 from services.analytics_center.literals import (
+    ANALYZER_REFRESH_SELECTOR_VALUES,
     ANALYTICS_EXTERNAL_RUN_MODES,
     ANALYTICS_EXTERNAL_SYNC_STATES,
     ANALYTICS_EXTERNAL_TARGET_SCOPE_TYPES,
@@ -39,6 +40,12 @@ METRIC_FAMILY_ALIASES: dict[str, str] = {
     "subscribers": "subscribers",
     "subscribers_gained_lost": "subscribers",
     "monetization": "monetization",
+}
+
+SCHEDULED_REFRESH_SELECTOR_INTERVAL_SECONDS: dict[str, int] = {
+    "HOURLY": 3600,
+    "EVERY_12_HOURS": 43200,
+    "DAILY": 86400,
 }
 
 
@@ -151,6 +158,30 @@ def _validate_sync_state(sync_state: str) -> str:
     return normalized
 
 
+def normalize_refresh_selector(refresh_selector: str) -> str:
+    normalized = str(refresh_selector or "").strip().upper()
+    if normalized not in ANALYZER_REFRESH_SELECTOR_VALUES:
+        raise AnalyticsDomainError(
+            code=E5A_INVALID_REFRESH_MODE,
+            message=f"unsupported scheduled refresh selector: {refresh_selector}; supported: {', '.join(ANALYZER_REFRESH_SELECTOR_VALUES)}",
+        )
+    return normalized
+
+
+def build_scheduled_refresh_control_contract() -> dict[str, Any]:
+    return {
+        "run_mode": "SCHEDULED_SYNC",
+        "allowed_refresh_selectors": list(ANALYZER_REFRESH_SELECTOR_VALUES),
+        "selector_to_interval_seconds": dict(SCHEDULED_REFRESH_SELECTOR_INTERVAL_SECONDS),
+        "invariants": [
+            "closed_selector_set",
+            "no_arbitrary_intervals",
+            "explicit_sync_visibility",
+            "default_no_auto_apply",
+        ],
+    }
+
+
 def create_sync_run(
     conn: sqlite3.Connection,
     *,
@@ -232,6 +263,33 @@ def create_sync_run(
         observed_to=observed_to,
     )
     return int(row.lastrowid)
+
+
+def request_scheduled_refresh(
+    conn: sqlite3.Connection,
+    *,
+    target_scope_type: str,
+    target_scope_ref: str,
+    refresh_selector: str,
+    metrics_subset: list[str] | None = None,
+    observed_to: float | None = None,
+) -> int:
+    selector = normalize_refresh_selector(refresh_selector)
+    interval_seconds = int(SCHEDULED_REFRESH_SELECTOR_INTERVAL_SECONDS[selector])
+    observed_end = float(observed_to) if observed_to is not None else now_ts()
+    observed_start = observed_end - float(interval_seconds)
+    return create_sync_run(
+        conn,
+        provider_name="YOUTUBE",
+        target_scope_type=target_scope_type,
+        target_scope_ref=target_scope_ref,
+        run_mode="SCHEDULED_SYNC",
+        metric_families_requested=metrics_subset
+        or ["views", "impressions", "ctr", "watch_time", "average_view_duration", "retention", "subscribers", "monetization"],
+        observed_from=observed_start,
+        observed_to=observed_end,
+        freshness_basis=f"scheduled_selector:{selector.lower()}",
+    )
 
 
 def transition_sync_run(

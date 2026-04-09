@@ -7645,6 +7645,51 @@ def api_analytics_external_manual_refresh(payload: Dict[str, Any], _: bool = Dep
         conn.close()
 
 
+@app.post("/v1/analytics/external/scheduled-refresh")
+def api_analytics_external_scheduled_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import (
+            build_scheduled_refresh_control_contract,
+            normalize_refresh_selector,
+            request_scheduled_refresh,
+        )
+        from services.analytics_center.errors import AnalyticsDomainError
+
+        target_scope_type = str(payload.get("target_scope_type") or "CHANNEL")
+        target_scope_ref = str(payload.get("target_scope_ref") or "")
+        refresh_selector = normalize_refresh_selector(str(payload.get("refresh_selector") or ""))
+        metrics_subset = payload.get("metrics_subset")
+        run_id = request_scheduled_refresh(
+            conn,
+            target_scope_type=target_scope_type,
+            target_scope_ref=target_scope_ref,
+            refresh_selector=refresh_selector,
+            metrics_subset=metrics_subset if isinstance(metrics_subset, list) else None,
+        )
+        row = conn.execute("SELECT * FROM analytics_external_sync_runs WHERE id = ?", (int(run_id),)).fetchone()
+        assert row is not None
+        contract = build_scheduled_refresh_control_contract()
+        return {
+            "run_id": int(run_id),
+            "provider_name": "YOUTUBE",
+            "target_scope_type": target_scope_type,
+            "target_scope_ref": target_scope_ref,
+            "run_mode": str(row["run_mode"]),
+            "sync_state": str(row["sync_state"]),
+            "refresh_selector": refresh_selector,
+            "refresh_interval_seconds": int(contract["selector_to_interval_seconds"][refresh_selector]),
+            "scheduled_refresh_contract": contract,
+        }
+    except Exception as exc:
+        from services.analytics_center.errors import AnalyticsDomainError
+        if isinstance(exc, AnalyticsDomainError):
+            raise HTTPException(status_code=_external_sync_http_status(exc.code), detail={"code": exc.code, "message": exc.message})
+        raise
+    finally:
+        conn.close()
+
+
 @app.get("/v1/analytics/external/status")
 def api_analytics_external_status(target_scope_type: str, target_scope_ref: str, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)

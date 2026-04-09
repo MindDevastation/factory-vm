@@ -130,6 +130,9 @@ __all__ = [
     "AnalyzerIngestionResponse",
     "AnalyzerIngestionRequest",
     "INGESTION_SCOPE_TYPES",
+    "normalize_refresh_selector",
+    "request_scheduled_refresh",
+    "build_scheduled_refresh_control_contract",
 ]
 
 from .errors import AnalyticsDomainError
@@ -138,6 +141,7 @@ from .write_service import SnapshotWriteInput, write_external_identity, write_ro
 from .read_service import SnapshotReadFilters, normalize_read_filters, read_linkage_for_scope, read_snapshots, resolve_current_snapshot
 from .external_sync import (
     SyncTarget,
+    build_scheduled_refresh_control_contract,
     build_coverage_payload,
     classify_external_availability,
     create_or_update_youtube_video_link,
@@ -145,8 +149,10 @@ from .external_sync import (
     link_channel_identity,
     link_release_video_context,
     normalize_metric_families,
+    normalize_refresh_selector,
     plan_fetch_targets,
     request_manual_refresh,
+    request_scheduled_refresh,
     transition_sync_run,
     run_external_youtube_ingestion,
     get_sync_status,

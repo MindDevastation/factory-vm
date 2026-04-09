@@ -56,7 +56,7 @@ class TestAnalyzerFoundationContract(unittest.TestCase):
         self.assertEqual(coverage["one_analyzer_many_profiles_foundation_hooks"]["status"], "READY")
 
         self.assertEqual(coverage["required_metrics_breadth"]["status"], "GAP")
-        self.assertEqual(coverage["refresh_selector_exactness"]["status"], "GAP")
+        self.assertEqual(coverage["refresh_selector_exactness"]["status"], "READY")
         self.assertEqual(coverage["planning_assistant_v1_surface"]["status"], "GAP")
         self.assertEqual(coverage["telegram_analyzer_surface"]["status"], "GAP")
 

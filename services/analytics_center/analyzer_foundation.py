@@ -59,8 +59,8 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
             ),
         ),
         "refresh_selector_exactness": _status(
-            False,
-            note="exact operator selector runtime wiring for hourly/12h/daily remains pending",
+            set(ANALYZER_REFRESH_SELECTOR_VALUES) == {"HOURLY", "EVERY_12_HOURS", "DAILY"},
+            note="scheduled refresh selector contract enforces exact hourly/12h/daily set",
         ),
         "planning_assistant_v1_surface": _status(
             False,
