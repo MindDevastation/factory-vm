@@ -1,0 +1,107 @@
+{
+  "meta": {
+    "created_on_utc": "2026-04-09",
+    "slice": "Slice A",
+    "canonical_branch": "feature/youtube-performance-metrics-analyzer",
+    "scope": "state alignment + evidence/checklist harness only"
+  },
+  "global_preflight": {
+    "required_commands": [
+      "git fetch origin",
+      "git checkout feature/youtube-performance-metrics-analyzer",
+      "git reset --hard origin/feature/youtube-performance-metrics-analyzer",
+      "python -m unittest discover -s tests -v"
+    ],
+    "notes": "No blocker closure claim is valid without command evidence and linked artifacts."
+  },
+  "blockers": [
+    {
+      "id": "B1",
+      "name": "analyzer header entry + real analyzer UI surface family",
+      "status": "OPEN",
+      "tests": [],
+      "artifacts": [],
+      "closure_criteria": [
+        "UI surface route and header entry are present and exercised",
+        "Automated checks pass and evidence artifacts are attached"
+      ]
+    },
+    {
+      "id": "B2",
+      "name": "real user-facing charts and animated charts",
+      "status": "OPEN",
+      "tests": [],
+      "artifacts": [],
+      "closure_criteria": [
+        "Chart data rendering is proven with deterministic tests",
+        "Animation behavior evidence exists in captured artifacts"
+      ]
+    },
+    {
+      "id": "B3",
+      "name": "full required external YouTube metrics breadth",
+      "status": "OPEN",
+      "tests": [],
+      "artifacts": [],
+      "closure_criteria": [
+        "All required YouTube metrics are represented in contracts",
+        "Integration evidence validates metric breadth end-to-end"
+      ]
+    },
+    {
+      "id": "B4",
+      "name": "real historical backfill feature flow",
+      "status": "OPEN",
+      "tests": [],
+      "artifacts": [],
+      "closure_criteria": [
+        "Backfill flow is executable and persisted outputs are verifiable",
+        "Automated tests cover trigger, processing, and readback"
+      ]
+    },
+    {
+      "id": "B5",
+      "name": "real planning assistant feature surface",
+      "status": "OPEN",
+      "tests": [],
+      "artifacts": [],
+      "closure_criteria": [
+        "Planning surface contracts are exercised by automated tests",
+        "Review evidence shows production-shaped response behavior"
+      ]
+    },
+    {
+      "id": "B6",
+      "name": "real Telegram analyzer operator surface",
+      "status": "OPEN",
+      "tests": [],
+      "artifacts": [],
+      "closure_criteria": [
+        "Telegram surface contracts are validated",
+        "Operator-facing behavior is verified with deterministic evidence"
+      ]
+    },
+    {
+      "id": "B7",
+      "name": "truthful export coverage for planning outputs and comparison outputs",
+      "status": "OPEN",
+      "tests": [],
+      "artifacts": [],
+      "closure_criteria": [
+        "Export outputs contain planning/comparison fields without omission",
+        "Evidence includes fixture-to-export reconciliation checks"
+      ]
+    },
+    {
+      "id": "B8",
+      "name": "full automated evidence for the completed feature set",
+      "status": "OPEN",
+      "tests": [],
+      "artifacts": [],
+      "closure_criteria": [
+        "Comprehensive automated matrix is present and reproducible",
+        "All blocker evidence references are linked and auditable"
+      ]
+    }
+  ]
+}
