@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from services.analytics_center.external_sync import METRIC_FAMILY_ALIASES
+from services.analytics_center.analyzer_service_foundation import ANALYZER_SYNC_STATES
 from services.analytics_center.freshness_state_model import ANALYZER_COVERAGE_STATES
 from services.analytics_center.literals import (
     ANALYZER_DEFAULT_MUTATION_POLICY,
@@ -82,6 +83,16 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
         "implemented_metric_dimensions": list(implemented_metric_dimensions),
         "missing_required_metric_dimensions": list(missing_required_metrics),
         "mandatory_scope_coverage": scope_coverage,
+        "service_boundary_contract": {
+            "write_service": "write_analyzer_snapshot",
+            "read_service": "read_analyzer_snapshots",
+            "sync_states": list(ANALYZER_SYNC_STATES),
+            "invariants": [
+                "one_analyzer_many_profiles",
+                "default_no_auto_apply",
+                "explicit_coverage_state_visibility",
+            ],
+        },
         "state_model_contract": {
             "coverage_states": list(ANALYZER_COVERAGE_STATES),
             "visibility_guarantees": [

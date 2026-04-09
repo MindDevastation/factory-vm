@@ -52,5 +52,5 @@ def build_analytics_page_contract(*, page_scope: str, applied_filters: dict[str,
         "available_actions": available_actions,
         "export_report_actions": export_report_actions,
         "filter_state_token": json.dumps(applied_filters, sort_keys=True),
-        "data_completeness": "FULL" if source_coverage_summary.get("status") == "FULL" else "PARTIAL",
+        "data_completeness": "FULL" if source_coverage_summary.get("status") == "REFRESHED" else "PARTIAL",
     }

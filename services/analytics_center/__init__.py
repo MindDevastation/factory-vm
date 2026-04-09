@@ -118,6 +118,11 @@ __all__ = [
     "summarize_coverage_states",
     "normalize_coverage_state",
     "ANALYZER_COVERAGE_STATES",
+    "write_analyzer_snapshot",
+    "read_analyzer_snapshots",
+    "AnalyzerSnapshotWriteRequest",
+    "AnalyzerSnapshotReadRequest",
+    "ANALYZER_SYNC_STATES",
 ]
 
 from .errors import AnalyticsDomainError
@@ -215,4 +220,12 @@ from .freshness_state_model import (
     ANALYZER_COVERAGE_STATES,
     normalize_coverage_state,
     summarize_coverage_states,
+)
+
+from .analyzer_service_foundation import (
+    ANALYZER_SYNC_STATES,
+    AnalyzerSnapshotReadRequest,
+    AnalyzerSnapshotWriteRequest,
+    read_analyzer_snapshots,
+    write_analyzer_snapshot,
 )

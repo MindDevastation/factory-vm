@@ -13,6 +13,21 @@ from services.analytics_center.ui_contracts import (
 class TestMf6PageContracts(unittest.TestCase):
     def test_filter_validation(self) -> None:
         self.assertEqual(normalize_analytics_filters({"channel": "abc", "severity": "WARNING"}), {"channel": "abc", "severity": "WARNING"})
+
+        refreshed = build_analytics_page_contract(
+            page_scope="OVERVIEW",
+            applied_filters={},
+            freshness_summary={"status": "REFRESHED"},
+            source_coverage_summary={"status": "REFRESHED"},
+            summary_cards=[],
+            detail_blocks=[],
+            anomaly_risk_markers=[],
+            recommendation_summary=[],
+            available_actions=[],
+            export_report_actions=[],
+        )
+        self.assertEqual(refreshed["data_completeness"], "FULL")
+
         with self.assertRaises(AnalyticsDomainError):
             normalize_analytics_filters({"unknown": "x"})
 
@@ -35,6 +50,22 @@ class TestMf6PageContracts(unittest.TestCase):
             export_report_actions=[],
         )
         self.assertIn("filter_state_token", payload)
+        self.assertEqual(payload["data_completeness"], "PARTIAL")
+
+        refreshed = build_analytics_page_contract(
+            page_scope="OVERVIEW",
+            applied_filters={},
+            freshness_summary={"status": "REFRESHED"},
+            source_coverage_summary={"status": "REFRESHED"},
+            summary_cards=[],
+            detail_blocks=[],
+            anomaly_risk_markers=[],
+            recommendation_summary=[],
+            available_actions=[],
+            export_report_actions=[],
+        )
+        self.assertEqual(refreshed["data_completeness"], "FULL")
+
         with self.assertRaises(AnalyticsDomainError):
             build_analytics_page_contract(
                 page_scope="BAD",

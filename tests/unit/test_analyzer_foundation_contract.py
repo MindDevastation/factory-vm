@@ -32,6 +32,12 @@ class TestAnalyzerFoundationContract(unittest.TestCase):
         self.assertIn("cadence_mode", sample["planning_hooks"])
         self.assertTrue(sample["hook_fingerprint"])
 
+        service_boundary = contract["service_boundary_contract"]
+        self.assertEqual(service_boundary["write_service"], "write_analyzer_snapshot")
+        self.assertEqual(service_boundary["read_service"], "read_analyzer_snapshots")
+        self.assertIn("NOT_YET_SYNCED", service_boundary["sync_states"])
+        self.assertIn("one_analyzer_many_profiles", service_boundary["invariants"])
+
         state_model = contract["state_model_contract"]
         self.assertEqual(state_model["coverage_states"], ["MISSING", "PARTIAL", "PERMISSION_LIMITED", "STALE", "REFRESHED"])
         self.assertEqual(
