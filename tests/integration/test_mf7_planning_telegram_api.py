@@ -94,6 +94,13 @@ class TestMf7PlanningTelegramApi(unittest.TestCase):
             self.assertIn("release_video_snapshots", body)
             self.assertIn("recommendation_summaries", body)
             self.assertIn("planning_summaries", body)
+            self.assertIn("deep_links", body)
+            self.assertIn("operator_runtime", body)
+            self.assertEqual(body["operator_runtime"]["surface_kind"], "TELEGRAM_ANALYZER_OPERATOR")
+            self.assertGreaterEqual(len(body["linked_actions"]), 3)
+            self.assertTrue(all(action.get("auto_apply") is False for action in body["linked_actions"]))
+            self.assertTrue(all(action.get("mutation") is False for action in body["linked_actions"]))
+            self.assertIn("deep_link", body["alerts"][0])
             self.assertFalse(body["default_behavior"]["auto_apply"])
 
 

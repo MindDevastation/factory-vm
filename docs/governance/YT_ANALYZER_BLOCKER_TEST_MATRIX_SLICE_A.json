@@ -117,12 +117,21 @@
     {
       "id": "B6",
       "name": "real Telegram analyzer operator surface",
-      "status": "OPEN",
-      "tests": [],
-      "artifacts": [],
+      "status": "CLOSED_SLICE_G",
+      "tests": [
+        "tests/unit/test_mf7_telegram_surface.py::TestMf7TelegramSurface",
+        "tests/integration/test_mf7_planning_telegram_api.py::TestMf7PlanningTelegramApi::test_telegram_surface_endpoint_contract",
+        "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "services/analytics_center/telegram_surface.py",
+        "services/factory_api/templates/analyzer_surface.html"
+      ],
       "closure_criteria": [
-        "Telegram surface contracts are validated",
-        "Operator-facing behavior is verified with deterministic evidence"
+        "Telegram analyzer is exposed as a real operator-facing UI surface with actionable deep-links",
+        "Surface includes summaries, alerts, channel/release snapshots, recommendation/planning summaries, and linked actions",
+        "Linked actions preserve explicit auto_apply=false and mutation=false defaults"
       ]
     },
     {

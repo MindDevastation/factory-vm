@@ -22,10 +22,15 @@ class TestMf7TelegramSurface(unittest.TestCase):
         self.assertIn("recommendation_summaries", payload)
         self.assertIn("planning_summaries", payload)
         self.assertIn("linked_actions", payload)
+        self.assertIn("deep_links", payload)
+        self.assertIn("operator_runtime", payload)
+        self.assertEqual(payload["operator_runtime"]["surface_kind"], "TELEGRAM_ANALYZER_OPERATOR")
+        self.assertTrue(payload["interface_role"]["operator_surface"])
+        self.assertTrue(all(action.get("auto_apply") is False for action in payload["linked_actions"]))
+        self.assertTrue(all(action.get("mutation") is False for action in payload["linked_actions"]))
         self.assertFalse(payload["default_behavior"]["auto_apply"])
         self.assertFalse(payload["interface_role"]["replaces_web_ui"])
 
 
 if __name__ == "__main__":
     unittest.main()
-
