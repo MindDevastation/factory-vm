@@ -1,6 +1,6 @@
 # YouTube Performance Metrics Analyzer — Blocker Closure Checklist (Slice A Scaffold)
 
-Status date: 2026-04-09 (UTC)
+Status date: 2026-04-10 (UTC)
 Canonical branch: `feature/youtube-performance-metrics-analyzer`
 Scope: Slice A only (state alignment + deterministic evidence harness scaffolding)
 
@@ -16,7 +16,7 @@ This checklist is a tracking scaffold for blocker-closure execution. It intentio
 | B4 | real historical backfill feature flow | CLOSED (Slice E) | End-to-end operator flow evidence for explicit backfill trigger, runtime contract visibility, processing, and persisted history windows. |
 | B5 | real planning assistant feature surface | CLOSED (Slice F) | User-facing planning surface evidence for week/month/quarter scenarios with actionable outputs and non-auto-apply linked actions. |
 | B6 | real Telegram analyzer operator surface | CLOSED (Slice G2) | Real Telegram operator transport workflow evidence (dry-run + live dispatch), plus user-facing summaries/alerts/snapshots/planning/recommendation digests, linked actions/deep-links, and non-auto-apply defaults. |
-| B7 | truthful export coverage for planning outputs and comparison outputs | CLOSED (Slice H) | Export evidence proves planning/comparison outputs are sourced from real data only; no synthetic planning fallback rows are used. |
+| B7 | truthful export coverage for planning outputs and comparison outputs | CLOSED (Slice H re-apply @ `52b9c30`) | Export evidence proves planning/comparison outputs are sourced from real data only; no synthetic planning fallback rows are used. |
 | B8 | full automated evidence for the completed feature set | OPEN | Repeatable automation matrix with pass/fail outcomes and artifact links for all blockers. |
 
 ## Deterministic evidence harness (Slice A scaffold)

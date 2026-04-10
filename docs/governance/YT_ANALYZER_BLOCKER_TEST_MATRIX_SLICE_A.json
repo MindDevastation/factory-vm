@@ -144,6 +144,7 @@
       "tests": [
         "tests/unit/test_mf6_reporting_helpers.py::TestMf6ReportingHelpers",
         "tests/integration/test_mf6_reports_actions_integration.py::TestMf6ReportsActionsIntegration::test_structured_report_planning_outputs_are_truthful_without_synthetic_fallback",
+        "tests/integration/test_mf6_reports_actions_integration.py::TestMf6ReportsActionsIntegration::test_xlsx_export_source_table_mapping_is_truthful_for_planning_and_comparison_rows",
         "python -m unittest discover -s tests -v"
       ],
       "artifacts": [
