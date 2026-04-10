@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib
+import io
 import json
 import unittest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 from services.common import db as dbm
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
@@ -152,6 +154,67 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
             body = json.loads(Path(structured_ref).read_text(encoding="utf-8"))
             self.assertIn("planning_outputs", body["dataset_counts"])
             self.assertEqual(int(body["dataset_counts"]["planning_outputs"]), 0)
+
+    def test_xlsx_export_source_table_mapping_is_truthful_for_planning_and_comparison_rows(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                seed_recommendation_inputs(conn)
+                recompute_mf4(
+                    conn,
+                    run_kind="FULL_STACK_RECOMPUTE",
+                    target_scope_type="CHANNEL",
+                    target_scope_ref="darkwood-reverie",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+                recompute_recommendations(
+                    conn,
+                    recommendation_scope_type="CHANNEL",
+                    recommendation_scope_ref="darkwood-reverie",
+                    recommendation_family="CONTENT_PLANNING_SUGGESTION",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            created = client.post(
+                "/v1/analytics/reports/request",
+                headers=h,
+                json={
+                    "report_scope_type": "CHANNEL",
+                    "report_scope_ref": "darkwood-reverie",
+                    "report_family": "ANALYTICS_SUMMARY",
+                    "filter_payload": {"channel": "darkwood-reverie"},
+                    "artifact_type": "XLSX",
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            artifact_path = Path(str(created.json()["report_record"]["artifact_ref"]))
+            wb = load_workbook(io.BytesIO(artifact_path.read_bytes()))
+            ws = wb.active
+            headers = [str(v) for v in next(ws.iter_rows(min_row=2, max_row=2, values_only=True))]
+            source_table_idx = headers.index("source_table")
+            signal_family_idx = headers.index("signal_family")
+            source_table_by_signal: dict[str, str] = {}
+            for row in ws.iter_rows(min_row=3, values_only=True):
+                signal = str(row[signal_family_idx] or "")
+                source_table = str(row[source_table_idx] or "")
+                if signal and source_table:
+                    source_table_by_signal.setdefault(signal, source_table)
+
+            self.assertEqual(
+                source_table_by_signal["CONTENT_PLANNING_SUGGESTION"],
+                "analytics_recommendation_snapshots",
+            )
+            comparison_table_values = {
+                source_table
+                for signal, source_table in source_table_by_signal.items()
+                if signal in {"RELEASE_VS_CHANNEL_BASELINE", "RELEASE_VS_RECENT_TREND"}
+            }
+            self.assertEqual(comparison_table_values, {"analytics_comparison_snapshots"})
 
     def test_report_request_fails_when_required_source_data_missing(self) -> None:
         with temp_env() as (_, env):

@@ -199,7 +199,7 @@ def _generate_artifact(*, record_id: int, artifact_type: str, dataset: dict[str,
     for row in dataset["dataset"]["recommendations"]:
         rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_recommendation_snapshots", "source_row_id": row.get("id"), "signal_family": row.get("recommendation_family"), "status_or_class": row.get("severity_class")})
     for row in dataset["dataset"]["planning_outputs"]:
-        rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_planning_outputs", "source_row_id": row.get("id"), "signal_family": row.get("recommendation_family"), "status_or_class": row.get("lifecycle_status")})
+        rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_recommendation_snapshots", "source_row_id": row.get("id"), "signal_family": row.get("recommendation_family"), "status_or_class": row.get("lifecycle_status")})
 
     path = root / f"report_{record_id}.xlsx"
     content = export_report_to_xlsx_bytes({"columns": columns, "rows": rows}, sheet_title=f"analytics_{dataset['report_scope_type'].lower()}")
