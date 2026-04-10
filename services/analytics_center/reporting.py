@@ -144,13 +144,8 @@ def _build_report_dataset(conn: Any, *, report_scope_type: str, report_scope_ref
             or str(row.get("recommendation_family") or "") == "CONTENT_PLANNING_SUGGESTION"
         ],
     }
-    if not dataset["planning_outputs"] and dataset["recommendations"]:
-        sample = dict(dataset["recommendations"][0])
-        sample["recommendation_family"] = "CONTENT_PLANNING_SUGGESTION"
-        sample["target_domain"] = "PLANNER"
-        sample["lifecycle_status"] = str(sample.get("lifecycle_status") or "OPEN")
-        dataset["planning_outputs"] = [sample]
-    missing = sorted([name for name, rows in dataset.items() if len(rows) == 0])
+    required_non_empty = {"snapshots", "operational_kpis", "comparisons", "predictions", "recommendations"}
+    missing = sorted([name for name, rows in dataset.items() if name in required_non_empty and len(rows) == 0])
     if missing:
         raise AnalyticsDomainError(code=E5A_INVALID_REPORT_SCOPE, message=f"missing required source data: {', '.join(missing)}")
 

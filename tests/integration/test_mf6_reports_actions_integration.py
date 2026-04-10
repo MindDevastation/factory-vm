@@ -45,6 +45,13 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
                     recommendation_family="WEAK_RELEASE_ATTENTION",
                     recompute_mode="FULL_RECOMPUTE",
                 )
+                recompute_recommendations(
+                    conn,
+                    recommendation_scope_type="CHANNEL",
+                    recommendation_scope_ref="darkwood-reverie",
+                    recommendation_family="CONTENT_PLANNING_SUGGESTION",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
                 self.assertGreaterEqual(len(read_recommendations(conn, recommendation_family="WEAK_RELEASE_ATTENTION", current_only=True)), 1)
             finally:
                 conn.close()
@@ -110,6 +117,41 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
             bad_resp = client.post("/v1/analytics/reports/request", headers=h, json=bad)
             self.assertEqual(bad_resp.status_code, 422)
             self.assertIn("report generation failed", bad_resp.text)
+
+    def test_structured_report_planning_outputs_are_truthful_without_synthetic_fallback(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                seed_recommendation_inputs(conn)
+                recompute_recommendations(
+                    conn,
+                    recommendation_scope_type="CHANNEL",
+                    recommendation_scope_ref="darkwood-reverie",
+                    recommendation_family="WEAK_RELEASE_ATTENTION",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            structured = client.post(
+                "/v1/analytics/reports/request",
+                headers=h,
+                json={
+                    "report_scope_type": "CHANNEL",
+                    "report_scope_ref": "darkwood-reverie",
+                    "report_family": "ANALYTICS_SUMMARY",
+                    "filter_payload": {"channel": "darkwood-reverie"},
+                    "artifact_type": "STRUCTURED_REPORT",
+                },
+            )
+            self.assertEqual(structured.status_code, 200)
+            structured_ref = str(structured.json()["report_record"]["artifact_ref"])
+            body = json.loads(Path(structured_ref).read_text(encoding="utf-8"))
+            self.assertIn("planning_outputs", body["dataset_counts"])
+            self.assertEqual(int(body["dataset_counts"]["planning_outputs"]), 0)
 
     def test_report_request_fails_when_required_source_data_missing(self) -> None:
         with temp_env() as (_, env):

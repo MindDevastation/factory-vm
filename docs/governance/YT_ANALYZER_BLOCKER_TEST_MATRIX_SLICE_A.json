@@ -140,12 +140,20 @@
     {
       "id": "B7",
       "name": "truthful export coverage for planning outputs and comparison outputs",
-      "status": "OPEN",
-      "tests": [],
-      "artifacts": [],
+      "status": "CLOSED_SLICE_H",
+      "tests": [
+        "tests/unit/test_mf6_reporting_helpers.py::TestMf6ReportingHelpers",
+        "tests/integration/test_mf6_reports_actions_integration.py::TestMf6ReportsActionsIntegration::test_structured_report_planning_outputs_are_truthful_without_synthetic_fallback",
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "services/analytics_center/reporting.py",
+        "tests/integration/test_mf6_reports_actions_integration.py"
+      ],
       "closure_criteria": [
-        "Export outputs contain planning/comparison fields without omission",
-        "Evidence includes fixture-to-export reconciliation checks"
+        "Planning export rows are included only when real planning source rows exist",
+        "No synthetic fallback rows are generated for planning_outputs",
+        "Comparison outputs remain exported from real comparison snapshots"
       ]
     },
     {
