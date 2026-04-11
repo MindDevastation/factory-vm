@@ -20,6 +20,12 @@
   .backfill-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
   .backfill-row button:disabled { opacity:.6; cursor:not-allowed; }
   #backfill-runtime { margin-top:8px; font-size:12px; color:#374151; }
+  .refresh-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .refresh-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+  .refresh-row select { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
+  .refresh-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  .refresh-row button:disabled { opacity:.6; cursor:not-allowed; }
+  #manual-refresh-runtime, #scheduled-refresh-runtime { margin-top:8px; font-size:12px; color:#374151; }
   .planning-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
   .planning-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
   .planning-row select, .planning-row input { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
@@ -94,6 +100,27 @@
   <div id="backfill-runtime" data-backfill-contract>Awaiting operator trigger.</div>
 </section>
 
+<section class="refresh-panel" id="analyzer-refresh-panel">
+  <h3>Metric refresh controls (operator action)</h3>
+  <p class="muted">Manual and scheduled refresh are explicit operator actions and remain non-auto-apply.</p>
+  <div class="refresh-row">
+    <button id="manual-refresh-trigger" type="button">Run manual refresh</button>
+    <span id="manual-refresh-status" class="muted">Idle</span>
+  </div>
+  <div id="manual-refresh-runtime" data-manual-refresh-contract>Awaiting operator trigger.</div>
+  <div class="refresh-row">
+    <label for="scheduled-refresh-selector">Scheduled refresh</label>
+    <select id="scheduled-refresh-selector">
+      <option value="HOURLY">HOURLY</option>
+      <option value="EVERY_12_HOURS">EVERY_12_HOURS</option>
+      <option value="DAILY">DAILY</option>
+    </select>
+    <button id="scheduled-refresh-trigger" type="button">Apply scheduled refresh</button>
+    <span id="scheduled-refresh-status" class="muted">Idle</span>
+  </div>
+  <div id="scheduled-refresh-runtime" data-scheduled-refresh-contract>Awaiting operator trigger.</div>
+</section>
+
 <p id="analyzer-status" class="muted">Loading analyzer surface data…</p>
 <section class="chart-layout" id="analyzer-chart-layout">
   <article class="chart-card">
@@ -158,6 +185,13 @@
     const backfillStatusEl = document.getElementById('backfill-status');
     const backfillContextEl = document.getElementById('backfill-context');
     const backfillRuntimeEl = document.getElementById('backfill-runtime');
+    const manualRefreshTriggerEl = document.getElementById('manual-refresh-trigger');
+    const manualRefreshStatusEl = document.getElementById('manual-refresh-status');
+    const manualRefreshRuntimeEl = document.getElementById('manual-refresh-runtime');
+    const scheduledRefreshSelectorEl = document.getElementById('scheduled-refresh-selector');
+    const scheduledRefreshTriggerEl = document.getElementById('scheduled-refresh-trigger');
+    const scheduledRefreshStatusEl = document.getElementById('scheduled-refresh-status');
+    const scheduledRefreshRuntimeEl = document.getElementById('scheduled-refresh-runtime');
     const planningScenarioEl = document.getElementById('planning-scenario');
     const planningWindowsEl = document.getElementById('planning-windows');
     const planningGenerateEl = document.getElementById('planning-generate');
@@ -355,11 +389,25 @@
     function setBackfillContext(context) {
       if (!context || !context.target_scope_type || !context.target_scope_ref) {
         backfillTriggerEl.disabled = true;
+        manualRefreshTriggerEl.disabled = true;
+        scheduledRefreshSelectorEl.disabled = true;
+        scheduledRefreshTriggerEl.disabled = true;
         backfillContextEl.textContent = 'Context: not bound. Select an analyzer scope (channel/release/batch/portfolio) to enable backfill.';
+        manualRefreshStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        scheduledRefreshStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
         return;
       }
       backfillTriggerEl.disabled = false;
+      manualRefreshTriggerEl.disabled = false;
+      scheduledRefreshSelectorEl.disabled = false;
+      scheduledRefreshTriggerEl.disabled = false;
       backfillContextEl.textContent = `Context: ${context.target_scope_type}:${context.target_scope_ref} (${context.source})`;
+      if (manualRefreshStatusEl.textContent.startsWith('Blocked')) {
+        manualRefreshStatusEl.textContent = 'Idle';
+      }
+      if (scheduledRefreshStatusEl.textContent.startsWith('Blocked')) {
+        scheduledRefreshStatusEl.textContent = 'Idle';
+      }
     }
 
     let currentBackfillContext = resolveBackfillContext(null);
@@ -425,6 +473,76 @@
         backfillRuntimeEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
       } finally {
         backfillTriggerEl.disabled = false;
+      }
+    }
+
+    async function triggerManualRefresh() {
+      if (!currentBackfillContext) {
+        manualRefreshStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        return;
+      }
+      manualRefreshTriggerEl.disabled = true;
+      manualRefreshStatusEl.textContent = 'Submitting…';
+      try {
+        const resp = await fetch('/v1/analytics/external/manual-refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            target_scope_type: currentBackfillContext.target_scope_type,
+            target_scope_ref: currentBackfillContext.target_scope_ref,
+            refresh_mode: 'MANUAL_REFRESH',
+            force: true,
+          }),
+        });
+        const payload = await resp.json();
+        if (!resp.ok) {
+          manualRefreshStatusEl.textContent = `Failed (${resp.status})`;
+          manualRefreshRuntimeEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        manualRefreshStatusEl.textContent = `Submitted run #${payload.run_id}`;
+        manualRefreshRuntimeEl.textContent = JSON.stringify(payload.manual_refresh_contract || payload, null, 2);
+      } catch (err) {
+        manualRefreshStatusEl.textContent = 'Failed (network/runtime error)';
+        manualRefreshRuntimeEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      } finally {
+        manualRefreshTriggerEl.disabled = false;
+      }
+    }
+
+    async function triggerScheduledRefresh() {
+      if (!currentBackfillContext) {
+        scheduledRefreshStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        return;
+      }
+      const refreshSelector = String(scheduledRefreshSelectorEl.value || '').trim();
+      scheduledRefreshTriggerEl.disabled = true;
+      scheduledRefreshSelectorEl.disabled = true;
+      scheduledRefreshStatusEl.textContent = 'Submitting…';
+      try {
+        const resp = await fetch('/v1/analytics/external/scheduled-refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            target_scope_type: currentBackfillContext.target_scope_type,
+            target_scope_ref: currentBackfillContext.target_scope_ref,
+            refresh_selector: refreshSelector,
+          }),
+        });
+        const payload = await resp.json();
+        if (!resp.ok) {
+          scheduledRefreshStatusEl.textContent = `Failed (${resp.status})`;
+          scheduledRefreshRuntimeEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        scheduledRefreshStatusEl.textContent = `Submitted run #${payload.run_id} (${payload.refresh_selector})`;
+        scheduledRefreshRuntimeEl.textContent = JSON.stringify(payload.scheduled_refresh_contract || payload, null, 2);
+      } catch (err) {
+        scheduledRefreshStatusEl.textContent = 'Failed (network/runtime error)';
+        scheduledRefreshRuntimeEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      } finally {
+        scheduledRefreshTriggerEl.disabled = false;
+        scheduledRefreshSelectorEl.disabled = false;
       }
     }
 
@@ -547,6 +665,8 @@
     }
 
     backfillTriggerEl.addEventListener('click', triggerBackfill);
+    manualRefreshTriggerEl.addEventListener('click', triggerManualRefresh);
+    scheduledRefreshTriggerEl.addEventListener('click', triggerScheduledRefresh);
     planningGenerateEl.addEventListener('click', generatePlanning);
     telegramGenerateEl.addEventListener('click', generateTelegramSurface);
     loadSurface();
