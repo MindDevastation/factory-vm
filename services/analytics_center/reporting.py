@@ -90,6 +90,35 @@ def _load_current_snapshot_rows(conn: Any, *, where_sql: str, params: tuple[Any,
     return [dict(r) for r in rows]
 
 
+def _load_planner_truth_rows(conn: Any, *, report_scope_type: str, report_scope_ref: str | None) -> list[dict[str, Any]]:
+    normalized_scope_type = str(report_scope_type or "").upper()
+    normalized_scope_ref = str(report_scope_ref or "").strip()
+
+    where_sql = ""
+    params: tuple[Any, ...] = ()
+    if normalized_scope_type == "CHANNEL":
+        canonical = canonicalize_scope_ref(conn, scope_type="CHANNEL", scope_ref=normalized_scope_ref)
+        slug_row = conn.execute("SELECT slug FROM channels WHERE id = ? LIMIT 1", (canonical,)).fetchone()
+        if slug_row is None:
+            slug_row = conn.execute("SELECT slug FROM channels WHERE slug = ? LIMIT 1", (normalized_scope_ref,)).fetchone()
+        if slug_row is None:
+            return []
+        where_sql = "WHERE channel_slug = ?"
+        params = (str(slug_row["slug"]),)
+    elif normalized_scope_type == "RELEASE":
+        where_sql = "WHERE materialized_release_id = ?"
+        params = (normalized_scope_ref,)
+    elif normalized_scope_type == "BATCH_MONTH":
+        where_sql = "WHERE substr(COALESCE(publish_at, ''), 1, 7) = ?"
+        params = (normalized_scope_ref,)
+
+    rows = conn.execute(
+        f"SELECT * FROM planned_releases {where_sql} ORDER BY COALESCE(publish_at, created_at) DESC, id DESC",
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def _apply_report_filters(dataset: dict[str, Any], *, filter_payload: dict[str, Any]) -> dict[str, Any]:
     filtered = dict(dataset)
     recs = list(filtered["recommendations"])
@@ -137,12 +166,11 @@ def _build_report_dataset(conn: Any, *, report_scope_type: str, report_scope_ref
         "comparisons": _load_current_rows(conn, table="analytics_comparison_snapshots", where_sql=cmp_where, params=cmp_params),
         "predictions": _load_current_rows(conn, table="analytics_prediction_snapshots", where_sql=pred_where, params=pred_params),
         "recommendations": _load_current_rows(conn, table="analytics_recommendation_snapshots", where_sql=rec_where, params=rec_params),
-        "planning_outputs": [
-            row
-            for row in _load_current_rows(conn, table="analytics_recommendation_snapshots", where_sql=rec_where, params=rec_params)
-            if str(row.get("target_domain") or "") == "PLANNER"
-            or str(row.get("recommendation_family") or "") == "CONTENT_PLANNING_SUGGESTION"
-        ],
+        "planning_outputs": _load_planner_truth_rows(
+            conn,
+            report_scope_type=report_scope_type,
+            report_scope_ref=report_scope_ref,
+        ),
     }
     required_non_empty = {"snapshots", "operational_kpis", "comparisons", "predictions", "recommendations"}
     missing = sorted([name for name, rows in dataset.items() if name in required_non_empty and len(rows) == 0])
@@ -199,7 +227,16 @@ def _generate_artifact(*, record_id: int, artifact_type: str, dataset: dict[str,
     for row in dataset["dataset"]["recommendations"]:
         rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_recommendation_snapshots", "source_row_id": row.get("id"), "signal_family": row.get("recommendation_family"), "status_or_class": row.get("severity_class")})
     for row in dataset["dataset"]["planning_outputs"]:
-        rows.append({"report_scope_type": dataset["report_scope_type"], "report_scope_ref": dataset["report_scope_ref"], "source_table": "analytics_recommendation_snapshots", "source_row_id": row.get("id"), "signal_family": row.get("recommendation_family"), "status_or_class": row.get("lifecycle_status")})
+        rows.append(
+            {
+                "report_scope_type": dataset["report_scope_type"],
+                "report_scope_ref": dataset["report_scope_ref"],
+                "source_table": "planned_releases",
+                "source_row_id": row.get("id"),
+                "signal_family": row.get("content_type"),
+                "status_or_class": row.get("status"),
+            }
+        )
 
     path = root / f"report_{record_id}.xlsx"
     content = export_report_to_xlsx_bytes({"columns": columns, "rows": rows}, sheet_title=f"analytics_{dataset['report_scope_type'].lower()}")

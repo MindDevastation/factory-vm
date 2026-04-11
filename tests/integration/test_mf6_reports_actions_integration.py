@@ -34,12 +34,23 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
         importlib.reload(mod)
         return TestClient(mod.app)
 
+    @staticmethod
+    def _seed_planner_output(conn: object, *, channel_slug: str = "darkwood-reverie") -> None:
+        conn.execute(
+            """
+            INSERT INTO planned_releases(channel_slug, content_type, title, publish_at, notes, status, created_at, updated_at)
+            VALUES (?, 'LONG', 'Planner Truth Row', '2026-01-14T10:00:00Z', 'seeded for mf6 export truth', 'PLANNED', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+            """,
+            (channel_slug,),
+        )
+
     def test_generate_list_download_and_dedupe_reports(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
             conn = dbm.connect(env)
             try:
                 seed_recommendation_inputs(conn)
+                self._seed_planner_output(conn)
                 recompute_recommendations(
                     conn,
                     recommendation_scope_type="CHANNEL",
@@ -172,9 +183,10 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
                     conn,
                     recommendation_scope_type="CHANNEL",
                     recommendation_scope_ref="darkwood-reverie",
-                    recommendation_family="CONTENT_PLANNING_SUGGESTION",
+                    recommendation_family="WEAK_RELEASE_ATTENTION",
                     recompute_mode="FULL_RECOMPUTE",
                 )
+                self._seed_planner_output(conn)
             finally:
                 conn.close()
 
@@ -206,8 +218,8 @@ class TestMf6ReportsActionsIntegration(unittest.TestCase):
                     source_table_by_signal.setdefault(signal, source_table)
 
             self.assertEqual(
-                source_table_by_signal["CONTENT_PLANNING_SUGGESTION"],
-                "analytics_recommendation_snapshots",
+                source_table_by_signal["LONG"],
+                "planned_releases",
             )
             comparison_table_values = {
                 source_table
