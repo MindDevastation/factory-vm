@@ -6,7 +6,11 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from services.analytics_center.mf4_runtime import recompute_mf4
+from services.analytics_center.recommendation_core import persist_recommendation_snapshot, synthesize_recommendations
+from services.common import db as dbm
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
+from tests.prediction_fixtures import seed_mf4_mixed_input_snapshots, seed_mf4_operational_kpi_snapshot
 
 
 class TestMf7PlanningTelegramApi(unittest.TestCase):
@@ -64,6 +68,44 @@ class TestMf7PlanningTelegramApi(unittest.TestCase):
                 body = resp.json()
                 self.assertEqual(body["scenario"], scenario)
                 self.assertEqual(len(body["outputs"]["recommended_release_schedule"]), slot_count)
+
+    def test_planning_assistant_endpoint_uses_analyzer_grounding_over_request(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                seed_mf4_mixed_input_snapshots(conn, scope_type="CHANNEL", scope_ref="darkwood-reverie")
+                seed_mf4_operational_kpi_snapshot(conn, scope_type="CHANNEL", scope_ref="darkwood-reverie")
+                recompute_mf4(
+                    conn,
+                    run_kind="FULL_STACK_RECOMPUTE",
+                    target_scope_type="CHANNEL",
+                    target_scope_ref="darkwood-reverie",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+                for rec in synthesize_recommendations(conn, scope_type="CHANNEL", scope_ref="darkwood-reverie")[:2]:
+                    persist_recommendation_snapshot(conn, recommendation=rec)
+            finally:
+                conn.close()
+
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.post(
+                "/v1/analytics/planning-assistant",
+                headers=h,
+                json={
+                    "scenario": "MONTH",
+                    "scope_type": "CHANNEL",
+                    "scope_ref": "darkwood-reverie",
+                    "publish_windows": ["request_only_window"],
+                    "risk_signals": [{"source": "REQUEST_ONLY"}],
+                },
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["inputs"]["historical_performance"]["source"], "ANALYZER_PERSISTED_HISTORY")
+            self.assertNotEqual(body["inputs"]["publish_windows"], ["request_only_window"])
+            self.assertTrue(any(str(item.get("source")) != "REQUEST_ONLY" for item in body["inputs"]["risk_signals"]))
 
     def test_telegram_surface_endpoint_contract(self) -> None:
         with temp_env() as (_, env):

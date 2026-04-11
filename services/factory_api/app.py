@@ -7679,20 +7679,27 @@ def api_analytics_report_download(report_record_id: int, _: bool = Depends(requi
 def api_analytics_planning_assistant(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
     from services.analytics_center.planning_assistant import build_planning_assistant_summary
 
-    scenario = str(payload.get("scenario") or "WEEK")
-    channel_strategy_profile = str(payload.get("channel_strategy_profile") or "LONG_FORM_BACKGROUND_MUSIC")
-    format_profile = str(payload.get("format_profile") or "LONG_FORM")
-    summary = build_planning_assistant_summary(
-        scenario=scenario,
-        channel_strategy_profile=channel_strategy_profile,
-        format_profile=format_profile,
-        historical_performance=dict(payload.get("historical_performance") or {}),
-        audience_behavior=dict(payload.get("audience_behavior") or {}),
-        publish_windows=list(payload.get("publish_windows") or []),
-        cadence_patterns=dict(payload.get("cadence_patterns") or {}),
-        risk_signals=list(payload.get("risk_signals") or []),
-    )
-    return summary
+    conn = dbm.connect(env)
+    try:
+        scenario = str(payload.get("scenario") or "WEEK")
+        channel_strategy_profile = str(payload.get("channel_strategy_profile") or "LONG_FORM_BACKGROUND_MUSIC")
+        format_profile = str(payload.get("format_profile") or "LONG_FORM")
+        summary = build_planning_assistant_summary(
+            scenario=scenario,
+            channel_strategy_profile=channel_strategy_profile,
+            format_profile=format_profile,
+            conn=conn,
+            scope_type=str(payload.get("scope_type") or "CHANNEL"),
+            scope_ref=str(payload.get("scope_ref") or "darkwood-reverie"),
+            historical_performance=dict(payload.get("historical_performance") or {}),
+            audience_behavior=dict(payload.get("audience_behavior") or {}),
+            publish_windows=list(payload.get("publish_windows") or []),
+            cadence_patterns=dict(payload.get("cadence_patterns") or {}),
+            risk_signals=list(payload.get("risk_signals") or []),
+        )
+        return summary
+    finally:
+        conn.close()
 
 
 @app.post("/v1/analytics/telegram/surface")
