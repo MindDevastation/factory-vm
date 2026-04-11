@@ -10,7 +10,10 @@ class TestAnalyzerFoundationContract(unittest.TestCase):
         contract = build_analyzer_foundation_contract()
 
         self.assertEqual(contract["contract_version"], "MF1-S1")
-        self.assertEqual(contract["completeness"], "FOUNDATION_ONLY")
+        self.assertEqual(contract["completeness"], "BLOCKER_CLOSURE_PARTIAL")
+        self.assertEqual(contract["closure_status"]["closed_blockers"], ["B1", "B2", "B3", "B4", "B5", "B6", "B7"])
+        self.assertEqual(contract["closure_status"]["open_blockers"], ["B8"])
+        self.assertFalse(contract["closure_status"]["final_feature_closure"])
 
         model = contract["analyzer_model"]
         self.assertEqual(model["core_mode"], "ONE_ANALYZER_MANY_PROFILES")

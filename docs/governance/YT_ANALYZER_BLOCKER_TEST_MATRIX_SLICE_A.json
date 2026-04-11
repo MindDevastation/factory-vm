@@ -1,9 +1,10 @@
 {
   "meta": {
     "created_on_utc": "2026-04-09",
-    "slice": "Slice A",
+    "updated_on_utc": "2026-04-11",
+    "slice": "Canonical tracker (originated in Slice A)",
     "canonical_branch": "feature/youtube-performance-metrics-analyzer",
-    "scope": "state alignment + evidence/checklist harness only"
+    "scope": "truthful blocker-closure matrix and evidence references"
   },
   "global_preflight": {
     "required_commands": [

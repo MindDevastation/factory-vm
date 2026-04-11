@@ -1,11 +1,12 @@
-# YouTube Performance Metrics Analyzer — Blocker Closure Checklist (Slice A Scaffold)
+# YouTube Performance Metrics Analyzer — Blocker Closure Checklist (Canonical Tracker)
 
-Status date: 2026-04-10 (UTC)
+Status date: 2026-04-11 (UTC)
 Canonical branch: `feature/youtube-performance-metrics-analyzer`
-Scope: Slice A only (state alignment + deterministic evidence harness scaffolding)
+Scope: canonical blocker-closure tracker with deterministic evidence harness rules
 
 ## Purpose
-This checklist is a tracking scaffold for blocker-closure execution. It intentionally does **not** mark any blocker as closed in Slice A.
+This checklist is the canonical blocker-closure status tracker for PR #563.
+Statuses below must remain truthful and evidence-backed.
 
 ## Blocker tracker
 | ID | Blocker | Current status | Evidence contract (required before closure) |
@@ -19,7 +20,7 @@ This checklist is a tracking scaffold for blocker-closure execution. It intentio
 | B7 | truthful export coverage for planning outputs and comparison outputs | CLOSED (Slice H re-apply @ `52b9c30`) | Export evidence proves planning/comparison outputs are sourced from real data only; no synthetic planning fallback rows are used. |
 | B8 | full automated evidence for the completed feature set | OPEN | Repeatable automation matrix with pass/fail outcomes and artifact links for all blockers. |
 
-## Deterministic evidence harness (Slice A scaffold)
+## Deterministic evidence harness
 1. Use canonical branch head only (`origin/feature/youtube-performance-metrics-analyzer`).
 2. Run baseline test suite command:
    - `python -m unittest discover -s tests -v`
@@ -29,7 +30,7 @@ This checklist is a tracking scaffold for blocker-closure execution. It intentio
    - `docs/governance/YT_ANALYZER_BLOCKER_TEST_MATRIX_SLICE_A.json`
 5. Blocker status may move from `OPEN` only when linked evidence artifacts and automated checks are both present.
 
-## Slice A constraints acknowledged
-- No blocker is declared closed here.
-- No Slice B implementation work is included here.
-- This file is intended to reduce ambiguity and provide deterministic review checkpoints.
+## Tracker constraints
+- Blocker status may be marked `CLOSED (...)` only when linked evidence artifacts and automated checks are present.
+- B8 remains open until full automated evidence is present, reproducible, and linked.
+- This file must reflect current truthful closure state; stale closure signaling is invalid.

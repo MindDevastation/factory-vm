@@ -116,7 +116,13 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
             "planning_hooks": sample_profile_bundle.planning_hooks,
             "hook_fingerprint": profile_hook_fingerprint(sample_profile_bundle),
         },
-        "completeness": "FOUNDATION_ONLY",
+        "completeness": "BLOCKER_CLOSURE_PARTIAL",
+        "closure_status": {
+            "closed_blockers": ["B1", "B2", "B3", "B4", "B5", "B6", "B7"],
+            "open_blockers": ["B8"],
+            "final_feature_closure": False,
+            "note": "Closure signaling normalized: feature closure remains non-final while B8 evidence automation is still open.",
+        },
         "non_goals_in_this_slice": [
             "chart/export polish",
             "cross-domain auto-apply",
