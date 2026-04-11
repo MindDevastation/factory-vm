@@ -7706,13 +7706,19 @@ def api_analytics_planning_assistant(payload: Dict[str, Any], _: bool = Depends(
 def api_analytics_telegram_surface(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
     from services.analytics_center.telegram_surface import build_telegram_analyzer_surface
 
-    surface = build_telegram_analyzer_surface(
-        channel_slug=payload.get("channel_slug"),
-        release_id=None if payload.get("release_id") is None else str(payload.get("release_id")),
-        recommendation_items=list(payload.get("recommendation_items") or []),
-        planning_summary=dict(payload.get("planning_summary") or {}),
-    )
-    return surface
+    conn = dbm.connect(env)
+    try:
+        return build_telegram_analyzer_surface(
+            conn=conn,
+            scope_type=payload.get("scope_type"),
+            scope_ref=payload.get("scope_ref"),
+            channel_slug=payload.get("channel_slug"),
+            release_id=None if payload.get("release_id") is None else str(payload.get("release_id")),
+            recommendation_items=list(payload.get("recommendation_items") or []),
+            planning_summary=dict(payload.get("planning_summary") or {}),
+        )
+    finally:
+        conn.close()
 
 
 @app.post("/v1/analytics/telegram/dispatch")
@@ -7720,12 +7726,19 @@ def api_analytics_telegram_dispatch(payload: Dict[str, Any], _: bool = Depends(r
     from services.analytics_center.telegram_surface import build_telegram_analyzer_surface
     from services.analytics_center.telegram_delivery import deliver_telegram_operator_surface
 
-    surface = build_telegram_analyzer_surface(
-        channel_slug=payload.get("channel_slug"),
-        release_id=None if payload.get("release_id") is None else str(payload.get("release_id")),
-        recommendation_items=list(payload.get("recommendation_items") or []),
-        planning_summary=dict(payload.get("planning_summary") or {}),
-    )
+    conn = dbm.connect(env)
+    try:
+        surface = build_telegram_analyzer_surface(
+            conn=conn,
+            scope_type=payload.get("scope_type"),
+            scope_ref=payload.get("scope_ref"),
+            channel_slug=payload.get("channel_slug"),
+            release_id=None if payload.get("release_id") is None else str(payload.get("release_id")),
+            recommendation_items=list(payload.get("recommendation_items") or []),
+            planning_summary=dict(payload.get("planning_summary") or {}),
+        )
+    finally:
+        conn.close()
     dry_run = bool(payload.get("dry_run", True))
     chat_id = int(payload.get("chat_id") or env.tg_admin_chat_id or 0)
     delivery = deliver_telegram_operator_surface(

@@ -110,23 +110,40 @@ class TestMf7PlanningTelegramApi(unittest.TestCase):
     def test_telegram_surface_endpoint_contract(self) -> None:
         with temp_env() as (_, env):
             seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                seed_mf4_mixed_input_snapshots(conn, scope_type="CHANNEL", scope_ref="darkwood-reverie")
+                seed_mf4_operational_kpi_snapshot(conn, scope_type="CHANNEL", scope_ref="darkwood-reverie")
+                recompute_mf4(
+                    conn,
+                    run_kind="FULL_STACK_RECOMPUTE",
+                    target_scope_type="CHANNEL",
+                    target_scope_ref="darkwood-reverie",
+                    recompute_mode="FULL_RECOMPUTE",
+                )
+                for rec in synthesize_recommendations(conn, scope_type="CHANNEL", scope_ref="darkwood-reverie")[:2]:
+                    persist_recommendation_snapshot(conn, recommendation=rec)
+            finally:
+                conn.close()
             client = self._new_client()
             h = basic_auth_header(env.basic_user, env.basic_pass)
             resp = client.post(
                 "/v1/analytics/telegram/surface",
                 headers=h,
                 json={
+                    "scope_type": "CHANNEL",
+                    "scope_ref": "darkwood-reverie",
                     "channel_slug": "darkwood-reverie",
                     "release_id": 101,
                     "recommendation_items": [
                         {
-                            "recommendation_family": "ANOMALY_RISK_ALERT",
-                            "severity_class": "CRITICAL",
-                            "title_text": "Risk",
+                            "recommendation_family": "REQUEST_ONLY",
+                            "severity_class": "INFO",
+                            "title_text": "Request only",
                             "summary_text": "Drop detected",
                         }
                     ],
-                    "planning_summary": {"scenario": "WEEK", "status": "READY"},
+                    "planning_summary": {"scenario": "MONTH", "status": "REQUEST_ONLY"},
                 },
             )
             self.assertEqual(resp.status_code, 200)
@@ -145,6 +162,9 @@ class TestMf7PlanningTelegramApi(unittest.TestCase):
             self.assertTrue(all(action.get("mutation") is False for action in body["linked_actions"]))
             self.assertIn("deep_link", body["alerts"][0])
             self.assertFalse(body["default_behavior"]["auto_apply"])
+            self.assertEqual(body["planning_summaries"][0]["source"], "ANALYZER_PERSISTED_STATE")
+            self.assertEqual(body["summaries"]["history_summary"]["source"], "ANALYZER_PERSISTED_HISTORY")
+            self.assertTrue(all(item.get("recommendation_family") != "REQUEST_ONLY" for item in body["recommendation_summaries"]))
 
     def test_telegram_dispatch_operator_workflow_dry_run_and_live(self) -> None:
         with temp_env() as (_, env):
