@@ -26,6 +26,10 @@
   .refresh-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
   .refresh-row button:disabled { opacity:.6; cursor:not-allowed; }
   #manual-refresh-runtime, #scheduled-refresh-runtime { margin-top:8px; font-size:12px; color:#374151; }
+  .date-period-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .date-period-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+  .date-period-row input, .date-period-row select { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
+  .date-period-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
   .planning-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
   .planning-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
   .planning-row select, .planning-row input { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
@@ -121,6 +125,25 @@
   <div id="scheduled-refresh-runtime" data-scheduled-refresh-contract>Awaiting operator trigger.</div>
 </section>
 
+<section class="date-period-panel" id="analyzer-date-period-panel">
+  <h3>Date range + period comparison</h3>
+  <p class="muted">User-facing analyzer filters. Changes are applied only when you click Apply (default non-auto-apply).</p>
+  <div class="date-period-row">
+    <label for="analyzer-date-from">From</label>
+    <input id="analyzer-date-from" type="date" />
+    <label for="analyzer-date-to">To</label>
+    <input id="analyzer-date-to" type="date" />
+    <label for="analyzer-period-compare">Compare</label>
+    <select id="analyzer-period-compare">
+      <option value="PREVIOUS_PERIOD">PREVIOUS_PERIOD</option>
+      <option value="PREVIOUS_YEAR">PREVIOUS_YEAR</option>
+      <option value="NONE">NONE</option>
+    </select>
+    <button id="analyzer-date-period-apply" type="button">Apply date/period filters</button>
+    <button id="analyzer-date-period-clear" type="button">Clear date filters</button>
+  </div>
+</section>
+
 <p id="analyzer-status" class="muted">Loading analyzer surface data…</p>
 <section class="chart-layout" id="analyzer-chart-layout">
   <article class="chart-card">
@@ -192,6 +215,11 @@
     const scheduledRefreshTriggerEl = document.getElementById('scheduled-refresh-trigger');
     const scheduledRefreshStatusEl = document.getElementById('scheduled-refresh-status');
     const scheduledRefreshRuntimeEl = document.getElementById('scheduled-refresh-runtime');
+    const dateFromEl = document.getElementById('analyzer-date-from');
+    const dateToEl = document.getElementById('analyzer-date-to');
+    const periodCompareEl = document.getElementById('analyzer-period-compare');
+    const datePeriodApplyEl = document.getElementById('analyzer-date-period-apply');
+    const datePeriodClearEl = document.getElementById('analyzer-date-period-clear');
     const planningScenarioEl = document.getElementById('planning-scenario');
     const planningWindowsEl = document.getElementById('planning-windows');
     const planningGenerateEl = document.getElementById('planning-generate');
@@ -413,9 +441,50 @@
     let currentBackfillContext = resolveBackfillContext(null);
     setBackfillContext(currentBackfillContext);
 
+    function readDatePeriodFilters() {
+      const dateFrom = String(dateFromEl.value || '').trim();
+      const dateTo = String(dateToEl.value || '').trim();
+      const periodCompare = String(periodCompareEl.value || 'PREVIOUS_PERIOD').trim() || 'PREVIOUS_PERIOD';
+      return { date_from: dateFrom, date_to: dateTo, period_compare: periodCompare };
+    }
+
+    function buildSurfaceUrlWithDatePeriodFilters() {
+      const url = new URL(activeApiPath, window.location.origin);
+      const filters = readDatePeriodFilters();
+      if (filters.date_from) url.searchParams.set('date_from', filters.date_from);
+      if (filters.date_to) url.searchParams.set('date_to', filters.date_to);
+      if (filters.period_compare) url.searchParams.set('period_compare', filters.period_compare);
+      return url.toString();
+    }
+
+    function hydrateDatePeriodControlsFromLocation() {
+      const url = new URL(window.location.href);
+      dateFromEl.value = String(url.searchParams.get('date_from') || '').trim();
+      dateToEl.value = String(url.searchParams.get('date_to') || '').trim();
+      const compare = String(url.searchParams.get('period_compare') || 'PREVIOUS_PERIOD').trim().toUpperCase();
+      periodCompareEl.value = compare || 'PREVIOUS_PERIOD';
+      if (periodCompareEl.value !== compare) {
+        periodCompareEl.value = 'PREVIOUS_PERIOD';
+      }
+    }
+
+    function persistDatePeriodQueryParams() {
+      const url = new URL(window.location.href);
+      const filters = readDatePeriodFilters();
+      if (filters.date_from) url.searchParams.set('date_from', filters.date_from);
+      else url.searchParams.delete('date_from');
+      if (filters.date_to) url.searchParams.set('date_to', filters.date_to);
+      else url.searchParams.delete('date_to');
+      if (filters.period_compare) url.searchParams.set('period_compare', filters.period_compare);
+      window.history.replaceState({}, '', url.toString());
+    }
+
+    hydrateDatePeriodControlsFromLocation();
+
     async function loadSurface() {
       try {
-        const resp = await fetch(activeApiPath, { headers: { 'Accept': 'application/json' } });
+        const surfaceUrl = buildSurfaceUrlWithDatePeriodFilters();
+        const resp = await fetch(surfaceUrl, { headers: { 'Accept': 'application/json' } });
         const text = await resp.text();
         let payload;
         try {
@@ -667,6 +736,17 @@
     backfillTriggerEl.addEventListener('click', triggerBackfill);
     manualRefreshTriggerEl.addEventListener('click', triggerManualRefresh);
     scheduledRefreshTriggerEl.addEventListener('click', triggerScheduledRefresh);
+    datePeriodApplyEl.addEventListener('click', function () {
+      persistDatePeriodQueryParams();
+      loadSurface();
+    });
+    datePeriodClearEl.addEventListener('click', function () {
+      dateFromEl.value = '';
+      dateToEl.value = '';
+      periodCompareEl.value = 'PREVIOUS_PERIOD';
+      persistDatePeriodQueryParams();
+      loadSurface();
+    });
     planningGenerateEl.addEventListener('click', generatePlanning);
     telegramGenerateEl.addEventListener('click', generateTelegramSurface);
     loadSurface();

@@ -87,6 +87,15 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 self.assertIn("id=\"analyzer-line-chart\"", r.text)
                 self.assertIn("id=\"analyzer-bar-chart\"", r.text)
                 self.assertIn("id=\"analyzer-refresh-panel\"", r.text)
+                self.assertIn("id=\"analyzer-date-period-panel\"", r.text)
+                self.assertIn("id=\"analyzer-date-from\"", r.text)
+                self.assertIn("id=\"analyzer-date-to\"", r.text)
+                self.assertIn("id=\"analyzer-period-compare\"", r.text)
+                self.assertIn("id=\"analyzer-date-period-apply\"", r.text)
+                self.assertIn("id=\"analyzer-date-period-clear\"", r.text)
+                self.assertIn('value="PREVIOUS_PERIOD"', r.text)
+                self.assertIn('value="PREVIOUS_YEAR"', r.text)
+                self.assertIn('value="NONE"', r.text)
                 self.assertIn("id=\"manual-refresh-trigger\"", r.text)
                 self.assertIn("id=\"scheduled-refresh-selector\"", r.text)
                 self.assertIn("id=\"scheduled-refresh-trigger\"", r.text)
@@ -98,6 +107,8 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 self.assertNotIn('value="EVERY_6_HOURS"', r.text)
                 self.assertIn("animateLinePath", r.text)
                 self.assertIn("requestAnimationFrame", r.text)
+                self.assertIn("buildSurfaceUrlWithDatePeriodFilters", r.text)
+                self.assertIn("persistDatePeriodQueryParams", r.text)
 
     def test_ui_analyzer_backfill_binds_to_selected_scope_context(self) -> None:
         with temp_env() as (_, env):
