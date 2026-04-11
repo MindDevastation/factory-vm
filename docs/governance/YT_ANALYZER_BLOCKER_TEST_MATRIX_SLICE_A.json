@@ -161,13 +161,26 @@
     {
       "id": "B8",
       "name": "full automated evidence for the completed feature set",
-      "status": "OPEN",
-      "tests": [],
-      "artifacts": [],
+      "status": "CLOSED_R6",
+      "tests": [
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "docs/governance/YT_ANALYZER_R6_FINAL_EVIDENCE_CLOSEOUT.md",
+        "docs/governance/YT_ANALYZER_BLOCKER_CHECKLIST_SLICE_A.md"
+      ],
       "closure_criteria": [
         "Comprehensive automated matrix is present and reproducible",
         "All blocker evidence references are linked and auditable"
-      ]
+      ],
+      "result_summary": {
+        "suite_status": "PASS",
+        "suite_totals": {
+          "tests_ran": 1608,
+          "duration_seconds": 660.281
+        },
+        "evidence_timestamp_utc": "2026-04-11T15:06:22Z"
+      }
     }
   ]
 }

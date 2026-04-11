@@ -18,7 +18,7 @@ Statuses below must remain truthful and evidence-backed.
 | B5 | real planning assistant feature surface | CLOSED (Slice F) | User-facing planning surface evidence for week/month/quarter scenarios with actionable outputs and non-auto-apply linked actions. |
 | B6 | real Telegram analyzer operator surface | CLOSED (Slice G2) | Real Telegram operator transport workflow evidence (dry-run + live dispatch), plus user-facing summaries/alerts/snapshots/planning/recommendation digests, linked actions/deep-links, and non-auto-apply defaults. |
 | B7 | truthful export coverage for planning outputs and comparison outputs | CLOSED (Slice H re-apply @ `52b9c30`) | Export evidence proves planning/comparison outputs are sourced from real data only; no synthetic planning fallback rows are used. |
-| B8 | full automated evidence for the completed feature set | OPEN | Repeatable automation matrix with pass/fail outcomes and artifact links for all blockers. |
+| B8 | full automated evidence for the completed feature set | CLOSED (R6 @ `8e95469`) | Full required suite (`python -m unittest discover -s tests -v`) passed on canonical branch; final evidence package linked in `docs/governance/YT_ANALYZER_R6_FINAL_EVIDENCE_CLOSEOUT.md`. |
 
 ## Deterministic evidence harness
 1. Use canonical branch head only (`origin/feature/youtube-performance-metrics-analyzer`).
@@ -32,5 +32,5 @@ Statuses below must remain truthful and evidence-backed.
 
 ## Tracker constraints
 - Blocker status may be marked `CLOSED (...)` only when linked evidence artifacts and automated checks are present.
-- B8 remains open until full automated evidence is present, reproducible, and linked.
+- B8 closure requires a fresh passing full-suite run and a linked final evidence package; this condition is now satisfied by R6.
 - This file must reflect current truthful closure state; stale closure signaling is invalid.
