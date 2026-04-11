@@ -5657,6 +5657,22 @@ _ANALYZER_SURFACE_API_PATHS: dict[str, str] = {
     "reports": "/v1/analytics/reports",
 }
 
+def _build_analyzer_surface_api_path(surface: str, request: Request) -> str:
+    from urllib.parse import quote
+
+    base_path = _ANALYZER_SURFACE_API_PATHS[surface]
+    explicit_scope_type = str(request.query_params.get("target_scope_type") or "").strip().upper()
+    explicit_scope_ref = str(request.query_params.get("target_scope_ref") or "").strip()
+    if explicit_scope_type == "CHANNEL" and explicit_scope_ref:
+        return f"/v1/analytics/channels/{quote(explicit_scope_ref, safe='')}"
+    if explicit_scope_type == "RELEASE" and explicit_scope_ref:
+        return f"/v1/analytics/releases/{quote(explicit_scope_ref, safe='')}"
+    if explicit_scope_type == "BATCH_MONTH" and explicit_scope_ref:
+        return f"/v1/analytics/batches/{quote(explicit_scope_ref, safe='')}"
+    if explicit_scope_type == "PORTFOLIO" and explicit_scope_ref:
+        return f"/v1/analytics/portfolio?portfolio_project={quote(explicit_scope_ref, safe='')}"
+    return base_path
+
 
 @app.get("/ui/analyzer", response_class=HTMLResponse)
 @app.get("/ui/analyzer/{surface}", response_class=HTMLResponse)
@@ -5673,7 +5689,7 @@ def ui_analyzer_page(request: Request, surface: str = "overview", _: bool = Depe
         {
             "request": request,
             "active_surface": normalized_surface,
-            "active_api_path": _ANALYZER_SURFACE_API_PATHS[normalized_surface],
+            "active_api_path": _build_analyzer_surface_api_path(normalized_surface, request),
             "surface_items": surface_items,
         },
     )

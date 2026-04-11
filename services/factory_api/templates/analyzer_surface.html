@@ -90,6 +90,7 @@
     <button id="backfill-trigger" type="button">Run backfill</button>
     <span id="backfill-status" class="muted">Idle</span>
   </div>
+  <div class="muted" id="backfill-context">Context: resolving from selected analyzer scope…</div>
   <div id="backfill-runtime" data-backfill-contract>Awaiting operator trigger.</div>
 </section>
 
@@ -155,6 +156,7 @@
     const backfillDaysEl = document.getElementById('backfill-days');
     const backfillTriggerEl = document.getElementById('backfill-trigger');
     const backfillStatusEl = document.getElementById('backfill-status');
+    const backfillContextEl = document.getElementById('backfill-context');
     const backfillRuntimeEl = document.getElementById('backfill-runtime');
     const planningScenarioEl = document.getElementById('planning-scenario');
     const planningWindowsEl = document.getElementById('planning-windows');
@@ -335,6 +337,34 @@
       return `Surface loaded · scope=${scope} · freshness=${freshness} · completeness=${completeness}`;
     }
 
+    function resolveBackfillContext(payload) {
+      const url = new URL(window.location.href);
+      const qScopeType = String(url.searchParams.get('target_scope_type') || '').trim().toUpperCase();
+      const qScopeRef = String(url.searchParams.get('target_scope_ref') || '').trim();
+      if (qScopeType && qScopeRef) {
+        return { target_scope_type: qScopeType, target_scope_ref: qScopeRef, source: 'query' };
+      }
+      const filters = payload && payload.applied_filters && typeof payload.applied_filters === 'object' ? payload.applied_filters : {};
+      if (filters.channel) return { target_scope_type: 'CHANNEL', target_scope_ref: String(filters.channel), source: 'surface' };
+      if (filters.release_video) return { target_scope_type: 'RELEASE', target_scope_ref: String(filters.release_video), source: 'surface' };
+      if (filters.batch_month) return { target_scope_type: 'BATCH_MONTH', target_scope_ref: String(filters.batch_month), source: 'surface' };
+      if (filters.portfolio_project) return { target_scope_type: 'PORTFOLIO', target_scope_ref: String(filters.portfolio_project), source: 'surface' };
+      return null;
+    }
+
+    function setBackfillContext(context) {
+      if (!context || !context.target_scope_type || !context.target_scope_ref) {
+        backfillTriggerEl.disabled = true;
+        backfillContextEl.textContent = 'Context: not bound. Select an analyzer scope (channel/release/batch/portfolio) to enable backfill.';
+        return;
+      }
+      backfillTriggerEl.disabled = false;
+      backfillContextEl.textContent = `Context: ${context.target_scope_type}:${context.target_scope_ref} (${context.source})`;
+    }
+
+    let currentBackfillContext = resolveBackfillContext(null);
+    setBackfillContext(currentBackfillContext);
+
     async function loadSurface() {
       try {
         const resp = await fetch(activeApiPath, { headers: { 'Accept': 'application/json' } });
@@ -354,6 +384,8 @@
         renderLineChart(model);
         renderBarChart(model);
         renderSemanticChips(model);
+        currentBackfillContext = resolveBackfillContext(payload);
+        setBackfillContext(currentBackfillContext);
         statusEl.textContent = toSummary(payload);
         dataEl.textContent = JSON.stringify(payload, null, 2);
       } catch (err) {
@@ -363,6 +395,10 @@
     }
 
     async function triggerBackfill() {
+      if (!currentBackfillContext) {
+        backfillStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        return;
+      }
       const days = Number(backfillDaysEl.value || 30);
       backfillTriggerEl.disabled = true;
       backfillStatusEl.textContent = 'Submitting…';
@@ -371,8 +407,8 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
           body: JSON.stringify({
-            target_scope_type: 'CHANNEL',
-            target_scope_ref: 'darkwood-reverie',
+            target_scope_type: currentBackfillContext.target_scope_type,
+            target_scope_ref: currentBackfillContext.target_scope_ref,
             backfill_days: days,
           }),
         });

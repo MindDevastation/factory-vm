@@ -89,6 +89,23 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 self.assertIn("animateLinePath", r.text)
                 self.assertIn("requestAnimationFrame", r.text)
 
+    def test_ui_analyzer_backfill_binds_to_selected_scope_context(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            r = client.get(
+                "/ui/analyzer/channels?target_scope_type=CHANNEL&target_scope_ref=darkwood-reverie",
+                headers=headers,
+            )
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("/v1/analytics/channels/darkwood-reverie", r.text)
+            self.assertIn("resolveBackfillContext", r.text)
+            self.assertIn("setBackfillContext", r.text)
+            self.assertIn("id=\"backfill-context\"", r.text)
+            self.assertNotIn("target_scope_ref: 'darkwood-reverie'", r.text)
+
 
 if __name__ == "__main__":
     unittest.main()
