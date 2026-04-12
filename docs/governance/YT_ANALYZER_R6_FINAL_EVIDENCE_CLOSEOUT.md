@@ -22,7 +22,7 @@ Scope: R6 evidence closure only (no product behavior expansion)
    - Evidence: `services/factory_api/templates/analyzer_surface.html` (chart + animation hooks)
 3. **metrics breadth**
    - Evidence: `tests/unit/test_analytics_external_sync.py::TestAnalyticsExternalSyncUnit::test_default_required_metric_breadth_is_full`
-   - Evidence: `tests/unit/test_analyzer_foundation_contract.py::TestAnalyzerFoundationContract::test_contract_exposes_foundation_and_gap_boundaries`
+   - Evidence: `tests/unit/test_analyzer_foundation_contract.py::TestAnalyzerFoundationContract::test_contract_exposes_closed_feature_state_and_foundation_contracts`
 4. **historical backfill flow**
    - Evidence: `tests/integration/test_analytics_mf2_api_surface.py::TestAnalyticsMf2ApiSurface::test_historical_backfill_operator_flow_contract_and_observability`
 5. **planning assistant grounding**
@@ -34,9 +34,9 @@ Scope: R6 evidence closure only (no product behavior expansion)
    - Evidence: `tests/integration/test_mf6_reports_actions_integration.py::TestMf6ReportsActionsIntegration::test_xlsx_export_source_table_mapping_is_truthful_for_planning_and_comparison_rows`
 8. **one analyzer + many profiles**
    - Evidence: `tests/unit/test_profile_registry_foundation.py::TestProfileRegistryFoundation`
-   - Evidence: `tests/unit/test_analyzer_foundation_contract.py::TestAnalyzerFoundationContract::test_contract_exposes_foundation_and_gap_boundaries`
+   - Evidence: `tests/unit/test_analyzer_foundation_contract.py::TestAnalyzerFoundationContract::test_contract_exposes_closed_feature_state_and_foundation_contracts`
 9. **default non-auto-apply behavior**
-   - Evidence: `tests/unit/test_analyzer_foundation_contract.py::TestAnalyzerFoundationContract::test_contract_exposes_foundation_and_gap_boundaries`
+   - Evidence: `tests/unit/test_analyzer_foundation_contract.py::TestAnalyzerFoundationContract::test_contract_exposes_closed_feature_state_and_foundation_contracts`
 10. **full automated evidence**
    - Evidence: full required suite above passed on canonical branch head.
 

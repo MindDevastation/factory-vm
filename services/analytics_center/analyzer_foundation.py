@@ -27,8 +27,8 @@ def _status(ok: bool, *, note: str) -> dict[str, Any]:
 def build_analyzer_foundation_contract() -> dict[str, Any]:
     """MF1-S1 contract: explicit repo-vs-spec foundation coverage.
 
-    This contract intentionally reports foundation readiness and known mandatory gaps
-    without claiming feature completeness.
+    The feature is now in accepted closed state (B1..B8 closed); this contract
+    retains foundation-level structure while signaling final closure truthfully.
     """
 
     implemented_metric_dimensions = tuple(sorted(set(METRIC_FAMILY_ALIASES.values())))
@@ -123,7 +123,7 @@ def build_analyzer_foundation_contract() -> dict[str, Any]:
             "final_feature_closure": True,
             "note": "R6 closure completed with fresh full-suite evidence and linked canonical blocker-closeout artifacts.",
         },
-        "non_goals_in_this_slice": [
+        "non_goals": [
             "chart/export polish",
             "cross-domain auto-apply",
         ],

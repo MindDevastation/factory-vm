@@ -6,7 +6,7 @@ from services.analytics_center.analyzer_foundation import build_analyzer_foundat
 
 
 class TestAnalyzerFoundationContract(unittest.TestCase):
-    def test_contract_exposes_foundation_and_gap_boundaries(self) -> None:
+    def test_contract_exposes_closed_feature_state_and_foundation_contracts(self) -> None:
         contract = build_analyzer_foundation_contract()
 
         self.assertEqual(contract["contract_version"], "MF1-S1")
