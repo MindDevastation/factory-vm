@@ -39,7 +39,7 @@ class TestAnalyticsExternalInterfacesHardening(unittest.TestCase):
                     target_scope_type="CHANNEL",
                     target_scope_ref="darkwood-reverie",
                     refresh_mode="MANUAL_REFRESH",
-                    metrics_subset=["views", "impressions", "ctr", "monetization"],
+                    metrics_subset=["views", "impressions", "ctr", "revenue_rpm"],
                     force=True,
                 )
                 provider = _Provider(
@@ -47,7 +47,7 @@ class TestAnalyticsExternalInterfacesHardening(unittest.TestCase):
                         "channel_slug": "darkwood-reverie",
                         "metrics": {"views": 10},
                         "metric_families_returned": ["views"],
-                        "metric_families_unavailable": ["monetization"],
+                        "metric_families_unavailable": ["revenue_rpm"],
                         "freshness_status": "PARTIAL",
                         "freshness_basis": "window_end",
                         "incomplete_backfill": True,
@@ -65,7 +65,8 @@ class TestAnalyticsExternalInterfacesHardening(unittest.TestCase):
                 status = get_sync_status(conn, target_scope_type="CHANNEL", target_scope_ref="darkwood-reverie")
                 self.assertEqual(status["sync_state"], "PARTIAL")
                 self.assertTrue(status["incomplete_backfill"])
-                self.assertIn("monetization", status["missing_metric_families"])
+                self.assertIn("revenue_rpm", status["permission_limited_metric_families"])
+                self.assertIn("impressions", status["missing_metric_families"])
                 self.assertEqual(status["source_availability_status"], "PERMISSION_LIMITED")
 
                 coverage = get_coverage_report(conn, target_scope_type="CHANNEL", target_scope_ref="darkwood-reverie")

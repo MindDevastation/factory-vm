@@ -12,7 +12,25 @@ from services.analytics_center.ui_contracts import (
 
 class TestMf6PageContracts(unittest.TestCase):
     def test_filter_validation(self) -> None:
-        self.assertEqual(normalize_analytics_filters({"channel": "abc", "severity": "WARNING"}), {"channel": "abc", "severity": "WARNING"})
+        self.assertEqual(
+            normalize_analytics_filters({"channel": "abc", "severity": "WARNING", "date_from": "2026-01-01", "period_compare": "PREVIOUS_PERIOD"}),
+            {"channel": "abc", "severity": "WARNING", "date_from": "2026-01-01", "period_compare": "PREVIOUS_PERIOD"},
+        )
+
+        refreshed = build_analytics_page_contract(
+            page_scope="OVERVIEW",
+            applied_filters={},
+            freshness_summary={"status": "REFRESHED"},
+            source_coverage_summary={"status": "REFRESHED"},
+            summary_cards=[],
+            detail_blocks=[],
+            anomaly_risk_markers=[],
+            recommendation_summary=[],
+            available_actions=[],
+            export_report_actions=[],
+        )
+        self.assertEqual(refreshed["data_completeness"], "FULL")
+
         with self.assertRaises(AnalyticsDomainError):
             normalize_analytics_filters({"unknown": "x"})
 
@@ -35,6 +53,26 @@ class TestMf6PageContracts(unittest.TestCase):
             export_report_actions=[],
         )
         self.assertIn("filter_state_token", payload)
+        self.assertEqual(payload["data_completeness"], "PARTIAL")
+        self.assertIn("period_semantics", payload)
+        self.assertIn("chart_blocks", payload)
+        self.assertTrue(all(bool(c.get("animated")) for c in payload["chart_blocks"]))
+        self.assertEqual(payload["semantic_filter_contract"]["date_filters"]["period_compare"], "PREVIOUS_PERIOD")
+
+        refreshed = build_analytics_page_contract(
+            page_scope="OVERVIEW",
+            applied_filters={},
+            freshness_summary={"status": "REFRESHED"},
+            source_coverage_summary={"status": "REFRESHED"},
+            summary_cards=[],
+            detail_blocks=[],
+            anomaly_risk_markers=[],
+            recommendation_summary=[],
+            available_actions=[],
+            export_report_actions=[],
+        )
+        self.assertEqual(refreshed["data_completeness"], "FULL")
+
         with self.assertRaises(AnalyticsDomainError):
             build_analytics_page_contract(
                 page_scope="BAD",

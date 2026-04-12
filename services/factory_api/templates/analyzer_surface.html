@@ -1,0 +1,771 @@
+{% extends "base.html" %}
+{% block body %}
+<style>
+  .analyzer-tabs { display:flex; flex-wrap:wrap; gap:8px; margin: 10px 0 14px 0; }
+  .analyzer-tab { text-decoration:none; border:1px solid #d1d5db; border-radius:999px; padding:6px 10px; font-size:13px; color:#1f2937; }
+  .analyzer-tab.active { background:#111827; color:#fff; border-color:#111827; }
+  .analyzer-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:10px; margin: 10px 0 14px 0; }
+  .analyzer-card { border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .analyzer-card h3 { margin:0 0 6px 0; font-size:15px; }
+  .analyzer-card p { margin:0; color:#4b5563; font-size:13px; }
+  #analyzer-status { margin:8px 0 12px 0; }
+  #analyzer-data-view { border:1px solid #e5e7eb; border-radius:8px; padding:12px; background:#fff; }
+  #analyzer-data-view pre { margin:0; white-space:pre-wrap; word-break:break-word; }
+  .chart-layout { display:grid; grid-template-columns: 2fr 1fr; gap:12px; margin: 10px 0; }
+  .chart-card { border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .chart-card h3 { margin:0 0 8px 0; font-size:14px; }
+  .backfill-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .backfill-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+  .backfill-row input { width:90px; padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
+  .backfill-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  .backfill-row button:disabled { opacity:.6; cursor:not-allowed; }
+  #backfill-runtime { margin-top:8px; font-size:12px; color:#374151; }
+  .refresh-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .refresh-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+  .refresh-row select { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
+  .refresh-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  .refresh-row button:disabled { opacity:.6; cursor:not-allowed; }
+  #manual-refresh-runtime, #scheduled-refresh-runtime { margin-top:8px; font-size:12px; color:#374151; }
+  .date-period-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .date-period-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+  .date-period-row input, .date-period-row select { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
+  .date-period-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  .planning-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .planning-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+  .planning-row select, .planning-row input { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
+  .planning-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  #planning-status { margin-top:8px; }
+  #planning-output { margin-top:8px; border:1px solid #e5e7eb; border-radius:8px; padding:8px; background:#f9fafb; }
+  #planning-output table { width:100%; border-collapse:collapse; font-size:12px; margin-top:6px; }
+  #planning-output th, #planning-output td { border:1px solid #d1d5db; padding:4px 6px; text-align:left; }
+  .telegram-panel { margin: 10px 0 14px 0; border:1px solid #e5e7eb; border-radius:8px; padding:10px; background:#fff; }
+  .telegram-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+  .telegram-row input { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; min-width:170px; }
+  .telegram-row select { padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; }
+  .telegram-row button { border:1px solid #111827; background:#111827; color:#fff; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  #telegram-output { margin-top:8px; border:1px solid #e5e7eb; border-radius:8px; padding:8px; background:#f9fafb; }
+  #telegram-output ul { margin:6px 0 0 18px; }
+  .chart-meta { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+  .chart-chip { font-size:12px; border-radius:999px; padding:3px 8px; border:1px solid #d1d5db; background:#f9fafb; }
+  .chart-chip.up { border-color:#16a34a; color:#166534; background:#dcfce7; }
+  .chart-chip.down { border-color:#dc2626; color:#991b1b; background:#fee2e2; }
+  .chart-chip.flat { border-color:#6b7280; color:#374151; background:#f3f4f6; }
+  svg.chart-svg { width:100%; height:220px; display:block; }
+  .chart-axis { stroke:#d1d5db; stroke-width:1; }
+  .line-current { fill:none; stroke:#2563eb; stroke-width:3; }
+  .line-previous { fill:none; stroke:#9ca3af; stroke-width:2; stroke-dasharray:6 5; }
+  .line-baseline { fill:none; stroke:#10b981; stroke-width:2; stroke-dasharray:3 3; }
+  .line-point { fill:#2563eb; }
+  .line-point.anomaly { fill:#dc2626; }
+  .bar-track { fill:#f3f4f6; }
+  .bar-current { fill:#2563eb; }
+  .bar-previous { fill:#94a3b8; }
+  .bar-baseline { fill:#10b981; }
+  .bar-label { font-size:11px; fill:#374151; }
+  @media (max-width: 980px) { .chart-layout { grid-template-columns: 1fr; } }
+</style>
+
+<h1>Analyzer · Surface Family</h1>
+<p class="muted">
+  Real user-facing entry for the YouTube Performance Metrics Analyzer. This surface family is profile-compatible and does not auto-apply actions.
+</p>
+
+<nav class="analyzer-tabs" aria-label="Analyzer surface family navigation">
+  {% for item in surface_items %}
+    <a class="analyzer-tab{% if item.ui_path.endswith('/' ~ active_surface) %} active{% endif %}" href="{{ item.ui_path }}" data-analyzer-nav="{{ item.key }}">{{ item.label }}</a>
+  {% endfor %}
+</nav>
+
+<div class="analyzer-grid" id="analyzer-surface-family-cards">
+  <section class="analyzer-card">
+    <h3>One analyzer + many profiles</h3>
+    <p>Profile-aware operation is preserved. Surface rendering is read-first and does not mutate analyzer outcomes.</p>
+  </section>
+  <section class="analyzer-card">
+    <h3>Default non-auto-apply behavior</h3>
+    <p>This UI entry does not auto-apply recommendations or planning actions.</p>
+  </section>
+  <section class="analyzer-card">
+    <h3>Surface selected</h3>
+    <p><strong id="analyzer-selected-surface">{{ active_surface }}</strong> · Source: <code id="analyzer-active-api">{{ active_api_path }}</code></p>
+  </section>
+</div>
+
+<section class="backfill-panel" id="analyzer-backfill-panel">
+  <h3>Historical backfill (operator action)</h3>
+  <p class="muted">Creates an explicit INITIAL_BACKFILL sync run with historical-truth preserved. No auto-apply behavior.</p>
+  <div class="backfill-row">
+    <label for="backfill-days">Backfill days</label>
+    <input id="backfill-days" type="number" min="1" max="365" value="30" />
+    <button id="backfill-trigger" type="button">Run backfill</button>
+    <span id="backfill-status" class="muted">Idle</span>
+  </div>
+  <div class="muted" id="backfill-context">Context: resolving from selected analyzer scope…</div>
+  <div id="backfill-runtime" data-backfill-contract>Awaiting operator trigger.</div>
+</section>
+
+<section class="refresh-panel" id="analyzer-refresh-panel">
+  <h3>Metric refresh controls (operator action)</h3>
+  <p class="muted">Manual and scheduled refresh are explicit operator actions and remain non-auto-apply.</p>
+  <div class="refresh-row">
+    <button id="manual-refresh-trigger" type="button">Run manual refresh</button>
+    <span id="manual-refresh-status" class="muted">Idle</span>
+  </div>
+  <div id="manual-refresh-runtime" data-manual-refresh-contract>Awaiting operator trigger.</div>
+  <div class="refresh-row">
+    <label for="scheduled-refresh-selector">Scheduled refresh</label>
+    <select id="scheduled-refresh-selector">
+      <option value="HOURLY">HOURLY</option>
+      <option value="EVERY_12_HOURS">EVERY_12_HOURS</option>
+      <option value="DAILY">DAILY</option>
+    </select>
+    <button id="scheduled-refresh-trigger" type="button">Apply scheduled refresh</button>
+    <span id="scheduled-refresh-status" class="muted">Idle</span>
+  </div>
+  <div id="scheduled-refresh-runtime" data-scheduled-refresh-contract>Awaiting operator trigger.</div>
+</section>
+
+<section class="date-period-panel" id="analyzer-date-period-panel">
+  <h3>Date range + period comparison</h3>
+  <p class="muted">User-facing analyzer filters. Changes are applied only when you click Apply (default non-auto-apply).</p>
+  <div class="date-period-row">
+    <label for="analyzer-date-from">From</label>
+    <input id="analyzer-date-from" type="date" />
+    <label for="analyzer-date-to">To</label>
+    <input id="analyzer-date-to" type="date" />
+    <label for="analyzer-period-compare">Compare</label>
+    <select id="analyzer-period-compare">
+      <option value="PREVIOUS_PERIOD">PREVIOUS_PERIOD</option>
+      <option value="PREVIOUS_YEAR">PREVIOUS_YEAR</option>
+      <option value="NONE">NONE</option>
+    </select>
+    <button id="analyzer-date-period-apply" type="button">Apply date/period filters</button>
+    <button id="analyzer-date-period-clear" type="button">Clear date filters</button>
+  </div>
+</section>
+
+<p id="analyzer-status" class="muted">Loading analyzer surface data…</p>
+<section class="chart-layout" id="analyzer-chart-layout">
+  <article class="chart-card">
+    <h3>Trend (Current / Previous / Baseline)</h3>
+    <div class="chart-meta" id="analyzer-semantic-chips"></div>
+    <svg id="analyzer-line-chart" class="chart-svg" viewBox="0 0 640 220" role="img" aria-label="Analyzer trend chart"></svg>
+  </article>
+  <article class="chart-card">
+    <h3>Period Comparison</h3>
+    <svg id="analyzer-bar-chart" class="chart-svg" viewBox="0 0 340 220" role="img" aria-label="Analyzer period comparison chart"></svg>
+  </article>
+</section>
+<section id="analyzer-data-view" aria-live="polite">
+  <pre id="analyzer-data-json">{}</pre>
+</section>
+<section class="planning-panel" id="analyzer-planning-panel">
+  <h3>Planning assistant (Week / Month / Quarter)</h3>
+  <p class="muted">User-facing planning flow. Outputs are review-first with linked actions and no auto-apply defaults.</p>
+  <div class="planning-row">
+    <label for="planning-scenario">Scenario</label>
+    <select id="planning-scenario">
+      <option value="WEEK">Week</option>
+      <option value="MONTH">Month</option>
+      <option value="QUARTER">Quarter</option>
+    </select>
+    <label for="planning-windows">Publish windows</label>
+    <input id="planning-windows" type="text" value="weekday_evening,weekend_morning" />
+    <button id="planning-generate" type="button">Generate plan</button>
+    <span id="planning-status" class="muted">Idle</span>
+  </div>
+  <div class="muted" id="planning-context">Context: resolving from selected analyzer scope…</div>
+  <div id="planning-output" data-planning-surface>Awaiting planning request.</div>
+</section>
+<section class="telegram-panel" id="analyzer-telegram-panel">
+  <h3>Telegram analyzer operator surface</h3>
+  <p class="muted">Generate operator-ready summaries, alerts, snapshots, planning and recommendation digests with deep-links.</p>
+  <div class="telegram-row">
+    <label for="telegram-channel">Channel slug</label>
+    <input id="telegram-channel" type="text" value="darkwood-reverie" />
+    <label for="telegram-release">Release/video ref</label>
+    <input id="telegram-release" type="text" value="latest" />
+    <label for="telegram-delivery-mode">Delivery</label>
+    <select id="telegram-delivery-mode">
+      <option value="DRY_RUN">Dry run</option>
+      <option value="LIVE">Live send</option>
+    </select>
+    <button id="telegram-generate" type="button">Generate Telegram surface</button>
+    <span id="telegram-status" class="muted">Idle</span>
+  </div>
+  <div id="telegram-output" data-telegram-surface>Awaiting Telegram surface request.</div>
+</section>
+
+<script>
+  (function () {
+    const activeApiPath = {{ active_api_path | tojson }};
+    const statusEl = document.getElementById('analyzer-status');
+    const dataEl = document.getElementById('analyzer-data-json');
+    const lineChartEl = document.getElementById('analyzer-line-chart');
+    const barChartEl = document.getElementById('analyzer-bar-chart');
+    const chipsEl = document.getElementById('analyzer-semantic-chips');
+    const backfillDaysEl = document.getElementById('backfill-days');
+    const backfillTriggerEl = document.getElementById('backfill-trigger');
+    const backfillStatusEl = document.getElementById('backfill-status');
+    const backfillContextEl = document.getElementById('backfill-context');
+    const backfillRuntimeEl = document.getElementById('backfill-runtime');
+    const manualRefreshTriggerEl = document.getElementById('manual-refresh-trigger');
+    const manualRefreshStatusEl = document.getElementById('manual-refresh-status');
+    const manualRefreshRuntimeEl = document.getElementById('manual-refresh-runtime');
+    const scheduledRefreshSelectorEl = document.getElementById('scheduled-refresh-selector');
+    const scheduledRefreshTriggerEl = document.getElementById('scheduled-refresh-trigger');
+    const scheduledRefreshStatusEl = document.getElementById('scheduled-refresh-status');
+    const scheduledRefreshRuntimeEl = document.getElementById('scheduled-refresh-runtime');
+    const dateFromEl = document.getElementById('analyzer-date-from');
+    const dateToEl = document.getElementById('analyzer-date-to');
+    const periodCompareEl = document.getElementById('analyzer-period-compare');
+    const datePeriodApplyEl = document.getElementById('analyzer-date-period-apply');
+    const datePeriodClearEl = document.getElementById('analyzer-date-period-clear');
+    const planningScenarioEl = document.getElementById('planning-scenario');
+    const planningWindowsEl = document.getElementById('planning-windows');
+    const planningGenerateEl = document.getElementById('planning-generate');
+    const planningStatusEl = document.getElementById('planning-status');
+    const planningContextEl = document.getElementById('planning-context');
+    const planningOutputEl = document.getElementById('planning-output');
+    const telegramChannelEl = document.getElementById('telegram-channel');
+    const telegramReleaseEl = document.getElementById('telegram-release');
+    const telegramDeliveryModeEl = document.getElementById('telegram-delivery-mode');
+    const telegramGenerateEl = document.getElementById('telegram-generate');
+    const telegramStatusEl = document.getElementById('telegram-status');
+    const telegramOutputEl = document.getElementById('telegram-output');
+
+    function extractNumericValues(obj) {
+      if (!obj || typeof obj !== 'object') return [];
+      const vals = [];
+      for (const v of Object.values(obj)) {
+        const n = Number(v);
+        if (Number.isFinite(n)) vals.push(n);
+      }
+      return vals;
+    }
+
+    function average(values) {
+      if (!values.length) return 0;
+      return values.reduce((a, b) => a + b, 0) / values.length;
+    }
+
+    function buildChartModel(payload) {
+      const semantics = payload && payload.period_semantics && typeof payload.period_semantics === 'object' ? payload.period_semantics : {};
+      const currentVals = extractNumericValues(semantics.current_period);
+      const previousVals = extractNumericValues(semantics.previous_period);
+      const baselineVals = extractNumericValues(semantics.baseline_comparison);
+
+      const fallback = Array.isArray(payload && payload.summary_cards) ? payload.summary_cards.map((card) => Number(card && card.value)).filter(Number.isFinite) : [];
+      const seed = (currentVals.length ? currentVals : fallback).slice(0, 8);
+      const currentSeries = seed.length ? seed : [0, 0, 0, 0, 0, 0];
+      const previousSeries = previousVals.length ? previousVals.slice(0, currentSeries.length) : currentSeries.map((v) => v * 0.93);
+      const baselineSeries = baselineVals.length ? baselineVals.slice(0, currentSeries.length) : currentSeries.map((v) => v * 0.88);
+
+      const anomaliesCount = Math.max(
+        Array.isArray(payload && payload.anomaly_risk_markers) ? payload.anomaly_risk_markers.length : 0,
+        Array.isArray(semantics.anomalies) ? semantics.anomalies.length : Number(semantics.anomalies || 0) || 0
+      );
+      const growthCount = Math.max(
+        Array.isArray(payload && payload.recommendation_summary) ? payload.recommendation_summary.length : 0,
+        Array.isArray(semantics.growth_opportunities) ? semantics.growth_opportunities.length : Number(semantics.growth_opportunities || 0) || 0
+      );
+      const trendRaw = String(semantics.trend_direction || '').toUpperCase();
+      const trendDirection = trendRaw || (average(currentSeries) >= average(previousSeries) ? 'UP' : 'DOWN');
+      return { currentSeries, previousSeries, baselineSeries, anomaliesCount, growthCount, trendDirection };
+    }
+
+    function svgNode(tag, attrs) {
+      const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      Object.entries(attrs || {}).forEach(([k, v]) => node.setAttribute(k, String(v)));
+      return node;
+    }
+
+    function seriesToPoints(series, width, height, maxVal) {
+      return series.map((v, idx) => {
+        const x = 40 + (idx * (width - 70)) / Math.max(series.length - 1, 1);
+        const y = height - 24 - (Math.max(0, Number(v)) / Math.max(maxVal, 1)) * (height - 50);
+        return [x, y];
+      });
+    }
+
+    function pointsToPath(points) {
+      return points.map((p, idx) => `${idx === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ');
+    }
+
+    function animateLinePath(pathEl, durationMs) {
+      const length = pathEl.getTotalLength();
+      pathEl.style.strokeDasharray = `${length}`;
+      pathEl.style.strokeDashoffset = `${length}`;
+      pathEl.getBoundingClientRect();
+      pathEl.style.transition = `stroke-dashoffset ${durationMs}ms ease-out`;
+      pathEl.style.strokeDashoffset = '0';
+    }
+
+    function renderLineChart(model) {
+      lineChartEl.innerHTML = '';
+      const width = 640;
+      const height = 220;
+      const maxVal = Math.max(...model.currentSeries, ...model.previousSeries, ...model.baselineSeries, 1);
+
+      lineChartEl.appendChild(svgNode('line', { x1: 40, y1: height - 24, x2: width - 20, y2: height - 24, class: 'chart-axis' }));
+      lineChartEl.appendChild(svgNode('line', { x1: 40, y1: 16, x2: 40, y2: height - 24, class: 'chart-axis' }));
+
+      const currentPts = seriesToPoints(model.currentSeries, width, height, maxVal);
+      const previousPts = seriesToPoints(model.previousSeries, width, height, maxVal);
+      const baselinePts = seriesToPoints(model.baselineSeries, width, height, maxVal);
+
+      const prevPath = svgNode('path', { d: pointsToPath(previousPts), class: 'line-previous' });
+      const basePath = svgNode('path', { d: pointsToPath(baselinePts), class: 'line-baseline' });
+      const currPath = svgNode('path', { d: pointsToPath(currentPts), class: 'line-current' });
+      lineChartEl.appendChild(prevPath);
+      lineChartEl.appendChild(basePath);
+      lineChartEl.appendChild(currPath);
+      animateLinePath(prevPath, 700);
+      animateLinePath(basePath, 700);
+      animateLinePath(currPath, 900);
+
+      const anomalyCutoff = Math.max(1, model.currentSeries.length - Math.min(model.anomaliesCount, model.currentSeries.length));
+      currentPts.forEach((pt, idx) => {
+        lineChartEl.appendChild(
+          svgNode('circle', {
+            cx: pt[0],
+            cy: pt[1],
+            r: 4,
+            class: idx >= anomalyCutoff ? 'line-point anomaly' : 'line-point',
+          })
+        );
+      });
+    }
+
+    function animateBars(rects, targetHeights) {
+      const start = performance.now();
+      const duration = 800;
+      function frame(now) {
+        const t = Math.min(1, (now - start) / duration);
+        rects.forEach((rect, idx) => {
+          const h = targetHeights[idx] * t;
+          const y = 190 - h;
+          rect.setAttribute('height', `${h}`);
+          rect.setAttribute('y', `${y}`);
+        });
+        if (t < 1) requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    }
+
+    function renderBarChart(model) {
+      barChartEl.innerHTML = '';
+      const values = [average(model.currentSeries), average(model.previousSeries), average(model.baselineSeries)];
+      const labels = ['Current', 'Previous', 'Baseline'];
+      const classes = ['bar-current', 'bar-previous', 'bar-baseline'];
+      const maxVal = Math.max(...values, 1);
+      const rects = [];
+      const heights = [];
+      values.forEach((value, idx) => {
+        const x = 50 + idx * 90;
+        const track = svgNode('rect', { x, y: 40, width: 46, height: 150, class: 'bar-track', rx: 4 });
+        const barHeight = (Math.max(0, value) / maxVal) * 150;
+        const bar = svgNode('rect', { x, y: 190, width: 46, height: 0, class: classes[idx], rx: 4 });
+        const label = svgNode('text', { x: x + 23, y: 208, class: 'bar-label', 'text-anchor': 'middle' });
+        label.textContent = labels[idx];
+        barChartEl.appendChild(track);
+        barChartEl.appendChild(bar);
+        barChartEl.appendChild(label);
+        rects.push(bar);
+        heights.push(barHeight);
+      });
+      animateBars(rects, heights);
+    }
+
+    function renderSemanticChips(model) {
+      chipsEl.innerHTML = '';
+      const trendClass = model.trendDirection.includes('UP') ? 'up' : (model.trendDirection.includes('DOWN') ? 'down' : 'flat');
+      const chips = [
+        { label: `Trend: ${model.trendDirection}`, cls: trendClass },
+        { label: `Anomalies: ${model.anomaliesCount}`, cls: model.anomaliesCount > 0 ? 'down' : 'flat' },
+        { label: `Growth opportunities: ${model.growthCount}`, cls: model.growthCount > 0 ? 'up' : 'flat' },
+      ];
+      chips.forEach((chip) => {
+        const span = document.createElement('span');
+        span.className = `chart-chip ${chip.cls}`;
+        span.textContent = chip.label;
+        chipsEl.appendChild(span);
+      });
+    }
+
+    function toSummary(data) {
+      if (!data || typeof data !== 'object') return 'No data payload available.';
+      const scope = String(data.page_scope || data.scope || 'unknown');
+      const freshness = data.freshness_summary && data.freshness_summary.status ? String(data.freshness_summary.status) : 'unknown';
+      const completeness = String(data.data_completeness || 'unknown');
+      return `Surface loaded · scope=${scope} · freshness=${freshness} · completeness=${completeness}`;
+    }
+
+    function resolveBackfillContext(payload) {
+      const url = new URL(window.location.href);
+      const qScopeType = String(url.searchParams.get('target_scope_type') || '').trim().toUpperCase();
+      const qScopeRef = String(url.searchParams.get('target_scope_ref') || '').trim();
+      if (qScopeType && qScopeRef) {
+        return { target_scope_type: qScopeType, target_scope_ref: qScopeRef, source: 'query' };
+      }
+      const filters = payload && payload.applied_filters && typeof payload.applied_filters === 'object' ? payload.applied_filters : {};
+      if (filters.channel) return { target_scope_type: 'CHANNEL', target_scope_ref: String(filters.channel), source: 'surface' };
+      if (filters.release_video) return { target_scope_type: 'RELEASE', target_scope_ref: String(filters.release_video), source: 'surface' };
+      if (filters.batch_month) return { target_scope_type: 'BATCH_MONTH', target_scope_ref: String(filters.batch_month), source: 'surface' };
+      if (filters.portfolio_project) return { target_scope_type: 'PORTFOLIO', target_scope_ref: String(filters.portfolio_project), source: 'surface' };
+      return null;
+    }
+
+    function setBackfillContext(context) {
+      if (!context || !context.target_scope_type || !context.target_scope_ref) {
+        backfillTriggerEl.disabled = true;
+        manualRefreshTriggerEl.disabled = true;
+        scheduledRefreshSelectorEl.disabled = true;
+        scheduledRefreshTriggerEl.disabled = true;
+        planningGenerateEl.disabled = true;
+        backfillContextEl.textContent = 'Context: not bound. Select an analyzer scope (channel/release/batch/portfolio) to enable backfill.';
+        planningContextEl.textContent = 'Context: not bound. Select an analyzer scope (channel/release/batch/portfolio) to enable planning.';
+        manualRefreshStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        scheduledRefreshStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        planningStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        return;
+      }
+      backfillTriggerEl.disabled = false;
+      manualRefreshTriggerEl.disabled = false;
+      scheduledRefreshSelectorEl.disabled = false;
+      scheduledRefreshTriggerEl.disabled = false;
+      planningGenerateEl.disabled = false;
+      backfillContextEl.textContent = `Context: ${context.target_scope_type}:${context.target_scope_ref} (${context.source})`;
+      planningContextEl.textContent = `Context: ${context.target_scope_type}:${context.target_scope_ref} (${context.source})`;
+      if (manualRefreshStatusEl.textContent.startsWith('Blocked')) {
+        manualRefreshStatusEl.textContent = 'Idle';
+      }
+      if (scheduledRefreshStatusEl.textContent.startsWith('Blocked')) {
+        scheduledRefreshStatusEl.textContent = 'Idle';
+      }
+      if (planningStatusEl.textContent.startsWith('Blocked')) {
+        planningStatusEl.textContent = 'Idle';
+      }
+    }
+
+    let currentBackfillContext = resolveBackfillContext(null);
+    setBackfillContext(currentBackfillContext);
+
+    function readDatePeriodFilters() {
+      const dateFrom = String(dateFromEl.value || '').trim();
+      const dateTo = String(dateToEl.value || '').trim();
+      const periodCompare = String(periodCompareEl.value || 'PREVIOUS_PERIOD').trim() || 'PREVIOUS_PERIOD';
+      return { date_from: dateFrom, date_to: dateTo, period_compare: periodCompare };
+    }
+
+    function buildSurfaceUrlWithDatePeriodFilters() {
+      const url = new URL(activeApiPath, window.location.origin);
+      const filters = readDatePeriodFilters();
+      if (filters.date_from) url.searchParams.set('date_from', filters.date_from);
+      if (filters.date_to) url.searchParams.set('date_to', filters.date_to);
+      if (filters.period_compare) url.searchParams.set('period_compare', filters.period_compare);
+      return url.toString();
+    }
+
+    function hydrateDatePeriodControlsFromLocation() {
+      const url = new URL(window.location.href);
+      dateFromEl.value = String(url.searchParams.get('date_from') || '').trim();
+      dateToEl.value = String(url.searchParams.get('date_to') || '').trim();
+      const compare = String(url.searchParams.get('period_compare') || 'PREVIOUS_PERIOD').trim().toUpperCase();
+      periodCompareEl.value = compare || 'PREVIOUS_PERIOD';
+      if (periodCompareEl.value !== compare) {
+        periodCompareEl.value = 'PREVIOUS_PERIOD';
+      }
+    }
+
+    function persistDatePeriodQueryParams() {
+      const url = new URL(window.location.href);
+      const filters = readDatePeriodFilters();
+      if (filters.date_from) url.searchParams.set('date_from', filters.date_from);
+      else url.searchParams.delete('date_from');
+      if (filters.date_to) url.searchParams.set('date_to', filters.date_to);
+      else url.searchParams.delete('date_to');
+      if (filters.period_compare) url.searchParams.set('period_compare', filters.period_compare);
+      window.history.replaceState({}, '', url.toString());
+    }
+
+    hydrateDatePeriodControlsFromLocation();
+
+    async function loadSurface() {
+      try {
+        const surfaceUrl = buildSurfaceUrlWithDatePeriodFilters();
+        const resp = await fetch(surfaceUrl, { headers: { 'Accept': 'application/json' } });
+        const text = await resp.text();
+        let payload;
+        try {
+          payload = JSON.parse(text);
+        } catch (_) {
+          payload = { raw: text };
+        }
+        if (!resp.ok) {
+          statusEl.textContent = `Analyzer surface unavailable (${resp.status}).`;
+          dataEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        const model = buildChartModel(payload);
+        renderLineChart(model);
+        renderBarChart(model);
+        renderSemanticChips(model);
+        currentBackfillContext = resolveBackfillContext(payload);
+        setBackfillContext(currentBackfillContext);
+        statusEl.textContent = toSummary(payload);
+        dataEl.textContent = JSON.stringify(payload, null, 2);
+      } catch (err) {
+        statusEl.textContent = `Analyzer surface unavailable (network/runtime error).`;
+        dataEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      }
+    }
+
+    async function triggerBackfill() {
+      if (!currentBackfillContext) {
+        backfillStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        return;
+      }
+      const days = Number(backfillDaysEl.value || 30);
+      backfillTriggerEl.disabled = true;
+      backfillStatusEl.textContent = 'Submitting…';
+      try {
+        const resp = await fetch('/v1/analytics/external/backfill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            target_scope_type: currentBackfillContext.target_scope_type,
+            target_scope_ref: currentBackfillContext.target_scope_ref,
+            backfill_days: days,
+          }),
+        });
+        const payload = await resp.json();
+        if (!resp.ok) {
+          backfillStatusEl.textContent = `Failed (${resp.status})`;
+          backfillRuntimeEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        backfillStatusEl.textContent = `Submitted run #${payload.run_id}`;
+        backfillRuntimeEl.textContent = JSON.stringify(payload.historical_backfill_contract || payload, null, 2);
+      } catch (err) {
+        backfillStatusEl.textContent = 'Failed (network/runtime error)';
+        backfillRuntimeEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      } finally {
+        backfillTriggerEl.disabled = false;
+      }
+    }
+
+    async function triggerManualRefresh() {
+      if (!currentBackfillContext) {
+        manualRefreshStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        return;
+      }
+      manualRefreshTriggerEl.disabled = true;
+      manualRefreshStatusEl.textContent = 'Submitting…';
+      try {
+        const resp = await fetch('/v1/analytics/external/manual-refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            target_scope_type: currentBackfillContext.target_scope_type,
+            target_scope_ref: currentBackfillContext.target_scope_ref,
+            refresh_mode: 'MANUAL_REFRESH',
+            force: true,
+          }),
+        });
+        const payload = await resp.json();
+        if (!resp.ok) {
+          manualRefreshStatusEl.textContent = `Failed (${resp.status})`;
+          manualRefreshRuntimeEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        manualRefreshStatusEl.textContent = `Submitted run #${payload.run_id}`;
+        manualRefreshRuntimeEl.textContent = JSON.stringify(payload.manual_refresh_contract || payload, null, 2);
+      } catch (err) {
+        manualRefreshStatusEl.textContent = 'Failed (network/runtime error)';
+        manualRefreshRuntimeEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      } finally {
+        manualRefreshTriggerEl.disabled = false;
+      }
+    }
+
+    async function triggerScheduledRefresh() {
+      if (!currentBackfillContext) {
+        scheduledRefreshStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        return;
+      }
+      const refreshSelector = String(scheduledRefreshSelectorEl.value || '').trim();
+      scheduledRefreshTriggerEl.disabled = true;
+      scheduledRefreshSelectorEl.disabled = true;
+      scheduledRefreshStatusEl.textContent = 'Submitting…';
+      try {
+        const resp = await fetch('/v1/analytics/external/scheduled-refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            target_scope_type: currentBackfillContext.target_scope_type,
+            target_scope_ref: currentBackfillContext.target_scope_ref,
+            refresh_selector: refreshSelector,
+          }),
+        });
+        const payload = await resp.json();
+        if (!resp.ok) {
+          scheduledRefreshStatusEl.textContent = `Failed (${resp.status})`;
+          scheduledRefreshRuntimeEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        scheduledRefreshStatusEl.textContent = `Submitted run #${payload.run_id} (${payload.refresh_selector})`;
+        scheduledRefreshRuntimeEl.textContent = JSON.stringify(payload.scheduled_refresh_contract || payload, null, 2);
+      } catch (err) {
+        scheduledRefreshStatusEl.textContent = 'Failed (network/runtime error)';
+        scheduledRefreshRuntimeEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      } finally {
+        scheduledRefreshTriggerEl.disabled = false;
+        scheduledRefreshSelectorEl.disabled = false;
+      }
+    }
+
+    function renderPlanningOutput(payload) {
+      const outputs = (payload && payload.outputs) || {};
+      const schedule = Array.isArray(outputs.recommended_release_schedule) ? outputs.recommended_release_schedule : [];
+      const linked = Array.isArray(outputs.linked_actions) ? outputs.linked_actions : [];
+      const rows = schedule
+        .slice(0, 12)
+        .map((item) => `<tr><td>${item.slot}</td><td>${item.window || ''}</td><td>${item.priority || ''}</td><td>${item.focus || ''}</td></tr>`)
+        .join('');
+      const linkedRows = linked
+        .map((item) => `<li>${item.target_domain}: ${item.action} (<code>${item.path}</code>) auto_apply=${String(item.auto_apply)} mutation=${String(item.mutation)}</li>`)
+        .join('');
+      planningOutputEl.innerHTML = `
+        <div><strong>Scenario:</strong> ${payload.scenario || 'unknown'} · <strong>Horizon:</strong> ${outputs.planning_horizon_days || '-'} days</div>
+        <div><strong>Narrative:</strong> ${outputs.expected_outcome_risk_narrative || 'n/a'}</div>
+        <table>
+          <thead><tr><th>Slot</th><th>Window</th><th>Priority</th><th>Focus</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="4">No schedule rows</td></tr>'}</tbody>
+        </table>
+        <div style="margin-top:8px;"><strong>Linked actions</strong><ul>${linkedRows || '<li>None</li>'}</ul></div>
+      `;
+    }
+
+    async function generatePlanning() {
+      if (!currentBackfillContext) {
+        planningStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        return;
+      }
+      const scenario = planningScenarioEl.value;
+      const windows = String(planningWindowsEl.value || '')
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+      planningGenerateEl.disabled = true;
+      planningStatusEl.textContent = 'Generating…';
+      try {
+        const resp = await fetch('/v1/analytics/planning-assistant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            scenario,
+            scope_type: currentBackfillContext.target_scope_type,
+            scope_ref: currentBackfillContext.target_scope_ref,
+            channel_strategy_profile: 'LONG_FORM_BACKGROUND_MUSIC',
+            format_profile: 'LONG_FORM',
+            publish_windows: windows,
+            risk_signals: [{ signal: 'cadence_drop_risk' }],
+          }),
+        });
+        const payload = await resp.json();
+        if (!resp.ok) {
+          planningStatusEl.textContent = `Failed (${resp.status})`;
+          planningOutputEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        planningStatusEl.textContent = `Plan ready (${scenario})`;
+        renderPlanningOutput(payload);
+      } catch (err) {
+        planningStatusEl.textContent = 'Failed (network/runtime error)';
+        planningOutputEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      } finally {
+        planningGenerateEl.disabled = false;
+      }
+    }
+
+    function renderTelegramSurface(payload) {
+      const summaries = payload.summaries || {};
+      const alerts = Array.isArray(payload.alerts) ? payload.alerts : [];
+      const channelSnapshots = Array.isArray(payload.channel_snapshots) ? payload.channel_snapshots : [];
+      const releaseSnapshots = Array.isArray(payload.release_video_snapshots) ? payload.release_video_snapshots : [];
+      const recs = Array.isArray(payload.recommendation_summaries) ? payload.recommendation_summaries : [];
+      const plans = Array.isArray(payload.planning_summaries) ? payload.planning_summaries : [];
+      const links = Array.isArray(payload.linked_actions) ? payload.linked_actions : [];
+      telegramOutputEl.innerHTML = `
+        <div><strong>Overview:</strong> ${summaries.overview || 'n/a'}</div>
+        <div><strong>Alerts:</strong> ${alerts.length} · <strong>Recommendations:</strong> ${recs.length} · <strong>Planning summaries:</strong> ${plans.length}</div>
+        <div><strong>Channel snapshots:</strong> ${channelSnapshots.map((x) => `<code>${x.deep_link}</code>`).join(', ') || 'none'}</div>
+        <div><strong>Release snapshots:</strong> ${releaseSnapshots.map((x) => `<code>${x.deep_link}</code>`).join(', ') || 'none'}</div>
+        <div style="margin-top:8px;"><strong>Linked actions / deep-links</strong>
+          <ul>${links.map((x) => `<li>${x.label}: <code>${x.deep_link || x.path || ''}</code> auto_apply=${String(x.auto_apply)} mutation=${String(x.mutation)}</li>`).join('')}</ul>
+        </div>
+      `;
+    }
+
+    async function generateTelegramSurface() {
+      const channelSlug = String(telegramChannelEl.value || '').trim() || 'all';
+      const releaseRef = String(telegramReleaseEl.value || '').trim() || 'latest';
+      const dryRun = telegramDeliveryModeEl.value !== 'LIVE';
+      telegramGenerateEl.disabled = true;
+      telegramStatusEl.textContent = 'Generating…';
+      try {
+        const resp = await fetch('/v1/analytics/telegram/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({
+            channel_slug: channelSlug,
+            release_id: releaseRef,
+            dry_run: dryRun,
+            recommendation_items: [
+              {
+                recommendation_family: 'ANOMALY_RISK_ALERT',
+                severity_class: 'CRITICAL',
+                title_text: 'Risk snapshot',
+                summary_text: 'Engagement drop risk detected',
+              },
+            ],
+            planning_summary: { scenario: 'WEEK', status: 'READY' },
+          }),
+        });
+        const payload = await resp.json();
+        if (!resp.ok) {
+          telegramStatusEl.textContent = `Failed (${resp.status})`;
+          telegramOutputEl.textContent = JSON.stringify(payload, null, 2);
+          return;
+        }
+        telegramStatusEl.textContent = dryRun ? 'Telegram dry-run preview ready' : 'Telegram live dispatch completed';
+        renderTelegramSurface(payload.surface || {});
+      } catch (err) {
+        telegramStatusEl.textContent = 'Failed (network/runtime error)';
+        telegramOutputEl.textContent = JSON.stringify({ error: String(err || 'unknown error') }, null, 2);
+      } finally {
+        telegramGenerateEl.disabled = false;
+      }
+    }
+
+    backfillTriggerEl.addEventListener('click', triggerBackfill);
+    manualRefreshTriggerEl.addEventListener('click', triggerManualRefresh);
+    scheduledRefreshTriggerEl.addEventListener('click', triggerScheduledRefresh);
+    datePeriodApplyEl.addEventListener('click', function () {
+      persistDatePeriodQueryParams();
+      loadSurface();
+    });
+    datePeriodClearEl.addEventListener('click', function () {
+      dateFromEl.value = '';
+      dateToEl.value = '';
+      periodCompareEl.value = 'PREVIOUS_PERIOD';
+      persistDatePeriodQueryParams();
+      loadSurface();
+    });
+    planningGenerateEl.addEventListener('click', generatePlanning);
+    telegramGenerateEl.addEventListener('click', generateTelegramSurface);
+    loadSurface();
+  })();
+</script>
+{% endblock %}
