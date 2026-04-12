@@ -5,6 +5,8 @@ import unittest
 
 from fastapi.testclient import TestClient
 
+from services.analytics_center.mf4_runtime import recompute_mf4
+from services.analytics_center.recommendation_core import persist_recommendation_snapshot, synthesize_recommendations
 from services.common import db as dbm
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 from tests.analytics_ui_fixtures import seed_mf6_page_data
@@ -154,6 +156,73 @@ class TestMf6AnalyticsPagesIntegration(unittest.TestCase):
             body = r.json()
             self.assertEqual(body["error"]["code"], "E5A_INVALID_ANALYTICS_FILTER_COMBINATION")
             self.assertIn("source_family", body["error"]["message"])
+
+    def test_date_range_and_period_compare_affect_real_data_loading_for_required_surfaces(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            conn = dbm.connect(env)
+            try:
+                seeded = seed_mf6_page_data(conn)
+                scope_ref = "GLOBAL_PORTFOLIO"
+                from tests.prediction_fixtures import seed_mf4_mixed_input_snapshots, seed_mf4_operational_kpi_snapshot
+
+                seed_mf4_mixed_input_snapshots(conn, scope_type="PORTFOLIO", scope_ref=scope_ref)
+                seed_mf4_operational_kpi_snapshot(conn, scope_type="PORTFOLIO", scope_ref=scope_ref)
+                recompute_mf4(conn, run_kind="FULL_STACK_RECOMPUTE", target_scope_type="PORTFOLIO", target_scope_ref=scope_ref, recompute_mode="FULL_RECOMPUTE")
+                for rec in synthesize_recommendations(conn, scope_type="PORTFOLIO", scope_ref=scope_ref)[:2]:
+                    persist_recommendation_snapshot(conn, recommendation=rec)
+
+                now = dbm.now_ts()
+                old = now - (2 * 86400.0)
+                conn.execute("UPDATE analytics_comparison_snapshots SET created_at = ? WHERE is_current = 1", (old,))
+                conn.execute("UPDATE analytics_recommendation_snapshots SET created_at = ? WHERE is_current = 1", (old,))
+                conn.execute("UPDATE analytics_prediction_snapshots SET created_at = ? WHERE is_current = 1", (old,))
+                conn.execute("UPDATE analytics_operational_kpi_snapshots SET created_at = ? WHERE is_current = 1", (old,))
+            finally:
+                conn.close()
+
+            overview_current = client.get("/v1/analytics/overview", params={"date_from": "2026-04-11", "date_to": "2026-04-12"}, headers=h).json()
+            overview_previous = client.get("/v1/analytics/overview", params={"date_from": "2026-04-11", "date_to": "2026-04-12", "period_compare": "PREVIOUS_PERIOD"}, headers=h).json()
+            self.assertEqual(overview_current["summary_cards"][1]["value"], 0)
+            self.assertGreaterEqual(overview_previous["summary_cards"][1]["value"], 1)
+
+            channel_current = client.get(f"/v1/analytics/channels/{seeded['channel_slug']}", params={"date_from": "2026-04-11", "date_to": "2026-04-12"}, headers=h).json()
+            channel_previous = client.get(
+                f"/v1/analytics/channels/{seeded['channel_slug']}",
+                params={"date_from": "2026-04-11", "date_to": "2026-04-12", "period_compare": "PREVIOUS_PERIOD"},
+                headers=h,
+            ).json()
+            self.assertEqual(channel_current["summary_cards"][0]["value"], 0)
+            self.assertGreaterEqual(channel_previous["summary_cards"][0]["value"], 1)
+
+            release_current = client.get(f"/v1/analytics/releases/{seeded['release_id']}", params={"date_from": "2026-04-11", "date_to": "2026-04-12"}, headers=h).json()
+            release_previous = client.get(
+                f"/v1/analytics/releases/{seeded['release_id']}",
+                params={"date_from": "2026-04-11", "date_to": "2026-04-12", "period_compare": "PREVIOUS_PERIOD"},
+                headers=h,
+            ).json()
+            self.assertEqual(release_current["summary_cards"][0]["value"], 0)
+            self.assertGreaterEqual(release_previous["summary_cards"][0]["value"], 1)
+
+            batch_current = client.get(f"/v1/analytics/batches/{seeded['batch_month']}", params={"date_from": "2026-04-11", "date_to": "2026-04-12"}, headers=h).json()
+            batch_previous = client.get(
+                f"/v1/analytics/batches/{seeded['batch_month']}",
+                params={"date_from": "2026-04-11", "date_to": "2026-04-12", "period_compare": "PREVIOUS_PERIOD"},
+                headers=h,
+            ).json()
+            self.assertEqual(batch_current["summary_cards"][0]["value"], 0)
+            self.assertGreaterEqual(batch_previous["summary_cards"][0]["value"], 1)
+
+            portfolio_current = client.get("/v1/analytics/portfolio", params={"portfolio_project": scope_ref, "date_from": "2026-04-11", "date_to": "2026-04-12"}, headers=h).json()
+            portfolio_previous = client.get(
+                "/v1/analytics/portfolio",
+                params={"portfolio_project": scope_ref, "date_from": "2026-04-11", "date_to": "2026-04-12", "period_compare": "PREVIOUS_PERIOD"},
+                headers=h,
+            ).json()
+            self.assertEqual(portfolio_current["summary_cards"][0]["value"], 0)
+            self.assertGreaterEqual(portfolio_previous["summary_cards"][0]["value"], 1)
 
 
 if __name__ == "__main__":

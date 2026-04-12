@@ -7447,16 +7447,30 @@ def api_analytics_portfolio(_: bool = Depends(require_basic_auth(env)), portfoli
 
 
 @app.get("/v1/analytics/overview")
-def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_window: str | None = None, freshness: str | None = None):
+def api_analytics_overview(
+    _: bool = Depends(require_basic_auth(env)),
+    time_window: str | None = None,
+    freshness: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    period_compare: str | None = None,
+):
     conn = dbm.connect(env)
     try:
         from services.analytics_center.page_aggregations import aggregate_overview
 
-        aggregated = aggregate_overview(conn, time_window=time_window, freshness=freshness)
+        aggregated = aggregate_overview(
+            conn,
+            time_window=time_window,
+            freshness=freshness,
+            date_from=date_from,
+            date_to=date_to,
+            period_compare=period_compare,
+        )
         page = _build_page(
             conn,
             "OVERVIEW",
-            {"time_window": time_window, "freshness": freshness, "period_compare": "PREVIOUS_PERIOD"},
+            {"time_window": time_window, "freshness": freshness, "date_from": date_from, "date_to": date_to, "period_compare": period_compare},
             summary_cards=aggregated["summary_cards"],
             detail_blocks=aggregated["detail_blocks"],
             anomaly_markers=aggregated["anomaly_risk_markers"],
@@ -7476,7 +7490,20 @@ def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_au
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
 
-        aggregated = aggregate_scope(conn, scope_type="CHANNEL", scope_ref=channel_slug, filters={"time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence})
+        aggregated = aggregate_scope(
+            conn,
+            scope_type="CHANNEL",
+            scope_ref=channel_slug,
+            filters={
+                "time_window": time_window,
+                "recommendation_family": recommendation_family,
+                "severity": severity,
+                "confidence": confidence,
+                "date_from": date_from,
+                "date_to": date_to,
+                "period_compare": period_compare,
+            },
+        )
         page = _build_page(
             conn,
             "CHANNEL",
@@ -7508,7 +7535,20 @@ def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth
         except AnalyticsDomainError as exc:
             return _analytics_filter_error(exc.code, exc.message)
 
-        aggregated = aggregate_scope(conn, scope_type="RELEASE", scope_ref=str(release_id), filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family})
+        aggregated = aggregate_scope(
+            conn,
+            scope_type="RELEASE",
+            scope_ref=str(release_id),
+            filters={
+                "time_window": time_window,
+                "anomaly_risk_status": anomaly_risk_status,
+                "recommendation_family": recommendation_family,
+                "source_family": source_family,
+                "date_from": date_from,
+                "date_to": date_to,
+                "period_compare": period_compare,
+            },
+        )
         page = _build_page(
             conn,
             "RELEASE",
@@ -7528,16 +7568,39 @@ def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth
 
 
 @app.get("/v1/analytics/batches/{batch_month}")
-def api_analytics_batches(batch_month: str, _: bool = Depends(require_basic_auth(env)), channel: str | None = None, time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None):
+def api_analytics_batches(
+    batch_month: str,
+    _: bool = Depends(require_basic_auth(env)),
+    channel: str | None = None,
+    time_window: str | None = None,
+    anomaly_risk_status: str | None = None,
+    recommendation_family: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    period_compare: str | None = None,
+):
     conn = dbm.connect(env)
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
 
-        aggregated = aggregate_scope(conn, scope_type="BATCH_MONTH", scope_ref=batch_month, filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "channel": channel})
+        aggregated = aggregate_scope(
+            conn,
+            scope_type="BATCH_MONTH",
+            scope_ref=batch_month,
+            filters={
+                "time_window": time_window,
+                "anomaly_risk_status": anomaly_risk_status,
+                "recommendation_family": recommendation_family,
+                "channel": channel,
+                "date_from": date_from,
+                "date_to": date_to,
+                "period_compare": period_compare,
+            },
+        )
         page = _build_page(
             conn,
             "BATCH_MONTH",
-            {"batch_month": batch_month, "channel": channel, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family},
+            {"batch_month": batch_month, "channel": channel, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "date_from": date_from, "date_to": date_to, "period_compare": period_compare},
             scope_ref=batch_month,
             summary_cards=aggregated["summary_cards"],
             detail_blocks=aggregated["detail_blocks"],
