@@ -174,6 +174,7 @@
     <button id="planning-generate" type="button">Generate plan</button>
     <span id="planning-status" class="muted">Idle</span>
   </div>
+  <div class="muted" id="planning-context">Context: resolving from selected analyzer scope…</div>
   <div id="planning-output" data-planning-surface>Awaiting planning request.</div>
 </section>
 <section class="telegram-panel" id="analyzer-telegram-panel">
@@ -224,6 +225,7 @@
     const planningWindowsEl = document.getElementById('planning-windows');
     const planningGenerateEl = document.getElementById('planning-generate');
     const planningStatusEl = document.getElementById('planning-status');
+    const planningContextEl = document.getElementById('planning-context');
     const planningOutputEl = document.getElementById('planning-output');
     const telegramChannelEl = document.getElementById('telegram-channel');
     const telegramReleaseEl = document.getElementById('telegram-release');
@@ -420,21 +422,29 @@
         manualRefreshTriggerEl.disabled = true;
         scheduledRefreshSelectorEl.disabled = true;
         scheduledRefreshTriggerEl.disabled = true;
+        planningGenerateEl.disabled = true;
         backfillContextEl.textContent = 'Context: not bound. Select an analyzer scope (channel/release/batch/portfolio) to enable backfill.';
+        planningContextEl.textContent = 'Context: not bound. Select an analyzer scope (channel/release/batch/portfolio) to enable planning.';
         manualRefreshStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
         scheduledRefreshStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        planningStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
         return;
       }
       backfillTriggerEl.disabled = false;
       manualRefreshTriggerEl.disabled = false;
       scheduledRefreshSelectorEl.disabled = false;
       scheduledRefreshTriggerEl.disabled = false;
+      planningGenerateEl.disabled = false;
       backfillContextEl.textContent = `Context: ${context.target_scope_type}:${context.target_scope_ref} (${context.source})`;
+      planningContextEl.textContent = `Context: ${context.target_scope_type}:${context.target_scope_ref} (${context.source})`;
       if (manualRefreshStatusEl.textContent.startsWith('Blocked')) {
         manualRefreshStatusEl.textContent = 'Idle';
       }
       if (scheduledRefreshStatusEl.textContent.startsWith('Blocked')) {
         scheduledRefreshStatusEl.textContent = 'Idle';
+      }
+      if (planningStatusEl.textContent.startsWith('Blocked')) {
+        planningStatusEl.textContent = 'Idle';
       }
     }
 
@@ -638,6 +648,10 @@
     }
 
     async function generatePlanning() {
+      if (!currentBackfillContext) {
+        planningStatusEl.textContent = 'Blocked (no analyzer scope context selected)';
+        return;
+      }
       const scenario = planningScenarioEl.value;
       const windows = String(planningWindowsEl.value || '')
         .split(',')
@@ -651,6 +665,8 @@
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
           body: JSON.stringify({
             scenario,
+            scope_type: currentBackfillContext.target_scope_type,
+            scope_ref: currentBackfillContext.target_scope_ref,
             channel_strategy_profile: 'LONG_FORM_BACKGROUND_MUSIC',
             format_profile: 'LONG_FORM',
             publish_windows: windows,

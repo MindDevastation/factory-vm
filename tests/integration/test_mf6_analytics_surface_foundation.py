@@ -125,6 +125,10 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
             self.assertIn("resolveBackfillContext", r.text)
             self.assertIn("setBackfillContext", r.text)
             self.assertIn("id=\"backfill-context\"", r.text)
+            self.assertIn("id=\"planning-context\"", r.text)
+            self.assertIn("scope_type: currentBackfillContext.target_scope_type", r.text)
+            self.assertIn("scope_ref: currentBackfillContext.target_scope_ref", r.text)
+            self.assertIn("Blocked (no analyzer scope context selected)", r.text)
             self.assertNotIn("target_scope_ref: 'darkwood-reverie'", r.text)
 
 
