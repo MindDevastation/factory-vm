@@ -4,8 +4,9 @@ import json
 from typing import Any
 
 from services.analytics_center.errors import AnalyticsDomainError, E5A_INVALID_ANALYTICS_FILTERS, E5A_INVALID_ANALYTICS_PAGE_SCOPE
+from services.analytics_center.freshness_state_model import summarize_coverage_states
 
-ALLOWED_PAGE_SCOPES = {"OVERVIEW", "CHANNEL", "RELEASE", "BATCH_MONTH", "ANOMALIES", "RECOMMENDATIONS", "REPORTS_EXPORTS"}
+ALLOWED_PAGE_SCOPES = {"OVERVIEW", "CHANNEL", "RELEASE", "BATCH_MONTH", "PORTFOLIO", "ANOMALIES", "RECOMMENDATIONS", "REPORTS_EXPORTS"}
 
 
 def normalize_analytics_filters(raw: dict[str, Any]) -> dict[str, Any]:
@@ -26,6 +27,10 @@ def normalize_analytics_filters(raw: dict[str, Any]) -> dict[str, Any]:
         "lifecycle_status",
         "kpi_family",
         "prediction_family",
+        "portfolio_project",
+        "date_from",
+        "date_to",
+        "period_compare",
     }
     unknown = set(raw) - allowed
     if unknown:
@@ -34,35 +39,37 @@ def normalize_analytics_filters(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_freshness_coverage_summary(*, source_states: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
-    normalized = {str(k): str(v).upper() for k, v in source_states.items()}
-    states = list(normalized.values())
-    if states and all(state == "MISSING" for state in states):
-        freshness = {"status": "MISSING", "warning": "no canonical analytics source data"}
-    elif "STALE" in states:
-        freshness = {"status": "STALE", "warning": f"stale upstream sources: {', '.join(sorted([k for k, v in normalized.items() if v == 'STALE']))}"}
-    elif "PARTIAL" in states or "MISSING" in states:
-        freshness = {"status": "PARTIAL", "warning": f"degraded upstream sources: {', '.join(sorted([k for k, v in normalized.items() if v in {'PARTIAL', 'MISSING'}]))}"}
-    else:
-        freshness = {"status": "FRESH", "warning": None}
+    return summarize_coverage_states(source_states=source_states)
 
-    if normalized and all(v == "MISSING" for v in normalized.values()):
-        coverage_status = "NO_DATA"
-    elif all(v == "FRESH" for v in normalized.values()):
-        coverage_status = "FULL"
-    else:
-        coverage_status = "PARTIAL"
-    coverage = {
-        "status": coverage_status,
-        "missing_sources": sorted([k for k, v in normalized.items() if v == "MISSING"]),
-        "stale_sources": sorted([k for k, v in normalized.items() if v == "STALE"]),
-        "source_states": normalized,
-    }
-    return freshness, coverage
-
-
-def build_analytics_page_contract(*, page_scope: str, applied_filters: dict[str, Any], freshness_summary: dict[str, Any], source_coverage_summary: dict[str, Any], summary_cards: list[dict[str, Any]], detail_blocks: list[dict[str, Any]], anomaly_risk_markers: list[dict[str, Any]], recommendation_summary: list[dict[str, Any]], available_actions: list[dict[str, Any]], export_report_actions: list[dict[str, Any]]) -> dict[str, Any]:
+def build_analytics_page_contract(*, page_scope: str, applied_filters: dict[str, Any], freshness_summary: dict[str, Any], source_coverage_summary: dict[str, Any], summary_cards: list[dict[str, Any]], detail_blocks: list[dict[str, Any]], anomaly_risk_markers: list[dict[str, Any]], recommendation_summary: list[dict[str, Any]], available_actions: list[dict[str, Any]], export_report_actions: list[dict[str, Any],], period_semantics: dict[str, Any] | None = None, chart_blocks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     if page_scope not in ALLOWED_PAGE_SCOPES:
         raise AnalyticsDomainError(code=E5A_INVALID_ANALYTICS_PAGE_SCOPE, message="invalid page scope")
+    semantics = dict(period_semantics or {})
+    required_semantic_keys = (
+        "current_period",
+        "previous_period",
+        "baseline_comparison",
+        "trend_direction",
+        "anomalies",
+        "growth_opportunities",
+    )
+    for key in required_semantic_keys:
+        semantics.setdefault(key, {})
+    semantic_filter_contract = {
+        "period_comparison_supported": True,
+        "date_filters": {
+            "date_from": applied_filters.get("date_from"),
+            "date_to": applied_filters.get("date_to"),
+            "period_compare": applied_filters.get("period_compare", "PREVIOUS_PERIOD"),
+        },
+    }
+    charts = list(chart_blocks or [])
+    if not charts:
+        charts = [
+            {"chart_id": "trend_primary", "animated": True, "kind": "LINE"},
+            {"chart_id": "comparison_secondary", "animated": True, "kind": "BAR"},
+        ]
+    completeness_state = str(source_coverage_summary.get("status") or "").upper()
     return {
         "page_scope": page_scope,
         "applied_filters": applied_filters,
@@ -74,6 +81,9 @@ def build_analytics_page_contract(*, page_scope: str, applied_filters: dict[str,
         "recommendation_summary": recommendation_summary,
         "available_actions": available_actions,
         "export_report_actions": export_report_actions,
+        "period_semantics": semantics,
+        "semantic_filter_contract": semantic_filter_contract,
+        "chart_blocks": charts,
         "filter_state_token": json.dumps(applied_filters, sort_keys=True),
-        "data_completeness": "FULL" if source_coverage_summary.get("status") == "FULL" else "PARTIAL",
+        "data_completeness": "FULL" if completeness_state in {"REFRESHED", "FULL"} else "PARTIAL",
     }

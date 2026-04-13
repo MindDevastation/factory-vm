@@ -53,6 +53,7 @@ class TestMf4DerivationCoreUnit(unittest.TestCase):
         )
         self.assertIn("comparison_baseline", basis)
         self.assertIn("supporting_signals", explainability)
+        self.assertIn("next_recommended_operator_action", explainability)
 
     def test_prediction_registry_outputs_required_families(self) -> None:
         comparisons = [
@@ -65,7 +66,15 @@ class TestMf4DerivationCoreUnit(unittest.TestCase):
         families = {o.prediction_family for o in outputs}
         self.assertEqual(
             families,
-            {"WEAK_RELEASE_RISK", "PUBLISH_WINDOW_QUALITY", "CHANNEL_MOMENTUM", "CADENCE_DEGRADATION_RISK", "OPERATIONAL_ANOMALY_RISK"},
+            {
+                "VIEW_GROWTH_PREDICTION",
+                "WATCH_TIME_GROWTH_PREDICTION",
+                "CTR_PREDICTION",
+                "STRONG_WEAK_RELEASE_PREDICTION",
+                "BEST_PUBLISH_WINDOW_PREDICTION",
+                "CHANNEL_TREND_PREDICTION",
+                "ANOMALY_DROP_RISK_PREDICTION",
+            },
         )
 
 

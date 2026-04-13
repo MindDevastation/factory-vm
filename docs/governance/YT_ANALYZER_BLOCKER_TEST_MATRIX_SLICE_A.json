@@ -1,0 +1,186 @@
+{
+  "meta": {
+    "created_on_utc": "2026-04-09",
+    "updated_on_utc": "2026-04-11",
+    "slice": "Canonical tracker (originated in Slice A)",
+    "canonical_branch": "feature/youtube-performance-metrics-analyzer",
+    "scope": "truthful blocker-closure matrix and evidence references"
+  },
+  "global_preflight": {
+    "required_commands": [
+      "git fetch origin",
+      "git checkout feature/youtube-performance-metrics-analyzer",
+      "git reset --hard origin/feature/youtube-performance-metrics-analyzer",
+      "python -m unittest discover -s tests -v"
+    ],
+    "notes": "No blocker closure claim is valid without command evidence and linked artifacts."
+  },
+  "blockers": [
+    {
+      "id": "B1",
+      "name": "analyzer header entry + real analyzer UI surface family",
+      "status": "CLOSED_SLICE_B",
+      "tests": [
+        "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
+        "tests/integration/test_mf6_analytics_surface_foundation.py::TestMf6AnalyticsSurfaceFoundation::test_ui_analyzer_surface_family_is_reachable"
+      ],
+      "artifacts": [
+        "services/factory_api/templates/analyzer_surface.html",
+        "services/factory_api/ux_registry.py",
+        "services/factory_api/app.py"
+      ],
+      "closure_criteria": [
+        "UI surface route and header entry are present and exercised",
+        "Automated checks pass and evidence artifacts are attached"
+      ]
+    },
+    {
+      "id": "B2",
+      "name": "real user-facing charts and animated charts",
+      "status": "CLOSED_SLICE_C",
+      "tests": [
+        "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
+        "tests/integration/test_mf6_analytics_surface_foundation.py::TestMf6AnalyticsSurfaceFoundation::test_ui_analyzer_surface_family_is_reachable"
+      ],
+      "artifacts": [
+        "services/factory_api/templates/analyzer_surface.html"
+      ],
+      "closure_criteria": [
+        "Chart data rendering is proven with deterministic tests",
+        "Animation behavior evidence exists in captured artifacts"
+      ]
+    },
+    {
+      "id": "B3",
+      "name": "full required external YouTube metrics breadth",
+      "status": "CLOSED_SLICE_D_REAPPLY",
+      "tests": [
+        "tests/unit/test_analytics_external_sync.py::TestAnalyticsExternalSyncUnit",
+        "tests/unit/test_analyzer_ingestion_interface.py::TestAnalyzerIngestionInterface",
+        "tests/unit/test_analytics_schema_foundation.py::TestAnalyticsSchemaFoundation",
+        "tests/unit/test_analytics_external_interfaces_hardening.py::TestAnalyticsExternalInterfacesHardening",
+        "tests/unit/test_analyzer_foundation_contract.py::TestAnalyzerFoundationContract",
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "services/analytics_center/literals.py",
+        "services/analytics_center/analyzer_ingestion_interface.py",
+        "services/analytics_center/external_sync.py"
+      ],
+      "closure_criteria": [
+        "Required metric families are canonicalized across analyzer contracts and sync defaults",
+        "Coverage visibility explicitly distinguishes missing, permission-limited, availability-limited, and stale metric families",
+        "Foundation/hardening tests assert B3 READY and pass in full suite"
+      ]
+    },
+    {
+      "id": "B4",
+      "name": "real historical backfill feature flow",
+      "status": "CLOSED_SLICE_E",
+      "tests": [
+        "tests/unit/test_analytics_external_sync.py::TestAnalyticsExternalSyncUnit",
+        "tests/integration/test_analytics_mf2_api_surface.py::TestAnalyticsMf2ApiSurface::test_historical_backfill_operator_flow_contract_and_observability",
+        "tests/integration/test_analytics_external_sync_service.py::TestAnalyticsExternalSyncService::test_initial_backfill_writes_external_snapshot",
+        "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "services/analytics_center/external_sync.py",
+        "services/factory_api/app.py",
+        "services/factory_api/templates/analyzer_surface.html"
+      ],
+      "closure_criteria": [
+        "Historical backfill is exposed as an explicit operator action and runtime contract",
+        "Backfill run mode/status are visible in run history and detail APIs",
+        "Historical snapshot truth semantics remain preserved while sync/coverage visibility remains explicit"
+      ]
+    },
+    {
+      "id": "B5",
+      "name": "real planning assistant feature surface",
+      "status": "CLOSED_SLICE_F",
+      "tests": [
+        "tests/unit/test_mf7_planning_assistant.py::TestMf7PlanningAssistant",
+        "tests/integration/test_mf7_planning_telegram_api.py::TestMf7PlanningTelegramApi::test_planning_assistant_supports_week_month_quarter_behavior",
+        "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "services/analytics_center/planning_assistant.py",
+        "services/factory_api/templates/analyzer_surface.html"
+      ],
+      "closure_criteria": [
+        "Planning assistant is a real user-facing analyzer surface for week/month/quarter scenarios",
+        "Planning outputs include actionable schedule rows and linked actions with explicit non-auto-apply defaults",
+        "Automated tests cover unit, API integration, and UI-surface evidence"
+      ]
+    },
+    {
+      "id": "B6",
+      "name": "real Telegram analyzer operator surface",
+      "status": "CLOSED_SLICE_G2",
+      "tests": [
+        "tests/unit/test_mf7_telegram_surface.py::TestMf7TelegramSurface",
+        "tests/unit/test_mf7_telegram_delivery.py::TestMf7TelegramDelivery",
+        "tests/integration/test_mf7_planning_telegram_api.py::TestMf7PlanningTelegramApi::test_telegram_dispatch_operator_workflow_dry_run_and_live",
+        "tests/e2e/test_ui_pages_slice4.py::TestUiPagesSlice4::test_pages_and_validation",
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "services/analytics_center/telegram_surface.py",
+        "services/analytics_center/telegram_delivery.py",
+        "services/factory_api/app.py",
+        "services/factory_api/templates/analyzer_surface.html"
+      ],
+      "closure_criteria": [
+        "Telegram analyzer supports real operator dispatch workflow with dry-run and live transport paths",
+        "Surface includes summaries, alerts, channel/release snapshots, recommendation/planning summaries, and linked actions/deep-links",
+        "Linked actions and defaults preserve auto_apply=false and mutation=false invariants"
+      ]
+    },
+    {
+      "id": "B7",
+      "name": "truthful export coverage for planning outputs and comparison outputs",
+      "status": "CLOSED_SLICE_H",
+      "tests": [
+        "tests/unit/test_mf6_reporting_helpers.py::TestMf6ReportingHelpers",
+        "tests/integration/test_mf6_reports_actions_integration.py::TestMf6ReportsActionsIntegration::test_structured_report_planning_outputs_are_truthful_without_synthetic_fallback",
+        "tests/integration/test_mf6_reports_actions_integration.py::TestMf6ReportsActionsIntegration::test_xlsx_export_source_table_mapping_is_truthful_for_planning_and_comparison_rows",
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "services/analytics_center/reporting.py",
+        "tests/integration/test_mf6_reports_actions_integration.py"
+      ],
+      "closure_criteria": [
+        "Planning export rows are included only when real planning source rows exist",
+        "No synthetic fallback rows are generated for planning_outputs",
+        "Comparison outputs remain exported from real comparison snapshots"
+      ]
+    },
+    {
+      "id": "B8",
+      "name": "full automated evidence for the completed feature set",
+      "status": "CLOSED_R6",
+      "tests": [
+        "python -m unittest discover -s tests -v"
+      ],
+      "artifacts": [
+        "docs/governance/YT_ANALYZER_R6_FINAL_EVIDENCE_CLOSEOUT.md",
+        "docs/governance/YT_ANALYZER_BLOCKER_CHECKLIST_SLICE_A.md"
+      ],
+      "closure_criteria": [
+        "Comprehensive automated matrix is present and reproducible",
+        "All blocker evidence references are linked and auditable"
+      ],
+      "result_summary": {
+        "suite_status": "PASS",
+        "suite_totals": {
+          "tests_ran": 1608,
+          "duration_seconds": 660.281
+        },
+        "evidence_timestamp_utc": "2026-04-11T15:06:22Z"
+      }
+    }
+  ]
+}

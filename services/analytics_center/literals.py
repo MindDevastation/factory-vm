@@ -1,5 +1,39 @@
 from __future__ import annotations
 
+
+ANALYZER_PROFILE_AXES: tuple[str, ...] = (
+    "CHANNEL_STRATEGY_PROFILE",
+    "FORMAT_PROFILE",
+)
+
+ANALYZER_DEFAULT_MUTATION_POLICY: str = "NO_AUTO_APPLY"
+
+ANALYZER_REFRESH_SELECTOR_VALUES: tuple[str, ...] = (
+    "HOURLY",
+    "EVERY_12_HOURS",
+    "DAILY",
+)
+
+ANALYZER_REQUIRED_METRIC_DIMENSIONS: tuple[str, ...] = (
+    "views",
+    "impressions",
+    "ctr",
+    "watch_time",
+    "average_view_duration",
+    "retention",
+    "subscribers_gained_lost",
+    "revenue_rpm",
+    "unique_viewers",
+    "viewer_segments_new_casual_regular_returning",
+    "traffic_sources",
+    "youtube_search_terms",
+    "viewers_when_on_youtube",
+    "retention_key_moments",
+    "retention_typical_benchmark",
+    "top_geographies",
+    "subscriber_conversion_context",
+)
+
 ANALYTICS_ENTITY_TYPES: tuple[str, ...] = (
     "CHANNEL",
     "RELEASE",
@@ -148,11 +182,13 @@ ANALYTICS_MF4_VARIANCE_CLASSES: tuple[str, ...] = (
 )
 
 ANALYTICS_MF4_PREDICTION_FAMILIES: tuple[str, ...] = (
-    "WEAK_RELEASE_RISK",
-    "PUBLISH_WINDOW_QUALITY",
-    "CHANNEL_MOMENTUM",
-    "CADENCE_DEGRADATION_RISK",
-    "OPERATIONAL_ANOMALY_RISK",
+    "VIEW_GROWTH_PREDICTION",
+    "WATCH_TIME_GROWTH_PREDICTION",
+    "CTR_PREDICTION",
+    "STRONG_WEAK_RELEASE_PREDICTION",
+    "BEST_PUBLISH_WINDOW_PREDICTION",
+    "CHANNEL_TREND_PREDICTION",
+    "ANOMALY_DROP_RISK_PREDICTION",
 )
 
 ANALYTICS_MF4_CONFIDENCE_CLASSES: tuple[str, ...] = (
@@ -180,10 +216,13 @@ ANALYTICS_MF5_RECOMMENDATION_FAMILIES: tuple[str, ...] = (
     "PUBLISH_TIMING_SUGGESTION",
     "CADENCE_BATCH_HEALTH_SUGGESTION",
     "WEAK_RELEASE_ATTENTION",
+    "TITLE_METADATA_IMPROVEMENT",
+    "VISUAL_IMPROVEMENT",
     "OPERATIONAL_REMEDIATION",
     "CHANNEL_OPTIMIZATION",
     "ANOMALY_RISK_ALERT",
     "CONTENT_PACKAGING_SUGGESTION",
+    "CONTENT_PLANNING_SUGGESTION",
 )
 
 ANALYTICS_MF5_TARGET_DOMAINS: tuple[str, ...] = (

@@ -27,7 +27,7 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
             nav_keys = [item["key"] for item in body["navigation"]]
             self.assertEqual(
                 nav_keys,
-                ["OVERVIEW", "CHANNELS", "RELEASES_VIDEOS", "BATCH_MONTH", "ANOMALIES", "RECOMMENDATIONS", "REPORTS_EXPORTS"],
+                ["OVERVIEW", "CHANNELS", "RELEASES_VIDEOS", "BATCH_MONTH", "PORTFOLIO", "ANOMALIES", "RECOMMENDATIONS", "REPORTS_EXPORTS"],
             )
             for item in body["navigation"]:
                 r = client.get(item["path"], headers=headers)
@@ -44,6 +44,7 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 "/v1/analytics/channels/darkwood-reverie",
                 "/v1/analytics/releases/1",
                 "/v1/analytics/batches/2026-04",
+                "/v1/analytics/portfolio",
                 "/v1/analytics/anomalies",
                 "/v1/analytics/recommendations",
                 "/v1/analytics/reports",
@@ -59,6 +60,76 @@ class TestMf6AnalyticsSurfaceFoundation(unittest.TestCase):
                 self.assertIn(body["freshness_summary"]["status"], {"MISSING", "PARTIAL", "STALE", "FRESH"})
                 self.assertIn(body["source_coverage_summary"]["status"], {"NO_DATA", "PARTIAL", "FULL"})
                 self.assertEqual(body["data_completeness"], "PARTIAL")
+
+    def test_ui_analyzer_surface_family_is_reachable(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            paths = [
+                "/ui/analyzer",
+                "/ui/analyzer/overview",
+                "/ui/analyzer/channels",
+                "/ui/analyzer/releases",
+                "/ui/analyzer/batches",
+                "/ui/analyzer/portfolio",
+                "/ui/analyzer/anomalies",
+                "/ui/analyzer/recommendations",
+                "/ui/analyzer/reports",
+            ]
+            for path in paths:
+                r = client.get(path, headers=headers)
+                self.assertEqual(r.status_code, 200)
+                self.assertIn("Analyzer · Surface Family", r.text)
+                self.assertIn("data-analyzer-nav=", r.text)
+                self.assertIn("id=\"analyzer-status\"", r.text)
+                self.assertIn("id=\"analyzer-line-chart\"", r.text)
+                self.assertIn("id=\"analyzer-bar-chart\"", r.text)
+                self.assertIn("id=\"analyzer-refresh-panel\"", r.text)
+                self.assertIn("id=\"analyzer-date-period-panel\"", r.text)
+                self.assertIn("id=\"analyzer-date-from\"", r.text)
+                self.assertIn("id=\"analyzer-date-to\"", r.text)
+                self.assertIn("id=\"analyzer-period-compare\"", r.text)
+                self.assertIn("id=\"analyzer-date-period-apply\"", r.text)
+                self.assertIn("id=\"analyzer-date-period-clear\"", r.text)
+                self.assertIn('value="PREVIOUS_PERIOD"', r.text)
+                self.assertIn('value="PREVIOUS_YEAR"', r.text)
+                self.assertIn('value="NONE"', r.text)
+                self.assertIn("id=\"manual-refresh-trigger\"", r.text)
+                self.assertIn("id=\"scheduled-refresh-selector\"", r.text)
+                self.assertIn("id=\"scheduled-refresh-trigger\"", r.text)
+                self.assertIn("/v1/analytics/external/manual-refresh", r.text)
+                self.assertIn("/v1/analytics/external/scheduled-refresh", r.text)
+                self.assertIn('value="HOURLY"', r.text)
+                self.assertIn('value="EVERY_12_HOURS"', r.text)
+                self.assertIn('value="DAILY"', r.text)
+                self.assertNotIn('value="EVERY_6_HOURS"', r.text)
+                self.assertIn("animateLinePath", r.text)
+                self.assertIn("requestAnimationFrame", r.text)
+                self.assertIn("buildSurfaceUrlWithDatePeriodFilters", r.text)
+                self.assertIn("persistDatePeriodQueryParams", r.text)
+
+    def test_ui_analyzer_backfill_binds_to_selected_scope_context(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            client = self._new_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+
+            r = client.get(
+                "/ui/analyzer/channels?target_scope_type=CHANNEL&target_scope_ref=darkwood-reverie",
+                headers=headers,
+            )
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("/v1/analytics/channels/darkwood-reverie", r.text)
+            self.assertIn("resolveBackfillContext", r.text)
+            self.assertIn("setBackfillContext", r.text)
+            self.assertIn("id=\"backfill-context\"", r.text)
+            self.assertIn("id=\"planning-context\"", r.text)
+            self.assertIn("scope_type: currentBackfillContext.target_scope_type", r.text)
+            self.assertIn("scope_ref: currentBackfillContext.target_scope_ref", r.text)
+            self.assertIn("Blocked (no analyzer scope context selected)", r.text)
+            self.assertNotIn("target_scope_ref: 'darkwood-reverie'", r.text)
 
 
 if __name__ == "__main__":

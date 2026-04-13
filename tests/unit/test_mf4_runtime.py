@@ -81,7 +81,7 @@ class TestMf4RuntimeUnit(unittest.TestCase):
                             Mf4PredictionOutput(
                                 scope_type="CHANNEL",
                                 scope_ref="darkwood-reverie",
-                                prediction_family="WEAK_RELEASE_RISK",
+                                prediction_family="STRONG_WEAK_RELEASE_PREDICTION",
                                 variance_class="RISK",
                                 confidence_class="HIGH",
                                 predicted_label="RISK",
@@ -111,7 +111,7 @@ class TestMf4RuntimeUnit(unittest.TestCase):
                             Mf4PredictionOutput(
                                 scope_type="CHANNEL",
                                 scope_ref="darkwood-reverie",
-                                prediction_family="WEAK_RELEASE_RISK",
+                                prediction_family="STRONG_WEAK_RELEASE_PREDICTION",
                                 variance_class="RISK",
                                 confidence_class="HIGH",
                                 predicted_label="RISK",
