@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
@@ -183,42 +184,49 @@ class TestMf6AnalyticsPagesIntegration(unittest.TestCase):
             finally:
                 conn.close()
 
-            overview_current = client.get("/v1/analytics/overview", params={"date_from": "2026-04-11", "date_to": "2026-04-12"}, headers=h).json()
-            overview_previous = client.get("/v1/analytics/overview", params={"date_from": "2026-04-11", "date_to": "2026-04-12", "period_compare": "PREVIOUS_PERIOD"}, headers=h).json()
+            current_start = datetime.fromtimestamp(now, tz=timezone.utc).date()
+            current_end = current_start + timedelta(days=1)
+            date_from = current_start.isoformat()
+            date_to = current_end.isoformat()
+            current_params = {"date_from": date_from, "date_to": date_to}
+            previous_params = {"date_from": date_from, "date_to": date_to, "period_compare": "PREVIOUS_PERIOD"}
+
+            overview_current = client.get("/v1/analytics/overview", params=current_params, headers=h).json()
+            overview_previous = client.get("/v1/analytics/overview", params=previous_params, headers=h).json()
             self.assertEqual(overview_current["summary_cards"][1]["value"], 0)
             self.assertGreaterEqual(overview_previous["summary_cards"][1]["value"], 1)
 
-            channel_current = client.get(f"/v1/analytics/channels/{seeded['channel_slug']}", params={"date_from": "2026-04-11", "date_to": "2026-04-12"}, headers=h).json()
+            channel_current = client.get(f"/v1/analytics/channels/{seeded['channel_slug']}", params=current_params, headers=h).json()
             channel_previous = client.get(
                 f"/v1/analytics/channels/{seeded['channel_slug']}",
-                params={"date_from": "2026-04-11", "date_to": "2026-04-12", "period_compare": "PREVIOUS_PERIOD"},
+                params=previous_params,
                 headers=h,
             ).json()
             self.assertEqual(channel_current["summary_cards"][0]["value"], 0)
             self.assertGreaterEqual(channel_previous["summary_cards"][0]["value"], 1)
 
-            release_current = client.get(f"/v1/analytics/releases/{seeded['release_id']}", params={"date_from": "2026-04-11", "date_to": "2026-04-12"}, headers=h).json()
+            release_current = client.get(f"/v1/analytics/releases/{seeded['release_id']}", params=current_params, headers=h).json()
             release_previous = client.get(
                 f"/v1/analytics/releases/{seeded['release_id']}",
-                params={"date_from": "2026-04-11", "date_to": "2026-04-12", "period_compare": "PREVIOUS_PERIOD"},
+                params=previous_params,
                 headers=h,
             ).json()
             self.assertEqual(release_current["summary_cards"][0]["value"], 0)
             self.assertGreaterEqual(release_previous["summary_cards"][0]["value"], 1)
 
-            batch_current = client.get(f"/v1/analytics/batches/{seeded['batch_month']}", params={"date_from": "2026-04-11", "date_to": "2026-04-12"}, headers=h).json()
+            batch_current = client.get(f"/v1/analytics/batches/{seeded['batch_month']}", params=current_params, headers=h).json()
             batch_previous = client.get(
                 f"/v1/analytics/batches/{seeded['batch_month']}",
-                params={"date_from": "2026-04-11", "date_to": "2026-04-12", "period_compare": "PREVIOUS_PERIOD"},
+                params=previous_params,
                 headers=h,
             ).json()
             self.assertEqual(batch_current["summary_cards"][0]["value"], 0)
             self.assertGreaterEqual(batch_previous["summary_cards"][0]["value"], 1)
 
-            portfolio_current = client.get("/v1/analytics/portfolio", params={"portfolio_project": scope_ref, "date_from": "2026-04-11", "date_to": "2026-04-12"}, headers=h).json()
+            portfolio_current = client.get("/v1/analytics/portfolio", params={"portfolio_project": scope_ref, **current_params}, headers=h).json()
             portfolio_previous = client.get(
                 "/v1/analytics/portfolio",
-                params={"portfolio_project": scope_ref, "date_from": "2026-04-11", "date_to": "2026-04-12", "period_compare": "PREVIOUS_PERIOD"},
+                params={"portfolio_project": scope_ref, **previous_params},
                 headers=h,
             ).json()
             self.assertEqual(portfolio_current["summary_cards"][0]["value"], 0)
