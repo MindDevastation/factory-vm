@@ -3,6 +3,10 @@ from __future__ import annotations
 import unittest
 
 from services.analytics_center.literals import (
+    ANALYZER_DEFAULT_MUTATION_POLICY,
+    ANALYZER_PROFILE_AXES,
+    ANALYZER_REFRESH_SELECTOR_VALUES,
+    ANALYZER_REQUIRED_METRIC_DIMENSIONS,
     ANALYTICS_EXTERNAL_PROVIDER_NAMES,
     ANALYTICS_EXTERNAL_RUN_MODES,
     ANALYTICS_EXTERNAL_SYNC_STATES,
@@ -45,6 +49,35 @@ from tests._helpers import seed_minimal_db, temp_env
 
 class TestAnalyticsSchemaFoundation(unittest.TestCase):
     def test_literals_match_frozen_contract(self) -> None:
+        self.assertEqual(
+            ANALYZER_PROFILE_AXES,
+            ("CHANNEL_STRATEGY_PROFILE", "FORMAT_PROFILE"),
+        )
+        self.assertEqual(ANALYZER_DEFAULT_MUTATION_POLICY, "NO_AUTO_APPLY")
+        self.assertEqual(ANALYZER_REFRESH_SELECTOR_VALUES, ("HOURLY", "EVERY_12_HOURS", "DAILY"))
+        self.assertEqual(
+            ANALYZER_REQUIRED_METRIC_DIMENSIONS,
+            (
+                "views",
+                "impressions",
+                "ctr",
+                "watch_time",
+                "average_view_duration",
+                "retention",
+                "subscribers_gained_lost",
+                "revenue_rpm",
+                "unique_viewers",
+                "viewer_segments_new_casual_regular_returning",
+                "traffic_sources",
+                "youtube_search_terms",
+                "viewers_when_on_youtube",
+                "retention_key_moments",
+                "retention_typical_benchmark",
+                "top_geographies",
+                "subscriber_conversion_context",
+            ),
+        )
+
         self.assertEqual(
             ANALYTICS_ENTITY_TYPES,
             ("CHANNEL", "RELEASE", "BATCH", "JOB_RUNTIME", "PORTFOLIO"),
@@ -126,7 +159,15 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
         self.assertEqual(ANALYTICS_MF4_VARIANCE_CLASSES, ("NORMAL", "ANOMALY", "RISK"))
         self.assertEqual(
             ANALYTICS_MF4_PREDICTION_FAMILIES,
-            ("WEAK_RELEASE_RISK", "PUBLISH_WINDOW_QUALITY", "CHANNEL_MOMENTUM", "CADENCE_DEGRADATION_RISK", "OPERATIONAL_ANOMALY_RISK"),
+            (
+                "VIEW_GROWTH_PREDICTION",
+                "WATCH_TIME_GROWTH_PREDICTION",
+                "CTR_PREDICTION",
+                "STRONG_WEAK_RELEASE_PREDICTION",
+                "BEST_PUBLISH_WINDOW_PREDICTION",
+                "CHANNEL_TREND_PREDICTION",
+                "ANOMALY_DROP_RISK_PREDICTION",
+            ),
         )
         self.assertEqual(ANALYTICS_MF4_CONFIDENCE_CLASSES, ("LOW", "MEDIUM", "HIGH"))
         self.assertEqual(
@@ -141,10 +182,13 @@ class TestAnalyticsSchemaFoundation(unittest.TestCase):
                 "PUBLISH_TIMING_SUGGESTION",
                 "CADENCE_BATCH_HEALTH_SUGGESTION",
                 "WEAK_RELEASE_ATTENTION",
+                "TITLE_METADATA_IMPROVEMENT",
+                "VISUAL_IMPROVEMENT",
                 "OPERATIONAL_REMEDIATION",
                 "CHANNEL_OPTIMIZATION",
                 "ANOMALY_RISK_ALERT",
                 "CONTENT_PACKAGING_SUGGESTION",
+                "CONTENT_PLANNING_SUGGESTION",
             ),
         )
         self.assertEqual(ANALYTICS_MF5_TARGET_DOMAINS, ("PUBLISH", "METADATA", "VISUALS", "PLANNER", "OPERATIONAL_TROUBLESHOOTING"))

@@ -5646,6 +5646,55 @@ def ui_planner_page(request: Request, _: bool = Depends(require_basic_auth(env))
     return templates.TemplateResponse("planner_bulk_releases.html", {"request": request})
 
 
+_ANALYZER_SURFACE_API_PATHS: dict[str, str] = {
+    "overview": "/v1/analytics/overview",
+    "channels": "/v1/analytics/channels",
+    "releases": "/v1/analytics/releases",
+    "batches": "/v1/analytics/batches",
+    "portfolio": "/v1/analytics/portfolio",
+    "anomalies": "/v1/analytics/anomalies",
+    "recommendations": "/v1/analytics/recommendations",
+    "reports": "/v1/analytics/reports",
+}
+
+def _build_analyzer_surface_api_path(surface: str, request: Request) -> str:
+    from urllib.parse import quote
+
+    base_path = _ANALYZER_SURFACE_API_PATHS[surface]
+    explicit_scope_type = str(request.query_params.get("target_scope_type") or "").strip().upper()
+    explicit_scope_ref = str(request.query_params.get("target_scope_ref") or "").strip()
+    if explicit_scope_type == "CHANNEL" and explicit_scope_ref:
+        return f"/v1/analytics/channels/{quote(explicit_scope_ref, safe='')}"
+    if explicit_scope_type == "RELEASE" and explicit_scope_ref:
+        return f"/v1/analytics/releases/{quote(explicit_scope_ref, safe='')}"
+    if explicit_scope_type == "BATCH_MONTH" and explicit_scope_ref:
+        return f"/v1/analytics/batches/{quote(explicit_scope_ref, safe='')}"
+    if explicit_scope_type == "PORTFOLIO" and explicit_scope_ref:
+        return f"/v1/analytics/portfolio?portfolio_project={quote(explicit_scope_ref, safe='')}"
+    return base_path
+
+
+@app.get("/ui/analyzer", response_class=HTMLResponse)
+@app.get("/ui/analyzer/{surface}", response_class=HTMLResponse)
+def ui_analyzer_page(request: Request, surface: str = "overview", _: bool = Depends(require_basic_auth(env))):
+    normalized_surface = str(surface or "overview").strip().lower()
+    if normalized_surface not in _ANALYZER_SURFACE_API_PATHS:
+        normalized_surface = "overview"
+    surface_items = [
+        {"key": key.upper(), "label": key.replace("_", " ").title(), "ui_path": f"/ui/analyzer/{key}", "api_path": api_path}
+        for key, api_path in _ANALYZER_SURFACE_API_PATHS.items()
+    ]
+    return templates.TemplateResponse(
+        "analyzer_surface.html",
+        {
+            "request": request,
+            "active_surface": normalized_surface,
+            "active_api_path": _build_analyzer_surface_api_path(normalized_surface, request),
+            "surface_items": surface_items,
+        },
+    )
+
+
 @app.get("/ui/publish/queue", response_class=HTMLResponse)
 def ui_publish_queue_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("publish_queue.html", {"request": request, "view": "queue"})
@@ -7264,10 +7313,25 @@ def _analytics_nav_spine() -> list[dict[str, str]]:
         {"key": "CHANNELS", "label": "Channels", "path": "/v1/analytics/channels"},
         {"key": "RELEASES_VIDEOS", "label": "Releases/Videos", "path": "/v1/analytics/releases"},
         {"key": "BATCH_MONTH", "label": "Batch/Month", "path": "/v1/analytics/batches"},
+        {"key": "PORTFOLIO", "label": "Portfolio", "path": "/v1/analytics/portfolio"},
         {"key": "ANOMALIES", "label": "Anomalies", "path": "/v1/analytics/anomalies"},
         {"key": "RECOMMENDATIONS", "label": "Recommendations", "path": "/v1/analytics/recommendations"},
         {"key": "REPORTS_EXPORTS", "label": "Reports/Exports", "path": "/v1/analytics/reports"},
     ]
+
+
+def _build_period_semantics(*, scope: str, detail_blocks: list[dict[str, Any]], anomaly_markers: list[dict[str, Any]]) -> dict[str, Any]:
+    detail_count = sum(len(block.get("rows", [])) for block in detail_blocks if isinstance(block.get("rows"), list))
+    anomaly_count = len(anomaly_markers)
+    trend = "UP" if detail_count > 0 else "FLAT"
+    return {
+        "current_period": {"label": "CURRENT_PERIOD", "status": "AVAILABLE", "observed_points": detail_count},
+        "previous_period": {"label": "PREVIOUS_PERIOD", "status": "AVAILABLE"},
+        "baseline_comparison": {"status": "COMPARABLE", "basis": f"{scope}_BASELINE"},
+        "trend_direction": {"direction": trend},
+        "anomalies": {"count": anomaly_count, "status": "PRESENT" if anomaly_count else "NONE"},
+        "growth_opportunities": {"count": max(0, detail_count - anomaly_count), "status": "IDENTIFIED" if detail_count > anomaly_count else "REVIEW"},
+    }
 
 
 def _build_page(conn: Any, scope: str, raw_filters: dict[str, Any], *, scope_ref: str | None = None, summary_cards: list[dict[str, Any]], detail_blocks: list[dict[str, Any]], anomaly_markers: list[dict[str, Any]], recommendation_summary: list[dict[str, Any]], available_actions: list[dict[str, Any]], export_actions: list[dict[str, Any]]) -> dict[str, Any]:
@@ -7290,6 +7354,11 @@ def _build_page(conn: Any, scope: str, raw_filters: dict[str, Any], *, scope_ref
         recommendation_summary=recommendation_summary,
         available_actions=available_actions,
         export_report_actions=export_actions,
+        period_semantics=_build_period_semantics(scope=scope, detail_blocks=detail_blocks, anomaly_markers=anomaly_markers),
+        chart_blocks=[
+            {"chart_id": f"{scope.lower()}_trend", "animated": True, "kind": "LINE", "chart_family": "TREND"},
+            {"chart_id": f"{scope.lower()}_comparison", "animated": True, "kind": "BAR", "chart_family": "PERIOD_COMPARISON"},
+        ],
     )
     page["navigation"] = _analytics_nav_spine()
     return page
@@ -7298,7 +7367,7 @@ def _build_page(conn: Any, scope: str, raw_filters: dict[str, Any], *, scope_ref
 def _compute_freshness_summary(conn: Any, *, page_scope: str, scope_ref: Any | None = None) -> dict[str, Any]:
     from services.analytics_center.page_aggregations import compute_page_freshness
 
-    normalized_scope = {"BATCH_MONTH": "BATCH_MONTH", "OVERVIEW": "OVERVIEW", "CHANNEL": "CHANNEL", "RELEASE": "RELEASE", "ANOMALIES": "ANOMALIES", "RECOMMENDATIONS": "RECOMMENDATIONS", "REPORTS_EXPORTS": "REPORTS_EXPORTS"}.get(str(page_scope or "").upper(), "OVERVIEW")
+    normalized_scope = {"BATCH_MONTH": "BATCH_MONTH", "OVERVIEW": "OVERVIEW", "CHANNEL": "CHANNEL", "RELEASE": "RELEASE", "PORTFOLIO": "PORTFOLIO", "ANOMALIES": "ANOMALIES", "RECOMMENDATIONS": "RECOMMENDATIONS", "REPORTS_EXPORTS": "REPORTS_EXPORTS"}.get(str(page_scope or "").upper(), "OVERVIEW")
     freshness, _ = compute_page_freshness(conn, page_scope=normalized_scope, scope_ref=None if scope_ref is None else str(scope_ref))
     return freshness
 
@@ -7314,7 +7383,7 @@ def api_analytics_filter_contract(_: bool = Depends(require_basic_auth(env))):
         "shared_filters": [
             "channel", "release_video", "batch_month", "time_window", "anomaly_risk_status",
             "recommendation_family", "severity", "confidence", "freshness", "source_family",
-            "target_domain", "report_export_type",
+            "target_domain", "report_export_type", "portfolio_project", "date_from", "date_to", "period_compare",
         ],
         "navigation": _analytics_nav_spine(),
         "restorable": True,
@@ -7351,17 +7420,57 @@ def api_analytics_batches_index(_: bool = Depends(require_basic_auth(env))):
         conn.close()
 
 
+@app.get("/v1/analytics/portfolio")
+def api_analytics_portfolio(_: bool = Depends(require_basic_auth(env)), portfolio_project: str | None = None, time_window: str | None = None, date_from: str | None = None, date_to: str | None = None, period_compare: str | None = None):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.page_aggregations import aggregate_scope
+
+        scope_ref = str(portfolio_project or "GLOBAL_PORTFOLIO")
+        aggregated = aggregate_scope(conn, scope_type="PORTFOLIO", scope_ref=scope_ref, filters={"time_window": time_window, "date_from": date_from, "date_to": date_to, "period_compare": period_compare})
+        page = _build_page(
+            conn,
+            "PORTFOLIO",
+            {"portfolio_project": scope_ref, "time_window": time_window, "date_from": date_from, "date_to": date_to, "period_compare": period_compare},
+            scope_ref=scope_ref,
+            summary_cards=aggregated["summary_cards"],
+            detail_blocks=aggregated["detail_blocks"],
+            anomaly_markers=aggregated["anomaly_risk_markers"],
+            recommendation_summary=aggregated["recommendation_summary"],
+            available_actions=[{"action": "refresh"}, {"action": "recompute"}, {"action": "open_recommendation"}],
+            export_actions=[{"action": "export_portfolio", "artifact_types": ["XLSX", "STRUCTURED_REPORT", "API_REPORT"]}],
+        )
+    finally:
+        conn.close()
+    _record_analytics_ui_event(event_type="ANALYTICS_PAGE_VIEWED", page_scope="PORTFOLIO", action_type="VIEW", filter_payload=page["applied_filters"], freshness_summary=page["freshness_summary"])
+    return page
+
+
 @app.get("/v1/analytics/overview")
-def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_window: str | None = None, freshness: str | None = None):
+def api_analytics_overview(
+    _: bool = Depends(require_basic_auth(env)),
+    time_window: str | None = None,
+    freshness: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    period_compare: str | None = None,
+):
     conn = dbm.connect(env)
     try:
         from services.analytics_center.page_aggregations import aggregate_overview
 
-        aggregated = aggregate_overview(conn, time_window=time_window, freshness=freshness)
+        aggregated = aggregate_overview(
+            conn,
+            time_window=time_window,
+            freshness=freshness,
+            date_from=date_from,
+            date_to=date_to,
+            period_compare=period_compare,
+        )
         page = _build_page(
             conn,
             "OVERVIEW",
-            {"time_window": time_window, "freshness": freshness},
+            {"time_window": time_window, "freshness": freshness, "date_from": date_from, "date_to": date_to, "period_compare": period_compare},
             summary_cards=aggregated["summary_cards"],
             detail_blocks=aggregated["detail_blocks"],
             anomaly_markers=aggregated["anomaly_risk_markers"],
@@ -7376,16 +7485,29 @@ def api_analytics_overview(_: bool = Depends(require_basic_auth(env)), time_wind
 
 
 @app.get("/v1/analytics/channels/{channel_slug}")
-def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, recommendation_family: str | None = None, severity: str | None = None, confidence: str | None = None):
+def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, recommendation_family: str | None = None, severity: str | None = None, confidence: str | None = None, date_from: str | None = None, date_to: str | None = None, period_compare: str | None = None):
     conn = dbm.connect(env)
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
 
-        aggregated = aggregate_scope(conn, scope_type="CHANNEL", scope_ref=channel_slug, filters={"time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence})
+        aggregated = aggregate_scope(
+            conn,
+            scope_type="CHANNEL",
+            scope_ref=channel_slug,
+            filters={
+                "time_window": time_window,
+                "recommendation_family": recommendation_family,
+                "severity": severity,
+                "confidence": confidence,
+                "date_from": date_from,
+                "date_to": date_to,
+                "period_compare": period_compare,
+            },
+        )
         page = _build_page(
             conn,
             "CHANNEL",
-            {"channel": channel_slug, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence},
+            {"channel": channel_slug, "time_window": time_window, "recommendation_family": recommendation_family, "severity": severity, "confidence": confidence, "date_from": date_from, "date_to": date_to, "period_compare": period_compare},
             scope_ref=channel_slug,
             summary_cards=aggregated["summary_cards"],
             detail_blocks=aggregated["detail_blocks"],
@@ -7401,7 +7523,7 @@ def api_analytics_channels(channel_slug: str, _: bool = Depends(require_basic_au
 
 
 @app.get("/v1/analytics/releases/{release_id}")
-def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None, source_family: str | None = None):
+def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth(env)), time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None, source_family: str | None = None, date_from: str | None = None, date_to: str | None = None, period_compare: str | None = None):
     conn = dbm.connect(env)
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
@@ -7413,11 +7535,24 @@ def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth
         except AnalyticsDomainError as exc:
             return _analytics_filter_error(exc.code, exc.message)
 
-        aggregated = aggregate_scope(conn, scope_type="RELEASE", scope_ref=str(release_id), filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family})
+        aggregated = aggregate_scope(
+            conn,
+            scope_type="RELEASE",
+            scope_ref=str(release_id),
+            filters={
+                "time_window": time_window,
+                "anomaly_risk_status": anomaly_risk_status,
+                "recommendation_family": recommendation_family,
+                "source_family": source_family,
+                "date_from": date_from,
+                "date_to": date_to,
+                "period_compare": period_compare,
+            },
+        )
         page = _build_page(
             conn,
             "RELEASE",
-            {"release_video": str(release_id), "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family},
+            {"release_video": str(release_id), "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "source_family": source_family, "date_from": date_from, "date_to": date_to, "period_compare": period_compare},
             scope_ref=str(release_id),
             summary_cards=aggregated["summary_cards"],
             detail_blocks=aggregated["detail_blocks"],
@@ -7433,16 +7568,39 @@ def api_analytics_releases(release_id: int, _: bool = Depends(require_basic_auth
 
 
 @app.get("/v1/analytics/batches/{batch_month}")
-def api_analytics_batches(batch_month: str, _: bool = Depends(require_basic_auth(env)), channel: str | None = None, time_window: str | None = None, anomaly_risk_status: str | None = None, recommendation_family: str | None = None):
+def api_analytics_batches(
+    batch_month: str,
+    _: bool = Depends(require_basic_auth(env)),
+    channel: str | None = None,
+    time_window: str | None = None,
+    anomaly_risk_status: str | None = None,
+    recommendation_family: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    period_compare: str | None = None,
+):
     conn = dbm.connect(env)
     try:
         from services.analytics_center.page_aggregations import aggregate_scope
 
-        aggregated = aggregate_scope(conn, scope_type="BATCH_MONTH", scope_ref=batch_month, filters={"time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "channel": channel})
+        aggregated = aggregate_scope(
+            conn,
+            scope_type="BATCH_MONTH",
+            scope_ref=batch_month,
+            filters={
+                "time_window": time_window,
+                "anomaly_risk_status": anomaly_risk_status,
+                "recommendation_family": recommendation_family,
+                "channel": channel,
+                "date_from": date_from,
+                "date_to": date_to,
+                "period_compare": period_compare,
+            },
+        )
         page = _build_page(
             conn,
             "BATCH_MONTH",
-            {"batch_month": batch_month, "channel": channel, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family},
+            {"batch_month": batch_month, "channel": channel, "time_window": time_window, "anomaly_risk_status": anomaly_risk_status, "recommendation_family": recommendation_family, "date_from": date_from, "date_to": date_to, "period_compare": period_compare},
             scope_ref=batch_month,
             summary_cards=aggregated["summary_cards"],
             detail_blocks=aggregated["detail_blocks"],
@@ -7596,6 +7754,85 @@ def api_analytics_report_download(report_record_id: int, _: bool = Depends(requi
         conn.close()
 
 
+@app.post("/v1/analytics/planning-assistant")
+def api_analytics_planning_assistant(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    from services.analytics_center.planning_assistant import build_planning_assistant_summary
+
+    conn = dbm.connect(env)
+    try:
+        scenario = str(payload.get("scenario") or "WEEK")
+        channel_strategy_profile = str(payload.get("channel_strategy_profile") or "LONG_FORM_BACKGROUND_MUSIC")
+        format_profile = str(payload.get("format_profile") or "LONG_FORM")
+        summary = build_planning_assistant_summary(
+            scenario=scenario,
+            channel_strategy_profile=channel_strategy_profile,
+            format_profile=format_profile,
+            conn=conn,
+            scope_type=str(payload.get("scope_type") or "CHANNEL"),
+            scope_ref=str(payload.get("scope_ref") or "darkwood-reverie"),
+            historical_performance=dict(payload.get("historical_performance") or {}),
+            audience_behavior=dict(payload.get("audience_behavior") or {}),
+            publish_windows=list(payload.get("publish_windows") or []),
+            cadence_patterns=dict(payload.get("cadence_patterns") or {}),
+            risk_signals=list(payload.get("risk_signals") or []),
+        )
+        return summary
+    finally:
+        conn.close()
+
+
+@app.post("/v1/analytics/telegram/surface")
+def api_analytics_telegram_surface(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    from services.analytics_center.telegram_surface import build_telegram_analyzer_surface
+
+    conn = dbm.connect(env)
+    try:
+        return build_telegram_analyzer_surface(
+            conn=conn,
+            scope_type=payload.get("scope_type"),
+            scope_ref=payload.get("scope_ref"),
+            channel_slug=payload.get("channel_slug"),
+            release_id=None if payload.get("release_id") is None else str(payload.get("release_id")),
+            recommendation_items=list(payload.get("recommendation_items") or []),
+            planning_summary=dict(payload.get("planning_summary") or {}),
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/v1/analytics/telegram/dispatch")
+def api_analytics_telegram_dispatch(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    from services.analytics_center.telegram_surface import build_telegram_analyzer_surface
+    from services.analytics_center.telegram_delivery import deliver_telegram_operator_surface
+
+    conn = dbm.connect(env)
+    try:
+        surface = build_telegram_analyzer_surface(
+            conn=conn,
+            scope_type=payload.get("scope_type"),
+            scope_ref=payload.get("scope_ref"),
+            channel_slug=payload.get("channel_slug"),
+            release_id=None if payload.get("release_id") is None else str(payload.get("release_id")),
+            recommendation_items=list(payload.get("recommendation_items") or []),
+            planning_summary=dict(payload.get("planning_summary") or {}),
+        )
+    finally:
+        conn.close()
+    dry_run = bool(payload.get("dry_run", True))
+    chat_id = int(payload.get("chat_id") or env.tg_admin_chat_id or 0)
+    delivery = deliver_telegram_operator_surface(
+        surface=surface,
+        bot_token=str(payload.get("bot_token") or env.tg_bot_token or ""),
+        chat_id=chat_id,
+        dry_run=dry_run,
+    )
+    return {
+        "surface": surface,
+        "delivery": delivery,
+        "default_behavior": {"auto_apply": False, "mutation": False},
+    }
+
+
 
 
 def _external_sync_http_status(code: str) -> int:
@@ -7610,7 +7847,10 @@ def _external_sync_http_status(code: str) -> int:
 def api_analytics_external_manual_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
-        from services.analytics_center.external_sync import request_manual_refresh
+        from services.analytics_center.external_sync import (
+            build_manual_refresh_runtime_contract,
+            request_manual_refresh,
+        )
         from services.analytics_center.errors import AnalyticsDomainError
 
         provider_name = "YOUTUBE"
@@ -7619,6 +7859,12 @@ def api_analytics_external_manual_refresh(payload: Dict[str, Any], _: bool = Dep
         refresh_mode = str(payload.get("refresh_mode") or "MANUAL_REFRESH")
         force = bool(payload.get("force", False))
         metrics_subset = payload.get("metrics_subset")
+        runtime_contract = build_manual_refresh_runtime_contract(
+            refresh_mode=refresh_mode,
+            force=force,
+            observed_from=None,
+            observed_to=None,
+        )
         run_id = request_manual_refresh(
             conn,
             target_scope_type=target_scope_type,
@@ -7635,6 +7881,97 @@ def api_analytics_external_manual_refresh(payload: Dict[str, Any], _: bool = Dep
             "target_scope_ref": target_scope_ref,
             "run_mode": str(row["run_mode"]),
             "sync_state": str(row["sync_state"]),
+            "manual_refresh_contract": runtime_contract,
+        }
+    except Exception as exc:
+        from services.analytics_center.errors import AnalyticsDomainError
+        if isinstance(exc, AnalyticsDomainError):
+            raise HTTPException(status_code=_external_sync_http_status(exc.code), detail={"code": exc.code, "message": exc.message})
+        raise
+    finally:
+        conn.close()
+
+
+@app.post("/v1/analytics/external/scheduled-refresh")
+def api_analytics_external_scheduled_refresh(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import (
+            build_scheduled_refresh_control_contract,
+            normalize_refresh_selector,
+            request_scheduled_refresh,
+        )
+        from services.analytics_center.errors import AnalyticsDomainError
+
+        target_scope_type = str(payload.get("target_scope_type") or "CHANNEL")
+        target_scope_ref = str(payload.get("target_scope_ref") or "")
+        refresh_selector = normalize_refresh_selector(str(payload.get("refresh_selector") or ""))
+        metrics_subset = payload.get("metrics_subset")
+        run_id = request_scheduled_refresh(
+            conn,
+            target_scope_type=target_scope_type,
+            target_scope_ref=target_scope_ref,
+            refresh_selector=refresh_selector,
+            metrics_subset=metrics_subset if isinstance(metrics_subset, list) else None,
+        )
+        row = conn.execute("SELECT * FROM analytics_external_sync_runs WHERE id = ?", (int(run_id),)).fetchone()
+        assert row is not None
+        contract = build_scheduled_refresh_control_contract()
+        return {
+            "run_id": int(run_id),
+            "provider_name": "YOUTUBE",
+            "target_scope_type": target_scope_type,
+            "target_scope_ref": target_scope_ref,
+            "run_mode": str(row["run_mode"]),
+            "sync_state": str(row["sync_state"]),
+            "refresh_selector": refresh_selector,
+            "refresh_interval_seconds": int(contract["selector_to_interval_seconds"][refresh_selector]),
+            "scheduled_refresh_contract": contract,
+        }
+    except Exception as exc:
+        from services.analytics_center.errors import AnalyticsDomainError
+        if isinstance(exc, AnalyticsDomainError):
+            raise HTTPException(status_code=_external_sync_http_status(exc.code), detail={"code": exc.code, "message": exc.message})
+        raise
+    finally:
+        conn.close()
+
+
+@app.post("/v1/analytics/external/backfill")
+def api_analytics_external_backfill(payload: Dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        from services.analytics_center.external_sync import (
+            build_backfill_runtime_contract,
+            request_historical_backfill,
+        )
+        from services.analytics_center.errors import AnalyticsDomainError
+
+        target_scope_type = str(payload.get("target_scope_type") or "CHANNEL")
+        target_scope_ref = str(payload.get("target_scope_ref") or "")
+        backfill_days = int(payload.get("backfill_days", 30))
+        metrics_subset = payload.get("metrics_subset")
+        runtime = build_backfill_runtime_contract(
+            backfill_days=backfill_days,
+            observed_to=None,
+        )
+        run_id = request_historical_backfill(
+            conn,
+            target_scope_type=target_scope_type,
+            target_scope_ref=target_scope_ref,
+            backfill_days=backfill_days,
+            metrics_subset=metrics_subset if isinstance(metrics_subset, list) else None,
+        )
+        row = conn.execute("SELECT * FROM analytics_external_sync_runs WHERE id = ?", (int(run_id),)).fetchone()
+        assert row is not None
+        return {
+            "run_id": int(run_id),
+            "provider_name": "YOUTUBE",
+            "target_scope_type": target_scope_type,
+            "target_scope_ref": target_scope_ref,
+            "run_mode": str(row["run_mode"]),
+            "sync_state": str(row["sync_state"]),
+            "historical_backfill_contract": runtime,
         }
     except Exception as exc:
         from services.analytics_center.errors import AnalyticsDomainError

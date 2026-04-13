@@ -1,0 +1,430 @@
+REQ_GROWTH_INTELLIGENCE_ONE_CLICK_RELEASE_PLANNING_v1.0
+
+1. Название
+
+Growth Intelligence + One-Click Release Planning
+
+2. Цель
+
+Добавить в проект слой, который:
+- использует фактические YouTube-метрики и историю канала,
+- интерпретирует их через базу знаний / playbooks / trust model,
+- в один клик строит план релизов на неделю / месяц / квартал,
+- сейчас работает в режиме operator-approved planning,
+- в будущем может быть расширен до automatic planning.
+
+3. Что именно хотим получить
+
+3.1 Сейчас
+Оператор открывает Analyzer и нажимает кнопку типа Generate Release Plan.
+
+Система строит:
+- рекомендуемые даты/окна публикации,
+- типы релизов,
+- приоритеты,
+- mix safe / growth / experiment,
+- рекомендации по title / thumbnail / packaging / timing,
+- объяснение, почему именно так,
+- уровень доверия к каждому совету,
+- ожидаемое влияние на рост.
+
+Оператор может:
+- просмотреть план,
+- принять целиком,
+- принять частично,
+- отклонить,
+- отредактировать вручную.
+
+3.2 Потом
+Можно добавить режимы:
+- Auto-plan with approval policy,
+- Auto-plan + auto-apply under strict safety rules.
+
+Но это не входит в v1.
+
+4. Ключевое решение
+
+Новая фича должна быть не “ещё один аналитический экран”, а:
+
+Growth Intelligence Layer
+
+с четырьмя слоями:
+1) Knowledge Base
+2) Trust / Impact Model
+3) Planning Engine
+4) Operator Surfaces
+
+5. Основной сценарий использования
+
+5.1 Сценарий A — One-click planning
+Оператор выбирает:
+- канал,
+- период: неделя / месяц / квартал,
+- режим:
+  - safe,
+  - balanced,
+  - growth,
+  - experiment-heavy.
+
+Нажимает Generate Plan.
+
+Система возвращает:
+- план публикаций по датам,
+- рекомендуемый тип/формат каждого релиза,
+- цель релиза,
+- suggested publish window,
+- suggested packaging focus,
+- риски,
+- trust category,
+- expected impact,
+- связанные рекомендации,
+- linked actions.
+
+5.2 Сценарий B — Rebuild plan after new data
+После обновления метрик система:
+- пересчитывает план,
+- показывает, что изменилось,
+- объясняет, почему изменилось,
+- показывает, что нужно заменить / перенести / усилить.
+
+5.3 Сценарий C — Assisted planning
+Оператор может попросить:
+- “дай 5 лучших слотов на следующую неделю”,
+- “предложи 3 релиза с самым высоким growth potential”,
+- “какие релизы стоит отложить”.
+
+6. Что должно входить в план релизов
+
+Каждый элемент плана должен содержать минимум:
+- channel_id
+- planning_horizon (week/month/quarter)
+- slot_date
+- slot_window
+- release_type
+- goal
+- priority
+- expected_outcome
+- reasoning
+- source_signals
+- trust_category
+- impact_category
+- risk_level
+- safe_or_experiment
+- recommended_actions
+- linked_actions
+- requires_operator_approval
+
+Дополнительно:
+- suggested title direction
+- suggested thumbnail direction
+- suggested length / format bias
+- suggested metadata emphasis
+- fallback option if slot underperforms
+
+7. Откуда система должна брать сигналы
+
+7.1 Аналитические сигналы
+- CTR
+- retention
+- watch time
+- avg view duration
+- views / impressions
+- traffic sources
+- audience segments
+- unique viewers
+- search terms
+- geographies
+- publish window behavior
+- trend / anomaly state
+- historical release performance
+- comparisons by period
+
+7.2 Derived signals
+- packaging problem
+- timing problem
+- format fatigue
+- topic momentum
+- search opportunity
+- browse weakness
+- audience mismatch
+- overposting / underposting risk
+- safe-format candidate
+- high-upside experiment candidate
+
+7.3 Knowledge / playbook signals
+- official YouTube guidance
+- practitioner heuristics
+- internal proven heuristics
+- channel-specific learned heuristics
+
+8. Trust model
+
+Нужно разделить на две независимые шкалы.
+
+8.1 Source Trust
+- A — Official / strongly validated
+- B — strong practitioner pattern
+- C — conditional / niche / format-specific
+- D — experimental hypothesis
+
+8.2 Impact Confidence
+- High
+- Medium
+- Low
+
+8.3 Final displayed trust
+Оператору показывается, например:
+- Trust: A / High
+- Trust: B / Medium
+- Trust: C / High but niche
+
+9. Как должен работать planning engine
+
+9.1 Вход
+- current analyzer state
+- historical analyzer state
+- profile (channel strategy + format profile)
+- active signals / risks / opportunities
+- rules / playbooks / trust matrix
+- planning horizon
+- operator mode (safe / balanced / growth)
+
+9.2 Выход
+- ranked release slots
+- recommended release mix
+- safe actions
+- growth bets
+- experiment slots
+- packaging/timing guidance
+- risk warnings
+- approval-ready plan
+
+9.3 Обязательные ограничения
+- не нарушать approved publishing cadence
+- не перегружать risky slots
+- не делать слишком много experiments подряд
+- не auto-apply без разрешения
+- сохранять explainability для каждого решения
+
+10. Как это должно выглядеть в UI
+
+10.1 Экран 1 — Planning Dashboard
+Блоки:
+- growth health summary
+- active opportunities
+- active risks
+- suggested next releases
+- planning mode selector
+- generate plan button
+
+10.2 Экран 2 — Generated Plan
+Таблица/карточки:
+- дата
+- окно публикации
+- тип релиза
+- цель
+- why
+- trust
+- expected impact
+- risk
+- linked action
+
+Кнопки:
+- Accept all
+- Accept selected
+- Send to planner
+- Send to Telegram digest
+- Export plan
+- Rebuild plan
+
+10.3 Экран 3 — Plan Comparison
+Показывает:
+- старый план
+- новый план
+- что изменилось
+- какие сигналы вызвали изменения
+
+11. Telegram surface
+
+11.1 Planning digest
+- 3–5 рекомендуемых релизов на неделю
+- trust/impact по каждому
+- причины
+- риски
+- deep links в UI
+
+11.2 Replan alert
+- metrics changed, current plan degraded
+- better publish window found
+- packaging risk increased
+- one planned release should be postponed
+
+11.3 Approval flow
+- approve all
+- approve one slot
+- reject suggestion
+- open in UI
+
+Важно:
+default auto-apply = false всегда.
+
+12. Что хранить в данных
+
+12.1 growth_knowledge_items
+Поля:
+- id
+- title
+- description
+- source_type
+- source_name
+- source_trust
+- impact_confidence
+- applicable_profiles
+- applicable_metrics
+- trigger_conditions
+- action_template
+- explanation_template
+- status
+
+12.2 growth_playbooks
+Поля:
+- id
+- code
+- goal_type
+- channel_types
+- release_types
+- activation_rules
+- output_shape
+- trust_policy
+
+12.3 growth_planning_runs
+Поля:
+- id
+- channel_id
+- horizon
+- mode
+- generated_at
+- input_snapshot_ref
+- status
+- approval_status
+- created_by
+- explanation_summary
+
+12.4 growth_planning_items
+Поля:
+- id
+- planning_run_id
+- slot_date
+- slot_window
+- release_type
+- goal
+- trust_category
+- impact_category
+- risk_level
+- reasoning_json
+- linked_actions_json
+- approval_state
+
+13. Что должно считаться практическим применением
+
+Чтобы это не превратилось в “ещё один дашборд”, должны быть реальные действия:
+- generate plan in one click
+- export plan
+- send plan to Telegram
+- convert selected plan items into planner-ready artifacts
+- compare plans over time
+- show why each slot exists
+- show trust for each slot
+- allow operator approve/reject
+
+14. Границы v1
+
+14.1 Входит в v1
+- knowledge registry
+- trust categories
+- playbook activation
+- one-click plan generation
+- week/month/quarter planning
+- explanation and trust output
+- operator approval
+- Telegram planning digest
+- export plan
+- planner handoff
+
+14.2 Не входит в v1
+- fully autonomous auto-apply
+- self-learning trust auto-updates без проверки
+- полная self-optimization loop без approval
+- сложные ML models, если rule-based + analytics-grounded planning уже решают задачу
+
+15. Автоматическое планирование в будущем
+
+15.1 Этап 2 — Auto-plan draft mode
+- система сама создаёт draft plan регулярно
+- оператор только подтверждает
+
+15.2 Этап 3 — Policy-based auto-plan
+- можно авто-подтверждать только safe slots
+- medium/high risk требуют review
+
+15.3 Этап 4 — Selective auto-apply
+- только для заранее разрешённых сценариев
+- только по policy
+- только с audit trail
+- всегда можно откатить
+
+16. Риски
+
+Главные риски:
+- превращение спорных советов в “истину”
+- слишком агрессивные рекомендации
+- недостоверный trust score
+- auto-planning без достаточного audit trail
+- смешивание аналитики и исполнения без operator approval
+
+Как снизить:
+- trust categories обязательны
+- explainability обязательна
+- operator approval обязателен
+- все linked actions не мутируют систему по умолчанию
+- audit trail на каждый generated plan
+
+17. Рекомендуемый порядок внедрения
+
+Phase 1
+- knowledge registry
+- trust model
+- playbook schema
+
+Phase 2
+- planning engine
+- one-click release plan generation
+- operator approval UI
+
+Phase 3
+- Telegram planning digest
+- planner handoff
+- export
+
+Phase 4
+- auto-plan draft mode
+- policy model
+- safe automation
+
+18. Итоговое решение
+
+Фичу нужно делать как:
+Growth Intelligence + One-Click Release Planning
+
+Цель не “хранить советы”, а:
+- анализировать сигналы,
+- активировать playbooks,
+- строить план релизов,
+- объяснять его,
+- показывать доверие,
+- давать безопасный путь к применению,
+- позже перейти к auto-planning.
+
+19. READY FOR SPEC
+
+READY FOR SPEC: YES

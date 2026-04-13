@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from services.analytics_center.helpers import canonicalize_scope_ref
@@ -75,6 +76,84 @@ def _apply_time_window(rows: list[dict[str, Any]], *, time_window: str | None) -
     return filtered
 
 
+def _coerce_timestamp(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except Exception:
+        pass
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except Exception:
+        pass
+    normalized = text.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return float(dt.timestamp())
+
+
+def _parse_date_boundary(value: str | None, *, end_of_day: bool) -> float | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if "T" in raw:
+        return _coerce_timestamp(raw)
+    try:
+        dt = datetime.strptime(raw, "%Y-%m-%d")
+    except ValueError:
+        return _coerce_timestamp(raw)
+    if end_of_day:
+        dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    dt = dt.replace(tzinfo=timezone.utc)
+    return float(dt.timestamp())
+
+
+def _resolve_period_window(*, time_window: str | None, date_from: str | None, date_to: str | None, period_compare: str | None) -> tuple[float | None, float | None]:
+    from_ts = _parse_date_boundary(date_from, end_of_day=False)
+    to_ts = _parse_date_boundary(date_to, end_of_day=True)
+    if from_ts is None and to_ts is None:
+        cutoff = _time_window_cutoff(time_window)
+        if cutoff is not None:
+            from_ts = cutoff
+            to_ts = time.time()
+    if str(period_compare or "").strip().upper() != "PREVIOUS_PERIOD":
+        return from_ts, to_ts
+    if from_ts is None and to_ts is None:
+        return None, None
+    if from_ts is not None and to_ts is not None and to_ts > from_ts:
+        span = to_ts - from_ts
+        return from_ts - span, to_ts - span
+    if from_ts is not None and to_ts is None:
+        return None, from_ts
+    if to_ts is not None and from_ts is None:
+        return None, to_ts
+    return from_ts, to_ts
+
+
+def _apply_period_window(rows: list[dict[str, Any]], *, from_ts: float | None, to_ts: float | None) -> list[dict[str, Any]]:
+    if from_ts is None and to_ts is None:
+        return rows
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        row_ts = _coerce_timestamp(row.get("created_at"))
+        if row_ts is None:
+            continue
+        if from_ts is not None and row_ts < from_ts:
+            continue
+        if to_ts is not None and row_ts > to_ts:
+            continue
+        filtered.append(row)
+    return filtered
+
+
 def _row_freshness_state(row: dict[str, Any]) -> str:
     created_at = row.get("created_at")
     if created_at is None:
@@ -93,6 +172,7 @@ def compute_page_freshness(conn: Any, *, page_scope: str, scope_ref: str | None 
         "CHANNEL": ("CHANNEL", canonical_scope_ref),
         "RELEASE": ("RELEASE", str(scope_ref or "")),
         "BATCH_MONTH": ("BATCH", str(scope_ref or "")),
+        "PORTFOLIO": ("PORTFOLIO", str(scope_ref or "")),
     }.get(page_scope)
 
     if entity_scope is None:
@@ -153,7 +233,15 @@ def compute_page_freshness(conn: Any, *, page_scope: str, scope_ref: str | None 
     return _overall_freshness(source_states), _coverage_summary(source_states)
 
 
-def aggregate_overview(conn: Any, *, time_window: str | None = None, freshness: str | None = None) -> dict[str, Any]:
+def aggregate_overview(
+    conn: Any,
+    *,
+    time_window: str | None = None,
+    freshness: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    period_compare: str | None = None,
+) -> dict[str, Any]:
     channel_rows = _rows(
         conn,
         """
@@ -172,8 +260,9 @@ def aggregate_overview(conn: Any, *, time_window: str | None = None, freshness: 
         conn,
         "SELECT recommendation_scope_ref, recommendation_family, severity_class, confidence_class, lifecycle_status, created_at FROM analytics_recommendation_snapshots WHERE is_current = 1 AND lifecycle_status = 'OPEN' ORDER BY created_at DESC LIMIT 100",
     )
-    anomaly_rows = _apply_time_window(anomaly_rows, time_window=time_window)
-    rec_rows = _apply_time_window(rec_rows, time_window=time_window)
+    window_from, window_to = _resolve_period_window(time_window=time_window, date_from=date_from, date_to=date_to, period_compare=period_compare)
+    anomaly_rows = _apply_period_window(anomaly_rows, from_ts=window_from, to_ts=window_to)
+    rec_rows = _apply_period_window(rec_rows, from_ts=window_from, to_ts=window_to)
     if freshness:
         fresh = str(freshness).upper()
         if fresh in {"FRESH", "STALE", "PARTIAL", "MISSING"}:
@@ -220,12 +309,17 @@ def aggregate_scope(conn: Any, *, scope_type: str, scope_ref: str, filters: dict
     confidence = str(filters.get("confidence") or "").upper()
     rec_family = str(filters.get("recommendation_family") or "")
     anomaly_status = str(filters.get("anomaly_risk_status") or "").upper()
-    time_window = filters.get("time_window")
+    window_from, window_to = _resolve_period_window(
+        time_window=filters.get("time_window"),
+        date_from=filters.get("date_from"),
+        date_to=filters.get("date_to"),
+        period_compare=filters.get("period_compare"),
+    )
 
-    predictions = _apply_time_window(predictions, time_window=time_window)
-    comparisons = _apply_time_window(comparisons, time_window=time_window)
-    kpis = _apply_time_window(kpis, time_window=time_window)
-    recs = _apply_time_window(recs, time_window=time_window)
+    predictions = _apply_period_window(predictions, from_ts=window_from, to_ts=window_to)
+    comparisons = _apply_period_window(comparisons, from_ts=window_from, to_ts=window_to)
+    kpis = _apply_period_window(kpis, from_ts=window_from, to_ts=window_to)
+    recs = _apply_period_window(recs, from_ts=window_from, to_ts=window_to)
 
     if confidence:
         predictions = [r for r in predictions if str(r.get("confidence_class") or "").upper() == confidence]

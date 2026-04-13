@@ -107,6 +107,9 @@ def build_comparison_basis_and_explainability(
         "remediation_hint_or_next_interpretation": remediation_hint_or_next_interpretation,
         "scope": scope,
         "comparison_baseline": comparison_baseline,
+        "predicted_outcome_or_risk": primary_reason,
+        "key_reasons_signals": supporting_signals,
+        "next_recommended_operator_action": remediation_hint_or_next_interpretation,
     }
     return basis, explainability
 
@@ -261,25 +264,36 @@ def derive_predictions(conn: Any, *, comparisons: list[Mf4ComparisonOutput]) -> 
 
     def _prediction_for(family: str) -> Mf4PredictionOutput:
         pick = by_family["RELEASE_VS_CHANNEL_BASELINE"]
-        if family == "CHANNEL_MOMENTUM":
+        if family == "CHANNEL_TREND_PREDICTION":
             pick = by_family["CHANNEL_VS_SELF_HISTORY"]
-        elif family == "CADENCE_DEGRADATION_RISK":
+        elif family == "BEST_PUBLISH_WINDOW_PREDICTION":
             pick = by_family["BATCH_MONTH_VS_RECENT_CHANNEL"]
-        elif family == "OPERATIONAL_ANOMALY_RISK":
+        elif family == "ANOMALY_DROP_RISK_PREDICTION":
             pick = by_family["CHANNEL_VS_PORTFOLIO"]
+        elif family == "WATCH_TIME_GROWTH_PREDICTION":
+            pick = by_family["CHANNEL_VS_SELF_HISTORY"]
+        elif family == "VIEW_GROWTH_PREDICTION":
+            pick = by_family["RELEASE_VS_CHANNEL_BASELINE"]
+        elif family == "CTR_PREDICTION":
+            pick = by_family["BATCH_MONTH_VS_RECENT_CHANNEL"]
+        elif family == "STRONG_WEAK_RELEASE_PREDICTION":
+            pick = by_family["RELEASE_VS_CHANNEL_BASELINE"]
         delta_ratio = float(pick.delta_payload["delta_ratio"])
         variance = classify_variance(delta_ratio=delta_ratio, anomaly_threshold=0.15, risk_threshold=0.4)
         confidence = "HIGH" if delta_ratio >= 0.4 else "MEDIUM" if delta_ratio >= 0.15 else "LOW"
+        next_action = "inspect baseline drift and operational queue before intervention"
         basis, explainability = build_comparison_basis_and_explainability(
             primary_reason=f"{family} derived from {pick.comparison_family}",
             supporting_signals=[
                 {"signal": "delta_ratio", "value": delta_ratio},
                 {"signal": "relative_ranking_summary", "value": pick.delta_payload["relative_ranking_summary"]},
             ],
-            remediation_hint_or_next_interpretation="inspect baseline drift and operational queue before intervention",
+            remediation_hint_or_next_interpretation=next_action,
             scope={"scope_type": pick.scope_type, "scope_ref": pick.scope_ref},
             comparison_baseline={"comparison_family": pick.comparison_family, "baseline_family": pick.baseline_family},
         )
+        explainability["confidence_class_or_band"] = confidence
+        explainability["comparison_basis"] = basis
         return Mf4PredictionOutput(
             scope_type=pick.scope_type,
             scope_ref=pick.scope_ref,
@@ -287,7 +301,7 @@ def derive_predictions(conn: Any, *, comparisons: list[Mf4ComparisonOutput]) -> 
             variance_class=variance,
             confidence_class=confidence,
             predicted_label=variance,
-            predicted_value={"risk_score": delta_ratio, "family": family},
+            predicted_value={"risk_score": delta_ratio, "family": family, "predicted_outcome_or_risk": variance},
             signals_used=explainability["supporting_signals"],
             comparison_basis=basis,
             explainability_payload=explainability,
@@ -365,6 +379,18 @@ def persist_mf4_derivation(
             raise AnalyticsDomainError(
                 code=E5A_INVALID_PREDICTION_EXPLAINABILITY_PAYLOAD,
                 message="prediction explainability and comparison basis are required",
+            )
+        required_explainability = (
+            "predicted_outcome_or_risk",
+            "confidence_class_or_band",
+            "key_reasons_signals",
+            "comparison_basis",
+            "next_recommended_operator_action",
+        )
+        if any(not p.explainability_payload.get(key) for key in required_explainability):
+            raise AnalyticsDomainError(
+                code=E5A_INVALID_PREDICTION_EXPLAINABILITY_PAYLOAD,
+                message="prediction explainability payload missing required fields",
             )
         now = now_ts()
         conn.execute(

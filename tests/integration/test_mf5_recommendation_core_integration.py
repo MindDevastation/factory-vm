@@ -22,6 +22,9 @@ class TestMf5RecommendationCoreIntegration(unittest.TestCase):
                 self.assertIn("OPERATIONAL_REMEDIATION", families)
                 self.assertIn("CONTENT_PACKAGING_SUGGESTION", families)
                 self.assertIn("WEAK_RELEASE_ATTENTION", families)
+                self.assertIn("TITLE_METADATA_IMPROVEMENT", families)
+                self.assertIn("VISUAL_IMPROVEMENT", families)
+                self.assertIn("CONTENT_PLANNING_SUGGESTION", families)
             finally:
                 conn.close()
 

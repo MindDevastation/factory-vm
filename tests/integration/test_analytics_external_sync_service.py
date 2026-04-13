@@ -161,11 +161,63 @@ class TestAnalyticsExternalSyncService(unittest.TestCase):
                     target_scope_ref="darkwood-reverie",
                 )
                 self.assertIsNotNone(snapshot_id)
-                snap = conn.execute("SELECT source_family, snapshot_status, entity_ref FROM analytics_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
+                run_row = conn.execute("SELECT observed_from, observed_to FROM analytics_external_sync_runs WHERE id = ?", (run_id,)).fetchone()
+                snap = conn.execute(
+                    "SELECT source_family, snapshot_status, entity_ref, is_current, window_start_ts, window_end_ts FROM analytics_snapshots WHERE id = ?",
+                    (snapshot_id,),
+                ).fetchone()
                 self.assertEqual(snap["source_family"], "EXTERNAL_YOUTUBE")
-                self.assertEqual(snap["snapshot_status"], "CURRENT")
+                self.assertEqual(snap["snapshot_status"], "HISTORICAL")
+                self.assertEqual(int(snap["is_current"]), 0)
+                self.assertEqual(float(snap["window_start_ts"]), float(run_row["observed_from"]))
+                self.assertEqual(float(snap["window_end_ts"]), float(run_row["observed_to"]))
                 channel_id = int(conn.execute("SELECT id FROM channels WHERE slug = 'darkwood-reverie'").fetchone()["id"])
                 self.assertEqual(str(snap["entity_ref"]), str(channel_id))
+            finally:
+                conn.close()
+
+    def test_initial_backfill_preserves_existing_current_snapshot(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                provider = self._FakeProvider(
+                    {
+                        "channel_slug": "darkwood-reverie",
+                        "metrics": {"views": 11},
+                        "metric_families_returned": ["views"],
+                        "metric_families_unavailable": [],
+                        "freshness_status": "FRESH",
+                        "freshness_basis": "window_end",
+                        "incomplete_backfill": False,
+                    }
+                )
+                scheduled_run = create_sync_run(conn, **make_sync_run_payload(run_mode="SCHEDULED_SYNC"))
+                current_snapshot_id = run_external_youtube_ingestion(
+                    conn,
+                    run_id=scheduled_run,
+                    provider=provider,
+                    channel_slug="darkwood-reverie",
+                    target_scope_type="CHANNEL",
+                    target_scope_ref="darkwood-reverie",
+                )
+
+                backfill_run = create_sync_run(conn, **make_sync_run_payload(run_mode="INITIAL_BACKFILL"))
+                backfill_snapshot_id = run_external_youtube_ingestion(
+                    conn,
+                    run_id=backfill_run,
+                    provider=provider,
+                    channel_slug="darkwood-reverie",
+                    target_scope_type="CHANNEL",
+                    target_scope_ref="darkwood-reverie",
+                )
+
+                current_after = conn.execute("SELECT snapshot_status, is_current FROM analytics_snapshots WHERE id = ?", (current_snapshot_id,)).fetchone()
+                backfill_after = conn.execute("SELECT snapshot_status, is_current FROM analytics_snapshots WHERE id = ?", (backfill_snapshot_id,)).fetchone()
+                self.assertEqual(current_after["snapshot_status"], "CURRENT")
+                self.assertEqual(int(current_after["is_current"]), 1)
+                self.assertEqual(backfill_after["snapshot_status"], "HISTORICAL")
+                self.assertEqual(int(backfill_after["is_current"]), 0)
             finally:
                 conn.close()
 

@@ -1,0 +1,403 @@
+SPEC_YOUTUBE_PERFORMANCE_METRICS_ANALYZER_v1.0
+
+1. Overview / цель
+
+YouTube Performance Metrics Analyzer defines a full product feature for factory-vm that adds:
+- external YouTube performance metrics ingestion;
+- historical storage and backfill;
+- analytics dashboards and animated charts;
+- baselines, comparisons, trends, anomalies, and risks;
+- explainable predictions;
+- explainable recommendations;
+- planning assistant for weekly, monthly, and quarterly planning;
+- full Telegram surface;
+- no automatic cross-domain mutation by default.
+
+This is a standalone product feature and must not be mixed with the pre-launch QA backlog.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- external YouTube metrics ingestion
+- historical backfill
+- scheduled refresh
+- manual refresh
+- analytics data model and historical snapshots
+- overview dashboard
+- channel page
+- release/video page
+- portfolio/project summary
+- beautiful animated charts
+- compare periods
+- date filters
+- exports
+- explainable predictions
+- explainable recommendations
+- planning assistant
+- full Telegram surface
+
+2.2. Out of scope
+- silent auto-apply into adjacent domains by default
+- separate analyzer per channel type
+- reduction to internal-only analytics
+- removal of planning assistant from v1
+- removal of Telegram surface from v1
+
+2.3. Boundary rules
+- analyzer is a separate product feature and is not part of the pre-launch QA backlog
+- analyzer must use one core analyzer with profile-based analysis, not separate analyzers per channel type
+- analyzer must not silently mutate neighboring domains by default
+- all listed scope items are mandatory; there are no optional items in this REQ
+
+3. Canonical product model
+
+3.1. One analyzer + many profiles
+The analyzer must use one shared core analyzer.
+
+Different channel/format types are supported through profile-based analysis:
+- channel strategy profile
+- format profile
+
+Profiles must influence:
+- signal weighting
+- baseline logic
+- prediction logic
+- recommendation logic
+- planning logic
+
+3.2. Levels of analysis
+The analyzer must cover:
+- channel-level analytics
+- release/video-level analytics
+- portfolio/project-level analytics
+
+3.3. Supported profile families
+The analyzer must support different strategy/profile shapes including at minimum:
+- long-form background music
+- daily single-track releases
+- future additional formats
+
+4. Metrics coverage
+
+4.1. Required metrics
+The analyzer must support the full required metrics set:
+- views
+- impressions
+- CTR
+- watch time
+- average view duration
+- retention
+- subscribers gained/lost
+- revenue/RPM and other monetization metrics where source/permissions allow
+- unique viewers
+- new / casual / regular / returning viewers
+- traffic sources
+- YouTube search terms
+- when your viewers are on YouTube
+- key moments for audience retention
+- typical retention benchmark
+- top geographies
+- subscriber conversion context
+
+4.2. Metrics availability rule
+Metrics that depend on source permissions or monetization access must be supported when available.
+Lack of availability must be surfaced explicitly and must not be silently treated as complete data.
+
+5. Historical data and refresh model
+
+5.1. Historical backfill
+The analyzer must support historical backfill of old data.
+
+5.2. Automatic refresh
+The analyzer must support automatic metric refresh.
+
+5.3. Operator-selectable refresh policy
+The analyzer page must allow operator-selected auto-refresh frequency with exactly these values:
+- every hour
+- every 12 hours
+- every day
+
+5.4. Manual refresh
+The analyzer must support forced manual refresh from a page action/button.
+
+5.5. Freshness / sync / coverage
+The analyzer must show:
+- freshness
+- sync status
+- data coverage
+
+6. UI / UX surfaces
+
+6.1. Entry point
+The analyzer must have an entry button in the header.
+
+6.2. Required primary surfaces
+The analyzer must provide:
+- overview page
+- channel page
+- release/video page
+
+6.3. Required visual analytics behavior
+The analyzer must provide:
+- beautiful charts
+- animated charts
+- period comparisons
+- date-range filters
+- exports
+
+6.4. Required analytics presentation on surfaces
+The analyzer must show:
+- current period
+- previous period
+- baseline comparison
+- trend direction
+- anomalies
+- growth opportunities
+
+7. Additional mandatory analytics blocks
+
+The analyzer must include:
+- segment comparison by traffic source
+- segment comparison by geography
+- segment comparison by available audience segments
+- format split analytics
+- release cohort comparison for:
+  - first 24 hours
+  - first 72 hours
+  - first 7 days
+  - first 28 days
+- alerting layer for sharp drops and accelerations
+- weekly / monthly / quarterly planning views
+
+8. Data model and snapshot foundation
+
+8.1. Required persistence model
+The analyzer must have:
+- analytics data model
+- historical snapshots
+- period comparison capability
+- baseline-ready historical storage
+- prediction/recommendation/planning-ready storage
+
+8.2. Historical truth rule
+The analyzer must preserve historical data and backfill-derived history rather than relying only on live latest reads.
+
+8.3. Coverage truth rule
+Missing, partial, permission-limited, stale, and fully refreshed states must remain distinguishable.
+
+9. Prediction model
+
+9.1. Required prediction families
+The analyzer must provide at minimum:
+- view growth prediction
+- watch time growth prediction
+- CTR prediction
+- strong/weak release prediction
+- best publish window prediction
+- channel trend prediction
+- anomaly/drop risk prediction
+
+9.2. Prediction quality rule
+Predictions must be smart and explainable.
+
+9.3. Prediction payload contract
+Each prediction must include:
+- predicted outcome/risk
+- confidence class or confidence band
+- key reasons/signals
+- comparison basis
+- next recommended operator action
+
+9.4. Profile-aware prediction rule
+Predictions must account for profile-based analysis across channel and format types.
+
+10. Recommendation model
+
+10.1. Required recommendation families
+The analyzer must provide at minimum:
+- publish timing suggestions
+- weak release attention suggestions
+- title/metadata improvement suggestions
+- visual improvement suggestions
+- channel growth / decline suggestions
+- operational suggestions
+- anomaly / risk alerts
+- content planning suggestions
+
+10.2. Recommendation quality rule
+Recommendations must be explainable.
+
+10.3. Linked actions rule
+Recommendations must use linked actions where useful and safe.
+
+10.4. Default behavior rule
+Recommendations must not automatically mutate adjacent domains by default.
+
+11. Planning assistant model
+
+11.1. Planning assistant is mandatory in v1.
+
+11.2. Planning scenarios
+Planning assistant must support planning scenarios for:
+- week
+- month
+- quarter
+
+11.3. Required planning inputs
+Planning assistant must use:
+- channel profile
+- format profile
+- historical performance
+- audience behavior
+- publish windows
+- cadence patterns
+- risk signals
+
+11.4. Required planning outputs
+Planning assistant must provide:
+- recommended release schedule
+- recommended mix by format
+- recommended priority for releases
+- expected outcome/risk narrative
+- linked actions into planning surfaces
+
+11.5. Default behavior rule
+Planning assistant must not apply plans automatically by default.
+
+12. Telegram surface
+
+12.1. Telegram is mandatory in scope
+The analyzer must have a full Telegram surface.
+
+12.2. Required Telegram capabilities
+Telegram surface must support:
+- summaries
+- alerts
+- channel snapshots
+- release/video snapshots
+- recommendation summaries
+- planning summaries
+- linked actions / deep-links where appropriate
+
+12.3. Surface-role rule
+Telegram surface must not replace the main web UI, but it must still be a working operator interface for the analyzer.
+
+13. Exports
+
+13.1. Export support is mandatory.
+
+13.2. Export format rule
+Export must be available in a work-usable reporting format.
+
+13.3. Export coverage
+Exports must cover:
+- channel-level analytics
+- release/video-level analytics
+- planning outputs
+- comparison outputs
+
+14. Default safety behavior
+
+14.1. By default the analyzer changes nothing automatically.
+
+14.2. Any linked actions must lead into canonical neighboring product surfaces.
+
+14.3. Silent auto-apply behavior is forbidden by default.
+
+15. API / interface families
+
+15.1. Required interface families
+The feature must define at minimum:
+- external metrics ingestion interface
+- backfill interface
+- scheduled refresh control interface
+- manual refresh interface
+- analytics snapshot/read interface
+- prediction interface
+- recommendation interface
+- planning assistant interface
+- export/report interface
+- Telegram summary/alert interface
+
+15.2. Interface boundary rule
+These interfaces may coordinate with neighboring surfaces through linked actions, but they must not silently mutate those surfaces by default.
+
+16. Validation rules
+
+16.1. Scope validation
+- no listed scope item may be dropped as optional
+- internal-only analytics is invalid
+- removal of profile-based analysis is invalid
+- removal of planning assistant from v1 is invalid
+- removal of Telegram surface is invalid
+
+16.2. Model validation
+- one core analyzer is mandatory
+- multiple separate analyzers per channel type are invalid
+- profiles must affect weighting, baseline, prediction, recommendation, and planning logic
+
+16.3. Refresh validation
+- operator must be able to choose only the fixed auto-refresh frequencies:
+  - hourly
+  - every 12 hours
+  - daily
+- manual refresh must exist
+- freshness/sync/coverage visibility must exist
+
+16.4. Prediction/recommendation validation
+- predictions must be explainable
+- recommendations must be explainable
+- both must provide operator-action context
+- default auto-apply is forbidden
+
+17. Acceptance criteria
+
+The feature is accepted only if all of the following are true:
+- analyzer ingests the full set of required external YouTube performance metrics
+- historical backfill works
+- scheduled refresh works with operator-selected frequency
+- manual refresh works
+- overview, channel, and release/video surfaces exist
+- beautiful animated charts exist
+- period comparison and date filters work
+- exports exist
+- predictions are smart and explainable
+- recommendations are explainable and provide useful linked actions
+- planning assistant works for week, month, and quarter
+- analyzer uses profile-based analysis for different channel/format types
+- Telegram surface is full and working
+- analyzer changes nothing automatically by default
+
+18. Definition of done
+
+The analyzer feature is done only when:
+- the full mandatory scope is implemented
+- no mandatory block has been quietly reduced or deferred as optional
+- one analyzer + many profiles is preserved
+- planning assistant is present in v1
+- Telegram surface is present in v1
+- default non-auto-apply behavior is preserved
+- the feature is ready to move from REQ into implementation work
+
+19. Open questions / ambiguities
+
+19.1. Exact internal decomposition into microfeatures, slices, or implementation stages is not fixed at REQ level and remains an implementation/spec structuring choice.
+
+19.2. Exact technical charting library, animation implementation, and export file format details are implementation-level details, provided they satisfy the frozen UX and export obligations above.
+
+Ready for Dev? Yes
+
+Причины
+- REQ fully fixes the mandatory product scope, architecture constraints, profile-based model, planning assistant inclusion, Telegram inclusion, refresh policy, and default no-auto-apply behavior.
+- No critical REQ-level gaps remain.
+- Remaining uncertainty is implementation decomposition/detail, not a blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- quietly narrowing analyzer to internal-only analytics
+- quietly removing profile-based analysis
+- quietly removing planning assistant from v1
+- quietly turning analyzer into default auto-apply engine
+- quietly removing Telegram surface
