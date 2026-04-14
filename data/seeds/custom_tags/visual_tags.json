@@ -1,0 +1,25 @@
+{
+  "schema_version": "custom_tags_seed/1",
+  "category": "VISUAL",
+  "exported_at": "2026-04-05T19:54:43.938626+00:00",
+  "tags": [
+    {
+      "slug": "cyber_arena",
+      "name": "Cyber Arena",
+      "description": "Combat-ready cyber battleground and action-stage visual.",
+      "is_active": true
+    },
+    {
+      "slug": "digital_grid",
+      "name": "Digital Grid",
+      "description": "Abstract cyber network, matrix, and signal-space visuals.",
+      "is_active": true
+    },
+    {
+      "slug": "training_facility",
+      "name": "Training Facility",
+      "description": "Industrial drill zone, gym-combat, and hard-training visual.",
+      "is_active": true
+    }
+  ]
+}
