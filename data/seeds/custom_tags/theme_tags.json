@@ -1,0 +1,31 @@
+{
+  "schema_version": "custom_tags_seed/1",
+  "category": "THEME",
+  "exported_at": "2026-04-05T19:54:43.938626+00:00",
+  "tags": [
+    {
+      "slug": "anthem",
+      "name": "Anthem",
+      "description": "Vocal-led rallying or chant-like song concept.",
+      "is_active": true
+    },
+    {
+      "slug": "battle",
+      "name": "Battle",
+      "description": "Conflict, confrontation, and fight-energy concept.",
+      "is_active": true
+    },
+    {
+      "slug": "gaming",
+      "name": "Gaming",
+      "description": "Gameplay-oriented cyber action concept.",
+      "is_active": true
+    },
+    {
+      "slug": "workout",
+      "name": "Workout",
+      "description": "Physical training, push, and performance-drive concept.",
+      "is_active": true
+    }
+  ]
+}

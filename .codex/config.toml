@@ -1,0 +1,11 @@
+model = "gpt-5.4-mini"
+model_reasoning_effort = "medium"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "disabled"
+
+[features]
+fast_mode = false
+
+[windows]
+sandbox = "elevated"

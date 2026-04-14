@@ -5,13 +5,17 @@ __pycache__/
 *.pyc
 *.pyo
 .idea
+.vs
 
 # local data
-data/
+data/pydeps/
 storage/workspace/
 storage/outbox/
 storage/previews/
 storage/logs/
+storage/qa/
+secure/
+deploy/env.local
 *.sqlite3
 
 # env secrets
