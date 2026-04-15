@@ -6,7 +6,7 @@ This repo keeps Codex guidance short. If a rule needs detail, put it in `docs/`,
 
 - Workflow canon: `docs/workflows/CODEX_WORKFLOW.md`
 - Ops canon: `docs/ops/runbook/README.md`
-- Testing canon: `TESTING.md`
+- Testing canon: `docs/workflows/TESTING.md`
 
 ## Branch / workstream rules
 
