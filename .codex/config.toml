@@ -6,6 +6,3 @@ web_search = "disabled"
 
 [features]
 fast_mode = false
-
-[windows]
-sandbox = "elevated"
