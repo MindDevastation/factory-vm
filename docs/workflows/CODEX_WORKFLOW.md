@@ -40,4 +40,4 @@ This doc holds the fuller repo workflow so `AGENTS.md` can stay short.
 
 - Repo workflow guidance: `AGENTS.md`
 - Ops workflow: `docs/ops/runbook/README.md`
-- Testing instructions: `TESTING.md`
+- Testing instructions: `docs/workflows/TESTING.md`
