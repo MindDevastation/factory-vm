@@ -39,5 +39,6 @@ This doc holds the fuller repo workflow so `AGENTS.md` can stay short.
 ## Canonical references
 
 - Repo workflow guidance: `AGENTS.md`
+- Environment readiness: `docs/workflows/ENVIRONMENT_HEALTHCHECK.md`
 - Ops workflow: `docs/ops/runbook/README.md`
 - Testing instructions: `docs/workflows/TESTING.md`
