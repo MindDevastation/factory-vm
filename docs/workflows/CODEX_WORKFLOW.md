@@ -25,6 +25,14 @@ This doc holds the fuller repo workflow so `AGENTS.md` can stay short.
    - make only the approved bounded change
    - if new scope appears, stop and write a delta plan
 
+## Publication Flow
+
+- For new work, create a branch from fresh `origin/main`, switch to it, and push it to `origin` immediately so the branch exists on GitHub before the slice is treated as active.
+- Make the intended slice changes on that branch, then commit and push the slice.
+- Verify the remote HEAD SHA before creating the PR.
+- Create the PR only after the branch is published, and populate the PR title and body as part of publication.
+- For follow-up fixes on an existing PR branch, stay on the same branch/PR chain rather than creating a fresh PR branch.
+
 ## Slice acceptance
 
 - A slice is not accepted until it is pushed.
