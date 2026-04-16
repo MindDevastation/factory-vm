@@ -37,6 +37,7 @@ This repo keeps Codex guidance short. If a rule needs detail, put it in `docs/`,
 - Before opening a PR, rebase the branch onto fresh `origin/main`.
 - Before review or publication, inspect branch history relative to `origin/main`.
 - Dirty PR history is a workflow problem and should be fixed before review whenever practical.
+- Publication flow: create new work branches from fresh `origin/main`, push them to `origin` immediately, make the slice changes there, then commit, push, verify remote SHA, and open the PR; follow-up fixes stay on the same branch/PR chain.
 - A slice is accepted only after push plus remote SHA proof.
 - The pushed remote SHA must match the local commit SHA for the slice.
 
