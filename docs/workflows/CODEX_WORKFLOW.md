@@ -33,13 +33,19 @@ This is the umbrella Codex workflow for this repo. Keep details in dedicated wor
 
 ## Publication requirement
 
-
-- Publish from a non-`main` branch with push + remote SHA verification before review.
-- Do not create new branches with the `codex/` prefix; use functional prefixes (for example, `feature/` or `fix/`).
-- After creating the branch from fresh `origin/main` (and rebasing if needed), open the PR immediately with prepared title/body, then continue implementation on the same branch/PR chain.
-- PR creation is valid only with a numeric PR URL/PR number; `/pull/new/...` is not created-PR proof and missing numeric confirmation is a BLOCKER.
+- Publication actions are opt-in only. Unless the task prompt explicitly requests publication, do not automatically create branches, push, or open PRs.
+- If publication is not explicitly requested, complete only the requested analysis/editing/reporting scope and stop before publication actions.
+- If publication is explicitly requested, publish from a non-`main` branch with push + remote SHA verification before review.
+- When publication is explicitly requested, do not create new branches with the `codex/` prefix; use functional prefixes (for example, `feature/` or `fix/`).
+- When publication is explicitly requested, after creating the branch from fresh `origin/main` (and rebasing if needed), open the PR immediately with prepared title/body, then continue implementation on the same branch/PR chain.
+- When a PR is explicitly requested, creation is valid only with a numeric PR URL/PR number; `/pull/new/...` is not created-PR proof and missing numeric confirmation is a BLOCKER.
 - Cloud verification must not rely only on `origin`-based checks; when `origin` is unavailable, use GitHub-integrated branch/PR state per Cloud canon.
 - Use `docs/workflows/CLOUD_WORKFLOW.md` as canonical publication flow.
+
+## Reporting requirement
+
+- Final reporting must explicitly separate: (1) content changes completed, (2) publication not requested, and (3) publication requested but blocked.
+- Do not imply that a branch, push, or PR exists unless that action was explicitly requested and completed with proof.
 
 ## Review workflow
 

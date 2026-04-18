@@ -14,19 +14,29 @@ This is the canonical workflow for cloud-first Codex development in this repo.
 
 ## Canonical cloud publication flow
 
-1. Start from fresh `origin/main` and create a non-`main` work branch when `origin` is available.
-2. If Cloud does not expose a normal local `origin`, use the GitHub-integrated branch/PR flow as the canonical fallback.
-3. Push/publish the new branch immediately.
-4. Open the PR immediately with prepared title/body.
-5. PR creation is considered successful only when a numeric PR URL/PR number exists (for example, `/pull/123`).
-6. A branch-open URL such as `/pull/new/...` is not created-PR proof.
-7. If numeric PR confirmation cannot be obtained, treat it as a BLOCKER and do not mark the task complete.
-8. Make the intended bounded slice on that branch/PR chain.
-9. Commit and push the slice.
-10. Verify published branch state (Cloud verification must not depend only on `origin`-based git checks):
+0. Publication is opt-in only. Do not create branches, push, or open PRs unless the task prompt explicitly requests publication.
+1. If publication is not explicitly requested, stop after requested analysis/editing/reporting work; no publication actions.
+2. If publication is explicitly requested, start from fresh `origin/main` and create a non-`main` work branch when `origin` is available.
+3. If Cloud does not expose a normal local `origin`, use the GitHub-integrated branch/PR flow as the canonical fallback.
+4. Push/publish the new branch immediately.
+5. Open the PR immediately with prepared title/body.
+6. If a PR is explicitly requested, creation is successful only when a numeric PR URL/PR number exists (for example, `/pull/123`).
+7. A branch-open URL such as `/pull/new/...` is not created-PR proof.
+8. If numeric PR confirmation cannot be obtained, treat it as a BLOCKER and do not mark the task complete.
+9. Make the intended bounded slice on that branch/PR chain.
+10. Commit and push the slice.
+11. Verify published branch state (Cloud verification must not depend only on `origin`-based git checks):
     - use git local/remote SHA match when `origin` is available
     - otherwise use GitHub-integrated branch/PR commit state in Cloud
-11. Keep follow-up fixes on the same branch/PR chain.
+12. Keep follow-up fixes on the same branch/PR chain.
+
+## Reporting contract
+
+- Final reports must state publication status explicitly:
+  - `content changes completed`
+  - `publication not requested`
+  - `publication requested but blocked`
+- Never imply branch/push/PR creation when publication was not explicitly requested.
 
 ## Guardrails
 

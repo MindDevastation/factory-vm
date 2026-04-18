@@ -13,7 +13,7 @@ Keep this file short. Put detailed process guidance in `docs/`.
 
 - 1 thread = 1 task.
 - Keep one bounded slice per branch/PR chain.
-- Start new work from fresh `origin/main` on a non-`main` branch.
+- Start new work from fresh `origin/main` on a non-`main` branch only when publication is explicitly requested in the task prompt.
 - Do not create new branches with the `codex/` prefix; use functional prefixes such as `feature/` or `fix/`.
 - Repo-only tasks should keep web search off.
 
@@ -33,6 +33,8 @@ Keep this file short. Put detailed process guidance in `docs/`.
 
 ## Publish requirements
 
-- Never commit or push directly to `main`.
-- After branch creation (and rebase when needed), open the PR immediately using prepared title/body, then continue implementation on the same branch/PR chain.
-- Push the slice and verify local SHA equals remote SHA before review/publication.
+- Publication actions are opt-in only: do not create branches, push branches, or open PRs unless the task prompt explicitly requests publication.
+- If publication is not explicitly requested, stop after requested analysis/editing/reporting work and do not imply branch/PR creation.
+- If publication is explicitly requested, never commit or push directly to `main`.
+- For explicitly requested publication, after branch creation (and rebase when needed), open the PR immediately using prepared title/body, then continue implementation on the same branch/PR chain.
+- For explicitly requested publication, push the slice and verify local SHA equals remote SHA before review/publication.
