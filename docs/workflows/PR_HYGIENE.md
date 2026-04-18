@@ -11,6 +11,7 @@ This repo keeps PR history simple on purpose. Use this as the short branch-and-P
 ## Before Opening A PR
 
 - Rebase the branch onto fresh `origin/main` before opening the PR.
+- In Cloud checkouts where `origin` is unavailable, use the GitHub-integrated branch/PR state path from `docs/workflows/CLOUD_WORKFLOW.md`.
 - Inspect the branch history relative to `origin/main`.
 - Preferred check:
   - `git log --oneline origin/main..HEAD`
@@ -36,6 +37,8 @@ This repo keeps PR history simple on purpose. Use this as the short branch-and-P
 - The branch was not started from fresh `origin/main` for a new microfeature.
 - The branch contains unrelated commits or cross-slice drift.
 - The branch history cannot be checked cleanly against `origin/main`.
+- A numeric PR URL/PR number cannot be confirmed.
+- Only a `/pull/new/...` branch-open link is available (this is not created-PR proof).
 
 ## Push And Remote SHA Proof
 

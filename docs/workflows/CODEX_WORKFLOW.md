@@ -33,7 +33,8 @@ This is the umbrella Codex workflow for this repo. Keep details in dedicated wor
 
 ## Publication requirement
 
-- Publish from a non-`main` branch with push + remote SHA verification before review.
+- Publish from a non-`main` branch and follow Cloud verification/proof rules in `docs/workflows/CLOUD_WORKFLOW.md`.
+- PR creation is only confirmed by a numeric PR URL/PR number (not by `/pull/new/...` branch-open links).
 - Use `docs/workflows/CLOUD_WORKFLOW.md` as canonical publication flow.
 
 ## Review workflow

@@ -16,7 +16,8 @@ Before handing a slice to review-agent, confirm:
 4. The commit SHA is known.
 5. The remote HEAD SHA is known when the branch is published.
 6. Local HEAD matches remote HEAD when publication proof matters.
-7. Test evidence is available, or the blocker is stated truthfully.
+7. A numeric PR URL/PR number is known (not only a `/pull/new/...` link).
+8. Test evidence is available, or the blocker is stated truthfully.
 
 ## Review States
 
@@ -33,6 +34,7 @@ When applicable, record:
 - commit SHA
 - remote HEAD SHA
 - whether local HEAD equals remote HEAD
+- numeric PR URL/PR number
 - test evidence, or a truthful blocker explanation
 
 Docs-only or process-only slices may need lighter evidence, but they still need truthful publication state and an honest note about what was and was not verified.
@@ -51,6 +53,8 @@ Block review immediately when any of these are true:
 - the branch is not published when publication proof is expected
 - remote HEAD cannot be confirmed
 - local HEAD does not match remote HEAD when that match is required
+- numeric PR confirmation cannot be obtained
+- only a `/pull/new/...` link exists instead of a numeric PR URL/PR number
 - the changed-file set is unclear
 - test status is unknown and cannot be stated honestly
 
