@@ -33,6 +33,7 @@ This is the umbrella Codex workflow for this repo. Keep details in dedicated wor
 
 ## Publication requirement
 
+
 - Publish from a non-`main` branch with push + remote SHA verification before review.
 - Do not create new branches with the `codex/` prefix; use functional prefixes (for example, `feature/` or `fix/`).
 - After creating the branch from fresh `origin/main` (and rebasing if needed), open the PR immediately with prepared title/body, then continue implementation on the same branch/PR chain.
