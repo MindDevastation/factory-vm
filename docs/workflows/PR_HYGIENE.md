@@ -12,8 +12,8 @@ This repo keeps PR history simple on purpose. Use this as the short branch-and-P
 
 ## Before Opening A PR
 
-- Rebase the branch onto fresh `origin/main` before opening the PR.
-- In Cloud checkouts where `origin` is unavailable, use the GitHub-integrated branch/PR state path from `docs/workflows/CLOUD_WORKFLOW.md`.
+- Rebase the branch onto fresh `origin/main` before opening the PR when `origin` is available.
+- In Cloud checkouts where `origin` is unavailable, use the GitHub-integrated branch/PR state path from `docs/workflows/CLOUD_WORKFLOW.md` (do not block solely on missing local `origin`).
 - Open the PR immediately after branch creation/rebase using prepared title/body, then continue the bounded slice on that same branch/PR chain.
 - Inspect the branch history relative to `origin/main`.
 - Preferred check:

@@ -23,7 +23,7 @@ This is the canonical workflow for cloud-first Codex development in this repo.
 7. If numeric PR confirmation cannot be obtained, treat it as a BLOCKER and do not mark the task complete.
 8. Make the intended bounded slice on that branch/PR chain.
 9. Commit and push the slice.
-10. Verify published branch state:
+10. Verify published branch state (Cloud verification must not depend only on `origin`-based git checks):
     - use git local/remote SHA match when `origin` is available
     - otherwise use GitHub-integrated branch/PR commit state in Cloud
 11. Keep follow-up fixes on the same branch/PR chain.
