@@ -29,6 +29,7 @@ This is the canonical workflow for cloud-first Codex development in this repo.
 ## Guardrails
 
 - One branch/PR chain should carry one bounded slice.
+- Do not create new branches with the `codex/` prefix; use functional prefixes like `feature/` and `fix/` (or other repo-appropriate functional prefixes).
 - Do not mix unrelated workstreams in one branch.
 - Re-verify SHA after each follow-up push before declaring the slice published.
 - If numeric PR confirmation cannot be obtained, that is a BLOCKER and the task is not complete.
