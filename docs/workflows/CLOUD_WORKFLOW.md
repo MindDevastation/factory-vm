@@ -6,7 +6,7 @@ This is the canonical workflow for cloud-first Codex development in this repo.
 
 - Cloud is the default mode for normal development, review, and publication work.
 - In Cloud mode, the source of truth is the GitHub branch/PR state (not a local dirty checkout).
-- Cloud repo-backed checkouts may exist without exposing a normal local `origin` remote.
+- Cloud checkouts may be repo-backed while not exposing a normal local git remote named `origin`.
 - Local mode is fallback-only, limited to:
   - local environment or git repair
   - producing local-only artifacts
@@ -14,17 +14,19 @@ This is the canonical workflow for cloud-first Codex development in this repo.
 
 ## Canonical cloud publication flow
 
-1. Start a new work branch from fresh `origin/main` when `origin` is available in the cloud checkout.
-2. Push the new branch immediately.
-3. Open the PR immediately with prepared title/body.
-4. Treat PR creation as successful only when a numeric PR URL/PR number exists.
-5. Treat branch-open links such as `/pull/new/...` as not-created proof (they do not prove a PR exists).
-6. Make the intended bounded slice on that branch/PR chain.
-7. Commit and push the slice.
-8. Verify publication using one of these valid paths:
-   - `origin` available: verify remote branch HEAD SHA matches local `HEAD`.
-   - `origin` unavailable in Cloud: verify GitHub-integrated branch/PR state for the same branch/PR chain.
-9. Keep follow-up fixes on the same branch/PR chain.
+1. Start from fresh `origin/main` and create a non-`main` work branch when `origin` is available.
+2. If Cloud does not expose a normal local `origin`, use the GitHub-integrated branch/PR flow as the canonical fallback.
+3. Push/publish the new branch immediately.
+4. Open the PR immediately with prepared title/body.
+5. PR creation is considered successful only when a numeric PR URL/PR number exists (for example, `/pull/123`).
+6. A branch-open URL such as `/pull/new/...` is not created-PR proof.
+7. If numeric PR confirmation cannot be obtained, treat it as a BLOCKER and do not mark the task complete.
+8. Make the intended bounded slice on that branch/PR chain.
+9. Commit and push the slice.
+10. Verify published branch state:
+    - use git local/remote SHA match when `origin` is available
+    - otherwise use GitHub-integrated branch/PR commit state in Cloud
+11. Keep follow-up fixes on the same branch/PR chain.
 
 ## Guardrails
 

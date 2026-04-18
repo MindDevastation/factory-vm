@@ -5,6 +5,7 @@ This repo keeps PR history simple on purpose. Use this as the short branch-and-P
 ## Branch Rules
 
 - New branches must start from a fresh `origin/main`.
+- In Cloud, a repo-backed checkout may not expose a normal local `origin`; use `docs/workflows/CLOUD_WORKFLOW.md` for canonical fallback verification behavior.
 - Do not create new branches with the `codex/` prefix; use functional prefixes like `feature/`, `fix/`, or another repo-appropriate functional prefix.
 - Do not merge `origin/main` into feature branches.
 - If a feature branch needs the latest `main`, rebase onto `origin/main` instead.
@@ -45,8 +46,15 @@ This repo keeps PR history simple on purpose. Use this as the short branch-and-P
 ## Push And Remote SHA Proof
 
 - PR hygiene does not replace publish verification.
-- A slice is still accepted only after push plus remote SHA proof.
-- The remote branch SHA must match the local commit SHA before the PR is considered closed.
+- A slice is still accepted only after push plus publish-state proof.
+- When `origin` is available, the remote branch SHA must match the local commit SHA before the PR is considered closed.
+- When Cloud does not expose `origin`, use GitHub-integrated branch/PR commit state per `docs/workflows/CLOUD_WORKFLOW.md`.
+
+## PR Creation Proof
+
+- PR creation is successful only when a numeric PR URL/PR number exists.
+- A branch-open URL such as `/pull/new/...` is not created-PR proof.
+- Missing numeric PR confirmation is a BLOCKER.
 
 ## Existing PRs
 

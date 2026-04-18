@@ -15,7 +15,7 @@ This is the umbrella Codex workflow for this repo. Keep details in dedicated wor
 
 - Cloud is the default execution mode.
 - Local mode is fallback-only for repair/local-artifact/unpublished-state cases.
-- Canonical cloud policy and publication sequence live in `docs/workflows/CLOUD_WORKFLOW.md`.
+- Canonical cloud policy and publication sequence live in `docs/workflows/CLOUD_WORKFLOW.md`, including Cloud fallback verification when `origin` is unavailable.
 
 ## Mandatory execution flow
 
