@@ -14,6 +14,7 @@ Keep this file short. Put detailed process guidance in `docs/`.
 - 1 thread = 1 task.
 - Keep one bounded slice per branch/PR chain.
 - Start new work from fresh `origin/main` on a non-`main` branch.
+- Do not create new branches with the `codex/` prefix; use functional prefixes such as `feature/` or `fix/`.
 - Repo-only tasks should keep web search off.
 
 ## Mode policy
@@ -33,4 +34,5 @@ Keep this file short. Put detailed process guidance in `docs/`.
 ## Publish requirements
 
 - Never commit or push directly to `main`.
+- After branch creation (and rebase when needed), open the PR immediately using prepared title/body, then continue implementation on the same branch/PR chain.
 - Push the slice and verify local SHA equals remote SHA before review/publication.

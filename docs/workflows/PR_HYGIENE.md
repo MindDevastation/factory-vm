@@ -6,12 +6,15 @@ This repo keeps PR history simple on purpose. Use this as the short branch-and-P
 
 - New branches must start from a fresh `origin/main`.
 - In Cloud, a repo-backed checkout may not expose a normal local `origin`; use `docs/workflows/CLOUD_WORKFLOW.md` for canonical fallback verification behavior.
+- Do not create new branches with the `codex/` prefix; use functional prefixes like `feature/`, `fix/`, or another repo-appropriate functional prefix.
 - Do not merge `origin/main` into feature branches.
 - If a feature branch needs the latest `main`, rebase onto `origin/main` instead.
 
 ## Before Opening A PR
 
 - Rebase the branch onto fresh `origin/main` before opening the PR.
+- In Cloud checkouts where `origin` is unavailable, use the GitHub-integrated branch/PR state path from `docs/workflows/CLOUD_WORKFLOW.md`.
+- Open the PR immediately after branch creation/rebase using prepared title/body, then continue the bounded slice on that same branch/PR chain.
 - Inspect the branch history relative to `origin/main`.
 - Preferred check:
   - `git log --oneline origin/main..HEAD`
@@ -37,6 +40,8 @@ This repo keeps PR history simple on purpose. Use this as the short branch-and-P
 - The branch was not started from fresh `origin/main` for a new microfeature.
 - The branch contains unrelated commits or cross-slice drift.
 - The branch history cannot be checked cleanly against `origin/main`.
+- A numeric PR URL/PR number cannot be confirmed.
+- Only a `/pull/new/...` branch-open link is available (this is not created-PR proof).
 
 ## Push And Remote SHA Proof
 

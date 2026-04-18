@@ -18,6 +18,7 @@ Before handing a slice to review-agent, confirm:
 6. Local HEAD matches remote HEAD when `origin`-based verification is used.
 7. Numeric PR URL/PR number exists as PR-created proof (not `/pull/new/...`).
 8. Test evidence is available, or the blocker is stated truthfully.
+9. The remote HEAD SHA is known when the branch is published.
 
 ## Review States
 
@@ -51,9 +52,10 @@ Block review immediately when any of these are true:
 
 - implementation is unfinished
 - the branch is not published when publication proof is expected
-- published commit state cannot be confirmed (git remote SHA or GitHub-integrated state)
-- local HEAD does not match remote HEAD when `origin`-based verification is required
+- remote HEAD cannot be confirmed
+- local HEAD does not match remote HEAD when that match is required
 - numeric PR confirmation cannot be obtained
+- only a `/pull/new/...` link exists instead of a numeric PR URL/PR number
 - the changed-file set is unclear
 - test status is unknown and cannot be stated honestly
 
