@@ -15,7 +15,7 @@ This is the umbrella Codex workflow for this repo. Keep details in dedicated wor
 
 - Cloud is the default execution mode.
 - Local mode is fallback-only for repair/local-artifact/unpublished-state cases.
-- Canonical cloud policy and publication sequence live in `docs/workflows/CLOUD_WORKFLOW.md`.
+- Canonical cloud policy and publication sequence live in `docs/workflows/CLOUD_WORKFLOW.md`, including Cloud fallback verification when `origin` is unavailable.
 
 ## Mandatory execution flow
 
@@ -33,8 +33,8 @@ This is the umbrella Codex workflow for this repo. Keep details in dedicated wor
 
 ## Publication requirement
 
-- Publish from a non-`main` branch with push + remote SHA verification before review.
-- Use `docs/workflows/CLOUD_WORKFLOW.md` as canonical publication flow.
+- Publish from a non-`main` branch with publish-state verification before review.
+- Use `docs/workflows/CLOUD_WORKFLOW.md` as canonical publication flow and PR-created proof rules (numeric PR URL/number required; `/pull/new/...` is not proof).
 
 ## Review workflow
 
