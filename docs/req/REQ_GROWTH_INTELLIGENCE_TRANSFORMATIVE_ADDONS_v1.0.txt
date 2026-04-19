@@ -1,0 +1,183 @@
+REQ_GROWTH_INTELLIGENCE_TRANSFORMATIVE_ADDONS_v1.0
+
+1. Название
+
+Growth Intelligence + One-Click Release Planning
+Transformative Add-ons
+
+2. Назначение документа
+
+Этот REQ фиксирует аддоны, которые могут вывести продукт на qualitatively new level.
+
+Речь идет не о точечных улучшениях, а о расширениях, которые способны превратить Growth Intelligence из feature-layer в центральную operating system для planning, packaging, execution handoff и outcome intelligence.
+
+3. Базовые принципы
+
+Пока не принято отдельное решение о пересмотре продуктовой политики, даже трансформирующие расширения должны сохранять:
+- operator-approved default,
+- explainability,
+- trust visibility,
+- safe action governance,
+- audit trail,
+- rollback-friendly evolution.
+
+4. Transformative add-ons
+
+4.1. Full planning operating system
+
+Продукт должен later уметь выступать не только генератором плана, но и центральной planning OS.
+
+Минимально такая система должна покрывать:
+- weekly planning,
+- monthly planning,
+- quarterly planning,
+- approvals,
+- revisions,
+- comparisons,
+- planner handoff,
+- operator coordination.
+
+4.2. Historical backtesting suite
+
+Продукт должен later включать полноценную систему historical backtesting.
+
+Минимально suite должна поддерживать:
+- replay of historical data,
+- plan reconstruction,
+- quality benchmarking,
+- trust calibration checks,
+- scenario comparison against factual outcomes.
+
+4.3. Closed-loop outcome intelligence
+
+Продукт должен later уметь не только предлагать планы, но и замыкать loop:
+- what was recommended,
+- what operator accepted,
+- what was actually released,
+- what happened in reality,
+- whether expected impact matched factual result.
+
+Это один из ключевых будущих стратегических слоев.
+
+4.4. Counterfactual planning engine
+
+Продукт должен later уметь строить альтернативные будущие сценарии и объяснять trade-offs.
+
+Минимально:
+- what-if by slot,
+- what-if by release type,
+- what-if by timing,
+- what-if by safe/growth bias,
+- explicit risk/upside trade-off explanation.
+
+4.5. Portfolio-level allocator
+
+На уровне нескольких каналов продукт должен later поддержать portfolio orchestration.
+
+Минимально:
+- allocate release density,
+- allocate experiment budget,
+- identify rebuild candidates,
+- identify safe scale opportunities,
+- balance portfolio risk across channels.
+
+4.6. Trust-aware knowledge graph
+
+Knowledge/playbook/trust layer должен later эволюционировать в knowledge graph.
+
+Минимально graph должен покрывать:
+- evidence lineage,
+- source hierarchy,
+- conflict visibility,
+- supersession relationships,
+- applicability boundaries,
+- trust evolution.
+
+4.7. Operator memory / decision memory
+
+Продукт должен later уметь помнить operator decisions как structured system memory.
+
+Минимально:
+- what operator tends to accept,
+- what operator tends to reject,
+- which explanation styles are trusted,
+- which planning styles repeatedly fail.
+
+Важно:
+- это decision memory, а не implicit uncontrolled self-learning.
+
+4.8. Adaptive channel profiles
+
+Channel profile layer должен later стать adaptive.
+
+Минимально:
+- profile can evolve with observed outcomes,
+- profile updates are explainable,
+- operator can inspect profile shifts,
+- profile changes are not silently destructive.
+
+4.9. Packaging intelligence layer
+
+Продукт должен later поддержать отдельный packaging intelligence layer.
+
+Минимально:
+- title direction intelligence,
+- thumbnail direction intelligence,
+- metadata emphasis intelligence,
+- packaging-risk diagnostics,
+- packaging opportunity suggestions.
+
+4.10. Planning + metadata + execution bridge
+
+Продукт должен later объединить в один контур:
+- insight,
+- plan,
+- planner handoff,
+- metadata direction,
+- execution readiness.
+
+Это означает, что planning recommendation не остается изолированным советом, а становится управляемым мостом к реальному релизному процессу.
+
+5. Почему это трансформирует продукт
+
+Эти расширения способны изменить продуктовую роль системы:
+- из advisory surface в planning OS,
+- из static recommendation generator в measured outcome system,
+- из disconnected feature set в unified release intelligence platform.
+
+6. Основные риски
+
+Трансформирующие расширения несут риски:
+- слишком ранняя системная сложность,
+- переусложнение UX,
+- ложное ощущение предсказательной точности,
+- erosion of trust при слабом governance,
+- слишком сильная связка planning и execution без достаточных safety controls.
+
+7. Требуемые защитные правила
+
+Любое трансформирующее расширение должно later строиться только при наличии:
+- strong data lineage,
+- strong audit trail,
+- versioned policies/models,
+- operator-visible trust/explainability,
+- rollback path,
+- safe disablement/feature flags.
+
+8. Граница данного REQ
+
+Этот REQ не означает, что все перечисленное нужно внедрять сейчас.
+
+Он фиксирует product north star и transformation-level future scope.
+
+9. Acceptance criteria
+
+REQ считается согласованным, если:
+- все transformative add-ons оформлены как отдельный long-term scope,
+- они явно отделены от current foundation work,
+- их реализация предполагает stronger governance than current v1,
+- none of them is silently reinterpreted as immediate mandatory implementation.
+
+10. READY FOR SPEC
+
+READY FOR SPEC: YES

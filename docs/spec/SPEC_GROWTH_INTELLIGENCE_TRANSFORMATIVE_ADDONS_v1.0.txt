@@ -1,0 +1,272 @@
+SPEC_GROWTH_INTELLIGENCE_TRANSFORMATIVE_ADDONS_v1.0
+
+Conflict / Fullness Check
+
+Hard conflicts inside the REQ were not found.
+
+The REQ is internally aligned on the main product boundary:
+- these are transformative future extensions
+- they are not immediate mandatory implementation
+- they must preserve operator-approved default, explainability, trust visibility, safe action governance, audit trail, and rollback-friendly evolution unless product policy is separately revised
+
+This document is therefore a future-scope feature/program spec, not an immediate implementation backlog spec.
+
+SPEC_GROWTH_INTELLIGENCE_TRANSFORMATIVE_ADDONS_v1.0
+
+1. Overview / цель
+
+Growth Intelligence Transformative Add-ons define the long-term transformation scope that can evolve Growth Intelligence + One-Click Release Planning:
+- from a feature-layer
+- into a central planning operating system
+- into a measured outcome intelligence system
+- into a unified release intelligence platform
+
+This spec does not replace the current foundation work.
+It defines the future north-star layer that may be implemented only under stronger governance than current v1.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- Full Planning Operating System
+- Historical Backtesting Suite
+- Closed-Loop Outcome Intelligence
+- Counterfactual Planning Engine
+- Portfolio-Level Allocator
+- Trust-Aware Knowledge Graph
+- Operator Memory / Decision Memory
+- Adaptive Channel Profiles
+- Packaging Intelligence Layer
+- Planning + Metadata + Execution Bridge
+
+2.2. Out of scope in current immediate workstream
+- mandatory immediate implementation of all transformative items
+- weakening current operator-approved boundary
+- weakening explainability or trust visibility
+- default auto-apply behavior
+- silent execution coupling without governance
+
+2.3. Boundary rules
+- these items are future scope, not current mandatory implementation
+- stronger governance than current v1 is required before rollout
+- none of these items may silently reinterpret current v1 boundaries
+- transformation must remain rollback-friendly
+- transformation must remain audit-friendly
+
+3. Preserved base principles
+
+Until product policy is explicitly revised, any transformative implementation must preserve:
+- operator-approved default
+- explainability
+- trust visibility
+- safe action governance
+- audit trail
+- rollback-friendly evolution
+
+These are mandatory inherited product constraints.
+
+4. Canonical transformation model
+
+4.1. Product-role transformation
+The future role of the system may evolve:
+- from advisory surface
+- to planning OS
+- to measured outcome system
+- to unified release intelligence platform
+
+4.2. Transformation rule
+This role expansion is allowed only if each added layer remains governed, explainable, trust-aware, and rollback-safe.
+
+5. Transformative add-on families
+
+5.1. Full Planning Operating System
+The future system must be able to act as central planning OS covering at minimum:
+- weekly planning
+- monthly planning
+- quarterly planning
+- approvals
+- revisions
+- comparisons
+- planner handoff
+- operator coordination
+
+5.2. Historical Backtesting Suite
+The future system must support at minimum:
+- replay of historical data
+- plan reconstruction
+- quality benchmarking
+- trust calibration checks
+- scenario comparison against factual outcomes
+
+5.3. Closed-Loop Outcome Intelligence
+The future system must support closed-loop linkage across:
+- what was recommended
+- what operator accepted
+- what was actually released
+- what happened in reality
+- whether expected impact matched factual result
+
+5.4. Counterfactual Planning Engine
+The future system must support at minimum:
+- what-if by slot
+- what-if by release type
+- what-if by timing
+- what-if by safe/growth bias
+- explicit risk/upside trade-off explanation
+
+5.5. Portfolio-Level Allocator
+The future system must support portfolio orchestration across multiple channels at minimum for:
+- release density allocation
+- experiment budget allocation
+- rebuild-candidate identification
+- safe scale opportunity identification
+- portfolio-risk balancing
+
+5.6. Trust-Aware Knowledge Graph
+The future knowledge/playbook/trust layer must support at minimum:
+- evidence lineage
+- source hierarchy
+- conflict visibility
+- supersession relationships
+- applicability boundaries
+- trust evolution
+
+5.7. Operator Memory / Decision Memory
+The future system must support structured operator decision memory for at minimum:
+- what operator tends to accept
+- what operator tends to reject
+- which explanation styles are trusted
+- which planning styles repeatedly fail
+
+Constraint:
+- this is decision memory, not uncontrolled self-learning
+
+5.8. Adaptive Channel Profiles
+The future profile layer must support at minimum:
+- profile evolution with observed outcomes
+- explainable profile updates
+- operator inspection of profile shifts
+- non-destructive profile changes
+
+5.9. Packaging Intelligence Layer
+The future system must support at minimum:
+- title direction intelligence
+- thumbnail direction intelligence
+- metadata emphasis intelligence
+- packaging-risk diagnostics
+- packaging-opportunity suggestions
+
+5.10. Planning + Metadata + Execution Bridge
+The future system must support one managed bridge across:
+- insight
+- plan
+- planner handoff
+- metadata direction
+- execution readiness
+
+Rule:
+- planning recommendation must become a managed bridge to real release process, not remain an isolated suggestion
+
+6. Governance prerequisites
+
+Any transformative implementation must later be built only if all of the following exist:
+- strong data lineage
+- strong audit trail
+- versioned policies/models
+- operator-visible trust/explainability
+- rollback path
+- safe disablement / feature flags
+
+These are mandatory prerequisites for the transformation layer.
+
+7. Risk model
+
+The future system must explicitly guard against:
+- too-early system complexity
+- UX over-complexity
+- false feeling of predictive precision
+- erosion of trust under weak governance
+- too-strong coupling of planning and execution without safety controls
+
+8. API / interface families
+
+The long-term transformation scope must later define at minimum:
+- planning OS coordination interfaces
+- historical backtesting interfaces
+- outcome-intelligence linkage interfaces
+- counterfactual simulation interfaces
+- portfolio allocation interfaces
+- knowledge graph interfaces
+- operator memory interfaces
+- adaptive profile interfaces
+- packaging intelligence interfaces
+- planning-to-execution bridge interfaces
+
+Interface rule:
+- these are long-term interface families only
+- they are not immediate mandatory implementation interfaces for the current workstream
+
+9. Validation rules
+
+9.1. Future-scope validation
+- all transformative add-ons must remain explicitly future scope
+- none may be silently reinterpreted as immediate mandatory implementation
+- stronger governance than current v1 must remain an explicit requirement
+
+9.2. Boundary validation
+- operator-approved default must remain preserved unless separately revised
+- explainability and trust visibility must remain preserved
+- safe action governance, audit trail, and rollback path must remain preserved
+
+9.3. Transformation validation
+- each transformative family must be treated as a major product-layer expansion, not a casual add-on
+- planning and execution must not be tightly coupled without safety prerequisites
+
+10. Acceptance criteria
+
+This future-scope feature/program is product-accepted only if:
+- all transformative add-ons are documented as separate long-term scope
+- they remain clearly separated from current foundation work
+- their rollout explicitly assumes stronger governance than current v1
+- none of them is silently reinterpreted as immediate mandatory implementation
+
+11. Definition of done
+
+This spec is done only when:
+- the future transformation scope is explicit
+- all listed transformative add-ons are preserved as long-term product direction
+- the boundary between current foundation work and transformation layer is explicit
+- governance prerequisites are explicit
+- immediate mandatory implementation is explicitly not implied
+
+12. Rollout posture
+
+12.1. Current posture
+This spec is future-scope only.
+
+12.2. Promotion rule
+No transformative family may move into active implementation without a separate product decision and stronger governance framing.
+
+12.3. Rollback rule
+Any future rollout of these items must remain rollback-friendly and feature-flag-friendly.
+
+13. Open questions / ambiguities
+
+13.1. Exact prioritization order among the transformative add-ons is not fixed inside this REQ.
+13.2. Exact decomposition into separate epics/workstreams is implementation/program-structuring detail for future planning.
+
+Ready for Dev? No
+
+Причины
+- The REQ explicitly defines these as long-term transformative future scope, not immediate mandatory implementation.
+- Stronger governance than current v1 is a prerequisite.
+- A separate decision is required before promoting any of these families into active implementation.
+
+[BLOCKER]
+- no separate product decision yet to promote any transformative family into immediate workstream
+- stronger governance prerequisite is mandatory before rollout
+- immediate implementation would violate the REQ boundary that these are not current mandatory scope
+
+[RISK]
+- quietly treating north-star scope as immediate backlog
+- over-coupling planning and execution too early
+- damaging trust through weak governance on a high-complexity layer

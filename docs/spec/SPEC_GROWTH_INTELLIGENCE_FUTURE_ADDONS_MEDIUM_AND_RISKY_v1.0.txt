@@ -1,0 +1,378 @@
+SPEC_GROWTH_INTELLIGENCE_FUTURE_ADDONS_MEDIUM_AND_RISKY_v1.0
+
+Conflict / Fullness Check
+
+Hard conflicts inside the REQ were not found.
+
+The REQ is internally aligned on the key boundary:
+- these are future extensions
+- they are not part of the immediate workstream
+- medium-term items and risky high-upside items are explicitly separated
+- operator-approved planning remains the default norm
+- default auto-apply remains false
+- explainability, trust, policy-gated mutation paths, and audit trail remain mandatory
+
+This document is therefore a future-scope feature-group spec, not an immediate implementation backlog spec.
+
+SPEC_GROWTH_INTELLIGENCE_FUTURE_ADDONS_MEDIUM_AND_RISKY_v1.0
+
+1. Overview / цель
+
+Growth Intelligence Future Add-ons: Medium-Term and Risky High-Upside Extensions define the next-layer future scope beyond the current foundation.
+
+This scope combines two groups:
+- useful medium-term additions that are reasonable later
+- risky additions with potentially strong upside
+
+The purpose of this spec is to preserve future product direction without collapsing it into current mandatory implementation.
+
+2. Scope / Non-goals
+
+2.1. In scope
+Medium-term additions:
+- Scenario Simulation
+- Telegram Routing Policy
+- Recommendation Lifecycle States
+- Similarity / Analog Search
+- Predictive Scoring (ML-light)
+- Knowledge Conflict Graph
+- Historical Backtesting
+- Outcome Loop
+- Portfolio Allocator (medium form)
+- Counterfactual Explanations
+
+Risky high-upside additions:
+- LLM-Assisted Planning Explanations
+- LLM-Assisted Assisted-Planning Queries
+- Predictive Uplift Model
+- Auto-Prioritization of Recommendations
+- Auto-Generated Packaging Directions
+- Policy-Based Semi-Automation
+- Channel Archetype Inference
+- Experiment Recommendation Engine
+- Multi-Signal Anomaly Predictor
+- Cross-Channel Transfer Heuristics
+
+2.2. Out of scope in current immediate workstream
+- mandatory immediate implementation of any medium-term or risky item
+- default auto-apply
+- destruction of operator-approved planning norm
+- mutation-capable paths without policy gating
+- erosion of explainability/trust/audit trail
+
+2.3. Boundary rules
+- medium-term and risky groups must remain explicitly separate
+- no risky item may be silently reinterpreted as immediate mandatory implementation
+- current product boundaries stay in force until separately revised
+- deterministic data retrieval and grounded reasoning must remain preserved where future LLM or ML-light layers appear
+
+3. Preserved base boundaries
+
+Until separately revised, all future extensions must preserve:
+- operator-approved planning as default norm
+- default auto-apply = false
+- explainability
+- trust visibility
+- policy-gated mutation-capable paths
+- existing audit trail integrity
+
+4. Medium-term additions
+
+4.1. Scenario Simulation
+The future system must support multiple simultaneous planning scenarios at minimum:
+- safe scenario
+- balanced scenario
+- growth scenario
+
+For each scenario the system must show:
+- expected impact delta
+- risk delta
+- trust delta
+- release-mix differences
+
+4.2. Telegram Routing Policy
+The future system must support explicit Telegram routing policy covering at minimum:
+- quiet hours
+- urgency thresholds
+- digest frequency
+- per-channel routing rules
+- who receives what class of alert
+
+4.3. Recommendation Lifecycle States
+The future system must support recommendation lifecycle states:
+- NEW
+- ACKNOWLEDGED
+- DISMISSED
+- EXPIRED
+- APPLIED
+
+Purpose:
+- remove “eternal recommendations”
+- improve operational discipline
+
+4.4. Similarity / Analog Search
+The future system must support similarity-based reasoning over at minimum:
+- similar releases
+- similar windows
+- similar risk patterns
+- similar opportunity patterns
+
+Purpose:
+- strengthen reasoning
+- strengthen confidence display
+- attach planning advice to real analogs
+
+4.5. Predictive Scoring (ML-light)
+The future system may use ML-light predictive scoring as assist layer, but:
+- predictive scoring is not sole source of truth
+- decision layer remains explainable
+- deterministic fallback is mandatory
+
+Minimum predictive outputs:
+- expected impact bucket
+- underperformance risk bucket
+- confidence estimate
+
+4.6. Knowledge Conflict Graph
+The future system must support:
+- conflict detection
+- conflict severity
+- resolution hint
+- operator review requirement when needed
+
+4.7. Historical Backtesting
+The future system must support:
+- replay historical inputs
+- reconstruct hypothetical plan
+- compare with factual outcomes
+- evaluate planning-logic quality
+
+4.8. Outcome Loop
+The future system must support factual closed linkage across:
+- generated plan item
+- operator decision
+- actual release
+- actual outcome
+
+Purpose:
+- measure usefulness instead of relying on assumptions
+
+4.9. Portfolio Allocator (medium form)
+The future system must support portfolio-aware recommendation across channels at minimum for:
+- where to increase release density
+- where to pause experiments
+- where to favor safe planning
+
+4.10. Counterfactual Explanations
+The future system must support:
+- what changes if slot changes
+- what changes if release type changes
+- what changes if publish window changes
+
+5. Risky high-upside additions
+
+5.1. LLM-Assisted Planning Explanations
+LLM may later be used as explanation/synthesis layer, under these constraints:
+- LLM does not replace source-of-truth reasoning engine
+- explanation remains grounded in saved signals/playbooks/trust mappings
+- hallucination-resistant fallback is mandatory
+
+5.2. LLM-Assisted Assisted-Planning Queries
+Future query types such as:
+- give 5 best slots
+- which releases should be postponed
+- show high-growth options
+
+may later use LLM orchestration, under these constraints:
+- factual data retrieval remains deterministic
+- LLM composes/explains only
+
+5.3. Predictive Uplift Model
+A future model may later estimate uplift from slot/release/package choice.
+
+Primary risks:
+- false precision
+- high confidence on weak data
+
+5.4. Auto-Prioritization of Recommendations
+The system may later prioritize important recommendations more aggressively.
+
+Primary risks:
+- loss of operator trust
+- hidden prioritization bias
+
+5.5. Auto-Generated Packaging Directions
+The system may later generate title / thumbnail / metadata directions automatically.
+
+Primary risks:
+- templating
+- degradation of creative quality
+- false generalization across channels
+
+5.6. Policy-Based Semi-Automation
+The future system may later support safe-only automated draft creation or semi-approval flows, only:
+- by explicit policy
+- with audit trail
+- not as default behavior
+
+5.7. Channel Archetype Inference
+The future system may later infer channel archetype and alter planning profile accordingly.
+
+Primary risks:
+- wrong categorization
+- too-early hardening of wrong profile
+
+5.8. Experiment Recommendation Engine
+The future system may later recommend high-upside experiments.
+
+Primary risks:
+- excessive aggressiveness
+- over-experimentation
+
+5.9. Multi-Signal Anomaly Predictor
+The future system may later predict degradation before full factual manifestation.
+
+Primary risks:
+- high false positives
+- operator alert fatigue
+
+5.10. Cross-Channel Transfer Heuristics
+The future system may later use one channel's learning as weak prior for another.
+
+Primary risks:
+- invalid transfer across incompatible channels
+- misleading borrowed priors
+
+6. Priority model inside future scope
+
+6.1. Safer later-priority group
+The safer later-priority group is:
+- scenario simulation
+- recommendation lifecycle
+- similarity search
+- backtesting
+- outcome loop
+
+6.2. Riskier later-priority group
+The riskier later-priority group is:
+- LLM-assisted layers
+- predictive uplift
+- semi-automation
+- cross-channel transfer heuristics
+
+6.3. Priority interpretation rule
+This priority ordering is a future-shaping rule, not an immediate workstream commitment.
+
+7. Governance requirements
+
+Any future implementation of these extensions must preserve:
+- operator-first boundaries
+- explainability
+- trust visibility
+- policy-gated mutation paths
+- intact audit trail
+
+Additional rule:
+- risky items require stronger governance scrutiny than medium-term items before promotion to active implementation
+
+8. API / interface families
+
+8.1. Medium-term interface families
+The medium-term future layer may later require:
+- scenario simulation interfaces
+- Telegram routing-policy interfaces
+- recommendation lifecycle interfaces
+- similarity search interfaces
+- ML-light predictive scoring interfaces
+- knowledge conflict graph interfaces
+- backtesting interfaces
+- outcome-loop linkage interfaces
+- medium-form portfolio allocator interfaces
+- counterfactual explanation interfaces
+
+8.2. Risky future interface families
+The risky future layer may later require:
+- LLM explanation orchestration interfaces
+- LLM query orchestration interfaces
+- uplift-model interfaces
+- recommendation prioritization interfaces
+- packaging generation interfaces
+- semi-automation policy interfaces
+- archetype inference interfaces
+- experiment-engine interfaces
+- anomaly-predictor interfaces
+- cross-channel transfer interfaces
+
+8.3. Interface boundary rule
+These are future interface families only.
+They are not immediate mandatory implementation interfaces for the current workstream.
+
+9. Validation rules
+
+9.1. Future-scope validation
+- all listed items must remain future scope
+- none may be silently reinterpreted as immediate mandatory implementation
+- medium-term and risky groups must remain separated
+
+9.2. Boundary validation
+- operator-approved default must remain preserved
+- default auto-apply must remain false
+- explainability and trust must remain mandatory
+- mutation-capable paths must remain policy-gated
+- audit trail must remain intact
+
+9.3. Risk validation
+- risky items must not be represented as low-governance features
+- any LLM or ML-light layer must remain grounded and fallback-safe
+- any semi-automation must remain policy-controlled and non-default
+
+10. Acceptance criteria
+
+This future-scope feature-group is product-accepted only if:
+- future extensions are documented as separate future scope
+- operator-first boundaries remain preserved
+- risky items remain explicitly separated from medium-term items
+- no risky item is interpreted as immediate mandatory implementation
+
+11. Definition of done
+
+This spec is done only when:
+- both future groups are explicit
+- medium-term and risky items are separated
+- future priority grouping is explicit
+- immediate implementation is explicitly not implied
+- current foundation scope is not replaced or weakened
+
+12. Rollout posture
+
+12.1. Current posture
+This is future-scope only.
+
+12.2. Promotion rule
+No item may move into active implementation without a separate product decision.
+Risky items require stronger justification and governance than medium-term items.
+
+12.3. Safety rule
+Any future rollout must preserve policy gating, explainability, trust visibility, and audit trail.
+
+13. Open questions / ambiguities
+
+13.1. Exact order among items inside each future group is not fully fixed beyond the provided safer/riskier priority guidance.
+13.2. Exact decomposition into separate future epics/workstreams is implementation/program-structuring detail.
+
+Ready for Dev? No
+
+Причины
+- The REQ explicitly defines these additions as future direction rather than current mandatory implementation.
+- Risky items must remain clearly separated and governance-heavy.
+- Separate product decisions are required before promoting any of these items into active work.
+
+[BLOCKER]
+- no separate decision yet to promote any medium-term or risky extension into immediate workstream
+- risky items are explicitly not allowed to be treated as immediate mandatory implementation
+- governance requirements must remain in force before rollout
+
+[RISK]
+- blending medium-term and risky items into one undifferentiated backlog
+- prematurely implementing risky items without stronger governance
+- weakening operator-first boundaries while introducing ML/LLM/semi-automation layers
