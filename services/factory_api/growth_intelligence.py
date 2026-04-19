@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -33,6 +34,14 @@ def _error(code: str, message: str, status_code: int = 422) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
+def _validation_status(message: str) -> int:
+    if "already exists" in message:
+        return 409
+    if "not found" in message:
+        return 404
+    return 422
+
+
 def create_growth_intelligence_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/growth-intelligence", tags=["growth-intelligence"])
 
@@ -64,7 +73,9 @@ def create_growth_intelligence_router(env: Env) -> APIRouter:
             svc = GrowthRegistryService(conn)
             return svc.create_knowledge_item(payload)
         except ValueError as exc:
-            return _error("GI_VALIDATION_ERROR", str(exc))
+            return _error("GI_VALIDATION_ERROR", str(exc), status_code=_validation_status(str(exc)))
+        except sqlite3.IntegrityError:
+            return _error("GI_VALIDATION_ERROR", "knowledge item create failed", status_code=422)
         finally:
             conn.close()
 
@@ -75,7 +86,7 @@ def create_growth_intelligence_router(env: Env) -> APIRouter:
             svc = GrowthRegistryService(conn)
             return svc.update_knowledge_item(item_id, payload)
         except ValueError as exc:
-            return _error("GI_VALIDATION_ERROR", str(exc), status_code=404 if "not found" in str(exc) else 422)
+            return _error("GI_VALIDATION_ERROR", str(exc), status_code=_validation_status(str(exc)))
         finally:
             conn.close()
 
@@ -93,7 +104,9 @@ def create_growth_intelligence_router(env: Env) -> APIRouter:
         try:
             return GrowthRegistryService(conn).create_playbook(payload)
         except ValueError as exc:
-            return _error("GI_VALIDATION_ERROR", str(exc))
+            return _error("GI_VALIDATION_ERROR", str(exc), status_code=_validation_status(str(exc)))
+        except sqlite3.IntegrityError:
+            return _error("GI_VALIDATION_ERROR", "playbook create failed", status_code=422)
         finally:
             conn.close()
 
@@ -103,7 +116,7 @@ def create_growth_intelligence_router(env: Env) -> APIRouter:
         try:
             return GrowthRegistryService(conn).update_playbook(playbook_id, payload)
         except ValueError as exc:
-            return _error("GI_VALIDATION_ERROR", str(exc), status_code=404 if "not found" in str(exc) else 422)
+            return _error("GI_VALIDATION_ERROR", str(exc), status_code=_validation_status(str(exc)))
         finally:
             conn.close()
 
@@ -121,7 +134,9 @@ def create_growth_intelligence_router(env: Env) -> APIRouter:
         try:
             return GrowthRegistryService(conn).set_channel_feature_flags(channel_slug, payload.model_dump())
         except ValueError as exc:
-            return _error("GI_VALIDATION_ERROR", str(exc))
+            return _error("GI_VALIDATION_ERROR", str(exc), status_code=_validation_status(str(exc)))
+        except sqlite3.IntegrityError:
+            return _error("GI_VALIDATION_ERROR", "feature flags update failed", status_code=422)
         finally:
             conn.close()
 

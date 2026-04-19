@@ -34,6 +34,13 @@ def ensure_source_class(value: str) -> str:
     return normalized
 
 
+def ensure_non_empty_text(value: Any, *, field_name: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must be non-empty")
+    return normalized
+
+
 def ensure_source_trust(value: str) -> str:
     normalized = str(value or "").strip().upper()
     if normalized not in SOURCE_TRUST_LEVELS:

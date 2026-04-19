@@ -6,7 +6,15 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from services.growth_intelligence.contracts import ensure_boolean_flag_map, ensure_impact_confidence, ensure_json_text, ensure_source_hierarchy
+from services.growth_intelligence.contracts import (
+    ensure_boolean_flag_map,
+    ensure_impact_confidence,
+    ensure_json_text,
+    ensure_non_empty_text,
+    ensure_source_class,
+    ensure_source_hierarchy,
+    ensure_source_trust,
+)
 
 
 def _optional_text(value: Any) -> str | None:
@@ -35,10 +43,10 @@ class GrowthRegistryService:
         params: list[Any] = []
         if source_class:
             where.append("source_class = ?")
-            params.append(ensure_source_hierarchy(source_class=source_class, source_trust="A")[0])
+            params.append(ensure_source_class(source_class))
         if source_trust:
             where.append("source_trust = ?")
-            params.append(ensure_source_hierarchy(source_class="INTERNAL", source_trust=source_trust)[1])
+            params.append(ensure_source_trust(source_trust))
         if status:
             where.append("status = ?")
             params.append(str(status).strip())
@@ -56,42 +64,54 @@ class GrowthRegistryService:
 
     def create_knowledge_item(self, payload: dict[str, Any]) -> dict[str, Any]:
         now = self._now_iso()
+        code = ensure_non_empty_text(payload.get("code"), field_name="code")
+        title = ensure_non_empty_text(payload.get("title"), field_name="title")
+        source_type = ensure_non_empty_text(payload.get("source_type"), field_name="source_type")
+        source_name = ensure_non_empty_text(payload.get("source_name"), field_name="source_name")
+        action_template = ensure_non_empty_text(payload.get("action_template"), field_name="action_template")
+        explanation_template = ensure_non_empty_text(payload.get("explanation_template"), field_name="explanation_template")
+        status = ensure_non_empty_text(payload.get("status"), field_name="status")
         source_class, source_trust = ensure_source_hierarchy(source_class=str(payload.get("source_class", "")), source_trust=str(payload.get("source_trust", "")))
         impact_confidence = ensure_impact_confidence(str(payload.get("impact_confidence", "")))
-        cur = self._conn.execute(
-            """
-            INSERT INTO growth_knowledge_items(
-                code,title,description,source_type,source_name,source_trust,impact_confidence,
-                applicable_profiles_json,applicable_metrics_json,trigger_conditions_json,
-                action_template,explanation_template,status,source_url,source_class,evidence_note,
-                reviewed_by,reviewed_at,supersedes_item_id,invalidated_at,created_at,updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                str(payload.get("code", "")).strip(),
-                str(payload.get("title", "")).strip(),
-                str(payload.get("description", "")).strip(),
-                str(payload.get("source_type", "")).strip(),
-                str(payload.get("source_name", "")).strip(),
-                source_trust,
-                impact_confidence,
-                ensure_json_text(payload.get("applicable_profiles_json"), field_name="applicable_profiles_json", default=[]),
-                ensure_json_text(payload.get("applicable_metrics_json"), field_name="applicable_metrics_json", default=[]),
-                ensure_json_text(payload.get("trigger_conditions_json"), field_name="trigger_conditions_json", default=[]),
-                str(payload.get("action_template", "")).strip(),
-                str(payload.get("explanation_template", "")).strip(),
-                str(payload.get("status", "ACTIVE")).strip() or "ACTIVE",
-                str(payload.get("source_url", "")).strip(),
-                source_class,
-                str(payload.get("evidence_note", "")).strip(),
-                _optional_text(payload.get("reviewed_by")),
-                _optional_text(payload.get("reviewed_at")),
-                payload.get("supersedes_item_id"),
-                _optional_text(payload.get("invalidated_at")),
-                now,
-                now,
-            ),
-        )
+        try:
+            cur = self._conn.execute(
+                """
+                INSERT INTO growth_knowledge_items(
+                    code,title,description,source_type,source_name,source_trust,impact_confidence,
+                    applicable_profiles_json,applicable_metrics_json,trigger_conditions_json,
+                    action_template,explanation_template,status,source_url,source_class,evidence_note,
+                    reviewed_by,reviewed_at,supersedes_item_id,invalidated_at,created_at,updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    code,
+                    title,
+                    str(payload.get("description", "")).strip(),
+                    source_type,
+                    source_name,
+                    source_trust,
+                    impact_confidence,
+                    ensure_json_text(payload.get("applicable_profiles_json"), field_name="applicable_profiles_json", default=[]),
+                    ensure_json_text(payload.get("applicable_metrics_json"), field_name="applicable_metrics_json", default=[]),
+                    ensure_json_text(payload.get("trigger_conditions_json"), field_name="trigger_conditions_json", default=[]),
+                    action_template,
+                    explanation_template,
+                    status,
+                    str(payload.get("source_url", "")).strip(),
+                    source_class,
+                    str(payload.get("evidence_note", "")).strip(),
+                    _optional_text(payload.get("reviewed_by")),
+                    _optional_text(payload.get("reviewed_at")),
+                    payload.get("supersedes_item_id"),
+                    _optional_text(payload.get("invalidated_at")),
+                    now,
+                    now,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            if "growth_knowledge_items.code" in str(exc):
+                raise ValueError(f"knowledge item with code {code} already exists") from None
+            raise
         return self.get_knowledge_item(int(cur.lastrowid))
 
     def update_knowledge_item(self, item_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -104,6 +124,9 @@ class GrowthRegistryService:
             )
         if "impact_confidence" in payload:
             merged["impact_confidence"] = ensure_impact_confidence(str(merged.get("impact_confidence", "")))
+        for field in ("title", "source_type", "source_name", "action_template", "explanation_template", "status"):
+            if field in payload:
+                merged[field] = ensure_non_empty_text(merged.get(field), field_name=field)
         if not payload:
             return current
         serialized = dict(merged)
@@ -134,29 +157,38 @@ class GrowthRegistryService:
 
     def create_playbook(self, payload: dict[str, Any]) -> dict[str, Any]:
         now = self._now_iso()
-        cur = self._conn.execute(
-            """
-            INSERT INTO growth_playbooks(code,goal_type,channel_types_json,release_types_json,activation_rules_json,output_shape_json,trust_policy_json,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                str(payload.get("code", "")).strip(),
-                str(payload.get("goal_type", "")).strip(),
-                ensure_json_text(payload.get("channel_types_json"), field_name="channel_types_json", default=[]),
-                ensure_json_text(payload.get("release_types_json"), field_name="release_types_json", default=[]),
-                ensure_json_text(payload.get("activation_rules_json"), field_name="activation_rules_json", default={}),
-                ensure_json_text(payload.get("output_shape_json"), field_name="output_shape_json", default={}),
-                ensure_json_text(payload.get("trust_policy_json"), field_name="trust_policy_json", default={}),
-                now,
-                now,
-            ),
-        )
+        code = ensure_non_empty_text(payload.get("code"), field_name="code")
+        goal_type = ensure_non_empty_text(payload.get("goal_type"), field_name="goal_type")
+        try:
+            cur = self._conn.execute(
+                """
+                INSERT INTO growth_playbooks(code,goal_type,channel_types_json,release_types_json,activation_rules_json,output_shape_json,trust_policy_json,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    code,
+                    goal_type,
+                    ensure_json_text(payload.get("channel_types_json"), field_name="channel_types_json", default=[]),
+                    ensure_json_text(payload.get("release_types_json"), field_name="release_types_json", default=[]),
+                    ensure_json_text(payload.get("activation_rules_json"), field_name="activation_rules_json", default={}),
+                    ensure_json_text(payload.get("output_shape_json"), field_name="output_shape_json", default={}),
+                    ensure_json_text(payload.get("trust_policy_json"), field_name="trust_policy_json", default={}),
+                    now,
+                    now,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            if "growth_playbooks.code" in str(exc):
+                raise ValueError(f"playbook with code {code} already exists") from None
+            raise
         return self.get_playbook(int(cur.lastrowid))
 
     def update_playbook(self, playbook_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         self.get_playbook(playbook_id)
         allowed = {"goal_type", "channel_types_json", "release_types_json", "activation_rules_json", "output_shape_json", "trust_policy_json"}
         updates = {k: payload[k] for k in payload if k in allowed}
+        if "goal_type" in updates:
+            updates["goal_type"] = ensure_non_empty_text(updates["goal_type"], field_name="goal_type")
         if not updates:
             return self.get_playbook(playbook_id)
         for key in ("channel_types_json", "release_types_json", "activation_rules_json", "output_shape_json", "trust_policy_json"):
@@ -176,21 +208,27 @@ class GrowthRegistryService:
 
     def set_channel_feature_flags(self, channel_slug: str, payload: dict[str, Any]) -> dict[str, Any]:
         flags = ensure_boolean_flag_map(payload)
+        existing_channel = self._conn.execute("SELECT slug FROM channels WHERE slug = ?", (channel_slug,)).fetchone()
+        if existing_channel is None:
+            raise ValueError(f"channel {channel_slug} not found")
         now = self._now_iso()
-        self._conn.execute(
-            """
-            INSERT INTO growth_channel_feature_flags(channel_slug,growth_intelligence_enabled,planning_digest_enabled,planner_handoff_enabled,export_enabled,assisted_planning_enabled,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?)
-            ON CONFLICT(channel_slug) DO UPDATE SET
-                growth_intelligence_enabled=excluded.growth_intelligence_enabled,
-                planning_digest_enabled=excluded.planning_digest_enabled,
-                planner_handoff_enabled=excluded.planner_handoff_enabled,
-                export_enabled=excluded.export_enabled,
-                assisted_planning_enabled=excluded.assisted_planning_enabled,
-                updated_at=excluded.updated_at
-            """,
-            (channel_slug, flags["growth_intelligence_enabled"], flags["planning_digest_enabled"], flags["planner_handoff_enabled"], flags["export_enabled"], flags["assisted_planning_enabled"], now, now),
-        )
+        try:
+            self._conn.execute(
+                """
+                INSERT INTO growth_channel_feature_flags(channel_slug,growth_intelligence_enabled,planning_digest_enabled,planner_handoff_enabled,export_enabled,assisted_planning_enabled,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(channel_slug) DO UPDATE SET
+                    growth_intelligence_enabled=excluded.growth_intelligence_enabled,
+                    planning_digest_enabled=excluded.planning_digest_enabled,
+                    planner_handoff_enabled=excluded.planner_handoff_enabled,
+                    export_enabled=excluded.export_enabled,
+                    assisted_planning_enabled=excluded.assisted_planning_enabled,
+                    updated_at=excluded.updated_at
+                """,
+                (channel_slug, flags["growth_intelligence_enabled"], flags["planning_digest_enabled"], flags["planner_handoff_enabled"], flags["export_enabled"], flags["assisted_planning_enabled"], now, now),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError("invalid channel slug") from None
         return self.get_channel_feature_flags(channel_slug)
 
     def bootstrap_import(self, payload: dict[str, Any]) -> dict[str, Any]:

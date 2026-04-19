@@ -84,6 +84,53 @@ class TestGrowthIntelligenceRegistryService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_service_hardening_duplicate_and_validation_errors(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = GrowthRegistryService(conn)
+                item_payload = {
+                    "code": "GI-SVC-DUPE-1",
+                    "title": "Item",
+                    "description": "d",
+                    "source_type": "doc",
+                    "source_name": "seed",
+                    "source_trust": "B",
+                    "impact_confidence": "Medium",
+                    "source_class": "INTERNAL",
+                    "action_template": "a",
+                    "explanation_template": "e",
+                    "status": "ACTIVE",
+                }
+                svc.create_knowledge_item(item_payload)
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    svc.create_knowledge_item(item_payload)
+
+                with self.assertRaisesRegex(ValueError, "code must be non-empty"):
+                    svc.create_knowledge_item({**item_payload, "code": " "})
+
+                playbook_payload = {"code": "PB-SVC-1", "goal_type": "RETENTION"}
+                svc.create_playbook(playbook_payload)
+                with self.assertRaisesRegex(ValueError, "already exists"):
+                    svc.create_playbook(playbook_payload)
+                with self.assertRaisesRegex(ValueError, "goal_type must be non-empty"):
+                    svc.create_playbook({"code": "PB-SVC-2", "goal_type": " "})
+
+                with self.assertRaisesRegex(ValueError, "not found"):
+                    svc.set_channel_feature_flags(
+                        "missing-channel",
+                        {
+                            "growth_intelligence_enabled": True,
+                            "planning_digest_enabled": False,
+                            "planner_handoff_enabled": False,
+                            "export_enabled": False,
+                            "assisted_planning_enabled": False,
+                        },
+                    )
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()
