@@ -1,0 +1,264 @@
+REQ_GROWTH_INTELLIGENCE_FUTURE_ADDONS_MEDIUM_AND_RISKY_v1.0
+
+1. Название
+
+Growth Intelligence + One-Click Release Planning
+Future Add-ons: Medium-Term and Risky High-Upside Extensions
+
+2. Назначение документа
+
+Этот REQ фиксирует future extensions, которые не входят в ближайший старт, но представляют высокую ценность для развития продукта.
+
+Документ объединяет две группы:
+- полезные add-ons, которые разумно делать позже,
+- рисковые add-ons, которые потенциально могут дать сильный upside.
+
+3. Базовые рамки
+
+Даже после добавления этих future extensions должны сохраняться базовые продуктовые границы, пока они не будут отдельно пересмотрены:
+- operator-approved planning остается нормой по умолчанию,
+- default auto-apply = false,
+- explainability и trust обязательны,
+- любые mutation-capable paths должны быть policy-gated,
+- новые слои не должны разрушать existing audit trail.
+
+4. Medium-term additions
+
+4.1. Scenario simulation
+
+Система должна уметь строить несколько сценариев плана одновременно.
+
+Минимально:
+- safe scenario,
+- balanced scenario,
+- growth scenario.
+
+Для каждого сценария должны отображаться:
+- expected impact delta,
+- risk delta,
+- trust delta,
+- что изменилось в release mix.
+
+4.2. Telegram routing policy
+
+Поверх базового Telegram surface должна существовать explicit routing policy.
+
+Минимально policy должна поддерживать:
+- quiet hours,
+- urgency thresholds,
+- digest frequency,
+- per-channel routing rules,
+- who receives what class of alert.
+
+4.3. Recommendation lifecycle states
+
+Recommendations должны получить lifecycle model.
+
+Минимально:
+- NEW
+- ACKNOWLEDGED
+- DISMISSED
+- EXPIRED
+- APPLIED
+
+Цель:
+- убрать эффект вечных рекомендаций,
+- улучшить операционную дисциплину.
+
+4.4. Similarity / analog search
+
+Система должна уметь находить похожие исторические случаи.
+
+Минимально similarity layer должен поддерживать:
+- похожие releases,
+- похожие windows,
+- похожие risk patterns,
+- похожие opportunity patterns.
+
+Цель:
+- усилить reasoning,
+- усилить confidence display,
+- привязать planning advice к реальным аналогам.
+
+4.5. Predictive scoring (ML-light)
+
+Система должна уметь использовать ML-light predictive scoring как assist layer.
+
+Важно:
+- prediction layer не становится единственным источником истины,
+- decision layer остается explainable,
+- fallback к deterministic logic обязателен.
+
+Минимально допустимые predictive outputs:
+- expected impact bucket,
+- underperformance risk bucket,
+- confidence estimate.
+
+4.6. Knowledge conflict graph
+
+Система должна уметь выявлять конфликтующие knowledge items и playbooks.
+
+Минимально:
+- conflict detection,
+- conflict severity,
+- resolution hint,
+- operator review requirement when needed.
+
+4.7. Historical backtesting
+
+Система должна поддерживать historical backtesting planning logic.
+
+Минимально:
+- replay historical inputs,
+- reconstruct hypothetical plan,
+- compare with factual outcomes,
+- evaluate quality of planning logic.
+
+4.8. Outcome loop
+
+Система должна поддерживать closed factual linkage:
+- generated plan item,
+- operator decision,
+- actual release,
+- actual outcome.
+
+Цель:
+- получить measured usefulness instead of assumptions.
+
+4.9. Portfolio allocator (medium form)
+
+На уровне нескольких каналов система должна позже поддержать portfolio-aware recommendation layer.
+
+Минимально:
+- where to increase release density,
+- where to pause experiments,
+- where to favor safe planning.
+
+4.10. Counterfactual explanations
+
+Система должна позже уметь показывать:
+- что изменилось бы, если бы слот был другим,
+- что изменилось бы при другом release type,
+- что изменилось бы при другом publish window.
+
+5. Risky high-upside additions
+
+5.1. LLM-assisted planning explanations
+
+LLM может использоваться как explanation/synthesis layer поверх factual system outputs.
+
+Ограничения:
+- LLM не должен заменять source-of-truth reasoning engine,
+- explanation must remain grounded in saved signals/playbooks/trust mappings,
+- hallucination-resistant fallback обязателен.
+
+5.2. LLM-assisted assisted-planning queries
+
+Запросы вроде:
+- "дай 5 лучших слотов",
+- "какие релизы лучше отложить",
+- "покажи high-growth варианты"
+
+могут later orchestration-слоем проходить через LLM.
+
+Ограничения:
+- factual data retrieval должен оставаться deterministic,
+- LLM только композирует/объясняет.
+
+5.3. Predictive uplift model
+
+Отдельная модель может позже пытаться оценивать uplift от конкретного slot/release/package choice.
+
+Риск:
+- ложная точность,
+- high confidence on weak data.
+
+5.4. Auto-prioritization of recommendations
+
+Система может позже сама агрессивнее поднимать наиболее важные recommendations.
+
+Риск:
+- loss of operator trust,
+- hidden prioritization bias.
+
+5.5. Auto-generated packaging directions
+
+Система может позже генерировать title direction / thumbnail direction / metadata emphasis автоматически.
+
+Риск:
+- шаблонность,
+- деградация creative quality,
+- false generalization across channels.
+
+5.6. Policy-based semi-automation
+
+Система может later поддержать safe-only automated draft creation или semi-approval flows.
+
+Ограничения:
+- only by explicit policy,
+- only with audit trail,
+- not as default behavior.
+
+5.7. Channel archetype inference
+
+Система может позже сама infer archetype канала и менять planning profile accordingly.
+
+Риск:
+- неверная категоризация,
+- too-early hardening of wrong profile.
+
+5.8. Experiment recommendation engine
+
+Система может later отдельно рекомендовать high-upside experiments.
+
+Риск:
+- чрезмерная агрессивность,
+- over-experimentation.
+
+5.9. Multi-signal anomaly predictor
+
+Система может позже пытаться предсказывать деградацию еще до полного фактического проявления.
+
+Риск:
+- high false positive rate,
+- operator alert fatigue.
+
+5.10. Cross-channel transfer heuristics
+
+Система может later использовать learning одного канала как weak prior для другого.
+
+Риск:
+- неправомерный перенос сигналов между несовместимыми каналами.
+
+6. Что не входит в этот REQ как обязательный immediate scope
+
+Этот REQ не требует немедленного внедрения в текущем workstream.
+
+Он фиксирует future product direction и не должен подменять current foundation scope.
+
+7. Приоритет внутри future group
+
+Более безопасный поздний приоритет:
+- scenario simulation,
+- recommendation lifecycle,
+- similarity search,
+- backtesting,
+- outcome loop.
+
+Более рисковый поздний приоритет:
+- LLM-assisted layers,
+- predictive uplift,
+- semi-automation,
+- cross-channel transfer heuristics.
+
+8. Acceptance criteria
+
+REQ считается продуктово согласованным, если:
+- future extensions оформлены как отдельный future scope,
+- сохраняются базовые operator-first boundaries,
+- risky items явно отделены от medium-term items,
+- ни один risky item не трактуется как обязательный immediate implementation.
+
+9. READY FOR SPEC
+
+READY FOR SPEC: YES

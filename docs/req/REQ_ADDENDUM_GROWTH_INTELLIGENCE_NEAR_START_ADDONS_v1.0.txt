@@ -1,0 +1,237 @@
+REQ_ADDENDUM_GROWTH_INTELLIGENCE_NEAR_START_ADDONS_v1.0
+
+1. Название
+
+Addendum к текущей задаче Growth Intelligence + One-Click Release Planning:
+Best Near-Start Add-ons
+
+2. Назначение документа
+
+Этот документ расширяет текущую задачу по Growth Intelligence + One-Click Release Planning безопасными дополнениями, которые:
+- не меняют базовые продуктовые границы уже утвержденного REQ/SPEC,
+- усиливают foundation-layer,
+- повышают проверяемость, explainability и rollout safety,
+- должны быть включены в текущий workstream как часть ближайшего старта.
+
+Это addendum не заменяет исходный REQ/SPEC, а добавляет к нему дополнительные обязательные блоки для текущей реализации.
+
+3. Базовые ограничения, которые должны сохраниться
+
+Данное расширение не отменяет и не ослабляет уже принятые границы:
+- v1 остается operator-approved planning,
+- default auto-apply = false,
+- trust и explainability обязательны,
+- linked actions не мутируют систему silently по умолчанию,
+- complex ML не становится базой первой версии,
+- feature не деградирует в еще один analytics screen.
+
+4. Что добавляется в текущую задачу
+
+4.1. Provenance contract для knowledge items
+
+Для каждого knowledge item система должна хранить не только содержательное описание, но и происхождение знания.
+
+Минимально должны поддерживаться поля:
+- source_url
+- source_class
+  - OFFICIAL
+  - PRACTITIONER
+  - INTERNAL
+- evidence_note
+- reviewed_by
+- reviewed_at
+- supersedes_item_id
+- invalidated_at
+
+Цель:
+- сделать trust не декларативным, а проверяемым,
+- позволить различать официальные и practitioner источники,
+- поддержать review lifecycle knowledge items.
+
+5. Seed bootstrap from research
+
+Система должна поддерживать начальное наполнение knowledge registry из curated research pack.
+
+Обязательные правила:
+- official high-signal sources импортируются первыми,
+- practitioner sources импортируются вторым слоем,
+- низкодоверительные или слабо подтвержденные источники не должны автоматически становиться trusted defaults,
+- import должен быть повторяемым и audit-friendly.
+
+Цель:
+- избежать пустого knowledge registry на старте,
+- сократить время до первого полезного planning output,
+- сразу заложить правильную source hierarchy.
+
+6. Immutable explanation snapshot
+
+Для каждого planning run система должна сохранять immutable snapshot объяснения.
+
+Минимально snapshot должен включать:
+- normalized input signals snapshot,
+- resolved trust mapping,
+- activated playbooks,
+- reasoning snapshot,
+- linked action resolution snapshot,
+- version markers relevant planning policy.
+
+Цель:
+- обеспечить воспроизводимость,
+- упростить plan comparison,
+- упростить разбор "почему система предложила именно это".
+
+7. Typed linked-actions catalog
+
+Linked actions должны перестать быть свободным текстом и должны перейти в типизированный каталог действий.
+
+Минимально система должна поддерживать typed actions уровня:
+- OPEN_ANALYZER
+- OPEN_PLANNER
+- OPEN_METADATA_SURFACE
+- SEND_TELEGRAM_DIGEST
+- EXPORT_PLAN
+
+Допускается расширение списка, но только через явный action taxonomy.
+
+Цель:
+- упростить UI wiring,
+- повысить предсказуемость интеграций,
+- убрать двусмысленность в linked actions.
+
+8. Typed planner handoff contract
+
+Planner handoff должен использовать типизированный payload вместо слабо структурированного свободного контента.
+
+Минимально handoff payload должен поддерживать:
+- slot intent,
+- release goal,
+- packaging direction,
+- metadata emphasis,
+- fallback path,
+- source reasoning reference.
+
+Цель:
+- уменьшить ambiguity между planning и planner surfaces,
+- сделать handoff стабильным и тестируемым,
+- подготовить основу для дальнейшего execution bridge.
+
+9. Plan lint / validation layer
+
+Перед публикацией generated plan в UI или Telegram система должна запускать обязательный validation/lint pass.
+
+Минимально lint должен проверять:
+- отсутствие trust у meaningful recommendation,
+- отсутствие reasoning,
+- отсутствие source signals,
+- пустые или неразрешенные linked actions,
+- конфликтующие slot recommendations,
+- слишком много risky/experiment slots подряд,
+- недопустимые пустые required fields.
+
+Если lint не проходит:
+- план не должен считаться valid,
+- оператор должен видеть structured reason,
+- invalid state должен фиксироваться в audit trail.
+
+10. Channel-level feature flags
+
+Система должна поддерживать feature flags по каналам.
+
+Минимально должны поддерживаться флаги:
+- growth_intelligence_enabled
+- planning_digest_enabled
+- planner_handoff_enabled
+- export_enabled
+- assisted_planning_enabled
+
+Цель:
+- безопасный rollout по каналам,
+- возможность selective enablement,
+- быстрый kill-switch без code rollback.
+
+11. Schema preparation for future ML
+
+Текущая задача не включает полноценный ML layer, но должна подготовить data foundation для него.
+
+Минимально нужно заложить:
+- input feature snapshots per planning run,
+- version markers for planning/trust/playbook policies,
+- hooks для future outcome linkage,
+- совместимость с future model_version field,
+- возможность later связывать plan item с factual outcome.
+
+Важно:
+- это не означает обязательное внедрение ML в текущем workstream,
+- текущая реализация должна остаться rule-based / analytics-grounded / explainable.
+
+12. Operator feedback capture
+
+Система должна собирать операторский feedback по recommendation / plan item.
+
+Минимально должны поддерживаться состояния/сигналы:
+- approved,
+- rejected,
+- useful,
+- not_useful,
+- trust_too_weak,
+- reasoning_unclear,
+- optional freeform note.
+
+Цель:
+- зафиксировать human signal,
+- подготовить базу для future tuning,
+- не переходя в self-learning behavior в текущем этапе.
+
+13. Experiment budget policy
+
+Поверх общего правила "не делать слишком много experiments подряд" должна существовать явная experiment-budget policy.
+
+Минимально policy должна поддерживать:
+- max experiments per week,
+- max experiments per month,
+- max high-risk slots per horizon,
+- channel-specific risk budget,
+- cooldown after failed experiment.
+
+Цель:
+- формализовать risk governance,
+- не оставлять экспериментные ограничения только на уровне нестрогой эвристики.
+
+14. Что не добавляется этим addendum
+
+Этот addendum не добавляет в текущий workstream:
+- полноценный predictive ML,
+- black-box ranking model,
+- policy-based auto-approval,
+- selective auto-apply,
+- portfolio allocator,
+- counterfactual planning engine.
+
+15. Практический результат
+
+После включения данного addendum текущая задача должна дать не только базовый planning feature, но и более сильный foundation для:
+- trustworthy knowledge handling,
+- stable rollout,
+- reproducible explainability,
+- planner-safe handoff,
+- future ML-readiness,
+- structured operator feedback.
+
+16. Acceptance criteria
+
+Addendum считается реализованным только если:
+- provenance contract существует и используется knowledge registry,
+- research bootstrap поддерживается как repeatable import path,
+- immutable explanation snapshot сохраняется на planning run,
+- linked actions стали typed,
+- planner handoff использует typed payload,
+- plan lint блокирует invalid plans,
+- channel-level feature flags работают,
+- future-ML schema hooks существуют,
+- operator feedback capture существует,
+- experiment budget policy существует,
+- при этом не нарушены базовые product boundaries.
+
+17. READY FOR SPEC
+
+READY FOR SPEC: YES
