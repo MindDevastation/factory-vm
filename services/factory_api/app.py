@@ -40,6 +40,7 @@ from services.factory_api.publish_job_actions import create_publish_job_actions_
 from services.factory_api.publish_bulk_actions import create_publish_bulk_actions_router
 from services.factory_api.publish_queue_read import create_publish_queue_read_router
 from services.factory_api.publish_reconcile import create_publish_reconcile_router
+from services.factory_api.growth_intelligence import create_growth_intelligence_router
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
 from services.factory_api.ux_registry import breadcrumb_context, control_center_entry, primary_nav_items, route_ownership_map
 from services.factory_api.page_templates import page_template_contract
@@ -206,6 +207,7 @@ app.include_router(create_publish_job_actions_router(env))
 app.include_router(create_publish_bulk_actions_router(env))
 app.include_router(create_publish_queue_read_router(env))
 app.include_router(create_publish_reconcile_router(env))
+app.include_router(create_growth_intelligence_router(env))
 
 
 def _create_drive_client(_env: Env) -> DriveClient:
