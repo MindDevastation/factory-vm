@@ -1,0 +1,897 @@
+SPEC_GROWTH_INTELLIGENCE_ONE_CLICK_RELEASE_PLANNING_v1.1
+
+Conflict / Fullness Check
+
+Hard conflicts inside the addendum were not found.
+
+The addendum is aligned with the previously frozen feature boundaries:
+- v1 remains operator-approved planning
+- default auto-apply remains false
+- trust and explainability remain mandatory
+- linked actions still must not mutate the system silently by default
+- complex ML does not become the base of v1
+- the feature still must not degrade into another analytics screen
+
+The addendum does not replace the base feature. It strengthens the foundation of the same feature by adding:
+- provenance for knowledge items
+- research-seeded bootstrap
+- immutable explanation snapshots
+- typed linked actions
+- typed planner handoff
+- plan lint / validation
+- channel-level feature flags
+- future-ML data hooks
+- operator feedback capture
+- experiment budget policy
+
+No REQ-level critical gaps remain. The remaining unspecified details are implementation-level choices and decomposition choices, not blockers.
+
+SPEC_GROWTH_INTELLIGENCE_ONE_CLICK_RELEASE_PLANNING_v1.1
+
+1. Overview / цель
+
+Growth Intelligence + One-Click Release Planning defines a product feature that:
+- uses real YouTube metrics and channel history
+- interprets them through knowledge base / playbooks / trust model
+- generates a release plan for week / month / quarter in one click
+- works in operator-approved planning mode in v1
+- may later evolve toward automatic planning under stricter policy and safety rules
+
+The purpose of the feature is not to merely display analytics, but to convert analytics + heuristics + trust into actionable, explainable release planning.
+
+This v1.1 spec preserves the base feature and adds stronger foundation-layer requirements for:
+- trustworthy knowledge handling
+- reproducible explainability
+- rollout safety
+- typed integrations
+- future ML readiness
+- structured operator feedback
+
+2. Scope / Non-goals
+
+2.1. In scope
+- Growth Intelligence Layer
+- Knowledge Base
+- Trust / Impact Model
+- Planning Engine
+- Operator Surfaces
+- one-click plan generation
+- plan rebuild after new data
+- assisted planning queries
+- weekly / monthly / quarterly planning
+- planner handoff
+- plan export
+- Telegram planning digest
+- approval flows
+- plan comparison over time
+- explainability for every plan item
+- trust display for every plan item
+- linked actions
+- audit trail for every generated plan
+- provenance contract for knowledge items
+- research-seeded bootstrap import
+- immutable explanation snapshot per planning run
+- typed linked-actions catalog
+- typed planner handoff payload
+- plan lint / validation layer
+- channel-level feature flags
+- future-ML data foundation hooks
+- operator feedback capture
+- experiment budget policy
+
+2.2. Out of scope in v1
+- fully autonomous auto-apply
+- self-learning trust auto-updates without review
+- full self-optimization loop without approval
+- complex ML models when rule-based + analytics-grounded planning is sufficient
+- black-box ranking model
+- policy-based auto-approval
+- selective auto-apply
+- portfolio allocator
+- counterfactual planning engine
+
+2.3. Boundary rules
+- the feature must not degrade into “another analytics screen”
+- default auto-apply must remain false
+- analytics and execution must not be silently mixed
+- controversial advice must not be presented as unquestionable truth
+- operator approval is mandatory in v1
+- typed linked actions must still not silently mutate the system by default
+- ML-readiness hooks must not turn v1 into an ML-first system
+
+3. Canonical product model
+
+3.1. Feature identity
+The feature must be implemented as:
+Growth Intelligence + One-Click Release Planning
+
+3.2. Four-layer architecture
+The feature must contain four mandatory layers:
+- Knowledge Base
+- Trust / Impact Model
+- Planning Engine
+- Operator Surfaces
+
+3.3. Primary product goal
+The feature must:
+- analyze signals
+- activate playbooks
+- build release plans
+- explain why the plan exists
+- show trust
+- provide safe handoff/application paths
+- remain operator-approved by default
+
+4. Primary scenarios
+
+4.1. Scenario A — One-click planning
+Operator selects:
+- channel
+- planning period: week / month / quarter
+- mode:
+  - safe
+  - balanced
+  - growth
+  - experiment-heavy
+
+Operator presses Generate Plan.
+
+System returns:
+- release schedule by dates
+- recommended release types / formats
+- goals
+- suggested publish windows
+- suggested packaging focus
+- risks
+- trust category
+- expected impact
+- linked recommendations
+- linked actions
+
+4.2. Scenario B — Rebuild plan after new data
+After metrics refresh, the system:
+- recalculates the plan
+- shows what changed
+- explains why it changed
+- shows what should be replaced / moved / strengthened
+
+4.3. Scenario C — Assisted planning
+Operator may request:
+- best slots next week
+- top releases with highest growth potential
+- releases that should be postponed
+
+5. Plan item contract
+
+Every generated release-plan item must include at minimum:
+- channel_id
+- planning_horizon
+- slot_date
+- slot_window
+- release_type
+- goal
+- priority
+- expected_outcome
+- reasoning
+- source_signals
+- trust_category
+- impact_category
+- risk_level
+- safe_or_experiment
+- recommended_actions
+- linked_actions
+- requires_operator_approval
+
+Additional required fields:
+- suggested title direction
+- suggested thumbnail direction
+- suggested length / format bias
+- suggested metadata emphasis
+- fallback option if slot underperforms
+
+6. Signal model
+
+6.1. Analytical signals
+The system must use at minimum:
+- CTR
+- retention
+- watch time
+- avg view duration
+- views / impressions
+- traffic sources
+- audience segments
+- unique viewers
+- search terms
+- geographies
+- publish window behavior
+- trend / anomaly state
+- historical release performance
+- comparisons by period
+
+6.2. Derived signals
+The system must support at minimum:
+- packaging problem
+- timing problem
+- format fatigue
+- topic momentum
+- search opportunity
+- browse weakness
+- audience mismatch
+- overposting risk
+- underposting risk
+- safe-format candidate
+- high-upside experiment candidate
+
+6.3. Knowledge / playbook signals
+The system must support:
+- official YouTube guidance
+- practitioner heuristics
+- internal proven heuristics
+- channel-specific learned heuristics
+
+7. Trust model
+
+7.1. Trust model structure
+The trust model must use two independent scales.
+
+7.2. Source Trust scale
+Frozen Source Trust categories:
+- A — Official / strongly validated
+- B — strong practitioner pattern
+- C — conditional / niche / format-specific
+- D — experimental hypothesis
+
+7.3. Impact Confidence scale
+Frozen Impact Confidence categories:
+- High
+- Medium
+- Low
+
+7.4. Final displayed trust
+Operator-facing trust must combine the two scales, for example:
+- Trust: A / High
+- Trust: B / Medium
+- Trust: C / High but niche
+
+7.5. Trust display rule
+Every meaningful plan recommendation or slot suggestion must expose trust in operator-readable form.
+
+8. Knowledge registry model
+
+8.1. Knowledge item baseline fields
+Knowledge registry must support content-bearing fields for:
+- title
+- description
+- source_type / source_name
+- trigger_conditions
+- action_template
+- explanation_template
+- applicable_profiles
+- applicable_metrics
+- trust fields
+- status
+
+8.2. Provenance contract for knowledge items
+Every knowledge item must also store provenance fields:
+- source_url
+- source_class
+- evidence_note
+- reviewed_by
+- reviewed_at
+- supersedes_item_id
+- invalidated_at
+
+8.3. Frozen source_class literals
+Knowledge provenance must use:
+- OFFICIAL
+- PRACTITIONER
+- INTERNAL
+
+8.4. Provenance rule
+Trust must be verifiable, not declarative only.
+The system must distinguish official, practitioner, and internal knowledge sources explicitly.
+
+8.5. Review lifecycle rule
+Knowledge items must support review lifecycle semantics through:
+- reviewed_by
+- reviewed_at
+- supersedes_item_id
+- invalidated_at
+
+9. Research bootstrap model
+
+9.1. Seed bootstrap requirement
+The system must support initial population of the knowledge registry from a curated research pack.
+
+9.2. Bootstrap ordering rules
+- official high-signal sources are imported first
+- practitioner sources are imported as second layer
+- low-trust or weakly supported sources must not automatically become trusted defaults
+- import must be repeatable
+- import must be audit-friendly
+
+9.3. Bootstrap purpose rule
+Bootstrap must avoid an empty knowledge registry at start and shorten time to first useful planning output while preserving source hierarchy.
+
+10. Planning engine model
+
+10.1. Required inputs
+Planning engine must use:
+- current analyzer state
+- historical analyzer state
+- profile (channel strategy + format profile)
+- active signals / risks / opportunities
+- rules / playbooks / trust matrix
+- planning horizon
+- operator mode (safe / balanced / growth / experiment-heavy)
+
+10.2. Required outputs
+Planning engine must produce:
+- ranked release slots
+- recommended release mix
+- safe actions
+- growth bets
+- experiment slots
+- packaging / timing guidance
+- risk warnings
+- approval-ready plan
+
+10.3. Mandatory constraints
+Planning engine must:
+- not violate approved publishing cadence
+- not overload risky slots
+- not schedule too many experiments in a row
+- not auto-apply without permission
+- preserve explainability for each decision
+
+11. Experiment budget policy
+
+11.1. Explicit policy requirement
+The feature must define an explicit experiment-budget policy rather than relying only on vague heuristics.
+
+11.2. Minimum policy fields
+Experiment budget policy must support:
+- max_experiments_per_week
+- max_experiments_per_month
+- max_high_risk_slots_per_horizon
+- channel_specific_risk_budget
+- cooldown_after_failed_experiment
+
+11.3. Planning constraint rule
+The planning engine and lint layer must enforce experiment-budget policy when evaluating plan validity.
+
+12. Immutable explanation snapshot
+
+12.1. Snapshot requirement
+Every planning run must persist an immutable explanation snapshot.
+
+12.2. Minimum snapshot contents
+The immutable explanation snapshot must include:
+- normalized input signals snapshot
+- resolved trust mapping
+- activated playbooks
+- reasoning snapshot
+- linked action resolution snapshot
+- version markers for relevant planning policy
+
+12.3. Reproducibility rule
+The immutable explanation snapshot exists to support:
+- reproducibility
+- plan comparison
+- post-hoc explanation of why the system suggested a specific plan
+
+13. Typed linked-actions catalog
+
+13.1. Linked-actions typing rule
+Linked actions must not remain free text.
+They must use a typed action taxonomy.
+
+13.2. Minimum typed actions
+The system must support at minimum:
+- OPEN_ANALYZER
+- OPEN_PLANNER
+- OPEN_METADATA_SURFACE
+- SEND_TELEGRAM_DIGEST
+- EXPORT_PLAN
+
+13.3. Extension rule
+Additional actions are allowed only through explicit action taxonomy extension.
+
+13.4. Integration rule
+Typed linked actions must improve:
+- UI wiring
+- predictability of integrations
+- clarity of action resolution
+
+14. Typed planner handoff contract
+
+14.1. Typed handoff rule
+Planner handoff must use typed payload instead of weakly structured free content.
+
+14.2. Minimum planner handoff payload
+Planner handoff payload must support:
+- slot_intent
+- release_goal
+- packaging_direction
+- metadata_emphasis
+- fallback_path
+- source_reasoning_reference
+
+14.3. Stability rule
+Planner handoff must be stable, testable, and ambiguity-resistant between planning surfaces and planner surfaces.
+
+15. Plan lint / validation layer
+
+15.1. Mandatory lint pass
+Before a generated plan is shown in UI or Telegram, the system must run a required validation/lint pass.
+
+15.2. Minimum lint checks
+Lint must check at minimum:
+- missing trust on meaningful recommendation
+- missing reasoning
+- missing source signals
+- empty or unresolved linked actions
+- conflicting slot recommendations
+- too many risky/experiment slots in a row
+- empty required fields
+- experiment budget violations
+
+15.3. Invalid-plan rule
+If lint fails:
+- the plan must not be treated as valid
+- the operator must see structured invalid reasons
+- invalid state must be captured in audit trail
+
+16. Channel-level feature flags
+
+16.1. Feature-flag requirement
+The system must support channel-level feature flags.
+
+16.2. Minimum feature flags
+The feature must support at minimum:
+- growth_intelligence_enabled
+- planning_digest_enabled
+- planner_handoff_enabled
+- export_enabled
+- assisted_planning_enabled
+
+16.3. Rollout rule
+Channel-level feature flags must provide:
+- safe rollout by channel
+- selective enablement
+- fast kill-switch capability without code rollback
+
+17. Future-ML schema preparation
+
+17.1. ML readiness rule
+The current workstream does not implement full ML, but it must prepare data foundations for future ML.
+
+17.2. Minimum future-ML hooks
+The system must support:
+- input feature snapshots per planning run
+- version markers for planning / trust / playbook policies
+- hooks for future outcome linkage
+- compatibility with future model_version field
+- ability to later link plan item to factual outcome
+
+17.3. Constraint rule
+These hooks must not turn the current implementation into ML-first behavior.
+Current implementation remains:
+- rule-based
+- analytics-grounded
+- explainable
+
+18. Operator feedback capture
+
+18.1. Feedback requirement
+The system must capture operator feedback for recommendations and plan items.
+
+18.2. Minimum feedback states/signals
+The system must support:
+- approved
+- rejected
+- useful
+- not_useful
+- trust_too_weak
+- reasoning_unclear
+- optional freeform note
+
+18.3. Feedback purpose rule
+Feedback exists to:
+- capture human signal
+- support future tuning
+- avoid self-learning behavior in the current phase
+
+19. UI / UX surfaces
+
+19.1. Screen 1 — Planning Dashboard
+Required blocks:
+- growth health summary
+- active opportunities
+- active risks
+- suggested next releases
+- planning mode selector
+- generate plan button
+
+19.2. Screen 2 — Generated Plan
+Required table/card fields:
+- date
+- publish window
+- release type
+- goal
+- why
+- trust
+- expected impact
+- risk
+- linked action
+
+Required actions:
+- Accept all
+- Accept selected
+- Send to planner
+- Send to Telegram digest
+- Export plan
+- Rebuild plan
+
+19.3. Screen 3 — Plan Comparison
+Must show:
+- old plan
+- new plan
+- what changed
+- which signals caused the changes
+
+20. Telegram surface
+
+20.1. Telegram Planning Digest
+Must support:
+- 3–5 recommended releases for the week
+- trust / impact for each
+- reasons
+- risks
+- deep links into UI
+
+20.2. Replan alert
+Must support alerts such as:
+- metrics changed, current plan degraded
+- better publish window found
+- packaging risk increased
+- one planned release should be postponed
+
+20.3. Approval flow
+Telegram approval flow must support:
+- approve all
+- approve one slot
+- reject suggestion
+- open in UI
+
+20.4. Telegram safety rule
+Default auto-apply must remain false.
+
+20.5. Valid-plan rule
+Telegram must only receive planning payloads that passed required lint/validation.
+
+21. Data model
+
+21.1. growth_knowledge_items
+Required fields:
+- id
+- title
+- description
+- source_type
+- source_name
+- source_trust
+- impact_confidence
+- applicable_profiles
+- applicable_metrics
+- trigger_conditions
+- action_template
+- explanation_template
+- status
+- source_url
+- source_class
+- evidence_note
+- reviewed_by
+- reviewed_at
+- supersedes_item_id
+- invalidated_at
+
+21.2. growth_playbooks
+Required fields:
+- id
+- code
+- goal_type
+- channel_types
+- release_types
+- activation_rules
+- output_shape
+- trust_policy
+
+21.3. growth_planning_runs
+Required fields:
+- id
+- channel_id
+- horizon
+- mode
+- generated_at
+- input_snapshot_ref
+- status
+- approval_status
+- created_by
+- explanation_summary
+- planning_policy_version
+- trust_policy_version
+- playbook_policy_version
+- lint_status
+- lint_result_json
+- explanation_snapshot_ref
+
+21.4. growth_planning_items
+Required fields:
+- id
+- planning_run_id
+- slot_date
+- slot_window
+- release_type
+- goal
+- trust_category
+- impact_category
+- risk_level
+- reasoning_json
+- linked_actions_json
+- approval_state
+- planner_handoff_payload_json
+- feature_snapshot_ref
+- outcome_link_ref nullable
+- operator_feedback_state nullable
+- operator_feedback_note nullable
+
+22. Practical application contract
+
+To count as real practical application, the feature must support:
+- generate plan in one click
+- export plan
+- send plan to Telegram
+- convert selected plan items into planner-ready artifacts
+- compare plans over time
+- show why each slot exists
+- show trust for each slot
+- allow operator approve / reject
+
+23. V1 boundary
+
+23.1. Included in v1
+- knowledge registry
+- provenance contract
+- research bootstrap
+- trust categories
+- playbook activation
+- one-click plan generation
+- week / month / quarter planning
+- explanation and trust output
+- immutable explanation snapshots
+- typed linked actions
+- typed planner handoff
+- plan lint / validation
+- channel-level feature flags
+- future-ML schema hooks
+- operator feedback capture
+- experiment budget policy
+- operator approval
+- Telegram planning digest
+- export plan
+- planner handoff
+
+23.2. Excluded from v1
+- fully autonomous auto-apply
+- self-learning trust auto-updates without review
+- full self-optimization loop without approval
+- complex ML models if rule-based + analytics-grounded planning already solve the problem
+- black-box ranking model
+- policy-based auto-approval
+- selective auto-apply
+- portfolio allocator
+- counterfactual planning engine
+
+24. Future automation path
+
+24.1. Stage 2 — Auto-plan draft mode
+The system may later create draft plans regularly for operator approval.
+
+24.2. Stage 3 — Policy-based auto-plan
+The system may later auto-approve only safe slots, while medium/high risk slots remain review-required.
+
+24.3. Stage 4 — Selective auto-apply
+The system may later support selective auto-apply only:
+- for pre-approved scenarios
+- by policy
+- with audit trail
+- with rollback support
+
+24.4. Future-stage rule
+These future stages are not part of v1 and must not be implemented as default behavior in v1.
+
+25. Safety and risk controls
+
+25.1. Main risks
+The feature must explicitly guard against:
+- turning debatable advice into “truth”
+- overly aggressive recommendations
+- untrustworthy trust scores
+- auto-planning without sufficient audit trail
+- mixing analytics and execution without operator approval
+
+25.2. Required mitigations
+The feature must enforce:
+- mandatory trust categories
+- mandatory explainability
+- mandatory operator approval
+- linked actions that do not mutate the system by default
+- audit trail for every generated plan
+- invalid-plan blocking via lint
+- experiment budget enforcement
+- channel-level rollout safety via feature flags
+
+26. Recommended implementation order
+
+26.1. Phase 1
+- knowledge registry
+- provenance contract
+- research bootstrap
+- trust model
+- playbook schema
+
+26.2. Phase 2
+- planning engine
+- immutable explanation snapshot
+- typed linked actions
+- typed handoff payload
+- plan lint
+- one-click release plan generation
+- operator approval UI
+
+26.3. Phase 3
+- Telegram planning digest
+- planner handoff
+- export
+- feature flags
+- operator feedback capture
+
+26.4. Phase 4
+- future-ML schema hooks
+- auto-plan draft mode
+- policy model
+- safe automation
+
+27. API / interface families
+
+27.1. Required interface families
+The feature must define at minimum:
+- knowledge registry interface
+- knowledge provenance interface
+- research bootstrap import interface
+- trust model interface
+- playbook activation interface
+- planning engine interface
+- explanation snapshot interface
+- typed linked-actions interface
+- typed planner handoff interface
+- plan generation interface
+- plan comparison interface
+- lint/validation interface
+- feature-flag interface
+- operator feedback interface
+- approval interface
+- planner handoff interface
+- export interface
+- Telegram digest / approval interface
+
+27.2. Interface safety rule
+Linked actions may hand off to canonical planner and other surfaces, but must not silently mutate the system by default.
+
+28. Validation rules
+
+28.1. Product boundary validation
+- the feature must not be implemented as only another analytics screen
+- the four required layers must remain explicit
+- default auto-apply must remain false
+
+28.2. Planning validation
+- week / month / quarter planning must exist
+- one-click plan generation must exist
+- operator approval must exist
+- plan comparison must exist
+- planner handoff must exist
+
+28.3. Trust / explainability validation
+- every meaningful plan item must expose trust
+- every plan item must expose reasoning
+- every plan item must expose source signals
+- every plan item must expose expected impact and risk
+
+28.4. Provenance validation
+- every knowledge item must support provenance fields
+- source_class must be typed
+- reviewed / superseded / invalidated lifecycle must be supported
+
+28.5. Lint validation
+- invalid plans must not be treated as valid
+- invalid reasons must be structured
+- invalid state must be auditable
+
+28.6. Telegram validation
+- Telegram planning digest must exist
+- Telegram replan alert must exist
+- Telegram approval flow must exist
+- Telegram must not silently auto-apply
+- Telegram must not send invalid plans
+
+28.7. Feature-flag validation
+- minimum channel-level flags must exist
+- disabled features must fail safely
+- kill-switch behavior must be possible without code rollback
+
+28.8. Feedback validation
+- operator feedback states must exist
+- optional freeform note must exist
+- feedback capture must not become self-learning behavior in v1
+
+29. Acceptance criteria
+
+The feature is accepted only if all of the following are true:
+- the system uses actual YouTube metrics and channel history
+- the system interprets them through knowledge base / playbooks / trust model
+- one-click plan generation works for week / month / quarter
+- generated plans include dates/windows, release types, priorities, mix, recommendations, trust, impact, and reasoning
+- operator can view, accept all, accept partially, reject, and manually edit
+- rebuild-after-new-data scenario works
+- assisted planning scenario works
+- trust model is present with Source Trust and Impact Confidence
+- planning engine respects cadence, risk loading, experiment limits, explainability, and no auto-apply
+- planning dashboard, generated plan view, and plan comparison view exist
+- Telegram planning digest, replan alerts, and approval flow exist
+- export and planner handoff exist
+- provenance contract exists and is used by knowledge registry
+- research bootstrap exists as repeatable import path
+- immutable explanation snapshot exists per planning run
+- linked actions are typed
+- planner handoff uses typed payload
+- plan lint blocks invalid plans
+- channel-level feature flags work
+- future-ML schema hooks exist
+- operator feedback capture exists
+- experiment budget policy exists
+- default auto-apply remains false
+
+30. Definition of done
+
+The feature is done only when:
+- all v1-included blocks are implemented
+- no mandatory block has been quietly removed or downgraded
+- practical application exists beyond passive analytics
+- trust and explainability are visible for every generated plan item
+- operator-approved planning remains the default mode
+- addendum foundation blocks are implemented
+- the feature is ready to progress into implementation work
+
+31. Open questions / ambiguities
+
+31.1. Exact internal decomposition into subfeatures, slices, or workstreams is not fixed at REQ level and remains an implementation/spec structuring choice.
+
+31.2. Exact UI visual treatment, exact export file format, exact planner artifact mapping details, and exact curated research pack packaging are implementation-level details, as long as the frozen contracts above remain preserved.
+
+Ready for Dev? Yes
+
+Причины
+- The addendum strengthens the already frozen Growth Intelligence feature without weakening its base product boundaries.
+- Provenance, reproducibility, typed integrations, lint, feature flags, operator feedback, and experiment-budget governance are now explicit mandatory parts of the current workstream.
+- Remaining uncertainty is implementation decomposition/detail, not a blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- provenance being stored but not actually used in trust handling
+- lint existing only nominally and not blocking invalid plans
+- typed actions/handoff degrading back into free-text wiring
+- feature flags existing without real rollout safety semantics
+- ML-readiness hooks drifting into premature ML complexity
