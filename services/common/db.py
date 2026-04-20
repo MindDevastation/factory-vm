@@ -2269,6 +2269,116 @@ def migrate(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_analytics_ui_events_scope_time
             ON analytics_ui_events(page_scope, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS growth_knowledge_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_name TEXT NOT NULL,
+            source_trust TEXT NOT NULL,
+            impact_confidence TEXT NOT NULL,
+            applicable_profiles_json TEXT NOT NULL DEFAULT '[]',
+            applicable_metrics_json TEXT NOT NULL DEFAULT '[]',
+            trigger_conditions_json TEXT NOT NULL DEFAULT '[]',
+            action_template TEXT NOT NULL,
+            explanation_template TEXT NOT NULL,
+            status TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            source_class TEXT NOT NULL,
+            evidence_note TEXT NOT NULL,
+            reviewed_by TEXT NULL,
+            reviewed_at TEXT NULL,
+            supersedes_item_id INTEGER NULL,
+            invalidated_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(supersedes_item_id) REFERENCES growth_knowledge_items(id),
+            CHECK(source_class IN ('OFFICIAL','PRACTITIONER','INTERNAL')),
+            CHECK(source_trust IN ('A','B','C','D')),
+            CHECK(impact_confidence IN ('High','Medium','Low')),
+            CHECK(json_valid(applicable_profiles_json)),
+            CHECK(json_valid(applicable_metrics_json)),
+            CHECK(json_valid(trigger_conditions_json))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_growth_knowledge_items_status
+            ON growth_knowledge_items(status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS growth_playbooks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE,
+            goal_type TEXT NOT NULL,
+            channel_types_json TEXT NOT NULL,
+            release_types_json TEXT NOT NULL,
+            activation_rules_json TEXT NOT NULL,
+            output_shape_json TEXT NOT NULL,
+            trust_policy_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(json_valid(channel_types_json)),
+            CHECK(json_valid(release_types_json)),
+            CHECK(json_valid(activation_rules_json)),
+            CHECK(json_valid(output_shape_json)),
+            CHECK(json_valid(trust_policy_json))
+        );
+
+        CREATE TABLE IF NOT EXISTS growth_channel_feature_flags (
+            channel_slug TEXT PRIMARY KEY,
+            growth_intelligence_enabled INTEGER NOT NULL DEFAULT 0,
+            planning_digest_enabled INTEGER NOT NULL DEFAULT 0,
+            planner_handoff_enabled INTEGER NOT NULL DEFAULT 0,
+            export_enabled INTEGER NOT NULL DEFAULT 0,
+            assisted_planning_enabled INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(channel_slug) REFERENCES channels(slug),
+            CHECK(growth_intelligence_enabled IN (0,1)),
+            CHECK(planning_digest_enabled IN (0,1)),
+            CHECK(planner_handoff_enabled IN (0,1)),
+            CHECK(export_enabled IN (0,1)),
+            CHECK(assisted_planning_enabled IN (0,1))
+        );
+
+        CREATE TABLE IF NOT EXISTS growth_bootstrap_import_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            import_source TEXT NOT NULL,
+            import_mode TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_count INTEGER NOT NULL DEFAULT 0,
+            updated_count INTEGER NOT NULL DEFAULT 0,
+            skipped_count INTEGER NOT NULL DEFAULT 0,
+            failed_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            completed_at TEXT NULL,
+            actor TEXT NULL,
+            notes_json TEXT NOT NULL DEFAULT '{}',
+            CHECK(status IN ('STARTED','COMPLETED','FAILED')),
+            CHECK(json_valid(notes_json))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_growth_bootstrap_import_runs_created_at
+            ON growth_bootstrap_import_runs(created_at DESC, id DESC);
+
+        CREATE TABLE IF NOT EXISTS growth_bootstrap_import_run_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            item_code TEXT NOT NULL,
+            item_title TEXT NOT NULL,
+            source_class TEXT NOT NULL,
+            result_status TEXT NOT NULL,
+            result_message TEXT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES growth_bootstrap_import_runs(id) ON DELETE CASCADE,
+            CHECK(source_class IN ('OFFICIAL','PRACTITIONER','INTERNAL','')),
+            CHECK(result_status IN ('CREATED','UPDATED','SKIPPED','FAILED'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_growth_bootstrap_import_run_items_run
+            ON growth_bootstrap_import_run_items(run_id, id);
+
         """
     )
 
