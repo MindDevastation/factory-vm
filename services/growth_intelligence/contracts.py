@@ -72,6 +72,17 @@ def ensure_json_text(value: Any, *, field_name: str, default: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
+def ensure_required_json_text(value: Any, *, field_name: str, expected_type: type[list[Any]] | type[dict[str, Any]]) -> str:
+    if value is None:
+        raise ValueError(f"{field_name} is required")
+    parsed = json.loads(value) if isinstance(value, str) else value
+    if expected_type is list and not isinstance(parsed, list):
+        raise ValueError(f"{field_name} must be a JSON array")
+    if expected_type is dict and not isinstance(parsed, dict):
+        raise ValueError(f"{field_name} must be a JSON object")
+    return json.dumps(parsed, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
 def ensure_boolean_flag_map(value: dict[str, Any]) -> dict[str, int]:
     normalized: dict[str, int] = {}
     for key in FEATURE_FLAG_NAMES:

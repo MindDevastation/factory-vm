@@ -87,6 +87,8 @@ def create_growth_intelligence_router(env: Env) -> APIRouter:
             return svc.update_knowledge_item(item_id, payload)
         except ValueError as exc:
             return _error("GI_VALIDATION_ERROR", str(exc), status_code=_validation_status(str(exc)))
+        except sqlite3.IntegrityError:
+            return _error("GI_VALIDATION_ERROR", "knowledge item update failed", status_code=422)
         finally:
             conn.close()
 

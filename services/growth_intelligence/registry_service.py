@@ -11,6 +11,7 @@ from services.growth_intelligence.contracts import (
     ensure_impact_confidence,
     ensure_json_text,
     ensure_non_empty_text,
+    ensure_required_json_text,
     ensure_source_class,
     ensure_source_hierarchy,
     ensure_source_trust,
@@ -72,6 +73,7 @@ class GrowthRegistryService:
         explanation_template = ensure_non_empty_text(payload.get("explanation_template"), field_name="explanation_template")
         status = ensure_non_empty_text(payload.get("status"), field_name="status")
         source_class, source_trust = ensure_source_hierarchy(source_class=str(payload.get("source_class", "")), source_trust=str(payload.get("source_trust", "")))
+        self._ensure_trusted_source_provenance(source_class=source_class, source_url=payload.get("source_url"), evidence_note=payload.get("evidence_note"))
         impact_confidence = ensure_impact_confidence(str(payload.get("impact_confidence", "")))
         try:
             cur = self._conn.execute(
@@ -124,6 +126,14 @@ class GrowthRegistryService:
             )
         if "impact_confidence" in payload:
             merged["impact_confidence"] = ensure_impact_confidence(str(merged.get("impact_confidence", "")))
+        if any(k in payload for k in ("source_class", "source_url", "evidence_note")):
+            self._ensure_trusted_source_provenance(
+                source_class=str(merged.get("source_class", "")),
+                source_url=merged.get("source_url"),
+                evidence_note=merged.get("evidence_note"),
+            )
+        if "supersedes_item_id" in payload:
+            self._ensure_supersedes_item_exists(payload.get("supersedes_item_id"))
         for field in ("title", "source_type", "source_name", "action_template", "explanation_template", "status"):
             if field in payload:
                 merged[field] = ensure_non_empty_text(merged.get(field), field_name=field)
@@ -168,11 +178,11 @@ class GrowthRegistryService:
                 (
                     code,
                     goal_type,
-                    ensure_json_text(payload.get("channel_types_json"), field_name="channel_types_json", default=[]),
-                    ensure_json_text(payload.get("release_types_json"), field_name="release_types_json", default=[]),
-                    ensure_json_text(payload.get("activation_rules_json"), field_name="activation_rules_json", default={}),
-                    ensure_json_text(payload.get("output_shape_json"), field_name="output_shape_json", default={}),
-                    ensure_json_text(payload.get("trust_policy_json"), field_name="trust_policy_json", default={}),
+                    ensure_required_json_text(payload.get("channel_types_json"), field_name="channel_types_json", expected_type=list),
+                    ensure_required_json_text(payload.get("release_types_json"), field_name="release_types_json", expected_type=list),
+                    ensure_required_json_text(payload.get("activation_rules_json"), field_name="activation_rules_json", expected_type=dict),
+                    ensure_required_json_text(payload.get("output_shape_json"), field_name="output_shape_json", expected_type=dict),
+                    ensure_required_json_text(payload.get("trust_policy_json"), field_name="trust_policy_json", expected_type=dict),
                     now,
                     now,
                 ),
@@ -182,6 +192,23 @@ class GrowthRegistryService:
                 raise ValueError(f"playbook with code {code} already exists") from None
             raise
         return self.get_playbook(int(cur.lastrowid))
+
+    def _ensure_supersedes_item_exists(self, value: Any) -> None:
+        if value is None:
+            return
+        try:
+            target_id = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("supersedes_item_id must be an integer") from None
+        row = self._conn.execute("SELECT id FROM growth_knowledge_items WHERE id = ?", (target_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"supersedes_item_id {target_id} not found")
+
+    def _ensure_trusted_source_provenance(self, *, source_class: str, source_url: Any, evidence_note: Any) -> None:
+        if source_class not in ("OFFICIAL", "PRACTITIONER"):
+            return
+        ensure_non_empty_text(source_url, field_name="source_url")
+        ensure_non_empty_text(evidence_note, field_name="evidence_note")
 
     def update_playbook(self, playbook_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         self.get_playbook(playbook_id)

@@ -267,6 +267,8 @@ class TestGrowthIntelligenceApi(unittest.TestCase):
                     "source_trust": "B",
                     "impact_confidence": "Medium",
                     "source_class": "PRACTITIONER",
+                    "source_url": "https://example.com",
+                    "evidence_note": "community-tested",
                     "action_template": "a",
                     "explanation_template": "e",
                     "status": "ACTIVE",
@@ -408,6 +410,141 @@ class TestGrowthIntelligenceApi(unittest.TestCase):
                 json={"code": " ", "goal_type": "RETENTION"},
             )
             self.assertEqual(bad_playbook.status_code, 422)
+
+    def test_patch_nonexistent_supersedes_item_id_returns_structured_validation_error(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+            created = client.post(
+                "/v1/growth-intelligence/knowledge-items",
+                headers=headers,
+                json={
+                    "code": "GI-FK-1",
+                    "title": "Item",
+                    "description": "d",
+                    "source_type": "doc",
+                    "source_name": "seed",
+                    "source_trust": "B",
+                    "impact_confidence": "Medium",
+                    "source_class": "INTERNAL",
+                    "action_template": "a",
+                    "explanation_template": "e",
+                    "status": "ACTIVE",
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            item_id = int(created.json()["id"])
+
+            resp = client.patch(
+                f"/v1/growth-intelligence/knowledge-items/{item_id}",
+                headers=headers,
+                json={"supersedes_item_id": 999999},
+            )
+            self.assertEqual(resp.status_code, 404)
+            self.assertEqual(resp.json()["error"]["code"], "GI_VALIDATION_ERROR")
+
+    def test_playbook_create_requires_required_json_fields_and_shapes(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+            good = {
+                "code": "PB-REQ-BASE",
+                "goal_type": "RETENTION",
+                "channel_types_json": ["LONG"],
+                "release_types_json": ["VIDEO"],
+                "activation_rules_json": {"min_items": 1},
+                "output_shape_json": {"kind": "plan"},
+                "trust_policy_json": {"min_trust": "B"},
+            }
+            required_fields = (
+                "channel_types_json",
+                "release_types_json",
+                "activation_rules_json",
+                "output_shape_json",
+                "trust_policy_json",
+            )
+            for idx, field in enumerate(required_fields, start=1):
+                payload = dict(good)
+                payload["code"] = f"PB-REQ-{idx}"
+                payload.pop(field)
+                resp = client.post("/v1/growth-intelligence/playbooks", headers=headers, json=payload)
+                self.assertEqual(resp.status_code, 422)
+                self.assertEqual(resp.json()["error"]["code"], "GI_VALIDATION_ERROR")
+
+            bad_arr = dict(good)
+            bad_arr["code"] = "PB-BAD-ARR"
+            bad_arr["channel_types_json"] = {"wrong": True}
+            resp_bad_arr = client.post("/v1/growth-intelligence/playbooks", headers=headers, json=bad_arr)
+            self.assertEqual(resp_bad_arr.status_code, 422)
+            self.assertEqual(resp_bad_arr.json()["error"]["code"], "GI_VALIDATION_ERROR")
+
+            bad_obj = dict(good)
+            bad_obj["code"] = "PB-BAD-OBJ"
+            bad_obj["activation_rules_json"] = ["wrong"]
+            resp_bad_obj = client.post("/v1/growth-intelligence/playbooks", headers=headers, json=bad_obj)
+            self.assertEqual(resp_bad_obj.status_code, 422)
+            self.assertEqual(resp_bad_obj.json()["error"]["code"], "GI_VALIDATION_ERROR")
+
+    def test_trusted_source_provenance_validation_and_internal_flexibility(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+            base = {
+                "title": "Item",
+                "description": "d",
+                "source_type": "doc",
+                "source_name": "seed",
+                "impact_confidence": "Medium",
+                "action_template": "a",
+                "explanation_template": "e",
+                "status": "ACTIVE",
+            }
+            official_blank_url = client.post(
+                "/v1/growth-intelligence/knowledge-items",
+                headers=headers,
+                json={
+                    **base,
+                    "code": "GI-OFF-URL",
+                    "source_class": "OFFICIAL",
+                    "source_trust": "A",
+                    "source_url": " ",
+                    "evidence_note": "proof",
+                },
+            )
+            self.assertEqual(official_blank_url.status_code, 422)
+            self.assertEqual(official_blank_url.json()["error"]["code"], "GI_VALIDATION_ERROR")
+
+            practitioner_blank_note = client.post(
+                "/v1/growth-intelligence/knowledge-items",
+                headers=headers,
+                json={
+                    **base,
+                    "code": "GI-PR-NOTE",
+                    "source_class": "PRACTITIONER",
+                    "source_trust": "B",
+                    "source_url": "https://example.com",
+                    "evidence_note": " ",
+                },
+            )
+            self.assertEqual(practitioner_blank_note.status_code, 422)
+            self.assertEqual(practitioner_blank_note.json()["error"]["code"], "GI_VALIDATION_ERROR")
+
+            internal_ok = client.post(
+                "/v1/growth-intelligence/knowledge-items",
+                headers=headers,
+                json={
+                    **base,
+                    "code": "GI-INTERNAL-PROV",
+                    "source_class": "INTERNAL",
+                    "source_trust": "B",
+                    "source_url": " ",
+                    "evidence_note": " ",
+                },
+            )
+            self.assertEqual(internal_ok.status_code, 200)
 
 
 if __name__ == "__main__":

@@ -110,12 +110,30 @@ class TestGrowthIntelligenceRegistryService(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "code must be non-empty"):
                     svc.create_knowledge_item({**item_payload, "code": " "})
 
-                playbook_payload = {"code": "PB-SVC-1", "goal_type": "RETENTION"}
+                playbook_payload = {
+                    "code": "PB-SVC-1",
+                    "goal_type": "RETENTION",
+                    "channel_types_json": ["LONG"],
+                    "release_types_json": ["VIDEO"],
+                    "activation_rules_json": {"min_items": 1},
+                    "output_shape_json": {"kind": "plan"},
+                    "trust_policy_json": {"min_trust": "B"},
+                }
                 svc.create_playbook(playbook_payload)
                 with self.assertRaisesRegex(ValueError, "already exists"):
                     svc.create_playbook(playbook_payload)
                 with self.assertRaisesRegex(ValueError, "goal_type must be non-empty"):
-                    svc.create_playbook({"code": "PB-SVC-2", "goal_type": " "})
+                    svc.create_playbook(
+                        {
+                            "code": "PB-SVC-2",
+                            "goal_type": " ",
+                            "channel_types_json": ["LONG"],
+                            "release_types_json": ["VIDEO"],
+                            "activation_rules_json": {"min_items": 1},
+                            "output_shape_json": {"kind": "plan"},
+                            "trust_policy_json": {"min_trust": "B"},
+                        }
+                    )
 
                 with self.assertRaisesRegex(ValueError, "not found"):
                     svc.set_channel_feature_flags(
@@ -128,6 +146,139 @@ class TestGrowthIntelligenceRegistryService(unittest.TestCase):
                             "assisted_planning_enabled": False,
                         },
                     )
+            finally:
+                conn.close()
+
+    def test_service_patch_playbook_and_provenance_validations(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = GrowthRegistryService(conn)
+                base_item = {
+                    "code": "GI-SVC-VAL-1",
+                    "title": "Item",
+                    "description": "d",
+                    "source_type": "doc",
+                    "source_name": "seed",
+                    "source_trust": "B",
+                    "impact_confidence": "Medium",
+                    "source_class": "INTERNAL",
+                    "action_template": "a",
+                    "explanation_template": "e",
+                    "status": "ACTIVE",
+                }
+                created = svc.create_knowledge_item(base_item)
+                with self.assertRaisesRegex(ValueError, "supersedes_item_id 999999 not found"):
+                    svc.update_knowledge_item(int(created["id"]), {"supersedes_item_id": 999999})
+
+                required_fields = (
+                    "channel_types_json",
+                    "release_types_json",
+                    "activation_rules_json",
+                    "output_shape_json",
+                    "trust_policy_json",
+                )
+                for field in required_fields:
+                    payload = {
+                        "code": f"PB-SVC-{field}",
+                        "goal_type": "RETENTION",
+                        "channel_types_json": ["LONG"],
+                        "release_types_json": ["VIDEO"],
+                        "activation_rules_json": {"min_items": 1},
+                        "output_shape_json": {"kind": "plan"},
+                        "trust_policy_json": {"min_trust": "B"},
+                    }
+                    payload.pop(field)
+                    with self.assertRaisesRegex(ValueError, f"{field} is required"):
+                        svc.create_playbook(payload)
+
+                with self.assertRaisesRegex(ValueError, "channel_types_json must be a JSON array"):
+                    svc.create_playbook(
+                        {
+                            "code": "PB-SVC-BAD-ARR",
+                            "goal_type": "RETENTION",
+                            "channel_types_json": {"bad": True},
+                            "release_types_json": ["VIDEO"],
+                            "activation_rules_json": {"min_items": 1},
+                            "output_shape_json": {"kind": "plan"},
+                            "trust_policy_json": {"min_trust": "B"},
+                        }
+                    )
+                with self.assertRaisesRegex(ValueError, "activation_rules_json must be a JSON object"):
+                    svc.create_playbook(
+                        {
+                            "code": "PB-SVC-BAD-OBJ",
+                            "goal_type": "RETENTION",
+                            "channel_types_json": ["LONG"],
+                            "release_types_json": ["VIDEO"],
+                            "activation_rules_json": ["bad"],
+                            "output_shape_json": {"kind": "plan"},
+                            "trust_policy_json": {"min_trust": "B"},
+                        }
+                    )
+
+                official = {**base_item, "code": "GI-OFFICIAL-BAD", "source_class": "OFFICIAL", "source_trust": "A", "source_url": " ", "evidence_note": "ok"}
+                with self.assertRaisesRegex(ValueError, "source_url must be non-empty"):
+                    svc.create_knowledge_item(official)
+
+                practitioner = {
+                    **base_item,
+                    "code": "GI-PRACT-BAD",
+                    "source_class": "PRACTITIONER",
+                    "source_trust": "B",
+                    "source_url": "https://example.com",
+                    "evidence_note": " ",
+                }
+                with self.assertRaisesRegex(ValueError, "evidence_note must be non-empty"):
+                    svc.create_knowledge_item(practitioner)
+
+                internal = {**base_item, "code": "GI-INTERNAL-OK", "source_url": " ", "evidence_note": " "}
+                created_internal = svc.create_knowledge_item(internal)
+                self.assertEqual(created_internal["source_class"], "INTERNAL")
+            finally:
+                conn.close()
+
+    def test_bootstrap_import_records_failed_item_for_invalid_official_provenance(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = GrowthRegistryService(conn)
+                result = svc.bootstrap_import(
+                    {
+                        "import_source": "curated",
+                        "import_mode": "upsert",
+                        "actor": "tester",
+                        "items": [
+                            {
+                                "code": "GI-BOOT-BAD-PROV",
+                                "title": "Bad Official",
+                                "description": "d",
+                                "source_type": "doc",
+                                "source_name": "official-doc",
+                                "source_trust": "A",
+                                "impact_confidence": "Medium",
+                                "source_class": "OFFICIAL",
+                                "source_url": " ",
+                                "evidence_note": "ok",
+                                "action_template": "a",
+                                "explanation_template": "e",
+                                "status": "ACTIVE",
+                            }
+                        ],
+                    }
+                )
+                self.assertEqual(result["failed"], 1)
+                self.assertEqual(result["created"], 0)
+                self.assertEqual(result["items"][0]["result_status"], "FAILED")
+
+                run_row = conn.execute(
+                    "SELECT failed_count, created_count FROM growth_bootstrap_import_runs WHERE id = ?",
+                    (result["run_id"],),
+                ).fetchone()
+                self.assertEqual(int(run_row["failed_count"]), 1)
+                self.assertEqual(int(run_row["created_count"]), 0)
             finally:
                 conn.close()
 
