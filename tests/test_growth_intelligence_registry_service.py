@@ -171,6 +171,8 @@ class TestGrowthIntelligenceRegistryService(unittest.TestCase):
                 created = svc.create_knowledge_item(base_item)
                 with self.assertRaisesRegex(ValueError, "supersedes_item_id 999999 not found"):
                     svc.update_knowledge_item(int(created["id"]), {"supersedes_item_id": 999999})
+                with self.assertRaisesRegex(ValueError, "supersedes_item_id 999999 not found"):
+                    svc.create_knowledge_item({**base_item, "code": "GI-SVC-VAL-SUP-1", "supersedes_item_id": 999999})
 
                 required_fields = (
                     "channel_types_json",
@@ -217,6 +219,28 @@ class TestGrowthIntelligenceRegistryService(unittest.TestCase):
                             "trust_policy_json": {"min_trust": "B"},
                         }
                     )
+                valid_playbook = svc.create_playbook(
+                    {
+                        "code": "PB-SVC-PATCH-VALID",
+                        "goal_type": "RETENTION",
+                        "channel_types_json": ["LONG"],
+                        "release_types_json": ["VIDEO"],
+                        "activation_rules_json": {"min_items": 1},
+                        "output_shape_json": {"kind": "plan"},
+                        "trust_policy_json": {"min_trust": "B"},
+                    }
+                )
+                playbook_id = int(valid_playbook["id"])
+                malformed_updates = (
+                    ("channel_types_json", {"wrong": True}, "channel_types_json must be a JSON array"),
+                    ("release_types_json", {"wrong": True}, "release_types_json must be a JSON array"),
+                    ("activation_rules_json", ["wrong"], "activation_rules_json must be a JSON object"),
+                    ("output_shape_json", ["wrong"], "output_shape_json must be a JSON object"),
+                    ("trust_policy_json", ["wrong"], "trust_policy_json must be a JSON object"),
+                )
+                for field, bad_value, error_message in malformed_updates:
+                    with self.assertRaisesRegex(ValueError, error_message):
+                        svc.update_playbook(playbook_id, {field: bad_value})
 
                 official = {**base_item, "code": "GI-OFFICIAL-BAD", "source_class": "OFFICIAL", "source_trust": "A", "source_url": " ", "evidence_note": "ok"}
                 with self.assertRaisesRegex(ValueError, "source_url must be non-empty"):

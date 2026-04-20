@@ -318,6 +318,68 @@ class TestGrowthIntelligenceApi(unittest.TestCase):
             self.assertEqual(duplicate_playbook.status_code, 409)
             self.assertEqual(duplicate_playbook.json()["error"]["code"], "GI_VALIDATION_ERROR")
 
+    def test_patch_playbook_rejects_malformed_typed_json_shapes(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            created_playbook = client.post(
+                "/v1/growth-intelligence/playbooks",
+                headers=headers,
+                json={
+                    "code": "PB-API-PATCH-VAL-1",
+                    "goal_type": "RETENTION",
+                    "channel_types_json": ["LONG"],
+                    "release_types_json": ["VIDEO"],
+                    "activation_rules_json": {"min_items": 1},
+                    "output_shape_json": {"kind": "plan"},
+                    "trust_policy_json": {"min_trust": "B"},
+                },
+            )
+            self.assertEqual(created_playbook.status_code, 200)
+            playbook_id = int(created_playbook.json()["id"])
+
+            malformed_updates = (
+                ("channel_types_json", {"wrong": True}, "channel_types_json must be a JSON array"),
+                ("release_types_json", {"wrong": True}, "release_types_json must be a JSON array"),
+                ("activation_rules_json", ["wrong"], "activation_rules_json must be a JSON object"),
+                ("output_shape_json", ["wrong"], "output_shape_json must be a JSON object"),
+                ("trust_policy_json", ["wrong"], "trust_policy_json must be a JSON object"),
+            )
+            for field, bad_value, error_message in malformed_updates:
+                response = client.patch(f"/v1/growth-intelligence/playbooks/{playbook_id}", headers=headers, json={field: bad_value})
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(response.json()["error"]["code"], "GI_VALIDATION_ERROR")
+                self.assertEqual(response.json()["error"]["message"], error_message)
+
+    def test_create_knowledge_item_nonexistent_supersedes_is_structured_validation_error(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+            response = client.post(
+                "/v1/growth-intelligence/knowledge-items",
+                headers=headers,
+                json={
+                    "code": "GI-API-SUP-404",
+                    "title": "Item",
+                    "description": "Description",
+                    "source_type": "doc",
+                    "source_name": "seed",
+                    "source_trust": "B",
+                    "impact_confidence": "Medium",
+                    "source_class": "INTERNAL",
+                    "action_template": "open",
+                    "explanation_template": "why",
+                    "status": "ACTIVE",
+                    "supersedes_item_id": 999999,
+                },
+            )
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.json()["error"]["code"], "GI_VALIDATION_ERROR")
+            self.assertEqual(response.json()["error"]["message"], "supersedes_item_id 999999 not found")
+
             missing_channel_flags = client.put(
                 "/v1/growth-intelligence/channels/unknown-channel/feature-flags",
                 headers=headers,

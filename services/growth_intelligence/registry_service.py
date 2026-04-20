@@ -75,6 +75,10 @@ class GrowthRegistryService:
         source_class, source_trust = ensure_source_hierarchy(source_class=str(payload.get("source_class", "")), source_trust=str(payload.get("source_trust", "")))
         self._ensure_trusted_source_provenance(source_class=source_class, source_url=payload.get("source_url"), evidence_note=payload.get("evidence_note"))
         impact_confidence = ensure_impact_confidence(str(payload.get("impact_confidence", "")))
+        supersedes_item_id = payload.get("supersedes_item_id")
+        self._ensure_supersedes_item_exists(supersedes_item_id)
+        if supersedes_item_id is not None:
+            supersedes_item_id = int(supersedes_item_id)
         try:
             cur = self._conn.execute(
                 """
@@ -104,7 +108,7 @@ class GrowthRegistryService:
                     str(payload.get("evidence_note", "")).strip(),
                     _optional_text(payload.get("reviewed_by")),
                     _optional_text(payload.get("reviewed_at")),
-                    payload.get("supersedes_item_id"),
+                    supersedes_item_id,
                     _optional_text(payload.get("invalidated_at")),
                     now,
                     now,
@@ -216,11 +220,18 @@ class GrowthRegistryService:
         updates = {k: payload[k] for k in payload if k in allowed}
         if "goal_type" in updates:
             updates["goal_type"] = ensure_non_empty_text(updates["goal_type"], field_name="goal_type")
+        typed_json_fields: dict[str, type[list[Any]] | type[dict[str, Any]]] = {
+            "channel_types_json": list,
+            "release_types_json": list,
+            "activation_rules_json": dict,
+            "output_shape_json": dict,
+            "trust_policy_json": dict,
+        }
+        for key, expected_type in typed_json_fields.items():
+            if key in updates:
+                updates[key] = ensure_required_json_text(updates[key], field_name=key, expected_type=expected_type)
         if not updates:
             return self.get_playbook(playbook_id)
-        for key in ("channel_types_json", "release_types_json", "activation_rules_json", "output_shape_json", "trust_policy_json"):
-            if key in updates:
-                updates[key] = ensure_json_text(updates[key], field_name=key, default=[] if key.endswith("types_json") else {})
         updates["updated_at"] = self._now_iso()
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         self._conn.execute(f"UPDATE growth_playbooks SET {set_clause} WHERE id = ?", tuple(list(updates.values()) + [playbook_id]))
