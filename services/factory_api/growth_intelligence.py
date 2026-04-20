@@ -125,6 +125,8 @@ def create_growth_intelligence_router(env: Env) -> APIRouter:
         conn = dbm.connect(env)
         try:
             return GrowthRegistryService(conn).get_channel_feature_flags(channel_slug)
+        except ValueError as exc:
+            return _error("GI_VALIDATION_ERROR", str(exc), status_code=_validation_status(str(exc)))
         finally:
             conn.close()
 

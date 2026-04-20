@@ -131,6 +131,26 @@ class TestGrowthIntelligenceRegistryService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_get_channel_feature_flags_missing_channel_vs_existing_without_row(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = GrowthRegistryService(conn)
+
+                with self.assertRaisesRegex(ValueError, "channel missing-channel not found"):
+                    svc.get_channel_feature_flags("missing-channel")
+
+                flags = svc.get_channel_feature_flags("darkwood-reverie")
+                self.assertEqual(flags["channel_slug"], "darkwood-reverie")
+                self.assertEqual(int(flags["growth_intelligence_enabled"]), 0)
+                self.assertEqual(int(flags["planning_digest_enabled"]), 0)
+                self.assertEqual(int(flags["planner_handoff_enabled"]), 0)
+                self.assertEqual(int(flags["export_enabled"]), 0)
+                self.assertEqual(int(flags["assisted_planning_enabled"]), 0)
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

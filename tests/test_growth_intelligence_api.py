@@ -330,6 +330,26 @@ class TestGrowthIntelligenceApi(unittest.TestCase):
             self.assertEqual(missing_channel_flags.status_code, 404)
             self.assertEqual(missing_channel_flags.json()["error"]["code"], "GI_VALIDATION_ERROR")
 
+    def test_get_feature_flags_distinguishes_missing_vs_existing_channel(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            missing_channel = client.get("/v1/growth-intelligence/channels/unknown-channel/feature-flags", headers=headers)
+            self.assertEqual(missing_channel.status_code, 404)
+            self.assertEqual(missing_channel.json()["error"]["code"], "GI_VALIDATION_ERROR")
+
+            existing_channel = client.get("/v1/growth-intelligence/channels/darkwood-reverie/feature-flags", headers=headers)
+            self.assertEqual(existing_channel.status_code, 200)
+            body = existing_channel.json()
+            self.assertEqual(body["channel_slug"], "darkwood-reverie")
+            self.assertEqual(int(body["growth_intelligence_enabled"]), 0)
+            self.assertEqual(int(body["planning_digest_enabled"]), 0)
+            self.assertEqual(int(body["planner_handoff_enabled"]), 0)
+            self.assertEqual(int(body["export_enabled"]), 0)
+            self.assertEqual(int(body["assisted_planning_enabled"]), 0)
+
     def test_required_non_empty_fields_for_create_and_update(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)

@@ -200,6 +200,9 @@ class GrowthRegistryService:
         return self.get_playbook(playbook_id)
 
     def get_channel_feature_flags(self, channel_slug: str) -> dict[str, Any]:
+        existing_channel = self._conn.execute("SELECT slug FROM channels WHERE slug = ?", (channel_slug,)).fetchone()
+        if existing_channel is None:
+            raise ValueError(f"channel {channel_slug} not found")
         row = self._conn.execute("SELECT * FROM growth_channel_feature_flags WHERE channel_slug = ?", (channel_slug,)).fetchone()
         if row:
             return row
