@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from services.common import db as dbm
 from services.common.env import Env
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
@@ -50,7 +51,7 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(fetched.status_code, 200)
 
             patched = client.patch(f"/v1/prompt-registry/records/{prompt_id}", headers=headers, json={"status": "active"})
-            self.assertEqual(patched.status_code, 200)
+            self.assertEqual(patched.status_code, 422)
 
             version = client.post(
                 f"/v1/prompt-registry/records/{prompt_id}/versions",
@@ -74,6 +75,16 @@ class TestPromptRegistryApi(unittest.TestCase):
             activated = client.post(f"/v1/prompt-registry/versions/{version_id}/activate", headers=headers)
             self.assertEqual(activated.status_code, 200)
             self.assertEqual(int(activated.json()["is_active"]), 1)
+
+            conn = dbm.connect(env)
+            try:
+                audit_rows = conn.execute(
+                    "SELECT event_type,actor FROM prompt_audit_events WHERE prompt_id = ? ORDER BY id ASC",
+                    (prompt_id,),
+                ).fetchall()
+                self.assertTrue(all(row["actor"] == "admin" for row in audit_rows))
+            finally:
+                conn.close()
 
     def test_validation_duplicate_and_lifecycle_errors(self) -> None:
         with temp_env() as (_td, env):
@@ -128,3 +139,59 @@ class TestPromptRegistryApi(unittest.TestCase):
                 json={"body_text": "x", "variables": [{"name": "secret", "safety_class": "not_allowed"}]},
             )
             self.assertEqual(invalid_version.status_code, 422)
+
+    def test_version_create_atomicity_and_duplicate_names_api(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            created = client.post(
+                "/v1/prompt-registry/records",
+                headers=headers,
+                json={
+                    "slug": "api-atomic",
+                    "code": "PR-API-ATOMIC",
+                    "title": "API Atomic",
+                    "record_type": "prompt_template",
+                    "status": "draft",
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            prompt_id = int(created.json()["id"])
+
+            invalid_payload = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/versions",
+                headers=headers,
+                json={"body_text": "x", "variables": ["not-an-object"]},
+            )
+            self.assertEqual(invalid_payload.status_code, 422)
+
+            duplicate_names = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/versions",
+                headers=headers,
+                json={
+                    "body_text": "x {{a}} {{a}}",
+                    "variables": [
+                        {"name": "a", "safety_class": "standard"},
+                        {"name": "a", "safety_class": "standard"},
+                    ],
+                },
+            )
+            self.assertEqual(duplicate_names.status_code, 422)
+
+            contradictory_active = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/versions",
+                headers=headers,
+                json={"body_text": "x", "status": "active"},
+            )
+            self.assertEqual(contradictory_active.status_code, 422)
+
+            conn = dbm.connect(env)
+            try:
+                version_count = int(
+                    conn.execute("SELECT COUNT(*) AS c FROM prompt_versions WHERE prompt_id = ?", (prompt_id,)).fetchone()["c"]
+                )
+                self.assertEqual(version_count, 0)
+            finally:
+                conn.close()
