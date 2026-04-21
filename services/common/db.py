@@ -2379,6 +2379,78 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_growth_bootstrap_import_run_items_run
             ON growth_bootstrap_import_run_items(run_id, id);
 
+        CREATE TABLE IF NOT EXISTS prompt_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug TEXT NOT NULL UNIQUE,
+            code TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            record_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            validation_status TEXT NOT NULL,
+            bridge_policy_hook TEXT NULL,
+            active_version_id INTEGER NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(record_type IN ('prompt_template','snippet_block')),
+            CHECK(status IN ('draft','active','inactive','archived')),
+            CHECK(validation_status IN ('VALID','INVALID','UNKNOWN'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_records_status_updated
+            ON prompt_records(status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS prompt_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NOT NULL,
+            version_no INTEGER NOT NULL,
+            body_text TEXT NOT NULL,
+            status TEXT NOT NULL,
+            validation_status TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            CHECK(status IN ('draft','active','inactive','archived')),
+            CHECK(validation_status IN ('VALID','INVALID','UNKNOWN')),
+            CHECK(is_active IN (0,1)),
+            UNIQUE(prompt_id, version_no)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_versions_single_active
+            ON prompt_versions(prompt_id) WHERE is_active = 1;
+
+        CREATE TABLE IF NOT EXISTS prompt_variables (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_version_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            safety_class TEXT NOT NULL,
+            required INTEGER NOT NULL DEFAULT 1,
+            default_value TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(prompt_version_id) REFERENCES prompt_versions(id) ON DELETE CASCADE,
+            CHECK(safety_class IN ('standard','secret','operator_only','derived_from_context','multiline_longform')),
+            CHECK(required IN (0,1)),
+            UNIQUE(prompt_version_id, name)
+        );
+
+        CREATE TABLE IF NOT EXISTS prompt_audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NOT NULL,
+            version_id INTEGER NULL,
+            event_type TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            FOREIGN KEY(version_id) REFERENCES prompt_versions(id) ON DELETE SET NULL,
+            CHECK(json_valid(payload_json))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_audit_events_prompt_created
+            ON prompt_audit_events(prompt_id, created_at DESC);
+
         """
     )
 
