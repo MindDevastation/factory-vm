@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -102,6 +103,22 @@ class PromptRegistryService:
                 }
             )
         return validated
+
+    @staticmethod
+    def _build_render_fingerprint(body_text: str, variables: list[dict[str, Any]]) -> str:
+        normalized_variables = [
+            {
+                "name": str(item["name"]),
+                "safety_class": str(item["safety_class"]),
+                "required": int(item["required"]),
+                "default_value": str(item["default_value"]),
+                "description": str(item["description"]),
+            }
+            for item in sorted(variables, key=lambda value: str(value["name"]))
+        ]
+        payload = {"body_text": body_text, "variables": normalized_variables}
+        canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def create_record(self, payload: dict[str, Any], *, actor: str) -> dict[str, Any]:
         now = self._now_iso()
@@ -208,6 +225,7 @@ class PromptRegistryService:
             raise PromptRegistryValidationError("active version cannot be created with is_active=0")
         validation_status = ensure_validation_status(payload.get("validation_status", "UNKNOWN"))
         validated_variables = self._validate_variables_payload(payload.get("variables", []))
+        render_fingerprint = self._build_render_fingerprint(body_text, validated_variables)
         version_id: int | None = None
         in_txn = False
         try:
@@ -216,10 +234,10 @@ class PromptRegistryService:
             version_no = self._next_version_no(prompt_id)
             cur = self._conn.execute(
                 """
-                INSERT INTO prompt_versions(prompt_id,version_no,body_text,status,validation_status,is_active,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?)
+                INSERT INTO prompt_versions(prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?)
                 """,
-                (prompt_id, version_no, body_text, status, validation_status, 0, now, now),
+                (prompt_id, version_no, body_text, render_fingerprint, status, validation_status, 0, now, now),
             )
             version_id = int(cur.lastrowid)
             for variable in validated_variables:
@@ -286,3 +304,30 @@ class PromptRegistryService:
 
     def list_audit_events(self, prompt_id: int) -> list[dict[str, Any]]:
         return list(self._conn.execute("SELECT * FROM prompt_audit_events WHERE prompt_id = ? ORDER BY id ASC", (prompt_id,)).fetchall())
+
+    def get_audit_diagnostics(self, prompt_id: int) -> dict[str, Any]:
+        self.get_record(prompt_id)
+        rows = self.list_audit_events(prompt_id)
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            payload: dict[str, Any]
+            raw_payload = row.get("payload_json")
+            if isinstance(raw_payload, str):
+                try:
+                    parsed_payload = json.loads(raw_payload)
+                    payload = parsed_payload if isinstance(parsed_payload, dict) else {}
+                except json.JSONDecodeError:
+                    payload = {}
+            else:
+                payload = {}
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "event_type": str(row["event_type"]),
+                    "actor": str(row["actor"]),
+                    "version_id": row["version_id"],
+                    "payload": payload,
+                    "created_at": str(row["created_at"]),
+                }
+            )
+        return {"prompt_id": prompt_id, "items": items}

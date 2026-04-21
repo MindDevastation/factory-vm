@@ -71,3 +71,21 @@ def contracts_payload() -> dict[str, Any]:
         "validation_status": list(VALIDATION_STATUSES),
         "safety_class": list(SAFETY_CLASSES),
     }
+
+
+def bridge_policy_payload() -> dict[str, Any]:
+    return {
+        "mode": "bridge_safe_foundation",
+        "runtime_bridge_execution": "not_implemented",
+        "authoritative_surfaces": {
+            "title_templates": "authoritative",
+            "description_templates": "authoritative",
+            "video_tag_presets": "authoritative",
+            "channel_visual_style_templates": "authoritative",
+        },
+        "prompt_registry_role": "policy_and_registry_foundation_only",
+        "future_work": {
+            "bridge_migration_slices_expected": True,
+            "runtime_binding_or_resolution_in_this_slice": False,
+        },
+    }
