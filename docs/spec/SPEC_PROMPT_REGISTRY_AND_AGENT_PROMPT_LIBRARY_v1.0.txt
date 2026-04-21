@@ -1,0 +1,712 @@
+SPEC_PROMPT_REGISTRY_AND_AGENT_PROMPT_LIBRARY_v1.0
+
+Conflict / Fullness Check
+
+Hard conflicts inside the REQ were not found.
+
+The REQ is internally aligned on the key product boundaries:
+- prompt records are first-class product entities, not loose text strings
+- v1 includes both prompt templates and snippet blocks
+- versioning is mandatory
+- context-based resolution is mandatory
+- resolution order is fixed as:
+  item > channel > workflow > global
+- preview/render is mandatory and must be explainable
+- launch workflow from interface is mandatory
+- Telegram is a read/copy helper only and is not the primary editing surface
+- broken render, broken bindings, broken imports, and silent overwrite behavior are forbidden
+- the feature is not a free-form AI agent layer and does not replace domain workflows
+
+No REQ-level critical gaps remain. The remaining unspecified details are implementation-level decomposition and artifact-format choices, not blockers.
+
+SPEC_PROMPT_REGISTRY_AND_AGENT_PROMPT_LIBRARY_v1.0
+
+1. Overview / цель
+
+Prompt Registry / Agent Prompt Library defines a centralized product layer for AI-agent prompts and operator workflows inside factory-vm.
+
+Its purpose is to:
+- store prompt records as first-class product entities
+- support versioning
+- support categories / domains / workflow bindings
+- support template variables and reusable snippets
+- support preview / render
+- support context-based prompt selection
+- support linked actions and workflow launch from UI
+- support import / export
+- support usage history
+- support Telegram read/copy helper
+- remain auditable, validatable, and safe
+
+This feature turns prompts into a managed product layer rather than scattered operational text.
+
+2. Scope / Non-goals
+
+2.1. In scope
+- centralized prompt library
+- prompt records as first-class entities
+- versioning
+- lifecycle/status model
+- categories / domains / target workflow classification
+- global/workflow/channel/item bindings
+- scoped overrides
+- context-based selection
+- template variables
+- snippet blocks
+- preview/render
+- linked actions
+- workflow launch from interface
+- import/export
+- validation/safety checks
+- access control
+- usage history
+- Telegram read/copy helper
+- search/filtering
+- audit trail
+
+2.2. Out of scope in v1
+- Telegram-first editing surface
+- autonomous prompt execution without operator visibility
+- hidden auto-selection without explainable resolution
+- uncontrolled free-form prompt mutation inside downstream agents
+- A/B experimentation platform
+- full token-level execution logging for every LLM interaction
+- replacing dedicated domain UIs with chat-only prompt actions
+
+2.3. Boundary rules
+- the feature must not degrade into a simple text reference library
+- launch workflow from interface is mandatory and may not be quietly removed
+- context resolution order may not be changed
+- broken render on missing required variables is forbidden
+- Telegram helper must not become the primary editing surface in v1
+
+3. Canonical entity model
+
+3.1. Canonical entity
+The canonical entity in v1 is:
+- prompt record
+
+3.2. Prompt record rule
+A prompt record is not just a text string.
+It is a full product object with:
+- stable identity
+- classification
+- lifecycle
+- version set
+- active version
+- template content
+- variable schema
+- binding model
+- usage linkage
+- governance/audit metadata
+
+3.3. Canonical record types
+V1 supports these record types:
+- prompt_template
+- snippet_block
+
+4. Prompt record contract
+
+Every prompt record must contain at minimum:
+
+4.1. Identity fields
+- prompt_id
+- stable slug/code
+- display_name
+
+4.2. Classification fields
+- domain/category
+- record_type
+- target_workflow_or_tool
+- target_action_class
+
+4.3. Lifecycle fields
+- status
+- active_version_ref
+- created_by
+- created_at
+- updated_by
+- updated_at
+
+4.4. Content fields
+- prompt_template_body
+- system_notes
+- operator_notes
+- variable_schema
+- render_instructions
+- linked_snippet_references
+- example_input_set
+- example_rendered_output
+
+4.5. Binding fields
+- supports_global_scope
+- supports_workflow_scope
+- supports_channel_scope
+- supports_item_scope
+
+4.6. Governance fields
+- audit_metadata
+- import_export_metadata
+- usage_history_linkage
+- validation_status
+
+5. Lifecycle model
+
+5.1. Frozen statuses
+Prompt records and versions must support:
+- draft
+- active
+- inactive
+- archived
+
+5.2. Status semantics
+- draft: not used in runtime selection
+- active: participates in selection/use
+- inactive: preserved for history/editing but not resolved as active runtime choice
+- archived: not used in selection/use and not edited as a working object
+
+5.3. Lifecycle rules
+- archived records are not active runtime objects
+- draft records do not resolve into runtime usage
+- inactive records remain referenceable for history/audit
+- active status is required for runtime resolution
+
+6. Versioning model
+
+6.1. Versioning is mandatory.
+
+6.2. Every prompt record has a version set.
+
+6.3. Every version must contain:
+- version_id
+- version_number
+- status
+- content_snapshot
+- variable_schema_snapshot
+- linked_snippet_snapshot_references
+- changelog
+- author
+- created_at
+
+6.4. Active-version rule
+For any concrete binding/context, only one active version may be used.
+
+6.5. Change rule
+Prompt changes must be created through a new version, not by silent overwrite of the active version.
+
+6.6. Usage-history rule
+Usage history must always store the exact used version.
+
+7. Categories / domains / areas of use
+
+7.1. Frozen categories
+Canonical categories in v1:
+- jobs
+- metadata
+- tags
+- visuals
+- analytics
+- operator
+- reusable_blocks
+
+7.2. Classification rule
+Every prompt record must belong to one primary category and also carry target workflow/tool classification.
+
+7.3. Mandatory prompt domains in scope
+The product must support prompts for:
+- JSON bulk jobs creation
+- tags generation
+- title generation
+- description generation
+- visual prompts
+- analytics / recommendation prompt templates
+- operator prompts for Codex / ChatGPT workflows
+- reusable snippets / blocks
+
+8. Binding model
+
+8.1. Supported scopes
+V1 supports:
+- global library bindings
+- workflow-scoped bindings
+- channel-scoped bindings
+- item-scoped bindings
+
+8.2. Binding record contract
+Every binding must contain:
+- target_scope_type
+- target_scope_identifier
+- linked_prompt_record
+- linked_active_version
+- activation_state
+- priority according to canonical resolution order
+
+8.3. Binding rule
+Binding does not replace versioning.
+A binding always points to a concrete active version.
+
+9. Context resolution model
+
+9.1. Context-based selection is mandatory.
+
+9.2. Frozen resolution order
+The canonical resolution order is:
+- item
+- channel
+- workflow
+- global
+
+9.3. Resolution semantics
+- item-scoped binding overrides any broader binding
+- channel-scoped binding overrides workflow/global
+- workflow-scoped binding overrides global
+- global is used only as final fallback
+
+9.4. Explainability rule
+Resolution must be explainable.
+The system must show:
+- which binding won
+- which version was selected
+- why that binding/version was chosen
+
+10. Variables / templates
+
+10.1. Variables are mandatory.
+
+10.2. Frozen variable syntax
+The canonical syntax is:
+{{variable_name}}
+
+10.3. Variable classes
+Variables are divided into:
+- required
+- optional_with_default
+
+10.4. Variable field contract
+Each variable must store:
+- name
+- description
+- type/class
+- required_flag
+- default_value if applicable
+- allowed_constraints if applicable
+- example_value
+
+10.5. Missing-variable rules
+- missing required variable makes render invalid
+- empty render on missing required variable is forbidden
+- silent fallback for missing required variables is forbidden
+
+11. Snippets / reusable blocks
+
+11.1. Snippet identity
+Snippets are also prompt records, but of type:
+- snippet_block
+
+11.2. Snippet versioning
+Snippets are versioned independently.
+
+11.3. Snippet usage
+Snippets may be referenced from prompt templates.
+
+11.4. Multiple-snippet rule
+One prompt template may include multiple snippets.
+
+11.5. Lineage rule
+Snippets participate in render contract and usage lineage.
+
+11.6. Context rule for snippets
+Snippets may also have bindings and context-based resolution using the same canonical rules if needed for a specific scope.
+
+12. Preview / render contract
+
+12.1. Preview/render is mandatory.
+
+12.2. Preview/render must show:
+- final rendered prompt
+- selected version
+- winning binding
+- included snippets
+- substituted variables
+- missing required variables
+- validation result
+
+12.3. Invalid-render rule
+Render without valid resolution/variables is not successful.
+
+12.4. UX rule
+Preview/render must be available in UI before:
+- linked action
+- workflow launch
+
+13. Linked actions
+
+13.1. Linked actions are mandatory.
+
+13.2. Required linked actions
+The system must support at minimum:
+- open prompt in editor
+- preview with variables
+- render final prompt
+- copy rendered prompt
+- apply/select for workflow
+- open related workflow screen
+- create new version from existing
+- launch linked workflow from interface
+
+13.3. Workflow-launch trace rule
+Launch linked workflow from interface must save:
+- usage history entry
+- exact used version
+
+14. Workflow launch semantics
+
+14.1. Non-engine rule
+Prompt Registry is not a generic execution engine for all LLM flows.
+
+14.2. Launch contract
+Launch means:
+- resolve/select prompt
+- render prompt
+- save usage history
+- pass prompt into target workflow/tool surface
+- open/continue the linked workflow in canonical context
+
+14.3. Bypass rule
+Launch must not silently bypass the existing domain workflow.
+
+15. Usage history model
+
+15.1. Usage history is mandatory.
+
+15.2. Usage history contract
+Every usage event must store:
+- usage_id
+- actor
+- timestamp
+- prompt_record
+- exact_version
+- resolved_binding/context
+- target_workflow_or_tool
+- scope_type
+- rendered_output_snapshot
+- action_type
+- result_status
+- linked_target_entity if applicable
+
+15.3. Telegram usage-summary rule
+Usage history must support summary display in Telegram read/copy helper.
+
+15.4. Logging boundary
+Usage history does not need to be a full token-level execution log, but it must be sufficient for traceability and operational audit.
+
+16. Validation / safety
+
+16.1. Validation is mandatory.
+
+16.2. The system must validate at minimum:
+- empty prompt body is invalid
+- invalid placeholder syntax is invalid
+- missing required variables is invalid
+- broken snippet reference is invalid
+- duplicate/conflicting active binding is invalid where it breaks canonical resolution
+- invalid status transition is forbidden
+- import payload with broken contracts is forbidden
+
+16.3. Error UX rule
+Error reporting must be operator-readable.
+
+16.4. Silent-acceptance rule
+Silent acceptance of broken prompt templates is forbidden.
+
+17. Access control
+
+17.1. Access control is mandatory.
+
+17.2. Canonical permission classes in v1
+- read_copy
+- create_edit
+- activate_deactivate
+- archive_restore
+- import_export
+- launch_workflow
+
+17.3. Permission-separation rule
+The system must distinguish:
+- who can only read/copy
+- who can create/edit
+- who can activate versions
+- who can archive
+- who can import/export
+- who can launch linked workflow
+
+17.4. Auditability rule
+Permission model must be auditable.
+
+18. Import / export
+
+18.1. Import/export is mandatory.
+
+18.2. Export scope levels
+Export must support:
+- whole library
+- by category/domain
+- by workflow
+- by channel
+- by selected records
+
+18.3. Import flow
+Import must go through:
+- preview
+- validate
+- confirm/apply
+
+18.4. Conflict-handling rule
+On slug/code/version conflict, the system must:
+- show the conflict clearly
+- forbid silent overwrite
+- require explicit conflict resolution
+- preserve import audit trail
+
+19. Telegram role
+
+19.1. Telegram is not the primary editing surface in v1.
+
+19.2. Telegram is mandatory as read/copy helper.
+
+19.3. Telegram helper must support:
+- find prompt
+- choose context
+- render final prompt
+- show usage-history summary
+- produce copy-friendly output
+
+19.4. Telegram editing rule
+Telegram does not edit prompt records in v1.
+
+20. Search / filtering
+
+20.1. Search/filtering is mandatory.
+
+20.2. The system must support filtering/search by:
+- name
+- slug/code
+- category
+- workflow
+- channel
+- item
+- status
+- active version
+- snippet usage
+- recent usage
+
+21. UI / operator surfaces
+
+21.1. Primary surface
+The primary surface in v1 is:
+- web UI
+
+21.2. Required UI surfaces
+- prompt library index
+- record detail
+- version history
+- binding management
+- render/preview page or modal
+- import preview/confirm surface
+- usage history view
+- launch-workflow surface
+- snippet management surface
+
+22. Audit / governance
+
+22.1. Mandatory auditable actions
+The system must audit at minimum:
+- create
+- edit
+- new version
+- activate/deactivate
+- archive/restore
+- import
+- export
+- render
+- copy
+- launch workflow
+- binding change
+
+22.2. Audit trail contract
+Audit trail must store:
+- actor
+- timestamp
+- target
+- action
+- result
+
+23. Data model
+
+23.1. prompt_records
+Required fields:
+- prompt_id
+- slug_code
+- display_name
+- category
+- record_type
+- target_workflow_or_tool
+- target_action_class
+- status
+- active_version_ref
+- created_by
+- created_at
+- updated_by
+- updated_at
+- system_notes
+- operator_notes
+- audit_metadata
+- import_export_metadata
+- validation_status
+
+23.2. prompt_versions
+Required fields:
+- version_id
+- prompt_id
+- version_number
+- status
+- content_snapshot
+- variable_schema_snapshot
+- linked_snippet_snapshot_refs
+- changelog
+- author
+- created_at
+
+23.3. prompt_bindings
+Required fields:
+- binding_id
+- prompt_id
+- linked_active_version
+- target_scope_type
+- target_scope_identifier
+- activation_state
+- resolution_priority
+
+23.4. prompt_variables
+Required fields:
+- variable_id
+- prompt_id or version_id
+- name
+- description
+- type_class
+- required_flag
+- default_value
+- allowed_constraints
+- example_value
+
+23.5. prompt_usage_history
+Required fields:
+- usage_id
+- actor
+- timestamp
+- prompt_id
+- exact_version
+- resolved_binding_context
+- target_workflow_or_tool
+- scope_type
+- rendered_output_snapshot
+- action_type
+- result_status
+- linked_target_entity
+
+24. Scope boundaries
+
+24.1. Domain-workflow boundary
+This feature does not replace jobs/metadata/visuals/analytics domain workflows.
+It centralizes prompt records and links them to those workflows.
+
+24.2. AI-agent boundary
+This feature does not become a new free-form AI agent layer.
+
+24.3. Telegram boundary
+This feature does not replace Telegram Operator Layer.
+
+24.4. Product-depth boundary
+This feature is not only a note-taking library.
+Bindings, versioning, linked actions, workflow launch, and usage history are mandatory scope.
+
+25. Validation rules
+
+25.1. Product-boundary validation
+- the feature must not degrade into a simple text registry
+- launch workflow from interface must remain mandatory
+- Telegram helper must remain separate from primary editing surface
+
+25.2. Resolution validation
+- canonical order item > channel > workflow > global must remain unchanged
+- broken/conflicting active bindings must be rejected where they break resolution
+- winning binding/version must be explainable
+
+25.3. Render validation
+- missing required variables must block valid render
+- broken snippet references must block valid render
+- invalid placeholder syntax must block valid render
+- empty success render under invalid conditions is forbidden
+
+25.4. Versioning validation
+- silent overwrite of active version is forbidden
+- exact used version must be present in usage history
+- active runtime selection must use active version only
+
+26. Acceptance criteria
+
+The feature is accepted only if all of the following are true:
+- a centralized prompt library exists with prompt records as first-class entities
+- all mandatory prompt domains are supported:
+  - JSON bulk jobs
+  - tags
+  - title generation
+  - description generation
+  - visual prompts
+  - analytics/recommendation prompts
+  - operator prompts for Codex / ChatGPT workflows
+  - reusable snippets / blocks
+- versioning and active-version model exist
+- categories / workflows / bindings / scoped overrides exist
+- context resolution works with canonical order:
+  item > channel > workflow > global
+- variable/template model and snippet model exist
+- preview/render exists with full explainable resolution output
+- linked actions and launch-workflow-from-interface exist
+- import/export exists
+- validation/safety checks exist
+- access control exists
+- linked usage history exists
+- Telegram read/copy helper exists with search + render + usage summary
+
+27. Definition of done
+
+The feature is done only when:
+- all mandatory v1 prompt domains are supported
+- prompt records are truly first-class entities
+- versioning, bindings, resolution, variables, snippets, preview/render, launch, import/export, access control, usage history, and Telegram helper all exist
+- no mandatory product boundary has been quietly reduced
+- the feature is ready to progress into implementation work
+
+28. Open questions / ambiguities
+
+28.1. Exact internal decomposition into slices/workstreams is not fixed at REQ level and remains an implementation/spec structuring choice.
+
+28.2. Exact UI layout of index/detail/history surfaces is implementation detail as long as the frozen contracts above remain preserved.
+
+Ready for Dev? Yes
+
+Причины
+- The REQ fully fixes entity model, lifecycle, versioning, categories, resolution order, variable/snippet model, preview/render contract, linked actions, workflow launch semantics, usage history, validation, access control, import/export, Telegram helper role, and acceptance scope.
+- No critical REQ-level gaps remain.
+- Remaining uncertainty is implementation decomposition/detail, not a blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- feature quietly degrading into a simple text registry
+- launch workflow being quietly reduced to copy-only behavior
+- canonical context-resolution order being violated
+- missing-variable render being treated as successful
+- Telegram helper being incorrectly expanded into primary editing surface
