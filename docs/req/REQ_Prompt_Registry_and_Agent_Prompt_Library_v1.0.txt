@@ -1,0 +1,535 @@
+REQ_PROMPT_REGISTRY_AND_AGENT_PROMPT_LIBRARY_v1.0
+
+1. Название
+
+Prompt Registry / Agent Prompt Library
+
+2. Цель
+
+Добавить в factory-vm полноценное централизованное хранилище промптов для ИИ-агентов и operator workflows, которое:
+- хранит prompt records как first-class сущности продукта;
+- поддерживает versioning;
+- поддерживает categories / domains / workflow bindings;
+- поддерживает template variables и reusable snippets;
+- умеет preview / render;
+- умеет выбирать prompt by context;
+- умеет запускать связанный workflow из интерфейса;
+- поддерживает import / export;
+- поддерживает usage history;
+- поддерживает Telegram read/copy helper;
+- остается auditable, валидируемым и безопасным.
+
+3. Зачем делаем
+
+Сейчас рабочие промпты рискуют жить в разрозненных чатах, JSON-фрагментах, заметках и ad-hoc текстах. Это создает проблемы:
+- нет канонического источника истины;
+- нет versioning;
+- нет гарантии, что используется актуальная версия;
+- нет централизованного context-based selection;
+- нет понятного linked usage history;
+- сложно безопасно переиспользовать промпты между каналами, workflow и сущностями;
+- трудно импортировать/экспортировать и переносить библиотеку между средами.
+
+Эта фича нужна, чтобы превратить промпты в управляемый продуктовый слой, а не в неформальный операционный шум.
+
+4. Scope v1
+
+В v1 входят все следующие prompt domains:
+
+4.1. Промпты для:
+- создания JSON bulk jobs
+- генерации тегов
+- title generation
+- description generation
+- visual prompts
+- prompt templates для аналитики / рекомендаций
+- системные operator prompts для Codex / ChatGPT workflows
+- служебные prompt snippets / reusable blocks
+
+4.2. Core capabilities:
+- global prompt library
+- scoped overrides / bindings
+- context-based selection
+- versioning
+- status lifecycle
+- template variables
+- preview / render
+- linked actions
+- workflow launch from UI
+- import / export
+- validation / safety checks
+- linked usage history
+- access control
+- Telegram read/copy helper
+
+5. Non-goals v1
+
+В v1 не входят:
+- Telegram-first editing surface
+- autonomous prompt execution without operator visibility
+- hidden auto-selection without explainable resolution
+- uncontrolled free-form prompt mutation inside downstream agents
+- A/B experimentation platform
+- full execution log platform for every token-level LLM interaction
+- replacing dedicated domain UIs with chat-only prompt actions
+
+6. Каноническая сущность
+
+6.1. Каноническая сущность v1:
+prompt record
+
+6.2. Prompt record — это не просто текстовая строка, а полноценный продуктовый объект.
+
+6.3. Prompt record обязательно включает:
+- stable identity
+- domain/category
+- workflow/tool target
+- lifecycle status
+- version set
+- active version
+- template body
+- variable schema
+- render/preview behavior
+- binding scope
+- usage history linkage
+- audit metadata
+
+7. Канонический состав prompt record
+
+Каждый prompt record обязан содержать:
+
+7.1. Identity fields
+- prompt_id
+- stable slug/code
+- display name
+
+7.2. Classification fields
+- domain/category
+- record type
+- target workflow/tool
+- target action class
+
+7.3. Lifecycle fields
+- status
+- active version reference
+- created_by
+- created_at
+- updated_by
+- updated_at
+
+7.4. Content fields
+- prompt template body
+- system notes / operator notes
+- variable schema
+- render instructions
+- linked snippet references
+- example input set
+- example rendered output
+
+7.5. Binding fields
+- global scope support
+- workflow scope support
+- channel scope support
+- item scope support
+
+7.6. Governance fields
+- audit metadata
+- import/export metadata
+- usage history linkage
+- validation status
+
+8. Record types
+
+V1 поддерживает канонические record types:
+- prompt_template
+- snippet_block
+
+9. Lifecycle / statuses
+
+Канонические статусы prompt record / version:
+- draft
+- active
+- inactive
+- archived
+
+Правила:
+- draft не используется в runtime selection
+- active участвует в selection/use
+- inactive сохраняется и доступен для истории/редактирования, но не резолвится как active choice
+- archived не участвует в selection/use и не редактируется как рабочий объект
+
+10. Versioning model
+
+10.1. Versioning обязательна.
+
+10.2. Каждый prompt record имеет version set.
+
+10.3. Каждая версия имеет:
+- version_id
+- version_number
+- status
+- content snapshot
+- variable schema snapshot
+- linked snippet snapshot references
+- changelog
+- author
+- created_at
+
+10.4. Для каждого конкретного binding/context допускается только одна active version.
+
+10.5. Создание изменений выполняется через новую версию, а не через silent overwrite активной версии.
+
+10.6. Usage history всегда хранит exact used version.
+
+11. Categories / domains / areas of use
+
+Канонические категории v1:
+- jobs
+- metadata
+- tags
+- visuals
+- analytics
+- operator
+- reusable_blocks
+
+Каждый prompt record обязан принадлежать одной основной категории и иметь target workflow/tool classification.
+
+12. Context resolution
+
+12.1. Context-based prompt selection обязательна.
+
+12.2. Канонический порядок резолва:
+item > channel > workflow > global
+
+12.3. Это означает:
+- item-scoped binding побеждает любой более широкий binding
+- channel-scoped binding побеждает workflow/global
+- workflow-scoped binding побеждает global
+- global используется только как последний fallback
+
+12.4. Resolution должен быть explainable:
+система обязана показывать, какой binding сработал и почему.
+
+13. Binding model
+
+13.1. V1 поддерживает:
+- global library
+- workflow-scoped bindings
+- channel-scoped bindings
+- item-scoped bindings
+
+13.2. Binding обязан содержать:
+- target scope type
+- target scope identifier
+- linked prompt record
+- linked active version
+- activation state
+- priority according to canonical resolution order
+
+13.3. Binding не заменяет versioning; binding всегда указывает на конкретную active version.
+
+14. Variables / templates
+
+14.1. Template variables обязательны.
+
+14.2. Канонический syntax:
+{{variable_name}}
+
+14.3. Переменные делятся на:
+- required
+- optional_with_default
+
+14.4. Для каждой переменной хранятся:
+- name
+- description
+- type/class
+- required flag
+- default value if applicable
+- allowed constraints if applicable
+- example value
+
+14.5. Missing required variable делает render invalid.
+
+14.6. Empty render при missing required variable запрещен.
+
+14.7. Silent fallback for missing required variables запрещен.
+
+15. Snippets / reusable blocks
+
+15.1. Snippets являются таким же prompt record, но типа:
+snippet_block
+
+15.2. Snippets versioned отдельно.
+
+15.3. Snippets могут использоваться в prompt templates по ссылке.
+
+15.4. Один prompt template может использовать несколько snippets.
+
+15.5. Snippets участвуют в render contract и usage lineage.
+
+15.6. Snippets могут иметь bindings и context-based resolution по тем же каноническим правилам, если это нужно для конкретного scope.
+
+16. Preview / render contract
+
+16.1. Preview / render обязательны.
+
+16.2. Preview / render должны показывать:
+- итоговый rendered prompt
+- какая версия была выбрана
+- какой binding сработал
+- какие snippets были подмешаны
+- какие variables были подставлены
+- какие required variables missing
+- validation result
+
+16.3. Render без валидного resolution/variables не считается успешным.
+
+16.4. Preview / render должен быть доступен из UI до linked action и до workflow launch.
+
+17. Linked actions
+
+17.1. V1 поддерживает linked actions обязательно.
+
+17.2. Обязательные linked actions:
+- открыть prompt в editor
+- preview with variables
+- render final prompt
+- copy rendered prompt
+- apply/select for workflow
+- open related workflow screen
+- create new version from existing
+- launch linked workflow from interface
+
+17.3. Launch linked workflow from interface обязан сохранять usage history entry и exact used version.
+
+18. Workflow launch semantics
+
+18.1. Prompt Registry не является самостоятельным execution engine для всех LLM flows.
+
+18.2. Prompt Registry обязан уметь запускать связанный workflow из интерфейса как linked product action.
+
+18.3. Launch означает:
+- выбрать/отрезолвить prompt
+- отрендерить prompt
+- сохранить usage history
+- передать prompt в целевой workflow/tool surface
+- открыть/продолжить связанный workflow в каноническом контексте
+
+18.4. Launch не должен silently bypass существующий domain workflow.
+
+19. Usage history
+
+19.1. Linked usage history обязательна.
+
+19.2. Usage history хранит:
+- usage_id
+- who used
+- when used
+- which prompt record
+- which exact version
+- which binding/context resolved
+- which target workflow/tool
+- which scope (global/channel/item/workflow)
+- rendered output snapshot
+- launch/copy/apply action type
+- result status
+- linked target entity if applicable
+
+19.3. Usage history должна позволять видеть summary в Telegram read/copy helper.
+
+19.4. Usage history не обязана быть full token-level execution log, но обязана быть достаточной для traceability и operational audit.
+
+20. Validation / safety
+
+20.1. Validation обязательна.
+
+20.2. Система обязана валидировать:
+- пустой prompt body запрещен
+- invalid placeholder syntax запрещен
+- missing required variables invalid
+- broken snippet reference invalid
+- duplicate/conflicting active binding invalid where it breaks canonical resolution
+- invalid status transitions forbidden
+- import payload with broken contracts forbidden
+
+20.3. Error reporting должен быть operator-readable.
+
+20.4. Silent acceptance broken prompt templates запрещен.
+
+21. Access control
+
+21.1. Access control обязательна.
+
+21.2. Канонические роли/права v1:
+- read_copy
+- create_edit
+- activate_deactivate
+- archive_restore
+- import_export
+- launch_workflow
+
+21.3. Система обязана различать:
+- кто может только читать/копировать
+- кто может создавать/редактировать
+- кто может активировать версии
+- кто может архивировать
+- кто может импортировать/экспортировать
+- кто может запускать linked workflow
+
+21.4. Permission model должен быть auditable.
+
+22. Import / export
+
+22.1. Import / export обязательны.
+
+22.2. Export обязателен на уровнях:
+- whole library
+- by category/domain
+- by workflow
+- by channel
+- by selected records
+
+22.3. Import обязан идти через:
+- preview
+- validate
+- confirm/apply
+
+22.4. При конфликте slug/code/version система обязана:
+- показать конфликт clearly
+- не делать silent overwrite
+- требовать explicit conflict resolution
+- сохранять audit trail import action
+
+23. Telegram role
+
+23.1. Telegram в v1 не является primary editing surface.
+
+23.2. Telegram обязателен как read/copy helper.
+
+23.3. Telegram helper обязан уметь:
+- найти prompt
+- выбрать context
+- render final prompt
+- показывать usage history summary
+- давать copy-friendly output
+
+23.4. Telegram helper не редактирует prompt records в v1.
+
+24. Search / filtering
+
+24.1. Search/filtering обязательны.
+
+24.2. Система обязана поддерживать поиск и фильтрацию по:
+- name
+- slug/code
+- category
+- workflow
+- channel
+- item
+- status
+- active version
+- snippet usage
+- recent usage
+
+25. UI / operator surfaces
+
+25.1. Основной surface v1:
+web UI
+
+25.2. Обязательные UI surfaces:
+- prompt library index
+- record detail
+- version history
+- binding management
+- render/preview page/modal
+- import preview/confirm surface
+- usage history view
+- launch workflow surface
+- snippet management surface
+
+26. Audit / governance
+
+26.1. Все значимые действия обязаны быть auditable:
+- create
+- edit
+- new version
+- activate/deactivate
+- archive/restore
+- import
+- export
+- render
+- copy
+- launch workflow
+- binding change
+
+26.2. Audit trail обязан хранить actor, timestamp, target, action, result.
+
+27. Scope boundaries
+
+27.1. Эта фича не заменяет domain workflows jobs/metadata/visuals/analytics.
+Она централизует prompt records и связывает их с этими workflows.
+
+27.2. Эта фича не становится новым free-form AI agent layer.
+
+27.3. Эта фича не заменяет Telegram Operator Layer.
+
+27.4. Эта фича не является только "заметочником" — linked actions, launch, bindings, versioning и usage history входят в обязательный scope.
+
+28. Acceptance criteria
+
+Фича считается успешно закрытой на уровне REQ/продукта, если:
+
+28.1. Есть централизованная prompt library с prompt records как first-class entities.
+
+28.2. Поддерживаются все обязательные prompt domains:
+- JSON bulk jobs
+- tags
+- title generation
+- description generation
+- visual prompts
+- analytics/recommendation prompts
+- operator prompts for Codex / ChatGPT workflows
+- reusable snippets / blocks
+
+28.3. Есть versioning и active version model.
+
+28.4. Есть categories / workflows / bindings / scoped overrides.
+
+28.5. Есть context resolution по каноническому порядку:
+item > channel > workflow > global
+
+28.6. Есть variable/template model и snippet model.
+
+28.7. Есть preview / render с полным explainable resolution output.
+
+28.8. Есть linked actions и launch workflow from interface.
+
+28.9. Есть import/export.
+
+28.10. Есть validation / safety checks.
+
+28.11. Есть access control.
+
+28.12. Есть linked usage history.
+
+28.13. Есть Telegram read/copy helper с search + render + usage summary.
+
+29. Что готово
+
+29.1. Зафиксирован полный обязательный scope v1.
+29.2. Зафиксированы lifecycle, versioning, context resolution, variables, snippets, bindings, usage history, access control и Telegram role.
+29.3. Продуктовых пробелов для REQ уровня не осталось.
+
+30. Чего не хватает
+
+30.1. Следующий шаг — SPEC.
+
+31. Риски двусмысленности
+
+31.1. Нельзя quietly сузить фичу до простого текстового справочника.
+31.2. Нельзя quietly убрать launch workflow и оставить только copy.
+31.3. Нельзя нарушить канонический порядок context resolution.
+31.4. Нельзя допускать broken render при missing required variables.
+31.5. Нельзя смешивать Telegram helper и primary editing surface.
+
+READY FOR SPEC: YES
