@@ -331,6 +331,10 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(len(filtered_composed.json()["items"]), 1)
             invalid_filter = client.get("/v1/prompt-registry/bindings?binding_scope=bad-scope", headers=headers)
             self.assertEqual(invalid_filter.status_code, 422)
+            self.assertEqual(invalid_filter.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+            invalid_prompt_id = client.get("/v1/prompt-registry/bindings?prompt_id=not-an-int", headers=headers)
+            self.assertEqual(invalid_prompt_id.status_code, 422)
+            self.assertEqual(invalid_prompt_id.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
 
             duplicate = client.post(
                 "/v1/prompt-registry/bindings",
@@ -458,8 +462,10 @@ class TestPromptRegistryApi(unittest.TestCase):
 
             only_type = client.post("/v1/prompt-registry/resolve", headers=headers, json={"item_type": "release"})
             self.assertEqual(only_type.status_code, 422)
+            self.assertEqual(only_type.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
             only_ref = client.post("/v1/prompt-registry/resolve", headers=headers, json={"item_ref": "rel-1"})
             self.assertEqual(only_ref.status_code, 422)
+            self.assertEqual(only_ref.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
 
             resolved = client.post("/v1/prompt-registry/resolve", headers=headers, json={"channel_slug": "tie-channel"})
             self.assertEqual(resolved.status_code, 200)

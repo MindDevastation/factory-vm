@@ -158,23 +158,29 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
 
     @router.get("/bindings")
     def list_bindings(
-        prompt_id: int | None = None,
+        prompt_id: str | None = None,
         binding_scope: str | None = None,
         binding_status: str | None = None,
         _: bool = Depends(require_basic_auth(env)),
     ):
         conn = dbm.connect(env)
         try:
+            validated_prompt_id: int | None = None
+            if prompt_id is not None:
+                try:
+                    validated_prompt_id = int(str(prompt_id).strip())
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("prompt_id must be an integer") from exc
             validated_scope = ensure_binding_scope(binding_scope) if binding_scope is not None else None
             validated_status = ensure_binding_status(binding_status) if binding_status is not None else None
             return {
                 "items": PromptRegistryService(conn).list_bindings(
-                    prompt_id=prompt_id,
+                    prompt_id=validated_prompt_id,
                     binding_scope=validated_scope,
                     binding_status=validated_status,
                 )
             }
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
         finally:
             conn.close()
