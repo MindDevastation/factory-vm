@@ -76,6 +76,7 @@ class TestPromptRegistryService(unittest.TestCase):
 
                 versions = svc.list_versions(prompt_id)
                 self.assertEqual(len(versions), 2)
+                self.assertTrue(all("render_fingerprint" in item for item in versions))
                 audit = svc.list_audit_events(prompt_id)
                 self.assertGreaterEqual(len(audit), 5)
                 self.assertTrue(any(row["event_type"] == "version_activated" for row in audit))
@@ -83,6 +84,37 @@ class TestPromptRegistryService(unittest.TestCase):
 
                 fetched = svc.get_version(int(v1["id"]))
                 self.assertEqual(fetched["variables"][0]["safety_class"], "operator_only")
+                self.assertIsInstance(fetched["render_fingerprint"], str)
+            finally:
+                conn.close()
+
+    def test_render_fingerprint_is_deterministic_for_identical_payloads(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                created = svc.create_record(
+                    {
+                        "slug": "fingerprint-template",
+                        "code": "PR-FINGERPRINT-1",
+                        "title": "Fingerprint Template",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                prompt_id = int(created["id"])
+                payload = {
+                    "body_text": "hello {{name}}",
+                    "status": "draft",
+                    "variables": [
+                        {"name": "name", "safety_class": "operator_only", "required": True, "default_value": ""},
+                    ],
+                }
+                v1 = svc.create_version(prompt_id, payload, actor="tester")
+                v2 = svc.create_version(prompt_id, payload, actor="tester")
+                self.assertEqual(v1["render_fingerprint"], v2["render_fingerprint"])
             finally:
                 conn.close()
 

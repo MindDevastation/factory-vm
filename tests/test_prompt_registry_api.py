@@ -29,6 +29,16 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertIn("record_type", contracts.json())
             self.assertIn("safety_class", contracts.json())
 
+            bridge_policy = client.get("/v1/prompt-registry/bridge-policy", headers=headers)
+            self.assertEqual(bridge_policy.status_code, 200)
+            bridge_payload = bridge_policy.json()
+            self.assertEqual(bridge_payload["mode"], "bridge_safe_foundation")
+            self.assertEqual(bridge_payload["runtime_bridge_execution"], "not_implemented")
+            self.assertEqual(bridge_payload["authoritative_surfaces"]["title_templates"], "authoritative")
+            self.assertEqual(bridge_payload["authoritative_surfaces"]["description_templates"], "authoritative")
+            self.assertEqual(bridge_payload["authoritative_surfaces"]["video_tag_presets"], "authoritative")
+            self.assertEqual(bridge_payload["authoritative_surfaces"]["channel_visual_style_templates"], "authoritative")
+
             created = client.post(
                 "/v1/prompt-registry/records",
                 headers=headers,
@@ -63,14 +73,27 @@ class TestPromptRegistryApi(unittest.TestCase):
             )
             self.assertEqual(version.status_code, 200)
             version_id = int(version.json()["id"])
+            self.assertIn("render_fingerprint", version.json())
+            self.assertIsInstance(version.json()["render_fingerprint"], str)
 
             versions = client.get(f"/v1/prompt-registry/records/{prompt_id}/versions", headers=headers)
             self.assertEqual(versions.status_code, 200)
             self.assertEqual(len(versions.json()["items"]), 1)
+            self.assertIn("render_fingerprint", versions.json()["items"][0])
 
             get_version = client.get(f"/v1/prompt-registry/versions/{version_id}", headers=headers)
             self.assertEqual(get_version.status_code, 200)
             self.assertEqual(get_version.json()["variables"][0]["safety_class"], "standard")
+            self.assertIn("render_fingerprint", get_version.json())
+
+            audit_response = client.get(f"/v1/prompt-registry/records/{prompt_id}/audit", headers=headers)
+            self.assertEqual(audit_response.status_code, 200)
+            audit_payload = audit_response.json()
+            self.assertEqual(audit_payload["prompt_id"], prompt_id)
+            self.assertGreaterEqual(len(audit_payload["items"]), 2)
+            audit_ids = [item["id"] for item in audit_payload["items"]]
+            self.assertEqual(audit_ids, sorted(audit_ids))
+            self.assertTrue(all("payload_json" not in item for item in audit_payload["items"]))
 
             activated = client.post(f"/v1/prompt-registry/versions/{version_id}/activate", headers=headers)
             self.assertEqual(activated.status_code, 200)
@@ -83,8 +106,38 @@ class TestPromptRegistryApi(unittest.TestCase):
                     (prompt_id,),
                 ).fetchall()
                 self.assertTrue(all(row["actor"] == "admin" for row in audit_rows))
+                table_names = {
+                    row["name"]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?,?,?,?)",
+                        (
+                            "title_templates",
+                            "description_templates",
+                            "video_tag_presets",
+                            "channel_visual_style_templates",
+                        ),
+                    ).fetchall()
+                }
+                self.assertEqual(
+                    table_names,
+                    {
+                        "title_templates",
+                        "description_templates",
+                        "video_tag_presets",
+                        "channel_visual_style_templates",
+                    },
+                )
             finally:
                 conn.close()
+
+    def test_audit_endpoint_returns_404_for_unknown_prompt(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            missing = client.get("/v1/prompt-registry/records/999999/audit", headers=headers)
+            self.assertEqual(missing.status_code, 404)
 
     def test_validation_duplicate_and_lifecycle_errors(self) -> None:
         with temp_env() as (_td, env):

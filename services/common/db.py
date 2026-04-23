@@ -2404,6 +2404,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             prompt_id INTEGER NOT NULL,
             version_no INTEGER NOT NULL,
             body_text TEXT NOT NULL,
+            render_fingerprint TEXT NULL,
             status TEXT NOT NULL,
             validation_status TEXT NOT NULL,
             is_active INTEGER NOT NULL DEFAULT 0,
@@ -2466,11 +2467,23 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_planned_releases_template_preview_foundation(conn)
     _ensure_monthly_planning_template_apply_schema(conn)
     _ensure_releases_current_open_job_relation(conn)
+    _ensure_prompt_registry_columns(conn)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
     return {str(r.get("name")) for r in rows if isinstance(r, dict) and r.get("name")}
+
+
+def _ensure_prompt_registry_columns(conn: sqlite3.Connection) -> None:
+    table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'prompt_versions'"
+    ).fetchone()
+    if table is None:
+        return
+    columns = _table_columns(conn, "prompt_versions")
+    if "render_fingerprint" not in columns:
+        conn.execute("ALTER TABLE prompt_versions ADD COLUMN render_fingerprint TEXT NULL")
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:

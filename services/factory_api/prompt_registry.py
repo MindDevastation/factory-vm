@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from services.common import db as dbm
 from services.common.env import Env
 from services.factory_api.security import require_basic_auth
-from services.prompt_registry.contracts import contracts_payload
+from services.prompt_registry.contracts import bridge_policy_payload, contracts_payload
 from services.prompt_registry.errors import (
     PromptRegistryConflictError,
     PromptRegistryNotFoundError,
@@ -41,6 +41,10 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
     def get_contracts(_: bool = Depends(require_basic_auth(env))):
         return contracts_payload()
 
+    @router.get("/bridge-policy")
+    def get_bridge_policy(_: bool = Depends(require_basic_auth(env))):
+        return bridge_policy_payload()
+
     @router.get("/records")
     def list_records(_: bool = Depends(require_basic_auth(env))):
         conn = dbm.connect(env)
@@ -70,6 +74,16 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
         conn = dbm.connect(env)
         try:
             return PromptRegistryService(conn).get_record(prompt_id)
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        finally:
+            conn.close()
+
+    @router.get("/records/{prompt_id}/audit")
+    def get_record_audit(prompt_id: int, _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).get_audit_diagnostics(prompt_id)
         except PromptRegistryNotFoundError as exc:
             return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
         finally:
