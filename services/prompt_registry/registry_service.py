@@ -97,8 +97,27 @@ class PromptRegistryService:
     def list_records(self) -> list[dict[str, Any]]:
         return list(self._conn.execute("SELECT * FROM prompt_records ORDER BY updated_at DESC, id DESC").fetchall())
 
-    def list_bindings(self) -> list[dict[str, Any]]:
-        return list(self._conn.execute("SELECT * FROM prompt_bindings ORDER BY updated_at DESC, id DESC").fetchall())
+    def list_bindings(
+        self,
+        *,
+        prompt_id: int | None = None,
+        binding_scope: str | None = None,
+        binding_status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if prompt_id is not None:
+            where_parts.append("prompt_id = ?")
+            params.append(int(prompt_id))
+        if binding_scope is not None:
+            where_parts.append("binding_scope = ?")
+            params.append(ensure_binding_scope(binding_scope))
+        if binding_status is not None:
+            where_parts.append("binding_status = ?")
+            params.append(ensure_binding_status(binding_status))
+        where_clause = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        query = f"SELECT * FROM prompt_bindings{where_clause} ORDER BY updated_at DESC, id DESC"
+        return list(self._conn.execute(query, tuple(params)).fetchall())
 
     def get_record(self, prompt_id: int) -> dict[str, Any]:
         row = self._conn.execute("SELECT * FROM prompt_records WHERE id = ?", (prompt_id,)).fetchone()
@@ -413,33 +432,33 @@ class PromptRegistryService:
         return updated
 
     @staticmethod
-    def _context_match(binding: dict[str, Any], context: dict[str, str | None]) -> tuple[bool, str]:
+    def _context_match(binding: dict[str, Any], context: dict[str, str | None]) -> tuple[bool, str, str]:
         scope = str(binding["binding_scope"])
         if str(binding["binding_status"]) != "active":
-            return False, "ignored: binding_status is not active"
+            return False, "ignored: binding_status is not active", "IGNORED_INACTIVE_BINDING"
         if scope == "item":
             item_type = context.get("item_type")
             item_ref = context.get("item_ref")
             if not item_type or not item_ref:
-                return False, "ignored: item context missing"
+                return False, "ignored: item context missing", "IGNORED_ITEM_CONTEXT_MISSING"
             if str(binding.get("item_type") or "") != item_type or str(binding.get("item_ref") or "") != item_ref:
-                return False, "ignored: item target mismatch"
-            return True, "matched: item target exact match"
+                return False, "ignored: item target mismatch", "IGNORED_ITEM_TARGET_MISMATCH"
+            return True, "matched: item target exact match", "MATCHED_ITEM_EXACT"
         if scope == "channel":
             channel_slug = context.get("channel_slug")
             if not channel_slug:
-                return False, "ignored: channel context missing"
+                return False, "ignored: channel context missing", "IGNORED_CHANNEL_CONTEXT_MISSING"
             if str(binding.get("channel_slug") or "") != channel_slug:
-                return False, "ignored: channel target mismatch"
-            return True, "matched: channel target exact match"
+                return False, "ignored: channel target mismatch", "IGNORED_CHANNEL_TARGET_MISMATCH"
+            return True, "matched: channel target exact match", "MATCHED_CHANNEL_EXACT"
         if scope == "workflow":
             workflow_slug = context.get("workflow_slug")
             if not workflow_slug:
-                return False, "ignored: workflow context missing"
+                return False, "ignored: workflow context missing", "IGNORED_WORKFLOW_CONTEXT_MISSING"
             if str(binding.get("workflow_slug") or "") != workflow_slug:
-                return False, "ignored: workflow target mismatch"
-            return True, "matched: workflow target exact match"
-        return True, "matched: global fallback"
+                return False, "ignored: workflow target mismatch", "IGNORED_WORKFLOW_TARGET_MISMATCH"
+            return True, "matched: workflow target exact match", "MATCHED_WORKFLOW_EXACT"
+        return True, "matched: global fallback", "MATCHED_GLOBAL_FALLBACK"
 
     def resolve_effective_prompt(self, payload: dict[str, Any]) -> dict[str, Any]:
         context = {
@@ -448,6 +467,8 @@ class PromptRegistryService:
             "channel_slug": self._nullable_text(payload.get("channel_slug")),
             "workflow_slug": self._nullable_text(payload.get("workflow_slug")),
         }
+        if (context["item_type"] and not context["item_ref"]) or (context["item_ref"] and not context["item_type"]):
+            raise PromptRegistryValidationError("item_type and item_ref must be provided together or both omitted")
         rows = list(
             self._conn.execute(
                 """
@@ -462,10 +483,12 @@ class PromptRegistryService:
         candidates: list[dict[str, Any]] = []
         winner: dict[str, Any] | None = None
         winner_prompt: dict[str, Any] | None = None
+        evaluated_order = 0
         for scope in priority_order:
             scoped = [row for row in rows if str(row["binding_scope"]) == scope]
             for row in scoped:
-                matched, reason = self._context_match(row, context)
+                evaluated_order += 1
+                matched, reason, reason_code = self._context_match(row, context)
                 candidate = {
                     "binding_id": int(row["id"]),
                     "prompt_id": int(row["prompt_id"]),
@@ -476,8 +499,10 @@ class PromptRegistryService:
                     "item_type": row.get("item_type"),
                     "item_ref": row.get("item_ref"),
                     "priority_rank": priority_order.index(scope) + 1,
+                    "evaluated_order": evaluated_order,
                     "matched": matched,
                     "reason": reason,
+                    "reason_code": reason_code,
                 }
                 candidates.append(candidate)
                 if matched and winner is None:
@@ -493,11 +518,15 @@ class PromptRegistryService:
                     }
                 elif matched and winner is not None:
                     candidate["matched"] = False
-                    candidate["reason"] = (
-                        "ignored: lower priority than winner"
-                        if candidate["priority_rank"] > int(winner["priority_rank"])
-                        else "ignored: same scope older binding lost tie-breaker by updated_at/id"
-                    )
+                    if candidate["priority_rank"] > int(winner["priority_rank"]):
+                        candidate["reason"] = "ignored: lower priority than winner"
+                        candidate["reason_code"] = "IGNORED_LOWER_PRIORITY_THAN_WINNER"
+                    else:
+                        candidate["reason"] = "ignored: same scope older binding lost tie-breaker by updated_at/id"
+                        candidate["reason_code"] = "IGNORED_SAME_SCOPE_OLDER_BINDING"
+                        candidate["tie_break_note"] = (
+                            "same_scope_tie_break=updated_at_desc_then_id_desc; older binding lost deterministically"
+                        )
         return {
             "context": context,
             "winner_binding": winner,

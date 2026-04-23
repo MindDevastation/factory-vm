@@ -110,6 +110,11 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(result["winner_binding"]["binding_scope"], "item")
                 self.assertEqual(result["winner_prompt"]["slug"], "item-template")
                 self.assertTrue(any(item["reason"].startswith("ignored: lower priority") for item in result["evaluated_candidates"]))
+                self.assertTrue(all("reason_code" in item for item in result["evaluated_candidates"]))
+                self.assertEqual(
+                    [item["evaluated_order"] for item in result["evaluated_candidates"]],
+                    list(range(1, len(result["evaluated_candidates"]) + 1)),
+                )
 
                 deactivated_item = svc.update_binding_status(int(item_binding["id"]), {"binding_status": "inactive"}, actor="tester")
                 self.assertEqual(deactivated_item["binding_status"], "inactive")
@@ -131,6 +136,81 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(miss_only["resolution_status"], "miss")
                 self.assertIsNone(miss_only["winner_binding"])
                 self.assertIsNone(miss_only["winner_prompt"])
+            finally:
+                conn.close()
+
+    def test_binding_list_filters_and_resolve_tie_break_diagnostics(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec_a = svc.create_record(
+                    {
+                        "slug": "scope-a",
+                        "code": "PR-SCOPE-A",
+                        "title": "Scope A",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                rec_b = svc.create_record(
+                    {
+                        "slug": "scope-b",
+                        "code": "PR-SCOPE-B",
+                        "title": "Scope B",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                first = svc.create_binding(
+                    {
+                        "prompt_id": int(rec_a["id"]),
+                        "binding_scope": "channel",
+                        "channel_slug": "ch-tie",
+                        "binding_status": "active",
+                    },
+                    actor="tester",
+                )
+                second = svc.create_binding(
+                    {
+                        "prompt_id": int(rec_b["id"]),
+                        "binding_scope": "channel",
+                        "channel_slug": "ch-tie",
+                        "binding_status": "active",
+                    },
+                    actor="tester",
+                )
+                inactive = svc.create_binding(
+                    {
+                        "prompt_id": int(rec_a["id"]),
+                        "binding_scope": "workflow",
+                        "workflow_slug": "wf-z",
+                        "binding_status": "inactive",
+                    },
+                    actor="tester",
+                )
+
+                by_scope = svc.list_bindings(binding_scope="channel")
+                self.assertTrue(all(item["binding_scope"] == "channel" for item in by_scope))
+                by_status = svc.list_bindings(binding_status="inactive")
+                self.assertEqual({int(item["id"]) for item in by_status}, {int(inactive["id"])})
+                composed = svc.list_bindings(prompt_id=int(rec_a["id"]), binding_scope="channel", binding_status="active")
+                self.assertEqual({int(item["id"]) for item in composed}, {int(first["id"])})
+
+                resolved = svc.resolve_effective_prompt({"channel_slug": "ch-tie"})
+                self.assertEqual(resolved["winner_binding"]["binding_scope"], "channel")
+                self.assertEqual(int(resolved["winner_binding"]["binding_id"]), int(second["id"]))
+                loser = [item for item in resolved["evaluated_candidates"] if int(item["binding_id"]) == int(first["id"])][0]
+                self.assertEqual(loser["reason_code"], "IGNORED_SAME_SCOPE_OLDER_BINDING")
+                self.assertIn("tie_break_note", loser)
+
+                with self.assertRaisesRegex(Exception, "item_type and item_ref must be provided together"):
+                    svc.resolve_effective_prompt({"item_type": "release"})
+                with self.assertRaisesRegex(Exception, "item_type and item_ref must be provided together"):
+                    svc.resolve_effective_prompt({"item_ref": "rel-10"})
             finally:
                 conn.close()
 

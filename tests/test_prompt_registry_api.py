@@ -320,6 +320,17 @@ class TestPromptRegistryApi(unittest.TestCase):
             list_response = client.get("/v1/prompt-registry/bindings", headers=headers)
             self.assertEqual(list_response.status_code, 200)
             self.assertGreaterEqual(len(list_response.json()["items"]), 4)
+            filtered_scope = client.get("/v1/prompt-registry/bindings?binding_scope=channel", headers=headers)
+            self.assertEqual(filtered_scope.status_code, 200)
+            self.assertTrue(all(item["binding_scope"] == "channel" for item in filtered_scope.json()["items"]))
+            filtered_composed = client.get(
+                f"/v1/prompt-registry/bindings?prompt_id={prompt_ids['channel']}&binding_scope=channel&binding_status=active",
+                headers=headers,
+            )
+            self.assertEqual(filtered_composed.status_code, 200)
+            self.assertEqual(len(filtered_composed.json()["items"]), 1)
+            invalid_filter = client.get("/v1/prompt-registry/bindings?binding_scope=bad-scope", headers=headers)
+            self.assertEqual(invalid_filter.status_code, 422)
 
             duplicate = client.post(
                 "/v1/prompt-registry/bindings",
@@ -352,6 +363,11 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(payload["winner_binding"]["binding_scope"], "item")
             self.assertIn("evaluated_candidates", payload)
             self.assertTrue(any("reason" in candidate for candidate in payload["evaluated_candidates"]))
+            self.assertTrue(all("reason_code" in candidate for candidate in payload["evaluated_candidates"]))
+            self.assertEqual(
+                [candidate["evaluated_order"] for candidate in payload["evaluated_candidates"]],
+                list(range(1, len(payload["evaluated_candidates"]) + 1)),
+            )
 
             deactivated = client.patch(
                 f"/v1/prompt-registry/bindings/{int(item_binding.json()['id'])}",
@@ -386,3 +402,69 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(miss.status_code, 200)
             self.assertEqual(miss.json()["resolution_status"], "miss")
             self.assertIsNone(miss.json()["winner_binding"])
+
+    def test_resolve_rejects_partial_item_context_and_explains_same_scope_tie_break(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            first_prompt = client.post(
+                "/v1/prompt-registry/records",
+                headers=headers,
+                json={
+                    "slug": "tie-first",
+                    "code": "PR-TIE-FIRST",
+                    "title": "Tie First",
+                    "record_type": "prompt_template",
+                    "status": "draft",
+                },
+            )
+            second_prompt = client.post(
+                "/v1/prompt-registry/records",
+                headers=headers,
+                json={
+                    "slug": "tie-second",
+                    "code": "PR-TIE-SECOND",
+                    "title": "Tie Second",
+                    "record_type": "prompt_template",
+                    "status": "draft",
+                },
+            )
+            self.assertEqual(first_prompt.status_code, 200)
+            self.assertEqual(second_prompt.status_code, 200)
+            first_binding = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={
+                    "prompt_id": int(first_prompt.json()["id"]),
+                    "binding_scope": "channel",
+                    "channel_slug": "tie-channel",
+                    "binding_status": "active",
+                },
+            )
+            second_binding = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={
+                    "prompt_id": int(second_prompt.json()["id"]),
+                    "binding_scope": "channel",
+                    "channel_slug": "tie-channel",
+                    "binding_status": "active",
+                },
+            )
+            self.assertEqual(first_binding.status_code, 200)
+            self.assertEqual(second_binding.status_code, 200)
+
+            only_type = client.post("/v1/prompt-registry/resolve", headers=headers, json={"item_type": "release"})
+            self.assertEqual(only_type.status_code, 422)
+            only_ref = client.post("/v1/prompt-registry/resolve", headers=headers, json={"item_ref": "rel-1"})
+            self.assertEqual(only_ref.status_code, 422)
+
+            resolved = client.post("/v1/prompt-registry/resolve", headers=headers, json={"channel_slug": "tie-channel"})
+            self.assertEqual(resolved.status_code, 200)
+            payload = resolved.json()
+            self.assertEqual(int(payload["winner_binding"]["binding_id"]), int(second_binding.json()["id"]))
+            older = [item for item in payload["evaluated_candidates"] if int(item["binding_id"]) == int(first_binding.json()["id"])][0]
+            self.assertEqual(older["reason_code"], "IGNORED_SAME_SCOPE_OLDER_BINDING")
+            self.assertIn("tie_break_note", older)

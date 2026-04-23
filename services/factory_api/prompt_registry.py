@@ -9,7 +9,12 @@ from fastapi.responses import JSONResponse
 from services.common import db as dbm
 from services.common.env import Env
 from services.factory_api.security import require_basic_auth
-from services.prompt_registry.contracts import bridge_policy_payload, contracts_payload
+from services.prompt_registry.contracts import (
+    bridge_policy_payload,
+    contracts_payload,
+    ensure_binding_scope,
+    ensure_binding_status,
+)
 from services.prompt_registry.errors import (
     PromptRegistryConflictError,
     PromptRegistryNotFoundError,
@@ -152,10 +157,25 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
             conn.close()
 
     @router.get("/bindings")
-    def list_bindings(_: bool = Depends(require_basic_auth(env))):
+    def list_bindings(
+        prompt_id: int | None = None,
+        binding_scope: str | None = None,
+        binding_status: str | None = None,
+        _: bool = Depends(require_basic_auth(env)),
+    ):
         conn = dbm.connect(env)
         try:
-            return {"items": PromptRegistryService(conn).list_bindings()}
+            validated_scope = ensure_binding_scope(binding_scope) if binding_scope is not None else None
+            validated_status = ensure_binding_status(binding_status) if binding_status is not None else None
+            return {
+                "items": PromptRegistryService(conn).list_bindings(
+                    prompt_id=prompt_id,
+                    binding_scope=validated_scope,
+                    binding_status=validated_status,
+                )
+            }
+        except ValueError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
         finally:
             conn.close()
 
@@ -196,6 +216,8 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
         conn = dbm.connect(env)
         try:
             return PromptRegistryService(conn).resolve_effective_prompt(payload)
+        except PromptRegistryValidationError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
         finally:
             conn.close()
 
