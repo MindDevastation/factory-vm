@@ -2452,6 +2452,36 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_prompt_audit_events_prompt_created
             ON prompt_audit_events(prompt_id, created_at DESC);
 
+        CREATE TABLE IF NOT EXISTS prompt_bindings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NOT NULL,
+            binding_scope TEXT NOT NULL,
+            workflow_slug TEXT NULL,
+            channel_slug TEXT NULL,
+            item_type TEXT NULL,
+            item_ref TEXT NULL,
+            binding_status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            CHECK(binding_scope IN ('global','workflow','channel','item')),
+            CHECK(binding_status IN ('active','inactive'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_bindings_lookup
+            ON prompt_bindings(binding_scope, workflow_slug, channel_slug, item_type, item_ref, binding_status, updated_at DESC, id DESC);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_bindings_unique_active_exact_target_prompt
+            ON prompt_bindings(
+                prompt_id,
+                binding_scope,
+                IFNULL(workflow_slug,''),
+                IFNULL(channel_slug,''),
+                IFNULL(item_type,''),
+                IFNULL(item_ref,'')
+            )
+            WHERE binding_status = 'active';
+
         """
     )
 
@@ -2468,6 +2498,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_monthly_planning_template_apply_schema(conn)
     _ensure_releases_current_open_job_relation(conn)
     _ensure_prompt_registry_columns(conn)
+    _ensure_prompt_bindings_schema(conn)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -2484,6 +2515,48 @@ def _ensure_prompt_registry_columns(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "prompt_versions")
     if "render_fingerprint" not in columns:
         conn.execute("ALTER TABLE prompt_versions ADD COLUMN render_fingerprint TEXT NULL")
+
+
+def _ensure_prompt_bindings_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prompt_bindings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NOT NULL,
+            binding_scope TEXT NOT NULL,
+            workflow_slug TEXT NULL,
+            channel_slug TEXT NULL,
+            item_type TEXT NULL,
+            item_ref TEXT NULL,
+            binding_status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            CHECK(binding_scope IN ('global','workflow','channel','item')),
+            CHECK(binding_status IN ('active','inactive'))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_prompt_bindings_lookup
+            ON prompt_bindings(binding_scope, workflow_slug, channel_slug, item_type, item_ref, binding_status, updated_at DESC, id DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_bindings_unique_active_exact_target_prompt
+            ON prompt_bindings(
+                prompt_id,
+                binding_scope,
+                IFNULL(workflow_slug,''),
+                IFNULL(channel_slug,''),
+                IFNULL(item_type,''),
+                IFNULL(item_ref,'')
+            )
+            WHERE binding_status = 'active'
+        """
+    )
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:

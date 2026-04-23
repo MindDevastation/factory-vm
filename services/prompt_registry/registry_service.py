@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from services.prompt_registry.contracts import (
+    ensure_binding_scope,
+    ensure_binding_status,
     ensure_lifecycle_transition,
     ensure_non_empty,
     ensure_record_status,
@@ -53,13 +55,61 @@ class PromptRegistryService:
             ),
         )
 
+    @staticmethod
+    def _nullable_text(value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
+
+    def _validate_binding_target(self, payload: dict[str, Any]) -> dict[str, Any]:
+        scope = ensure_binding_scope(payload.get("binding_scope"))
+        workflow_slug = self._nullable_text(payload.get("workflow_slug"))
+        channel_slug = self._nullable_text(payload.get("channel_slug"))
+        item_type = self._nullable_text(payload.get("item_type"))
+        item_ref = self._nullable_text(payload.get("item_ref"))
+
+        if scope == "global":
+            if any((workflow_slug, channel_slug, item_type, item_ref)):
+                raise PromptRegistryValidationError("global binding_scope cannot include workflow/channel/item target fields")
+        elif scope == "workflow":
+            if not workflow_slug:
+                raise PromptRegistryValidationError("workflow binding_scope requires workflow_slug")
+            if any((channel_slug, item_type, item_ref)):
+                raise PromptRegistryValidationError("workflow binding_scope cannot include channel/item target fields")
+        elif scope == "channel":
+            if not channel_slug:
+                raise PromptRegistryValidationError("channel binding_scope requires channel_slug")
+            if any((workflow_slug, item_type, item_ref)):
+                raise PromptRegistryValidationError("channel binding_scope cannot include workflow/item target fields")
+        else:
+            if not item_type or not item_ref:
+                raise PromptRegistryValidationError("item binding_scope requires item_type and item_ref")
+            if any((workflow_slug, channel_slug)):
+                raise PromptRegistryValidationError("item binding_scope cannot include workflow/channel target fields")
+
+        return {
+            "binding_scope": scope,
+            "workflow_slug": workflow_slug,
+            "channel_slug": channel_slug,
+            "item_type": item_type,
+            "item_ref": item_ref,
+        }
+
     def list_records(self) -> list[dict[str, Any]]:
         return list(self._conn.execute("SELECT * FROM prompt_records ORDER BY updated_at DESC, id DESC").fetchall())
+
+    def list_bindings(self) -> list[dict[str, Any]]:
+        return list(self._conn.execute("SELECT * FROM prompt_bindings ORDER BY updated_at DESC, id DESC").fetchall())
 
     def get_record(self, prompt_id: int) -> dict[str, Any]:
         row = self._conn.execute("SELECT * FROM prompt_records WHERE id = ?", (prompt_id,)).fetchone()
         if row is None:
             raise PromptRegistryNotFoundError(f"prompt record {prompt_id} not found")
+        return row
+
+    def get_binding(self, binding_id: int) -> dict[str, Any]:
+        row = self._conn.execute("SELECT * FROM prompt_bindings WHERE id = ?", (binding_id,)).fetchone()
+        if row is None:
+            raise PromptRegistryNotFoundError(f"prompt binding {binding_id} not found")
         return row
 
     @staticmethod
@@ -274,6 +324,47 @@ class PromptRegistryService:
             raise PromptRegistryValidationError("failed to create version")
         return self.get_version(version_id)
 
+    def create_binding(self, payload: dict[str, Any], *, actor: str) -> dict[str, Any]:
+        actor_id = self._validated_actor(actor)
+        prompt_id = int(payload.get("prompt_id") or 0)
+        if prompt_id <= 0:
+            raise PromptRegistryValidationError("prompt_id must be a positive integer")
+        self.get_record(prompt_id)
+        target = self._validate_binding_target(payload)
+        binding_status = ensure_binding_status(payload.get("binding_status", "active"))
+        now = self._now_iso()
+        try:
+            cur = self._conn.execute(
+                """
+                INSERT INTO prompt_bindings(prompt_id,binding_scope,workflow_slug,channel_slug,item_type,item_ref,binding_status,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    prompt_id,
+                    target["binding_scope"],
+                    target["workflow_slug"],
+                    target["channel_slug"],
+                    target["item_type"],
+                    target["item_ref"],
+                    binding_status,
+                    now,
+                    now,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            message = str(exc)
+            if "idx_prompt_bindings_unique_active_exact_target_prompt" in message:
+                raise PromptRegistryConflictError("duplicate active binding for the same prompt and target is not allowed") from None
+            raise
+        binding_id = int(cur.lastrowid)
+        self._write_audit_event(
+            prompt_id=prompt_id,
+            event_type="binding_created",
+            actor=actor_id,
+            payload={"binding_id": binding_id, "binding_scope": target["binding_scope"], "binding_status": binding_status},
+        )
+        return self.get_binding(binding_id)
+
     def list_versions(self, prompt_id: int) -> list[dict[str, Any]]:
         self.get_record(prompt_id)
         return list(self._conn.execute("SELECT * FROM prompt_versions WHERE prompt_id = ? ORDER BY version_no DESC", (prompt_id,)).fetchall())
@@ -290,6 +381,132 @@ class PromptRegistryService:
             ).fetchall()
         )
         return item
+
+    def update_binding_status(self, binding_id: int, payload: dict[str, Any], *, actor: str) -> dict[str, Any]:
+        actor_id = self._validated_actor(actor)
+        current = self.get_binding(binding_id)
+        new_status = ensure_binding_status(payload.get("binding_status"))
+        if str(current["binding_status"]) == new_status:
+            return current
+        now = self._now_iso()
+        try:
+            self._conn.execute(
+                "UPDATE prompt_bindings SET binding_status = ?, updated_at = ? WHERE id = ?",
+                (new_status, now, binding_id),
+            )
+        except sqlite3.IntegrityError as exc:
+            message = str(exc)
+            if "idx_prompt_bindings_unique_active_exact_target_prompt" in message:
+                raise PromptRegistryConflictError("duplicate active binding for the same prompt and target is not allowed") from None
+            raise
+        updated = self.get_binding(binding_id)
+        self._write_audit_event(
+            prompt_id=int(updated["prompt_id"]),
+            event_type="binding_status_updated",
+            actor=actor_id,
+            payload={
+                "binding_id": int(updated["id"]),
+                "from_status": str(current["binding_status"]),
+                "to_status": new_status,
+            },
+        )
+        return updated
+
+    @staticmethod
+    def _context_match(binding: dict[str, Any], context: dict[str, str | None]) -> tuple[bool, str]:
+        scope = str(binding["binding_scope"])
+        if str(binding["binding_status"]) != "active":
+            return False, "ignored: binding_status is not active"
+        if scope == "item":
+            item_type = context.get("item_type")
+            item_ref = context.get("item_ref")
+            if not item_type or not item_ref:
+                return False, "ignored: item context missing"
+            if str(binding.get("item_type") or "") != item_type or str(binding.get("item_ref") or "") != item_ref:
+                return False, "ignored: item target mismatch"
+            return True, "matched: item target exact match"
+        if scope == "channel":
+            channel_slug = context.get("channel_slug")
+            if not channel_slug:
+                return False, "ignored: channel context missing"
+            if str(binding.get("channel_slug") or "") != channel_slug:
+                return False, "ignored: channel target mismatch"
+            return True, "matched: channel target exact match"
+        if scope == "workflow":
+            workflow_slug = context.get("workflow_slug")
+            if not workflow_slug:
+                return False, "ignored: workflow context missing"
+            if str(binding.get("workflow_slug") or "") != workflow_slug:
+                return False, "ignored: workflow target mismatch"
+            return True, "matched: workflow target exact match"
+        return True, "matched: global fallback"
+
+    def resolve_effective_prompt(self, payload: dict[str, Any]) -> dict[str, Any]:
+        context = {
+            "item_type": self._nullable_text(payload.get("item_type")),
+            "item_ref": self._nullable_text(payload.get("item_ref")),
+            "channel_slug": self._nullable_text(payload.get("channel_slug")),
+            "workflow_slug": self._nullable_text(payload.get("workflow_slug")),
+        }
+        rows = list(
+            self._conn.execute(
+                """
+                SELECT b.*, r.slug AS prompt_slug, r.code AS prompt_code, r.title AS prompt_title, r.record_type AS prompt_record_type, r.status AS prompt_status, r.active_version_id
+                FROM prompt_bindings b
+                JOIN prompt_records r ON r.id = b.prompt_id
+                ORDER BY b.updated_at DESC, b.id DESC
+                """
+            ).fetchall()
+        )
+        priority_order = ("item", "channel", "workflow", "global")
+        candidates: list[dict[str, Any]] = []
+        winner: dict[str, Any] | None = None
+        winner_prompt: dict[str, Any] | None = None
+        for scope in priority_order:
+            scoped = [row for row in rows if str(row["binding_scope"]) == scope]
+            for row in scoped:
+                matched, reason = self._context_match(row, context)
+                candidate = {
+                    "binding_id": int(row["id"]),
+                    "prompt_id": int(row["prompt_id"]),
+                    "binding_scope": str(row["binding_scope"]),
+                    "binding_status": str(row["binding_status"]),
+                    "workflow_slug": row.get("workflow_slug"),
+                    "channel_slug": row.get("channel_slug"),
+                    "item_type": row.get("item_type"),
+                    "item_ref": row.get("item_ref"),
+                    "priority_rank": priority_order.index(scope) + 1,
+                    "matched": matched,
+                    "reason": reason,
+                }
+                candidates.append(candidate)
+                if matched and winner is None:
+                    winner = candidate
+                    winner_prompt = {
+                        "id": int(row["prompt_id"]),
+                        "slug": str(row["prompt_slug"]),
+                        "code": str(row["prompt_code"]),
+                        "title": str(row["prompt_title"]),
+                        "record_type": str(row["prompt_record_type"]),
+                        "status": str(row["prompt_status"]),
+                        "active_version_id": row.get("active_version_id"),
+                    }
+                elif matched and winner is not None:
+                    candidate["matched"] = False
+                    candidate["reason"] = (
+                        "ignored: lower priority than winner"
+                        if candidate["priority_rank"] > int(winner["priority_rank"])
+                        else "ignored: same scope older binding lost tie-breaker by updated_at/id"
+                    )
+        return {
+            "context": context,
+            "winner_binding": winner,
+            "winner_prompt": winner_prompt,
+            "evaluated_candidates": candidates,
+            "resolution_status": "matched" if winner is not None else "miss",
+            "reason": "no matching active bindings for supplied context" if winner is None else "resolved_by_fixed_priority_order",
+            "resolution_order": list(priority_order),
+        }
 
     def activate_version(self, version_id: int, *, actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)

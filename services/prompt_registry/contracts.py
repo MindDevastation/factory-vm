@@ -12,6 +12,8 @@ SAFETY_CLASSES: Final[tuple[str, ...]] = (
     "derived_from_context",
     "multiline_longform",
 )
+BINDING_SCOPES: Final[tuple[str, ...]] = ("global", "workflow", "channel", "item")
+BINDING_STATUSES: Final[tuple[str, ...]] = ("active", "inactive")
 
 _ALLOWED_STATUS_TRANSITIONS: Final[dict[str, set[str]]] = {
     "draft": {"active", "inactive", "archived"},
@@ -64,12 +66,28 @@ def ensure_lifecycle_transition(*, current_status: str, new_status: str) -> None
         raise ValueError(f"invalid lifecycle transition: {current_status} -> {new_status}")
 
 
+def ensure_binding_scope(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in BINDING_SCOPES:
+        raise ValueError(f"binding_scope must be one of {', '.join(BINDING_SCOPES)}")
+    return normalized
+
+
+def ensure_binding_status(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in BINDING_STATUSES:
+        raise ValueError(f"binding_status must be one of {', '.join(BINDING_STATUSES)}")
+    return normalized
+
+
 def contracts_payload() -> dict[str, Any]:
     return {
         "record_type": list(RECORD_TYPES),
         "status": list(RECORD_STATUSES),
         "validation_status": list(VALIDATION_STATUSES),
         "safety_class": list(SAFETY_CLASSES),
+        "binding_scope": list(BINDING_SCOPES),
+        "binding_status": list(BINDING_STATUSES),
     }
 
 

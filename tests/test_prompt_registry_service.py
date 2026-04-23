@@ -13,9 +13,186 @@ class TestPromptRegistryService(unittest.TestCase):
             seed_minimal_db(env)
             conn = dbm.connect(env)
             try:
-                for table in ("prompt_records", "prompt_versions", "prompt_variables", "prompt_audit_events"):
+                for table in ("prompt_records", "prompt_versions", "prompt_variables", "prompt_audit_events", "prompt_bindings"):
                     row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)).fetchone()
                     self.assertIsNotNone(row)
+            finally:
+                conn.close()
+
+    def test_binding_create_list_update_and_resolution_order(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                records = [
+                    svc.create_record(
+                        {
+                            "slug": "global-template",
+                            "code": "PR-BIND-GLOBAL",
+                            "title": "Global",
+                            "record_type": "prompt_template",
+                            "status": "draft",
+                        },
+                        actor="tester",
+                    ),
+                    svc.create_record(
+                        {
+                            "slug": "workflow-template",
+                            "code": "PR-BIND-WORKFLOW",
+                            "title": "Workflow",
+                            "record_type": "prompt_template",
+                            "status": "draft",
+                        },
+                        actor="tester",
+                    ),
+                    svc.create_record(
+                        {
+                            "slug": "channel-template",
+                            "code": "PR-BIND-CHANNEL",
+                            "title": "Channel",
+                            "record_type": "prompt_template",
+                            "status": "draft",
+                        },
+                        actor="tester",
+                    ),
+                    svc.create_record(
+                        {
+                            "slug": "item-template",
+                            "code": "PR-BIND-ITEM",
+                            "title": "Item",
+                            "record_type": "prompt_template",
+                            "status": "draft",
+                        },
+                        actor="tester",
+                    ),
+                ]
+                global_binding = svc.create_binding(
+                    {"prompt_id": int(records[0]["id"]), "binding_scope": "global", "binding_status": "active"},
+                    actor="tester",
+                )
+                workflow_binding = svc.create_binding(
+                    {
+                        "prompt_id": int(records[1]["id"]),
+                        "binding_scope": "workflow",
+                        "workflow_slug": "wf-a",
+                        "binding_status": "active",
+                    },
+                    actor="tester",
+                )
+                channel_binding = svc.create_binding(
+                    {
+                        "prompt_id": int(records[2]["id"]),
+                        "binding_scope": "channel",
+                        "channel_slug": "ch-a",
+                        "binding_status": "active",
+                    },
+                    actor="tester",
+                )
+                item_binding = svc.create_binding(
+                    {
+                        "prompt_id": int(records[3]["id"]),
+                        "binding_scope": "item",
+                        "item_type": "release",
+                        "item_ref": "r-001",
+                        "binding_status": "active",
+                    },
+                    actor="tester",
+                )
+                listed = svc.list_bindings()
+                self.assertGreaterEqual(len(listed), 4)
+                self.assertEqual(int(global_binding["prompt_id"]), int(records[0]["id"]))
+
+                result = svc.resolve_effective_prompt(
+                    {"workflow_slug": "wf-a", "channel_slug": "ch-a", "item_type": "release", "item_ref": "r-001"}
+                )
+                self.assertEqual(result["resolution_status"], "matched")
+                self.assertEqual(result["winner_binding"]["binding_scope"], "item")
+                self.assertEqual(result["winner_prompt"]["slug"], "item-template")
+                self.assertTrue(any(item["reason"].startswith("ignored: lower priority") for item in result["evaluated_candidates"]))
+
+                deactivated_item = svc.update_binding_status(int(item_binding["id"]), {"binding_status": "inactive"}, actor="tester")
+                self.assertEqual(deactivated_item["binding_status"], "inactive")
+                channel_result = svc.resolve_effective_prompt(
+                    {"workflow_slug": "wf-a", "channel_slug": "ch-a", "item_type": "release", "item_ref": "r-001"}
+                )
+                self.assertEqual(channel_result["winner_binding"]["binding_scope"], "channel")
+                workflow_result = svc.resolve_effective_prompt({"workflow_slug": "wf-a"})
+                self.assertEqual(workflow_result["winner_binding"]["binding_scope"], "workflow")
+                miss_result = svc.resolve_effective_prompt({"workflow_slug": "wf-z"})
+                self.assertEqual(miss_result["winner_binding"]["binding_scope"], "global")
+                self.assertIn("resolution_order", miss_result)
+                self.assertIn("evaluated_candidates", miss_result)
+
+                global_only = svc.resolve_effective_prompt({})
+                self.assertEqual(global_only["winner_binding"]["binding_scope"], "global")
+                svc.update_binding_status(int(global_binding["id"]), {"binding_status": "inactive"}, actor="tester")
+                miss_only = svc.resolve_effective_prompt({})
+                self.assertEqual(miss_only["resolution_status"], "miss")
+                self.assertIsNone(miss_only["winner_binding"])
+                self.assertIsNone(miss_only["winner_prompt"])
+            finally:
+                conn.close()
+
+    def test_binding_scope_validation_and_duplicate_hardening(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                record = svc.create_record(
+                    {
+                        "slug": "bind-validate-template",
+                        "code": "PR-BIND-VALIDATE",
+                        "title": "Binding Validate",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                prompt_id = int(record["id"])
+                with self.assertRaisesRegex(Exception, "global binding_scope cannot include"):
+                    svc.create_binding(
+                        {"prompt_id": prompt_id, "binding_scope": "global", "channel_slug": "ch-a"},
+                        actor="tester",
+                    )
+                with self.assertRaisesRegex(Exception, "workflow binding_scope requires workflow_slug"):
+                    svc.create_binding({"prompt_id": prompt_id, "binding_scope": "workflow"}, actor="tester")
+                with self.assertRaisesRegex(Exception, "channel binding_scope requires channel_slug"):
+                    svc.create_binding({"prompt_id": prompt_id, "binding_scope": "channel"}, actor="tester")
+                with self.assertRaisesRegex(Exception, "item binding_scope requires item_type and item_ref"):
+                    svc.create_binding({"prompt_id": prompt_id, "binding_scope": "item", "item_type": "release"}, actor="tester")
+
+                active_one = svc.create_binding(
+                    {
+                        "prompt_id": prompt_id,
+                        "binding_scope": "channel",
+                        "channel_slug": "ch-a",
+                        "binding_status": "active",
+                    },
+                    actor="tester",
+                )
+                with self.assertRaisesRegex(Exception, "duplicate active binding"):
+                    svc.create_binding(
+                        {
+                            "prompt_id": prompt_id,
+                            "binding_scope": "channel",
+                            "channel_slug": "ch-a",
+                            "binding_status": "active",
+                        },
+                        actor="tester",
+                    )
+                svc.update_binding_status(int(active_one["id"]), {"binding_status": "inactive"}, actor="tester")
+                second = svc.create_binding(
+                    {
+                        "prompt_id": prompt_id,
+                        "binding_scope": "channel",
+                        "channel_slug": "ch-a",
+                        "binding_status": "active",
+                    },
+                    actor="tester",
+                )
+                self.assertEqual(second["binding_status"], "active")
             finally:
                 conn.close()
 

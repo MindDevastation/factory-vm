@@ -248,3 +248,141 @@ class TestPromptRegistryApi(unittest.TestCase):
                 self.assertEqual(version_count, 0)
             finally:
                 conn.close()
+
+    def test_bindings_and_resolve_endpoints(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            prompt_ids: dict[str, int] = {}
+            for name, code in (
+                ("global", "PR-API-BIND-G"),
+                ("workflow", "PR-API-BIND-W"),
+                ("channel", "PR-API-BIND-C"),
+                ("item", "PR-API-BIND-I"),
+            ):
+                created = client.post(
+                    "/v1/prompt-registry/records",
+                    headers=headers,
+                    json={
+                        "slug": f"api-bind-{name}",
+                        "code": code,
+                        "title": f"Bind {name}",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                )
+                self.assertEqual(created.status_code, 200)
+                prompt_ids[name] = int(created.json()["id"])
+
+            global_binding = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={"prompt_id": prompt_ids["global"], "binding_scope": "global", "binding_status": "active"},
+            )
+            self.assertEqual(global_binding.status_code, 200)
+            channel_binding = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={
+                    "prompt_id": prompt_ids["channel"],
+                    "binding_scope": "channel",
+                    "channel_slug": "channel-1",
+                    "binding_status": "active",
+                },
+            )
+            self.assertEqual(channel_binding.status_code, 200)
+            workflow_binding = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={
+                    "prompt_id": prompt_ids["workflow"],
+                    "binding_scope": "workflow",
+                    "workflow_slug": "wf-1",
+                    "binding_status": "active",
+                },
+            )
+            self.assertEqual(workflow_binding.status_code, 200)
+            item_binding = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={
+                    "prompt_id": prompt_ids["item"],
+                    "binding_scope": "item",
+                    "item_type": "release",
+                    "item_ref": "rel-1",
+                    "binding_status": "active",
+                },
+            )
+            self.assertEqual(item_binding.status_code, 200)
+
+            list_response = client.get("/v1/prompt-registry/bindings", headers=headers)
+            self.assertEqual(list_response.status_code, 200)
+            self.assertGreaterEqual(len(list_response.json()["items"]), 4)
+
+            duplicate = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={
+                    "prompt_id": prompt_ids["item"],
+                    "binding_scope": "item",
+                    "item_type": "release",
+                    "item_ref": "rel-1",
+                    "binding_status": "active",
+                },
+            )
+            self.assertEqual(duplicate.status_code, 409)
+
+            invalid_scope = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={"prompt_id": prompt_ids["workflow"], "binding_scope": "workflow", "channel_slug": "bad-mix"},
+            )
+            self.assertEqual(invalid_scope.status_code, 422)
+
+            resolve = client.post(
+                "/v1/prompt-registry/resolve",
+                headers=headers,
+                json={"workflow_slug": "wf-1", "channel_slug": "channel-1", "item_type": "release", "item_ref": "rel-1"},
+            )
+            self.assertEqual(resolve.status_code, 200)
+            payload = resolve.json()
+            self.assertEqual(payload["resolution_status"], "matched")
+            self.assertEqual(payload["winner_binding"]["binding_scope"], "item")
+            self.assertIn("evaluated_candidates", payload)
+            self.assertTrue(any("reason" in candidate for candidate in payload["evaluated_candidates"]))
+
+            deactivated = client.patch(
+                f"/v1/prompt-registry/bindings/{int(item_binding.json()['id'])}",
+                headers=headers,
+                json={"binding_status": "inactive"},
+            )
+            self.assertEqual(deactivated.status_code, 200)
+            fallback = client.post(
+                "/v1/prompt-registry/resolve",
+                headers=headers,
+                json={"workflow_slug": "wf-1", "channel_slug": "channel-1", "item_type": "release", "item_ref": "rel-1"},
+            )
+            self.assertEqual(fallback.status_code, 200)
+            self.assertEqual(fallback.json()["winner_binding"]["binding_scope"], "channel")
+
+            client.patch(
+                f"/v1/prompt-registry/bindings/{int(channel_binding.json()['id'])}",
+                headers=headers,
+                json={"binding_status": "inactive"},
+            )
+            client.patch(
+                f"/v1/prompt-registry/bindings/{int(workflow_binding.json()['id'])}",
+                headers=headers,
+                json={"binding_status": "inactive"},
+            )
+            client.patch(
+                f"/v1/prompt-registry/bindings/{int(global_binding.json()['id'])}",
+                headers=headers,
+                json={"binding_status": "inactive"},
+            )
+            miss = client.post("/v1/prompt-registry/resolve", headers=headers, json={})
+            self.assertEqual(miss.status_code, 200)
+            self.assertEqual(miss.json()["resolution_status"], "miss")
+            self.assertIsNone(miss.json()["winner_binding"])
