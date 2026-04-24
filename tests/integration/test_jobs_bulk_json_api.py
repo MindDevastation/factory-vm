@@ -474,6 +474,40 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_execute_create_mode_uses_global_gdrive_token_path_for_drive_client(self) -> None:
+        with temp_env() as (td, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            os.environ["GDRIVE_OAUTH_TOKEN_JSON"] = os.path.join(td.name, "secure", "gdrive_token.json")
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch is not None
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            observed: dict[str, str] = {}
+
+            class _FakeDriveClient:
+                def __init__(self, *, service_account_json: str, oauth_client_json: str, oauth_token_json: str):
+                    observed["oauth_token_json"] = oauth_token_json
+
+            mod, client = self._new_client()
+            mod.DriveClient = _FakeDriveClient
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            execute = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={"mode": "create_draft_jobs", "items": [self._create_item(channel_id, title="Global Token Path")]},
+            )
+            self.assertEqual(execute.status_code, 200)
+            self.assertEqual(execute.json()["summary"]["created"], 1)
+            self.assertEqual(observed.get("oauth_token_json"), os.path.join(td.name, "secure", "gdrive_token.json"))
+
             token_path = oauth_token_path(base_dir=Env.load().gdrive_tokens_dir, channel_slug="darkwood-reverie")
             token_path.parent.mkdir(parents=True, exist_ok=True)
             token_path.write_text("{}", encoding="utf-8")

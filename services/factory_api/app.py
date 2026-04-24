@@ -214,7 +214,7 @@ app.include_router(create_prompt_registry_router(env))
 
 def _create_drive_client(_env: Env) -> DriveClient:
     channel_slug = _render_all_channel_slug.get()
-    token_path = _env.gdrive_oauth_token_json
+    token_path = str(_global_gdrive_token_path(_env))
     if channel_slug and _env.gdrive_tokens_dir:
         token_path = str(oauth_token_path(base_dir=_env.gdrive_tokens_dir, channel_slug=channel_slug))
     return DriveClient(
@@ -3062,6 +3062,47 @@ def _oauth_start(kind: str, channel_slug: str) -> dict:
     return {"auth_url": url}
 
 
+def _global_gdrive_token_path(_env: Env) -> Path:
+    configured = str(_env.gdrive_oauth_token_json or "").strip()
+    return Path(configured or "./secure/gdrive_token.json").expanduser()
+
+
+def _oauth_global_gdrive_start() -> dict[str, str]:
+    client_secret_path, _tokens_dir, scope = validate_oauth_config(env, kind="gdrive")
+    token_path = _global_gdrive_token_path(env)
+    ensure_token_dir(token_path)
+    state = sign_state(secret=env.oauth_state_secret, kind="gdrive_global")
+    url = build_authorization_url(
+        client_secret_path=client_secret_path,
+        scope=scope,
+        redirect_uri=redirect_uri(env, "gdrive_global"),
+        state=state,
+    )
+    return {"auth_url": url}
+
+
+def _oauth_global_gdrive_callback(code: str, state: str) -> HTMLResponse:
+    client_secret_path, _tokens_dir, scope = validate_oauth_config(env, kind="gdrive")
+    verify_state(secret=env.oauth_state_secret, expected_kind="gdrive_global", state=state, require_channel_slug=False)
+    token_json = exchange_code_for_token_json(
+        client_secret_path=client_secret_path,
+        scope=scope,
+        redirect_uri=redirect_uri(env, "gdrive_global"),
+        code=code,
+    )
+    token_path = _global_gdrive_token_path(env)
+    ensure_token_dir(token_path)
+    token_path.write_text(token_json, encoding="utf-8")
+    token_path.chmod(0o600)
+    return HTMLResponse(
+        content=(
+            "<html><body><h3>Global GDrive token saved</h3>"
+            f"<p>path={html.escape(str(token_path))}</p>"
+            "<p>You can close this tab.</p></body></html>"
+        )
+    )
+
+
 def _oauth_callback(kind: str, code: str, state: str) -> HTMLResponse:
     client_secret_path, tokens_dir, scope = validate_oauth_config(env, kind=kind)
     payload = verify_state(secret=env.oauth_state_secret, expected_kind=kind, state=state)
@@ -3271,9 +3312,19 @@ def api_oauth_gdrive_start(channel_slug: str, _: bool = Depends(require_basic_au
     return _oauth_start("gdrive", channel_slug)
 
 
+@app.post("/v1/oauth/gdrive_global/start")
+def api_oauth_gdrive_global_start(_: bool = Depends(require_basic_auth(env))):
+    return _oauth_global_gdrive_start()
+
+
 @app.get("/v1/oauth/gdrive/callback", response_class=HTMLResponse)
 def api_oauth_gdrive_callback(code: str, state: str, _: bool = Depends(require_basic_auth(env))):
     return _oauth_callback("gdrive", code, state)
+
+
+@app.get("/v1/oauth/gdrive_global/callback", response_class=HTMLResponse)
+def api_oauth_gdrive_global_callback(code: str, state: str, _: bool = Depends(require_basic_auth(env))):
+    return _oauth_global_gdrive_callback(code, state)
 
 
 @app.post("/v1/oauth/youtube/{channel_slug}/start")
@@ -6690,14 +6741,21 @@ def api_ui_jobs_render_selected(payload: UiJobsRenderSelectedPayload, _: bool = 
         if not payload.job_ids:
             return _uij_error(400, "UIJ_INVALID_INPUT", "job_ids is required and must be non-empty")
 
-        results = [_render_selected_item(job_id_text) for job_id_text in payload.job_ids]
+        job_ids = sorted(
+            payload.job_ids,
+            key=lambda value: (
+                1 if not str(value).strip().lstrip("-").isdigit() else 0,
+                int(value) if str(value).strip().lstrip("-").isdigit() else str(value),
+            ),
+        )
+        results = [_render_selected_item(job_id_text) for job_id_text in job_ids]
         enqueued_count = sum(1 for item in results if item.get("enqueued") is True)
         noop_count = sum(1 for item in results if item.get("enqueued") is False)
         failed_count = sum(1 for item in results if item.get("error"))
         return {
             "results": results,
             "summary": {
-                "requested": len(payload.job_ids),
+                "requested": len(job_ids),
                 "enqueued": enqueued_count,
                 "noop": noop_count,
                 "failed": failed_count,
@@ -6720,7 +6778,7 @@ def api_ui_jobs_render_all(_: bool = Depends(require_basic_auth(env))):
             SELECT j.id
             FROM jobs j
             WHERE j.job_type='UI' AND j.state='DRAFT'
-            ORDER BY j.created_at ASC
+            ORDER BY j.id ASC
             """
         ).fetchall()
         # drive = _create_drive_client(env)

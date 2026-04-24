@@ -162,6 +162,22 @@ class TestUiJobsRenderSelected(unittest.TestCase):
             self.assertEqual(resp.status_code, 500)
             self.assertEqual(resp.json()["error"]["code"], "UIJ_INTERNAL")
 
+    def test_render_selected_sorts_job_ids_ascending(self) -> None:
+        with temp_env() as (_, env):
+            seed_minimal_db(env)
+            mod, client = self._new_client()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            seen: list[str] = []
+
+            def _record(job_id_text: str) -> dict[str, object]:
+                seen.append(str(job_id_text))
+                return {"job_id": str(job_id_text), "enqueued": True}
+
+            mod._render_selected_item = _record
+            resp = client.post("/v1/ui/jobs/render_selected", headers=h, json={"job_ids": ["9", "2", "11", "4"]})
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(seen, ["2", "4", "9", "11"])
+
 
 if __name__ == "__main__":
     unittest.main()
