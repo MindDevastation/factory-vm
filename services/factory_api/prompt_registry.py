@@ -156,6 +156,20 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
         finally:
             conn.close()
 
+    @router.post("/versions/{version_id}/preview")
+    def preview_version(version_id: int, payload: dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).preview_version(version_id, payload)
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except PromptRegistryValidationError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        except ValueError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
     @router.get("/bindings")
     def list_bindings(
         prompt_id: str | None = None,
@@ -210,6 +224,19 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
             return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
         except PromptRegistryConflictError as exc:
             return _error("PROMPT_REGISTRY_CONFLICT", str(exc), status_code=409)
+        except PromptRegistryValidationError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        except ValueError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+
+    @router.post("/resolve-preview")
+    def resolve_preview(payload: dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).preview_resolved_prompt(payload)
         except PromptRegistryValidationError as exc:
             return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
         except ValueError as exc:
