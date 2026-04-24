@@ -474,3 +474,93 @@ class TestPromptRegistryApi(unittest.TestCase):
             older = [item for item in payload["evaluated_candidates"] if int(item["binding_id"]) == int(first_binding.json()["id"])][0]
             self.assertEqual(older["reason_code"], "IGNORED_SAME_SCOPE_OLDER_BINDING")
             self.assertIn("tie_break_note", older)
+
+    def test_preview_endpoint_foundation_cases(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            created = client.post(
+                "/v1/prompt-registry/records",
+                headers=headers,
+                json={
+                    "slug": "api-preview",
+                    "code": "PR-API-PREVIEW",
+                    "title": "API Preview",
+                    "record_type": "prompt_template",
+                    "status": "draft",
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            prompt_id = int(created.json()["id"])
+            version = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/versions",
+                headers=headers,
+                json={
+                    "body_text": "Hello {{name}}! Role={{role}} Secret={{token}}.",
+                    "variables": [
+                        {"name": "name", "safety_class": "standard", "required": True},
+                        {"name": "role", "safety_class": "standard", "required": False, "default_value": "operator"},
+                        {"name": "token", "safety_class": "operator_only", "required": False, "default_value": "t-001"},
+                    ],
+                },
+            )
+            self.assertEqual(version.status_code, 200)
+            version_id = int(version.json()["id"])
+
+            ok = client.post(
+                f"/v1/prompt-registry/versions/{version_id}/preview",
+                headers=headers,
+                json={"variables": {"name": "Alice"}},
+            )
+            self.assertEqual(ok.status_code, 200)
+            ok_payload = ok.json()
+            self.assertEqual(ok_payload["preview_status"], "OK")
+            self.assertIn("Alice", ok_payload["rendered_text"])
+            self.assertIn("operator", ok_payload["rendered_text"])
+            self.assertIn("***MASKED***", ok_payload["rendered_text"])
+            self.assertEqual(ok_payload["missing_variables"], [])
+            self.assertIn("role", ok_payload["diagnostics"]["defaults_used"])
+            self.assertIn("token", ok_payload["masked_variables"])
+
+            missing = client.post(
+                f"/v1/prompt-registry/versions/{version_id}/preview",
+                headers=headers,
+                json={"variables": {}},
+            )
+            self.assertEqual(missing.status_code, 200)
+            missing_payload = missing.json()
+            self.assertEqual(missing_payload["preview_status"], "INVALID")
+            self.assertIn("name", missing_payload["missing_variables"])
+
+            unknown = client.post(
+                f"/v1/prompt-registry/versions/{version_id}/preview",
+                headers=headers,
+                json={"variables": {"name": "Alice", "unknown": "x"}},
+            )
+            self.assertEqual(unknown.status_code, 200)
+            self.assertIn("unknown", unknown.json()["diagnostics"]["unknown_variables"])
+
+            unmasked = client.post(
+                f"/v1/prompt-registry/versions/{version_id}/preview",
+                headers=headers,
+                json={"variables": {"name": "Alice"}, "mask_sensitive": False},
+            )
+            self.assertEqual(unmasked.status_code, 200)
+            self.assertIn("t-001", unmasked.json()["rendered_text"])
+            self.assertEqual(unmasked.json()["masked_variables"], [])
+
+            missing_version = client.post(
+                "/v1/prompt-registry/versions/999999/preview",
+                headers=headers,
+                json={"variables": {"name": "Alice"}},
+            )
+            self.assertEqual(missing_version.status_code, 404)
+
+            malformed = client.post(
+                f"/v1/prompt-registry/versions/{version_id}/preview",
+                headers=headers,
+                json={"variables": "not-an-object"},
+            )
+            self.assertEqual(malformed.status_code, 422)

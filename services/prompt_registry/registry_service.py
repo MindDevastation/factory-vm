@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import hashlib
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -188,6 +189,29 @@ class PromptRegistryService:
         payload = {"body_text": body_text, "variables": normalized_variables}
         canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _preview_render_fingerprint(
+        *,
+        version_id: int,
+        prompt_id: int,
+        rendered_text: str,
+        used_variables: dict[str, str],
+        preview_status: str,
+    ) -> str:
+        payload = {
+            "version_id": version_id,
+            "prompt_id": prompt_id,
+            "rendered_text": rendered_text,
+            "used_variables": {key: used_variables[key] for key in sorted(used_variables)},
+            "preview_status": preview_status,
+        }
+        canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _extract_placeholders(body_text: str) -> list[str]:
+        return re.findall(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}", body_text)
 
     def create_record(self, payload: dict[str, Any], *, actor: str) -> dict[str, Any]:
         now = self._now_iso()
@@ -400,6 +424,94 @@ class PromptRegistryService:
             ).fetchall()
         )
         return item
+
+    def preview_version(self, version_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        version = self.get_version(version_id)
+        raw_variables = payload.get("variables", {})
+        if raw_variables is None:
+            raw_variables = {}
+        if not isinstance(raw_variables, dict):
+            raise PromptRegistryValidationError("variables must be an object")
+        if "mask_sensitive" in payload and not isinstance(payload.get("mask_sensitive"), bool):
+            raise PromptRegistryValidationError("mask_sensitive must be a boolean")
+        mask_sensitive = bool(payload.get("mask_sensitive", True))
+
+        declared_variables = version["variables"]
+        variable_map = {str(item["name"]): item for item in declared_variables}
+        sensitive_classes = {"secret", "operator_only"}
+        defaults_used: list[str] = []
+        missing_required: list[str] = []
+        unknown_variables = sorted(str(name) for name in raw_variables.keys() if str(name) not in variable_map)
+
+        resolved_values: dict[str, str] = {}
+        for name, variable in variable_map.items():
+            if name in raw_variables:
+                resolved_values[name] = str(raw_variables[name])
+                continue
+            default_value = str(variable.get("default_value") or "")
+            if default_value:
+                resolved_values[name] = default_value
+                defaults_used.append(name)
+                continue
+            if int(variable.get("required") or 0) == 1:
+                missing_required.append(name)
+                continue
+            resolved_values[name] = ""
+
+        used_variables: dict[str, str] = {}
+        masked_variables: list[str] = []
+        unresolved_placeholders: list[str] = []
+        missing_required_set = set(missing_required)
+        declared_placeholder_names = set(self._extract_placeholders(str(version["body_text"])))
+
+        def _replace(match: re.Match[str]) -> str:
+            name = match.group(1)
+            normalized = name.strip()
+            if normalized in variable_map:
+                if normalized in missing_required_set:
+                    unresolved_placeholders.append(normalized)
+                    return match.group(0)
+                rendered_value = resolved_values.get(normalized, "")
+                safety_class = str(variable_map[normalized]["safety_class"])
+                if mask_sensitive and safety_class in sensitive_classes:
+                    if normalized not in masked_variables:
+                        masked_variables.append(normalized)
+                    used_variables[normalized] = "***MASKED***"
+                    return "***MASKED***"
+                used_variables[normalized] = rendered_value
+                return rendered_value
+            unresolved_placeholders.append(normalized)
+            return match.group(0)
+
+        rendered_text = re.sub(r"\{\{\s*([^{}]+?)\s*\}\}", _replace, str(version["body_text"]))
+        unresolved_placeholders = sorted(set(unresolved_placeholders))
+        preview_status = "INVALID" if missing_required or unresolved_placeholders else "OK"
+        render_fingerprint = self._preview_render_fingerprint(
+            version_id=int(version["id"]),
+            prompt_id=int(version["prompt_id"]),
+            rendered_text=rendered_text,
+            used_variables=used_variables,
+            preview_status=preview_status,
+        )
+        diagnostics = {
+            "missing_required": sorted(missing_required),
+            "defaults_used": sorted(defaults_used),
+            "unknown_variables": unknown_variables,
+            "masked_variables": sorted(masked_variables),
+            "unresolved_placeholders": unresolved_placeholders,
+            "declared_placeholders": sorted(declared_placeholder_names),
+        }
+        return {
+            "version_id": int(version["id"]),
+            "prompt_id": int(version["prompt_id"]),
+            "rendered_text": rendered_text,
+            "missing_variables": sorted(missing_required),
+            "used_variables": used_variables,
+            "masked_variables": sorted(masked_variables),
+            "render_fingerprint": render_fingerprint,
+            "preview_status": preview_status,
+            "diagnostics": diagnostics,
+        }
 
     def update_binding_status(self, binding_id: int, payload: dict[str, Any], *, actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)

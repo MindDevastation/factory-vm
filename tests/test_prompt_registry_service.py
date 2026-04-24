@@ -452,3 +452,56 @@ class TestPromptRegistryService(unittest.TestCase):
                     svc.create_version(prompt_id, {"body_text": "x", "status": "active"}, actor="tester")
             finally:
                 conn.close()
+
+    def test_preview_foundation_render_and_diagnostics(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                created = svc.create_record(
+                    {
+                        "slug": "preview-template",
+                        "code": "PR-PREVIEW-1",
+                        "title": "Preview Template",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                prompt_id = int(created["id"])
+                version = svc.create_version(
+                    prompt_id,
+                    {
+                        "body_text": "Hello {{name}}. Role={{role}} Secret={{token}} Snippet={{snippet_ref}}.",
+                        "variables": [
+                            {"name": "name", "safety_class": "standard", "required": True},
+                            {"name": "role", "safety_class": "standard", "required": False, "default_value": "operator"},
+                            {"name": "token", "safety_class": "secret", "required": False, "default_value": "abc123"},
+                        ],
+                    },
+                    actor="tester",
+                )
+
+                ok_preview = svc.preview_version(int(version["id"]), {"variables": {"name": "Alice", "extra": "x"}})
+                self.assertEqual(ok_preview["preview_status"], "INVALID")
+                self.assertEqual(ok_preview["used_variables"]["name"], "Alice")
+                self.assertEqual(ok_preview["used_variables"]["role"], "operator")
+                self.assertEqual(ok_preview["used_variables"]["token"], "***MASKED***")
+                self.assertIn("token", ok_preview["masked_variables"])
+                self.assertIn("role", ok_preview["diagnostics"]["defaults_used"])
+                self.assertIn("extra", ok_preview["diagnostics"]["unknown_variables"])
+                self.assertIn("snippet_ref", ok_preview["diagnostics"]["unresolved_placeholders"])
+
+                missing_required = svc.preview_version(int(version["id"]), {"variables": {}})
+                self.assertEqual(missing_required["preview_status"], "INVALID")
+                self.assertIn("name", missing_required["missing_variables"])
+                self.assertIn("name", missing_required["diagnostics"]["missing_required"])
+
+                unmasked = svc.preview_version(int(version["id"]), {"variables": {"name": "Alice"}, "mask_sensitive": False})
+                self.assertEqual(unmasked["preview_status"], "INVALID")
+                self.assertIn("Secret=abc123", unmasked["rendered_text"])
+                self.assertEqual(unmasked["masked_variables"], [])
+                self.assertEqual(unmasked["used_variables"]["token"], "abc123")
+            finally:
+                conn.close()
