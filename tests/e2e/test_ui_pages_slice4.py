@@ -809,6 +809,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('id="jobs-bulk-modal"', r.text)
             self.assertIn('"mode": "create_and_enqueue"', r.text)
             self.assertIn('"audio_ids_text": "001 015 027"', r.text)
+            self.assertIn('jobs-reupload-btn', r.text)
             self.assertIn('id="secondary-surfaces-drawer"', r.text)
             self.assertIn('class="secondary-drawer"', r.text)
             self.assertIn('id="secondary-surfaces-backdrop"', r.text)

@@ -223,6 +223,9 @@
         {% if j.actions and j.actions.retry_allowed == true %}
         <button type="button" class="jobs-retry-btn" data-job-id="{{ j.id }}">Retry</button>
         {% endif %}
+        {% if j.state|upper == 'UPLOAD_FAILED' %}
+        <button type="button" class="jobs-reupload-btn" data-job-id="{{ j.id }}">Reupload</button>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}
@@ -535,6 +538,9 @@
     if (retryAllowedForJob(job)) {
       parts.push('<button type="button" class="jobs-retry-btn" data-job-id="' + esc(job.id) + '">Retry</button>');
     }
+    if (normalizeStatus(job.state) === 'UPLOAD_FAILED') {
+      parts.push('<button type="button" class="jobs-reupload-btn" data-job-id="' + esc(job.id) + '">Reupload</button>');
+    }
 
     return parts.join(' ');
   }
@@ -718,6 +724,34 @@
     }
   }
 
+  async function reuploadJob(jobId, buttonEl) {
+    if (!jobId) {
+      return;
+    }
+    if (buttonEl) {
+      buttonEl.disabled = true;
+    }
+    try {
+      const res = await fetch('/v1/ui/jobs/' + encodeURIComponent(jobId) + '/reupload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        const errorMessage = data.error ? data.error.message : 'Failed to reupload job';
+        setJobsMessage(errorMessage, 'error');
+        return;
+      }
+      setJobsMessage(data.message || 'Reupload scheduled', 'success');
+      await refreshJobsList();
+    } catch (err) {
+      setJobsMessage(err.message || 'Failed to reupload job', 'error');
+      if (buttonEl) {
+        buttonEl.disabled = false;
+      }
+    }
+  }
+
   function bindJobsTableEventHandlers() {
     jobsTableBody.querySelectorAll('.jobs-row-checkbox').forEach((checkbox) => {
       checkbox.addEventListener('change', () => {
@@ -744,6 +778,12 @@
     jobsTableBody.querySelectorAll('.jobs-retry-btn').forEach((button) => {
       button.addEventListener('click', async () => {
         await retryJob(button.getAttribute('data-job-id') || '', button);
+      });
+    });
+
+    jobsTableBody.querySelectorAll('.jobs-reupload-btn').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await reuploadJob(button.getAttribute('data-job-id') || '', button);
       });
     });
   }

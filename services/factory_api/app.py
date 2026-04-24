@@ -5903,6 +5903,7 @@ def api_jobs(state: Optional[str] = None, _: bool = Depends(require_basic_auth(e
             job["retry_child_job_id"] = retry_child_job_id
             actions = dict(job.get("actions") or {})
             actions["retry_allowed"] = bool(status == "FAILED" and retry_child_job_id is None)
+            actions["reupload_allowed"] = bool(status == "UPLOAD_FAILED")
             job["actions"] = actions
     finally:
         conn.close()
@@ -6964,6 +6965,53 @@ def api_ui_job_retry(job_id: int, _: bool = Depends(require_basic_auth(env))):
             extra={"job_id": job_id, "retry_job_id": result.retry_job_id, "stage": "noop"},
         )
     return payload
+
+
+@app.post("/v1/ui/jobs/{job_id}/reupload")
+def api_ui_job_reupload(job_id: int, _: bool = Depends(require_basic_auth(env))):
+    blocked = _disk_guard_write_heavy(operation="ui_jobs_reupload")
+    if blocked is not None:
+        return blocked
+
+    conn = dbm.connect(env)
+    tx_started = False
+    try:
+        job = dbm.get_job(conn, job_id)
+        if not job:
+            return _uij_error(404, "UIJ_JOB_NOT_FOUND", "UI job not found")
+
+        state = str(job.get("state") or "")
+        if state != "UPLOAD_FAILED":
+            return _uij_error(409, "UIJ_REUPLOAD_NOT_ALLOWED", "Reupload is allowed only for Upload Failed jobs")
+
+        mp4 = outbox_dir(env, job_id) / "render.mp4"
+        if not mp4.is_file():
+            return _uij_error(409, "UIJ_REUPLOAD_RENDER_MISSING", "Rendered mp4 is missing for reupload")
+
+        conn.execute("BEGIN IMMEDIATE")
+        tx_started = True
+        conn.execute("DELETE FROM youtube_uploads WHERE job_id = ?", (job_id,))
+        dbm.clear_retry(conn, job_id)
+        dbm.update_job_state(
+            conn,
+            job_id,
+            state="UPLOADING",
+            stage="UPLOAD",
+            error_reason="",
+            progress_text="reupload requested",
+        )
+        conn.execute("COMMIT")
+        tx_started = False
+    except Exception:
+        if tx_started:
+            conn.execute("ROLLBACK")
+        logger.exception("ui.jobs.reupload.error", extra={"job_id": job_id, "stage": "internal"})
+        return _uij_error(500, "UIJ_REUPLOAD_INTERNAL", "Internal error")
+    finally:
+        conn.close()
+
+    logger.info("ui.jobs.reupload.scheduled", extra={"job_id": job_id, "stage": "scheduled"})
+    return {"job_id": str(job_id), "enqueued": True, "message": "Reupload scheduled"}
 
 
 @app.get("/v1/ui/jobs/{job_id}")
