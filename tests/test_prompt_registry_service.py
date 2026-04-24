@@ -505,3 +505,100 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(unmasked["used_variables"]["token"], "abc123")
             finally:
                 conn.close()
+
+
+    def test_preview_resolved_prompt_foundation_cases(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                matching = svc.create_record(
+                    {
+                        "slug": "resolved-preview-template",
+                        "code": "PR-RESOLVED-1",
+                        "title": "Resolved Preview",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                matching_prompt_id = int(matching["id"])
+                matching_version = svc.create_version(
+                    matching_prompt_id,
+                    {
+                        "body_text": "Hello {{name}} Secret={{token}}",
+                        "variables": [
+                            {"name": "name", "safety_class": "standard", "required": True},
+                            {"name": "token", "safety_class": "secret", "required": False, "default_value": "tok-1"},
+                        ],
+                    },
+                    actor="tester",
+                )
+                svc.activate_version(int(matching_version["id"]), actor="tester")
+                svc.create_binding(
+                    {
+                        "prompt_id": matching_prompt_id,
+                        "binding_scope": "workflow",
+                        "workflow_slug": "wf-preview",
+                        "binding_status": "active",
+                    },
+                    actor="tester",
+                )
+
+                no_active = svc.create_record(
+                    {
+                        "slug": "resolved-preview-no-active",
+                        "code": "PR-RESOLVED-2",
+                        "title": "Resolved Preview No Active",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                no_active_prompt_id = int(no_active["id"])
+                svc.create_binding(
+                    {
+                        "prompt_id": no_active_prompt_id,
+                        "binding_scope": "channel",
+                        "channel_slug": "ch-no-active",
+                        "binding_status": "active",
+                    },
+                    actor="tester",
+                )
+
+                matched = svc.preview_resolved_prompt({"workflow_slug": "wf-preview", "variables": {"name": "Alice"}})
+                self.assertEqual(matched["overall_status"], "OK")
+                self.assertEqual(matched["resolution"]["resolution_status"], "matched")
+                self.assertEqual(matched["resolution"]["winner_binding"]["binding_scope"], "workflow")
+                self.assertEqual(matched["preview"]["preview_status"], "OK")
+                self.assertIn("Alice", matched["preview"]["rendered_text"])
+                self.assertIn("***MASKED***", matched["preview"]["rendered_text"])
+
+                missing_required = svc.preview_resolved_prompt({"workflow_slug": "wf-preview", "variables": {}})
+                self.assertEqual(missing_required["overall_status"], "INVALID")
+                self.assertEqual(missing_required["preview"]["preview_status"], "INVALID")
+                self.assertIn("name", missing_required["preview"]["missing_variables"])
+
+                unmasked = svc.preview_resolved_prompt(
+                    {"workflow_slug": "wf-preview", "variables": {"name": "Alice"}, "mask_sensitive": False}
+                )
+                self.assertEqual(unmasked["preview"]["preview_status"], "OK")
+                self.assertIn("tok-1", unmasked["preview"]["rendered_text"])
+                self.assertEqual(unmasked["preview"]["masked_variables"], [])
+
+                miss = svc.preview_resolved_prompt({"workflow_slug": "wf-miss", "variables": {"name": "Alice"}})
+                self.assertEqual(miss["overall_status"], "INVALID")
+                self.assertEqual(miss["resolution"]["resolution_status"], "miss")
+                self.assertEqual(miss["preview"]["preview_status"], "INVALID")
+                self.assertIn("no matching prompt binding", miss["preview"]["diagnostics"]["errors"][0])
+
+                no_active_result = svc.preview_resolved_prompt(
+                    {"channel_slug": "ch-no-active", "variables": {"name": "Alice"}}
+                )
+                self.assertEqual(no_active_result["overall_status"], "INVALID")
+                self.assertEqual(no_active_result["resolution"]["resolution_status"], "matched")
+                self.assertEqual(no_active_result["preview"]["preview_status"], "INVALID")
+                self.assertIn("no active version", no_active_result["preview"]["diagnostics"]["errors"][0])
+            finally:
+                conn.close()

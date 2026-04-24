@@ -513,6 +513,21 @@ class PromptRegistryService:
             "diagnostics": diagnostics,
         }
 
+
+    @staticmethod
+    def _invalid_preview_payload(*, diagnostics: dict[str, Any], prompt_id: int | None = None) -> dict[str, Any]:
+        return {
+            "version_id": None,
+            "prompt_id": prompt_id,
+            "rendered_text": "",
+            "missing_variables": [],
+            "used_variables": {},
+            "masked_variables": [],
+            "render_fingerprint": "",
+            "preview_status": "INVALID",
+            "diagnostics": diagnostics,
+        }
+
     def update_binding_status(self, binding_id: int, payload: dict[str, Any], *, actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         current = self.get_binding(binding_id)
@@ -647,6 +662,50 @@ class PromptRegistryService:
             "resolution_status": "matched" if winner is not None else "miss",
             "reason": "no matching active bindings for supplied context" if winner is None else "resolved_by_fixed_priority_order",
             "resolution_order": list(priority_order),
+        }
+
+
+    def preview_resolved_prompt(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_variables = payload.get("variables", {})
+        if raw_variables is None:
+            raw_variables = {}
+        if not isinstance(raw_variables, dict):
+            raise PromptRegistryValidationError("variables must be an object")
+        if "mask_sensitive" in payload and not isinstance(payload.get("mask_sensitive"), bool):
+            raise PromptRegistryValidationError("mask_sensitive must be a boolean")
+        mask_sensitive = bool(payload.get("mask_sensitive", True))
+
+        resolution = self.resolve_effective_prompt(payload)
+        winner_prompt = resolution.get("winner_prompt")
+
+        if resolution["resolution_status"] == "miss":
+            preview = self._invalid_preview_payload(
+                diagnostics={"errors": ["no matching prompt binding for supplied context"]}
+            )
+        else:
+            active_version_id = winner_prompt.get("active_version_id") if isinstance(winner_prompt, dict) else None
+            if active_version_id is None:
+                preview = self._invalid_preview_payload(
+                    prompt_id=int(winner_prompt["id"]) if isinstance(winner_prompt, dict) else None,
+                    diagnostics={"errors": ["resolved prompt has no active version"]},
+                )
+            else:
+                preview = self.preview_version(
+                    int(active_version_id),
+                    {"variables": raw_variables, "mask_sensitive": mask_sensitive},
+                )
+
+        overall_status = "OK" if resolution["resolution_status"] == "matched" and preview["preview_status"] == "OK" else "INVALID"
+        return {
+            "resolution": {
+                "winner_binding": resolution.get("winner_binding"),
+                "winner_prompt": resolution.get("winner_prompt"),
+                "evaluated_candidates": resolution.get("evaluated_candidates", []),
+                "resolution_status": resolution.get("resolution_status"),
+                "resolution_order": resolution.get("resolution_order", []),
+            },
+            "preview": preview,
+            "overall_status": overall_status,
         }
 
     def activate_version(self, version_id: int, *, actor: str) -> dict[str, Any]:

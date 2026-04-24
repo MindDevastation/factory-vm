@@ -231,6 +231,19 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
         finally:
             conn.close()
 
+
+    @router.post("/resolve-preview")
+    def resolve_preview(payload: dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).preview_resolved_prompt(payload)
+        except PromptRegistryValidationError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        except ValueError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
     @router.post("/resolve")
     def resolve_prompt(payload: dict[str, Any], _: bool = Depends(require_basic_auth(env))):
         conn = dbm.connect(env)

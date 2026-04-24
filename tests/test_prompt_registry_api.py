@@ -564,3 +564,148 @@ class TestPromptRegistryApi(unittest.TestCase):
                 json={"variables": "not-an-object"},
             )
             self.assertEqual(malformed.status_code, 422)
+
+
+    def test_resolve_preview_endpoint_foundation_cases(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            matched_record = client.post(
+                "/v1/prompt-registry/records",
+                headers=headers,
+                json={
+                    "slug": "api-resolve-preview-match",
+                    "code": "PR-API-RESOLVE-1",
+                    "title": "API Resolve Preview Match",
+                    "record_type": "prompt_template",
+                    "status": "draft",
+                },
+            )
+            self.assertEqual(matched_record.status_code, 200)
+            matched_prompt_id = int(matched_record.json()["id"])
+
+            matched_version = client.post(
+                f"/v1/prompt-registry/records/{matched_prompt_id}/versions",
+                headers=headers,
+                json={
+                    "body_text": "Hello {{name}} Secret={{token}}",
+                    "variables": [
+                        {"name": "name", "safety_class": "standard", "required": True},
+                        {"name": "token", "safety_class": "operator_only", "required": False, "default_value": "api-tok"},
+                    ],
+                },
+            )
+            self.assertEqual(matched_version.status_code, 200)
+            matched_version_id = int(matched_version.json()["id"])
+
+            activated = client.post(f"/v1/prompt-registry/versions/{matched_version_id}/activate", headers=headers)
+            self.assertEqual(activated.status_code, 200)
+
+            matched_binding = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={
+                    "prompt_id": matched_prompt_id,
+                    "binding_scope": "workflow",
+                    "workflow_slug": "wf-resolve",
+                    "binding_status": "active",
+                },
+            )
+            self.assertEqual(matched_binding.status_code, 200)
+
+            no_active_record = client.post(
+                "/v1/prompt-registry/records",
+                headers=headers,
+                json={
+                    "slug": "api-resolve-preview-no-active",
+                    "code": "PR-API-RESOLVE-2",
+                    "title": "API Resolve Preview No Active",
+                    "record_type": "prompt_template",
+                    "status": "draft",
+                },
+            )
+            self.assertEqual(no_active_record.status_code, 200)
+            no_active_prompt_id = int(no_active_record.json()["id"])
+            no_active_binding = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={
+                    "prompt_id": no_active_prompt_id,
+                    "binding_scope": "channel",
+                    "channel_slug": "ch-no-active",
+                    "binding_status": "active",
+                },
+            )
+            self.assertEqual(no_active_binding.status_code, 200)
+
+            ok = client.post(
+                "/v1/prompt-registry/resolve-preview",
+                headers=headers,
+                json={"workflow_slug": "wf-resolve", "variables": {"name": "Alice"}},
+            )
+            self.assertEqual(ok.status_code, 200)
+            ok_payload = ok.json()
+            self.assertEqual(ok_payload["overall_status"], "OK")
+            self.assertEqual(ok_payload["resolution"]["resolution_status"], "matched")
+            self.assertIn("winner_binding", ok_payload["resolution"])
+            self.assertEqual(ok_payload["preview"]["preview_status"], "OK")
+            self.assertIn("Alice", ok_payload["preview"]["rendered_text"])
+            self.assertIn("***MASKED***", ok_payload["preview"]["rendered_text"])
+
+            miss = client.post(
+                "/v1/prompt-registry/resolve-preview",
+                headers=headers,
+                json={"workflow_slug": "wf-miss", "variables": {"name": "Alice"}},
+            )
+            self.assertEqual(miss.status_code, 200)
+            miss_payload = miss.json()
+            self.assertEqual(miss_payload["overall_status"], "INVALID")
+            self.assertEqual(miss_payload["resolution"]["resolution_status"], "miss")
+            self.assertEqual(miss_payload["preview"]["preview_status"], "INVALID")
+
+            no_active = client.post(
+                "/v1/prompt-registry/resolve-preview",
+                headers=headers,
+                json={"channel_slug": "ch-no-active", "variables": {"name": "Alice"}},
+            )
+            self.assertEqual(no_active.status_code, 200)
+            no_active_payload = no_active.json()
+            self.assertEqual(no_active_payload["overall_status"], "INVALID")
+            self.assertEqual(no_active_payload["resolution"]["resolution_status"], "matched")
+            self.assertEqual(no_active_payload["preview"]["preview_status"], "INVALID")
+
+            missing_required = client.post(
+                "/v1/prompt-registry/resolve-preview",
+                headers=headers,
+                json={"workflow_slug": "wf-resolve", "variables": {}},
+            )
+            self.assertEqual(missing_required.status_code, 200)
+            self.assertEqual(missing_required.json()["overall_status"], "INVALID")
+            self.assertIn("name", missing_required.json()["preview"]["missing_variables"])
+
+            unmasked = client.post(
+                "/v1/prompt-registry/resolve-preview",
+                headers=headers,
+                json={"workflow_slug": "wf-resolve", "variables": {"name": "Alice"}, "mask_sensitive": False},
+            )
+            self.assertEqual(unmasked.status_code, 200)
+            self.assertIn("api-tok", unmasked.json()["preview"]["rendered_text"])
+            self.assertEqual(unmasked.json()["preview"]["masked_variables"], [])
+
+            partial_item = client.post(
+                "/v1/prompt-registry/resolve-preview",
+                headers=headers,
+                json={"item_type": "release", "variables": {}},
+            )
+            self.assertEqual(partial_item.status_code, 422)
+            self.assertEqual(partial_item.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
+            malformed_variables = client.post(
+                "/v1/prompt-registry/resolve-preview",
+                headers=headers,
+                json={"workflow_slug": "wf-resolve", "variables": "not-an-object"},
+            )
+            self.assertEqual(malformed_variables.status_code, 422)
+            self.assertEqual(malformed_variables.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
