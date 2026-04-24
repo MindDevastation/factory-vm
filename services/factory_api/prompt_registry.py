@@ -9,7 +9,12 @@ from fastapi.responses import JSONResponse
 from services.common import db as dbm
 from services.common.env import Env
 from services.factory_api.security import require_basic_auth
-from services.prompt_registry.contracts import bridge_policy_payload, contracts_payload
+from services.prompt_registry.contracts import (
+    bridge_policy_payload,
+    contracts_payload,
+    ensure_binding_scope,
+    ensure_binding_status,
+)
 from services.prompt_registry.errors import (
     PromptRegistryConflictError,
     PromptRegistryNotFoundError,
@@ -146,6 +151,77 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
             return PromptRegistryService(conn).activate_version(version_id, actor=_actor_from_request(request))
         except PromptRegistryNotFoundError as exc:
             return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except PromptRegistryValidationError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.get("/bindings")
+    def list_bindings(
+        prompt_id: str | None = None,
+        binding_scope: str | None = None,
+        binding_status: str | None = None,
+        _: bool = Depends(require_basic_auth(env)),
+    ):
+        conn = dbm.connect(env)
+        try:
+            validated_prompt_id: int | None = None
+            if prompt_id is not None:
+                try:
+                    validated_prompt_id = int(str(prompt_id).strip())
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("prompt_id must be an integer") from exc
+            validated_scope = ensure_binding_scope(binding_scope) if binding_scope is not None else None
+            validated_status = ensure_binding_status(binding_status) if binding_status is not None else None
+            return {
+                "items": PromptRegistryService(conn).list_bindings(
+                    prompt_id=validated_prompt_id,
+                    binding_scope=validated_scope,
+                    binding_status=validated_status,
+                )
+            }
+        except (TypeError, ValueError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.post("/bindings")
+    def create_binding(payload: dict[str, Any], request: Request, _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).create_binding(payload, actor=_actor_from_request(request))
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except PromptRegistryConflictError as exc:
+            return _error("PROMPT_REGISTRY_CONFLICT", str(exc), status_code=409)
+        except PromptRegistryValidationError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        except ValueError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.patch("/bindings/{binding_id}")
+    def patch_binding(binding_id: int, payload: dict[str, Any], request: Request, _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).update_binding_status(binding_id, payload, actor=_actor_from_request(request))
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except PromptRegistryConflictError as exc:
+            return _error("PROMPT_REGISTRY_CONFLICT", str(exc), status_code=409)
+        except PromptRegistryValidationError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        except ValueError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.post("/resolve")
+    def resolve_prompt(payload: dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).resolve_effective_prompt(payload)
         except PromptRegistryValidationError as exc:
             return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
         finally:
