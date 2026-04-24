@@ -24,6 +24,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
 ]
+PLAYLIST_WRITE_SCOPE = "https://www.googleapis.com/auth/youtube"
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ class YouTubeClient:
             Path(token_json).parent.mkdir(parents=True, exist_ok=True)
             Path(token_json).write_text(creds.to_json(), encoding="utf-8")
 
+        self._creds = creds
         self._yt = build("youtube", "v3", credentials=creds, cache_discovery=False)
 
     def upload_private(
@@ -61,7 +63,10 @@ class YouTubeClient:
         title: str,
         description: str,
         tags: List[str],
+        audience_is_for_kids: bool = False,
+        video_language: str = "English",
     ) -> UploadResult:
+        normalized_language = str(video_language or "").strip()
         body = {
             "snippet": {
                 "title": title,
@@ -69,8 +74,14 @@ class YouTubeClient:
                 "tags": [t.lstrip("#") for t in tags if t],
                 "categoryId": "10",
             },
-            "status": {"privacyStatus": "private"},
+            "status": {
+                "privacyStatus": "private",
+                "selfDeclaredMadeForKids": bool(audience_is_for_kids),
+            },
         }
+        if normalized_language:
+            body["snippet"]["defaultLanguage"] = normalized_language
+            body["snippet"]["defaultAudioLanguage"] = normalized_language
         media = MediaFileUpload(str(video_path), chunksize=8 * 1024 * 1024, resumable=True)
         req = self._yt.videos().insert(part="snippet,status", body=body, media_body=media)
 
@@ -79,6 +90,18 @@ class YouTubeClient:
             _, resp = req.next_chunk()
 
         return UploadResult(video_id=resp["id"])
+
+    def has_playlist_management_scope(self) -> bool:
+        checker = getattr(self._creds, "has_scopes", None)
+        if callable(checker):
+            try:
+                return bool(checker([PLAYLIST_WRITE_SCOPE]))
+            except Exception:
+                pass
+        scopes = getattr(self._creds, "scopes", None)
+        if isinstance(scopes, (list, tuple, set)):
+            return PLAYLIST_WRITE_SCOPE in {str(item) for item in scopes}
+        return False
 
     def set_thumbnail(self, *, video_id: str, image_path: Path) -> None:
         media = MediaFileUpload(str(image_path))

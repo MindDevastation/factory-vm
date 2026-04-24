@@ -52,6 +52,35 @@ def _resolve_playlist_targets(conn: Any, *, job_id: int) -> tuple[list[str], str
     return normalized_ids, title
 
 
+def _resolve_youtube_metadata(conn: Any, *, job_id: int) -> tuple[bool, str]:
+    row = conn.execute(
+        """
+        SELECT r.audience_is_for_kids, r.video_language
+        FROM jobs j
+        JOIN releases r ON r.id = j.release_id
+        WHERE j.id = ?
+        """,
+        (job_id,),
+    ).fetchone()
+    if not row:
+        return False, "English"
+    audience_is_for_kids = bool(int(row.get("audience_is_for_kids") or 0))
+    video_language = str(row.get("video_language") or "").strip() or "English"
+    return audience_is_for_kids, video_language
+
+
+def _ensure_playlist_scope_if_needed(conn: Any, *, job_id: int, yt: YouTubeClient) -> None:
+    playlist_ids, playlist_create_title = _resolve_playlist_targets(conn, job_id=job_id)
+    if not playlist_ids and not playlist_create_title:
+        return
+    scope_ok = getattr(yt, "has_playlist_management_scope", lambda: True)()
+    if scope_ok:
+        return
+    raise RuntimeError(
+        "YouTube token is missing playlist permissions. Regenerate YouTube token in Channels and retry upload."
+    )
+
+
 def _assign_video_to_playlists(conn: Any, *, job: dict[str, Any], video_id: str, yt: YouTubeClient) -> None:
     playlist_ids, playlist_create_title = _resolve_playlist_targets(conn, job_id=int(job["id"]))
     resolved_ids: list[str] = list(playlist_ids)
@@ -595,8 +624,21 @@ def uploader_cycle(*, env: Env, worker_id: str) -> None:
     finally:
         conn2.close()
 
+    conn_meta = dbm.connect(env)
     try:
-        res = yt.upload_private(video_path=mp4, title=job["release_title"], description=job["release_description"], tags=tags)
+        audience_is_for_kids, video_language = _resolve_youtube_metadata(conn_meta, job_id=job_id)
+    finally:
+        conn_meta.close()
+
+    try:
+        res = yt.upload_private(
+            video_path=mp4,
+            title=job["release_title"],
+            description=job["release_description"],
+            tags=tags,
+            audience_is_for_kids=audience_is_for_kids,
+            video_language=video_language,
+        )
         video_id = res.video_id
         url = f"https://www.youtube.com/watch?v={video_id}"
         studio_url = f"https://studio.youtube.com/video/{video_id}/edit"
@@ -640,6 +682,7 @@ def uploader_cycle(*, env: Env, worker_id: str) -> None:
     try:
         if env.upload_backend == "youtube":
             try:
+                _ensure_playlist_scope_if_needed(conn, job_id=job_id, yt=yt)
                 _assign_video_to_playlists(conn, job=job, video_id=video_id, yt=yt)
             except Exception as exc:
                 _handle_upload_step_failure(conn, env=env, job_id=job_id, error_text=str(exc), worker_id=worker_id)

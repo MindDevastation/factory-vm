@@ -17,7 +17,16 @@ class _YTStub:
     def __init__(self, *a, **k):
         pass
 
-    def upload_private(self, *, video_path: Path, title: str, description: str, tags: list[str]):
+    def upload_private(
+        self,
+        *,
+        video_path: Path,
+        title: str,
+        description: str,
+        tags: list[str],
+        audience_is_for_kids: bool = False,
+        video_language: str = "English",
+    ):
         return type("R", (), {"video_id": "vid123"})()
 
     def set_thumbnail(self, *, video_id: str, image_path: Path) -> None:
@@ -95,7 +104,16 @@ class TestUploaderBranchesMore(unittest.TestCase):
             mp4.write_bytes(b"x")
 
             class _YTFail(_YTStub):
-                def upload_private(self, *, video_path: Path, title: str, description: str, tags: list[str]):
+                def upload_private(
+                    self,
+                    *,
+                    video_path: Path,
+                    title: str,
+                    description: str,
+                    tags: list[str],
+                    audience_is_for_kids: bool = False,
+                    video_language: str = "English",
+                ):
                     raise RuntimeError("upload fail")
 
             with mock.patch.object(uploader_worker, "YouTubeClient", _YTFail):

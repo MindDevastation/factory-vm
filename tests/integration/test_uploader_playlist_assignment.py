@@ -20,8 +20,18 @@ class _PlaylistYT:
         self.fail_ambiguous = False
         self.fail_once_add = False
         self._failed_once = False
+        self.scope_ok = True
 
-    def upload_private(self, *, video_path: Path, title: str, description: str, tags: list[str]):
+    def upload_private(
+        self,
+        *,
+        video_path: Path,
+        title: str,
+        description: str,
+        tags: list[str],
+        audience_is_for_kids: bool = False,
+        video_language: str = "English",
+    ):
         return type("R", (), {"video_id": "vid123"})()
 
     def set_thumbnail(self, *, video_id: str, image_path: Path) -> None:
@@ -41,6 +51,9 @@ class _PlaylistYT:
             self._failed_once = True
             raise RuntimeError("attach fail")
         self.added.append((playlist_id, video_id))
+
+    def has_playlist_management_scope(self) -> bool:
+        return self.scope_ok
 
 
 class TestUploaderPlaylistAssignment(unittest.TestCase):
@@ -129,6 +142,28 @@ class TestUploaderPlaylistAssignment(unittest.TestCase):
                 uploader_worker.uploader_cycle(env=env, worker_id="wu")
                 uploader_worker.uploader_cycle(env=env, worker_id="wu")
             self.assertEqual(len(yt.created), 1)
+
+    def test_missing_playlist_scope_fails_with_clear_actionable_error(self) -> None:
+        with temp_env() as (_, env0):
+            env = replace(env0, upload_backend="youtube", yt_client_secret_json="/env/client.json", yt_tokens_dir="/tmp/yt-tokens")
+            seed_minimal_db(env)
+            job_id = self._seed_upload_job(env)
+            self._set_release_playlist_targets(env, job_id=job_id, playlist_ids=["PL_A"], playlist_create_title=None)
+            token = Path(env.yt_tokens_dir) / "channel-b" / "token.json"
+            token.parent.mkdir(parents=True, exist_ok=True)
+            token.write_text("{}", encoding="utf-8")
+            yt = _PlaylistYT()
+            yt.scope_ok = False
+            with mock.patch.object(uploader_worker, "YouTubeClient", lambda *a, **k: yt):
+                uploader_worker.uploader_cycle(env=env, worker_id="wu")
+            conn = dbm.connect(env)
+            try:
+                job = dbm.get_job(conn, job_id)
+                assert job is not None
+                self.assertNotEqual(str(job["state"]), "WAIT_APPROVAL")
+                self.assertIn("Regenerate YouTube token", str(job["error_reason"]))
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":

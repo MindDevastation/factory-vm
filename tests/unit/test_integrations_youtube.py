@@ -80,11 +80,34 @@ class TestYouTubeIntegrationMocked(unittest.TestCase):
         ):
             c = ytm.YouTubeClient(client_secret_json="client.json", token_json="token.json")
             c._yt = yt
-            res = c.upload_private(video_path=Path("/tmp/a.mp4"), title="t", description="d", tags=["#a", "b", "", "#c"])
+            res = c.upload_private(
+                video_path=Path("/tmp/a.mp4"),
+                title="t",
+                description="d",
+                tags=["#a", "b", "", "#c"],
+                audience_is_for_kids=True,
+                video_language="es",
+            )
 
         self.assertEqual(res.video_id, "VID")
         body = yt.videos.return_value.insert.call_args.kwargs["body"]
         self.assertEqual(body["snippet"]["tags"], ["a", "b", "c"])
+        self.assertEqual(body["status"]["selfDeclaredMadeForKids"], True)
+        self.assertEqual(body["snippet"]["defaultLanguage"], "es")
+        self.assertEqual(body["snippet"]["defaultAudioLanguage"], "es")
+
+    def test_has_playlist_management_scope_uses_credentials(self):
+        from services.integrations import youtube as ytm
+
+        creds = SimpleNamespace(valid=True, has_scopes=Mock(return_value=True))
+        with (
+            patch.object(ytm, "_GOOGLE_IMPORT_ERROR", None),
+            patch.object(ytm, "Credentials", SimpleNamespace(from_authorized_user_file=Mock(return_value=creds))),
+            patch.object(ytm, "build", Mock(return_value=SimpleNamespace())),
+        ):
+            c = ytm.YouTubeClient(client_secret_json="client.json", token_json="token.json")
+        self.assertTrue(c.has_playlist_management_scope())
+        creds.has_scopes.assert_called_once()
 
     def test_set_thumbnail_executes(self):
         from services.integrations import youtube as ytm

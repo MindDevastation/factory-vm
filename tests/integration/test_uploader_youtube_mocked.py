@@ -21,12 +21,26 @@ class _Res:
 
 class _FakeYT:
     last_init: tuple[str, str] | None = None
+    last_upload_kwargs: dict[str, object] | None = None
 
     def __init__(self, *, client_secret_json: str, token_json: str):
         self._thumb_calls = 0
         _FakeYT.last_init = (client_secret_json, token_json)
 
-    def upload_private(self, *, video_path, title, description, tags):
+    def upload_private(
+        self,
+        *,
+        video_path,
+        title,
+        description,
+        tags,
+        audience_is_for_kids=False,
+        video_language="English",
+    ):
+        _FakeYT.last_upload_kwargs = {
+            "audience_is_for_kids": audience_is_for_kids,
+            "video_language": video_language,
+        }
         return _Res(video_id="vid123")
 
     def set_thumbnail(self, *, video_id: str, image_path):
@@ -75,6 +89,51 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
                 assert yt is not None
                 self.assertEqual(yt["video_id"], "vid123")
                 self.assertEqual(_FakeYT.last_init, ("/env/client_secret.json", str(token_path)))
+                self.assertEqual(_FakeYT.last_upload_kwargs, {"audience_is_for_kids": False, "video_language": "English"})
+
+    def test_youtube_backend_applies_audience_and_language_metadata(self) -> None:
+        with temp_env() as (_, _env0):
+            os.environ["UPLOAD_BACKEND"] = "youtube"
+            os.environ["YT_CLIENT_SECRET_JSON"] = "/env/client_secret.json"
+            with tempfile.TemporaryDirectory() as tokens_dir:
+                os.environ["YT_TOKENS_DIR"] = tokens_dir
+                env = Env.load()
+                seed_minimal_db(env)
+
+                job_id = insert_release_and_job(env, state="UPLOADING", stage="UPLOAD", channel_slug="channel-b")
+                conn = dbm.connect(env)
+                try:
+                    conn.execute(
+                        """
+                        UPDATE releases
+                        SET audience_is_for_kids = 1, video_language = 'es'
+                        WHERE id = (SELECT release_id FROM jobs WHERE id = ?)
+                        """,
+                        (job_id,),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+
+                ob = outbox_dir(env, job_id)
+                mp4 = ob / "render.mp4"
+                mp4.parent.mkdir(parents=True, exist_ok=True)
+                mp4.write_bytes(b"mp4")
+
+                token_path = Path(tokens_dir) / "channel-b" / "token.json"
+                token_path.parent.mkdir(parents=True, exist_ok=True)
+                token_path.write_text("{}", encoding="utf-8")
+
+                import services.workers.uploader as upl
+
+                old = upl.YouTubeClient
+                upl.YouTubeClient = _FakeYT  # type: ignore[assignment]
+                try:
+                    uploader_cycle(env=env, worker_id="t-upl-metadata")
+                finally:
+                    upl.YouTubeClient = old  # type: ignore[assignment]
+
+                self.assertEqual(_FakeYT.last_upload_kwargs, {"audience_is_for_kids": True, "video_language": "es"})
 
     def test_youtube_backend_missing_channel_token_is_terminal_upload_failed(self) -> None:
         with temp_env() as (_, _env0):
