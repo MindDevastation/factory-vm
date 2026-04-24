@@ -474,6 +474,36 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             finally:
                 conn.close()
 
+            token_path = oauth_token_path(base_dir=Env.load().gdrive_tokens_dir, channel_slug="darkwood-reverie")
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
+
+            mod, client = self._new_client()
+            mod._create_drive_client = lambda _env: object()
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
+            mod._render_selected_item = lambda _job_id_text: (_ for _ in ()).throw(RuntimeError("enqueue exploded"))
+
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            resp = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={"mode": "create_and_enqueue", "items": [self._create_item(channel_id, title="B crash")]},
+            )
+            self.assertEqual(resp.status_code, 200)
+            payload = resp.json()
+            self.assertEqual(payload["mode"], "create_and_enqueue")
+            self.assertEqual(payload["summary"], {"requested": 1, "created": 1, "enqueued": 0, "noop": 0, "failed": 1})
+            self.assertEqual(payload["results"][0]["enqueue"], {"job_id": payload["results"][0]["job_id"], "error": {"code": "UIJ_INTERNAL", "message": "Internal error"}})
+
+            created_job_id = int(payload["results"][0]["job_id"])
+            conn = dbm.connect(env)
+            try:
+                job = dbm.get_job(conn, created_job_id)
+                self.assertIsNotNone(job)
+                self.assertEqual(job["state"], "DRAFT")
+            finally:
+                conn.close()
+
     def test_execute_create_mode_uses_global_gdrive_token_path_for_drive_client(self) -> None:
         with temp_env() as (td, env):
             os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
@@ -507,36 +537,6 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             self.assertEqual(execute.status_code, 200)
             self.assertEqual(execute.json()["summary"]["created"], 1)
             self.assertEqual(observed.get("oauth_token_json"), os.path.join(td.name, "secure", "gdrive_token.json"))
-
-            token_path = oauth_token_path(base_dir=Env.load().gdrive_tokens_dir, channel_slug="darkwood-reverie")
-            token_path.parent.mkdir(parents=True, exist_ok=True)
-            token_path.write_text("{}", encoding="utf-8")
-
-            mod, client = self._new_client()
-            mod._create_drive_client = lambda _env: object()
-            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
-            mod._render_selected_item = lambda _job_id_text: (_ for _ in ()).throw(RuntimeError("enqueue exploded"))
-
-            h = basic_auth_header(env.basic_user, env.basic_pass)
-            resp = client.post(
-                "/v1/ui/jobs/bulk-json/execute",
-                headers=h,
-                json={"mode": "create_and_enqueue", "items": [self._create_item(channel_id, title="B crash")]},
-            )
-            self.assertEqual(resp.status_code, 200)
-            payload = resp.json()
-            self.assertEqual(payload["mode"], "create_and_enqueue")
-            self.assertEqual(payload["summary"], {"requested": 1, "created": 1, "enqueued": 0, "noop": 0, "failed": 1})
-            self.assertEqual(payload["results"][0]["enqueue"], {"job_id": payload["results"][0]["job_id"], "error": {"code": "UIJ_INTERNAL", "message": "Internal error"}})
-
-            created_job_id = int(payload["results"][0]["job_id"])
-            conn = dbm.connect(env)
-            try:
-                job = dbm.get_job(conn, created_job_id)
-                self.assertIsNotNone(job)
-                self.assertEqual(job["state"], "DRAFT")
-            finally:
-                conn.close()
 
 
 if __name__ == "__main__":
