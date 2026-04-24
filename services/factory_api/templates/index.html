@@ -95,6 +95,7 @@
 </table>
 <h3>OAuth Tokens</h3>
 <p>
+  <button type="button" id="global-gdrive-token-btn">Global GDrive token</button>
   <button type="button" id="oauth-refresh-btn">Refresh status</button>
   <span class="muted" id="oauth-refresh-note"></span>
 </p>
@@ -118,7 +119,27 @@
 <dialog id="jobs-bulk-modal" style="width:min(960px,95vw);">
 <h2>Jobs · Bulk JSON Editor</h2>
 <p class="muted">Preview and execute bulk job operations via existing UI contracts.</p>
-<p class="muted">Example item: <code>{"channel_slug":"deep-space","release_title":"Night Ride"}</code></p>
+<p class="muted">Example payload (copy/paste ready):</p>
+<pre class="muted" id="jobs-bulk-example-payload" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:8px;white-space:pre-wrap;">{
+  "mode": "create_and_enqueue",
+  "items": [
+    {
+      "channel_id": 1,
+      "title": "Darkwood Reverie — Midnight Transit",
+      "description": "Ambient release generated via Bulk JSON Editor.",
+      "tags_csv": "ambient,night,focus",
+      "playlist_ids": ["PL_DARKWOOD_FEATURED", "PL_DARKWOOD_AMBIENT"],
+      "playlist_create_title": "Darkwood Reverie • New Arrivals",
+      "audience_is_for_kids": false,
+      "video_language": "English",
+      "cover_name": "cover_midnight_transit",
+      "cover_ext": "png",
+      "background_name": "bg_midnight_transit",
+      "background_ext": "jpg",
+      "audio_ids_text": "001 015 027"
+    }
+  ]
+}</pre>
 <p>
   <label for="jobs-bulk-mode"><strong>Mode:</strong></label>
   <select id="jobs-bulk-mode">
@@ -202,6 +223,9 @@
         {% if j.actions and j.actions.retry_allowed == true %}
         <button type="button" class="jobs-retry-btn" data-job-id="{{ j.id }}">Retry</button>
         {% endif %}
+        {% if j.state|upper == 'UPLOAD_FAILED' %}
+        <button type="button" class="jobs-reupload-btn" data-job-id="{{ j.id }}">Reupload</button>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}
@@ -244,6 +268,7 @@
   const channelsTableBody = document.querySelector('#channels-table tbody');
   const channelNote = document.getElementById('channel-note');
   const refreshBtn = document.getElementById('oauth-refresh-btn');
+  const globalGDriveTokenBtn = document.getElementById('global-gdrive-token-btn');
   const refreshNote = document.getElementById('oauth-refresh-note');
   const oauthTableBody = document.querySelector('#oauth-status-table tbody');
   const trackJobStatusBySlug = {};
@@ -513,6 +538,9 @@
     if (retryAllowedForJob(job)) {
       parts.push('<button type="button" class="jobs-retry-btn" data-job-id="' + esc(job.id) + '">Retry</button>');
     }
+    if (normalizeStatus(job.state) === 'UPLOAD_FAILED') {
+      parts.push('<button type="button" class="jobs-reupload-btn" data-job-id="' + esc(job.id) + '">Reupload</button>');
+    }
 
     return parts.join(' ');
   }
@@ -696,6 +724,34 @@
     }
   }
 
+  async function reuploadJob(jobId, buttonEl) {
+    if (!jobId) {
+      return;
+    }
+    if (buttonEl) {
+      buttonEl.disabled = true;
+    }
+    try {
+      const res = await fetch('/v1/ui/jobs/' + encodeURIComponent(jobId) + '/reupload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        const errorMessage = data.error ? data.error.message : 'Failed to reupload job';
+        setJobsMessage(errorMessage, 'error');
+        return;
+      }
+      setJobsMessage(data.message || 'Reupload scheduled', 'success');
+      await refreshJobsList();
+    } catch (err) {
+      setJobsMessage(err.message || 'Failed to reupload job', 'error');
+      if (buttonEl) {
+        buttonEl.disabled = false;
+      }
+    }
+  }
+
   function bindJobsTableEventHandlers() {
     jobsTableBody.querySelectorAll('.jobs-row-checkbox').forEach((checkbox) => {
       checkbox.addEventListener('change', () => {
@@ -722,6 +778,12 @@
     jobsTableBody.querySelectorAll('.jobs-retry-btn').forEach((button) => {
       button.addEventListener('click', async () => {
         await retryJob(button.getAttribute('data-job-id') || '', button);
+      });
+    });
+
+    jobsTableBody.querySelectorAll('.jobs-reupload-btn').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await reuploadJob(button.getAttribute('data-job-id') || '', button);
       });
     });
   }
@@ -939,6 +1001,23 @@
     if (!res.ok) {
       const body = await res.text();
       throw new Error('Failed to start Add Channel OAuth: ' + body);
+    }
+    const data = await res.json();
+    if (!data.auth_url) {
+      throw new Error('Missing auth_url in response');
+    }
+    window.open(data.auth_url, '_blank', 'noopener');
+  }
+
+  async function startGlobalGDriveOauth() {
+    const res = await fetch('/v1/oauth/gdrive_global/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      const detail = extractApiErrorMessage(body);
+      throw new Error(detail || ('Global Drive OAuth failed with status ' + res.status + '.'));
     }
     const data = await res.json();
     if (!data.auth_url) {
@@ -1283,9 +1362,39 @@
     refreshAll();
   });
   refreshBtn.addEventListener('click', refreshAll);
+  globalGDriveTokenBtn.addEventListener('click', async () => {
+    try {
+      refreshNote.textContent = 'Starting global Drive OAuth flow...';
+      await startGlobalGDriveOauth();
+      refreshNote.textContent = 'OAuth window opened. Complete consent, then wait for auto-refresh or click Refresh status.';
+      pollCount = 0;
+      pollStatus();
+    } catch (err) {
+      refreshNote.textContent = err.message;
+    }
+  });
   jobsBulkPreviewBtn.addEventListener('click', () => jobsBulkRequest('preview'));
   jobsBulkExecuteBtn.addEventListener('click', () => jobsBulkRequest('execute'));
-  jobsBulkJson.value = JSON.stringify({ mode: 'create_draft_jobs', items: [] }, null, 2);
+  jobsBulkJson.value = JSON.stringify({
+    mode: 'create_and_enqueue',
+    items: [
+      {
+        channel_id: 1,
+        title: 'Darkwood Reverie — Midnight Transit',
+        description: 'Ambient release generated via Bulk JSON Editor.',
+        tags_csv: 'ambient,night,focus',
+        playlist_ids: ['PL_DARKWOOD_FEATURED', 'PL_DARKWOOD_AMBIENT'],
+        playlist_create_title: 'Darkwood Reverie • New Arrivals',
+        audience_is_for_kids: false,
+        video_language: 'English',
+        cover_name: 'cover_midnight_transit',
+        cover_ext: 'png',
+        background_name: 'bg_midnight_transit',
+        background_ext: 'jpg',
+        audio_ids_text: '001 015 027',
+      },
+    ],
+  }, null, 2);
   initJobsStatusFilter();
   refreshAll();
 })();

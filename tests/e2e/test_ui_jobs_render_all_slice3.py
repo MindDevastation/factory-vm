@@ -22,7 +22,81 @@ class FakeDrive:
         return list(self.tree.get(parent_id, []))
 
 
+class _PreflightOk:
+    ok = True
+    resolved = {
+        "tracks": [{"file_id": "track1", "filename": "track1.wav"}],
+        "background_file_id": "bg1",
+        "background_filename": "bg1.png",
+        "cover_file_id": "cover1",
+        "cover_filename": "cover1.png",
+    }
+
+
 class TestUiJobsRenderAllSlice3(unittest.TestCase):
+    def test_render_all_processes_draft_jobs_by_id_ascending(self) -> None:
+        with temp_env() as (_, _):
+            os.environ["GDRIVE_ROOT_ID"] = "root"
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            env = Env.load()
+            seed_minimal_db(env)
+
+            token_path = oauth_token_path(base_dir=env.gdrive_tokens_dir, channel_slug="darkwood-reverie")
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch
+                low_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="Low",
+                    description="",
+                    tags_csv="one,two",
+                    cover_name="cover",
+                    cover_ext="png",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                high_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="High",
+                    description="",
+                    tags_csv="one,two",
+                    cover_name="cover",
+                    cover_ext="png",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                conn.execute("UPDATE jobs SET created_at=? WHERE id=?", (200.0, low_id))
+                conn.execute("UPDATE jobs SET created_at=? WHERE id=?", (100.0, high_id))
+                conn.commit()
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            mod._create_drive_client = lambda _env: object()
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
+            seen: list[int] = []
+
+            def _record_enqueue(conn, *, job_id, channel_id, tracks, background_file_id, background_filename, cover_file_id, cover_filename):
+                seen.append(int(job_id))
+                return mod.UiRenderEnqueueResult(enqueued=True, reason="enqueued")
+
+            mod.enqueue_ui_render_job = _record_enqueue
+
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            rr = client.post("/v1/ui/jobs/render_all", headers=h)
+            self.assertEqual(rr.status_code, 200)
+            self.assertEqual(seen, sorted([low_id, high_id]))
+
     def test_render_all_enqueues_ui_drafts_and_creates_inputs(self) -> None:
         with temp_env() as (_, _):
             os.environ["GDRIVE_ROOT_ID"] = "root"

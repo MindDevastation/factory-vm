@@ -264,6 +264,11 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(authorized.status_code, 200)
             self.assertEqual(authorized.json()["auth_url"], "https://accounts.google.com/auth")
 
+            with mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/global-auth"):
+                authorized_global = client.post("/v1/oauth/gdrive_global/start", headers=h)
+            self.assertEqual(authorized_global.status_code, 200)
+            self.assertEqual(authorized_global.json()["auth_url"], "https://accounts.google.com/global-auth")
+
             missing = client.post("/v1/oauth/gdrive/missing-channel/start", headers=h)
             self.assertEqual(missing.status_code, 404)
 
@@ -303,6 +308,34 @@ class TestApiMoreEndpoints(unittest.TestCase):
             yt_token = Path(td.name) / "yt_tokens" / "darkwood-reverie" / "token.json"
             self.assertTrue(yt_token.is_file())
             self.assertIn("yt-token", yt_token.read_text(encoding="utf-8"))
+
+    def test_oauth_global_gdrive_callback_writes_global_token_path(self) -> None:
+        with temp_env() as (td, _env0):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            import os
+            os.environ["OAUTH_REDIRECT_BASE_URL"] = "http://localhost:8080"
+            os.environ["OAUTH_STATE_SECRET"] = "state-secret"
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = str(Path(td.name) / "gdrive_client.json")
+            os.environ["GDRIVE_TOKENS_DIR"] = str(Path(td.name) / "gdrive_tokens")
+            os.environ["GDRIVE_OAUTH_TOKEN_JSON"] = str(Path(td.name) / "secure" / "gdrive_token.json")
+            os.environ["YT_CLIENT_SECRET_JSON"] = str(Path(td.name) / "yt_client.json")
+            os.environ["YT_TOKENS_DIR"] = str(Path(td.name) / "yt_tokens")
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            state = mod.sign_state(secret="state-secret", kind="gdrive_global")
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"global-gdrive-token"}'):
+                response = client.get(f"/v1/oauth/gdrive_global/callback?code=fake-code&state={state}", headers=h)
+            self.assertEqual(response.status_code, 200)
+
+            token_path = Path(td.name) / "secure" / "gdrive_token.json"
+            self.assertTrue(token_path.is_file())
+            self.assertIn("global-gdrive-token", token_path.read_text(encoding="utf-8"))
 
     def test_oauth_status_reports_presence_without_reading_contents(self) -> None:
         with temp_env() as (td, _env0):

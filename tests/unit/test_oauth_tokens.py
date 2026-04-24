@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from services.factory_api.oauth_tokens import (
+    YOUTUBE_SCOPE,
     ensure_token_dir,
     oauth_token_path,
     sign_state,
@@ -51,6 +52,10 @@ class TestOauthTokens(unittest.TestCase):
         payload = verify_state(secret="secret", expected_kind="youtube_add_channel", state=state, require_channel_slug=False)
         self.assertEqual(payload["kind"], "youtube_add_channel")
         self.assertNotIn("channel_slug", payload)
+
+    def test_youtube_oauth_scope_includes_playlist_management(self) -> None:
+        self.assertIn("https://www.googleapis.com/auth/youtube.upload", YOUTUBE_SCOPE)
+        self.assertIn("https://www.googleapis.com/auth/youtube", YOUTUBE_SCOPE)
 
 
 if __name__ == "__main__":

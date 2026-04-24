@@ -17,8 +17,8 @@ from services.common.env import Env
 
 GDRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 YOUTUBE_SCOPE = [
-    "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube",
 ]
 _STATE_TTL_SECONDS = 600
 
