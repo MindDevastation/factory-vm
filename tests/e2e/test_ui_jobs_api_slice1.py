@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from services.common import db as dbm
 from services.common.env import Env
+from services.common.paths import outbox_dir
 
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
@@ -466,6 +467,97 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                 self.assertEqual(str(release_title["playlist_create_title"]), "New Playlist")
             finally:
                 conn2.close()
+
+    def test_upload_failed_background_change_requires_rerender(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                self.assertIsNotNone(ch)
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+
+            class _PreflightOk:
+                ok = True
+                field_errors = {}
+                resolved = {}
+
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _PreflightOk()
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            payload = {
+                "channel_id": channel_id,
+                "title": "Before upload",
+                "description": "desc",
+                "tags_csv": "one,two",
+                "playlist_ids": ["PL_A"],
+                "audience_is_for_kids": False,
+                "video_language": "en",
+                "cover_name": "cover",
+                "cover_ext": "png",
+                "background_name": "bg",
+                "background_ext": "jpg",
+                "audio_ids_text": "001 015",
+            }
+            created = client.post("/v1/ui/jobs", json=payload, headers=h)
+            self.assertEqual(created.status_code, 200)
+            job_id = int(created.json()["job_id"])
+
+            conn2 = dbm.connect(env)
+            try:
+                dbm.update_job_state(conn2, job_id, state="UPLOAD_FAILED", stage="UPLOAD")
+                conn2.execute(
+                    "INSERT INTO youtube_uploads(job_id, video_id, url, studio_url, privacy, uploaded_at, error) VALUES(?,?,?,?,?,?,?)",
+                    (job_id, "vid-old", "https://old", "https://studio-old", "private", dbm.now_ts(), "upload failed"),
+                )
+                conn2.execute(
+                    "INSERT INTO assets(channel_id, kind, origin, origin_id, name, path, created_at) VALUES(?,?,?,?,?,?,?)",
+                    (channel_id, "IMAGE", "GDRIVE", "bg-old-id", "bg.jpg", "gdrive:bg-old-id", dbm.now_ts()),
+                )
+                asset_id = int(conn2.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+                conn2.execute(
+                    "INSERT INTO job_inputs(job_id, asset_id, role, order_index) VALUES(?,?,?,?)",
+                    (job_id, asset_id, "BACKGROUND", 0),
+                )
+                conn2.commit()
+            finally:
+                conn2.close()
+
+            mp4 = outbox_dir(env, job_id) / "render.mp4"
+            mp4.parent.mkdir(parents=True, exist_ok=True)
+            mp4.write_bytes(b"stale-render")
+
+            update_payload = dict(payload)
+            update_payload["background_name"] = "bg-new"
+            update_payload["background_ext"] = "png"
+            updated = client.post(f"/v1/ui/jobs/{job_id}", json=update_payload, headers=h)
+            self.assertEqual(updated.status_code, 200)
+
+            reupload = client.post(f"/v1/ui/jobs/{job_id}/reupload", headers=h)
+            self.assertEqual(reupload.status_code, 409)
+            self.assertEqual(reupload.json()["error"]["code"], "UIJ_REUPLOAD_NOT_ALLOWED")
+
+            conn3 = dbm.connect(env)
+            try:
+                draft = dbm.get_ui_job_draft(conn3, job_id)
+                self.assertEqual(str(draft["background_name"]), "bg-new")
+                self.assertEqual(str(draft["background_ext"]), "png")
+                job = dbm.get_job(conn3, job_id)
+                self.assertEqual(str(job["state"]), "DRAFT")
+                self.assertEqual(str(job["stage"]), "DRAFT")
+                yt_row = conn3.execute("SELECT job_id FROM youtube_uploads WHERE job_id = ?", (job_id,)).fetchone()
+                input_row = conn3.execute("SELECT asset_id FROM job_inputs WHERE job_id = ?", (job_id,)).fetchone()
+            finally:
+                conn3.close()
+            self.assertIsNone(yt_row)
+            self.assertIsNone(input_row)
+            self.assertFalse(mp4.exists())
 
 
 if __name__ == "__main__":

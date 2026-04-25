@@ -16,6 +16,7 @@
 {% set allowed_exts = ['png', 'jpg', 'jpeg'] %}
 {% set form_cover_ext = (form.cover_ext|default('')|lower) %}
 {% set form_background_ext = (form.background_ext|default('')|lower) %}
+{% set background_inputs_locked = background_locked|default(render_locked) %}
 
 <form method="post" action="{% if mode == 'create' %}/ui/jobs/create{% else %}/ui/jobs/{{ job_id }}/edit{% endif %}">
   <h3>A) YouTube metadata</h3>
@@ -252,9 +253,9 @@
   <p id="playlist-overwrite-warning" style="color:#92400e; {% if not form.audio_ids_text %}display:none;{% endif %}"><b>Warning:</b> existing playlist will be replaced only after Apply.</p>
   {% if field_errors.audio %}<p style="color:#b91c1c">{{ field_errors.audio|join('; ') }}</p>{% endif %}
 
-  <p><label>Background name* <input name="background_name" value="{{ form.background_name|default('') }}" {% if render_locked %}disabled{% endif %}></label>
+  <p><label>Background name* <input name="background_name" value="{{ form.background_name|default('') }}" {% if background_inputs_locked %}disabled{% endif %}></label>
      <label>ext*
-       <select name="background_ext" {% if render_locked %}disabled{% endif %}>
+       <select name="background_ext" {% if background_inputs_locked %}disabled{% endif %}>
          <option value="">—</option>
          {% for ext in allowed_exts %}
          <option value="{{ ext }}" {% if form_background_ext == ext %}selected{% endif %}>{{ ext }}</option>
@@ -265,6 +266,9 @@
        </select>
      </label></p>
   {% if field_errors.background %}<p style="color:#b91c1c">{{ field_errors.background|join('; ') }}</p>{% endif %}
+  {% if mode == 'edit' and not background_inputs_locked and render_locked %}
+  <p style="color:#92400e;"><b>Note:</b> Changing background for an Upload Failed job requires rerender before upload/reupload.</p>
+  {% endif %}
 
   {% if not locked %}<p><button type="submit">{% if render_locked %}Save metadata{% else %}Save DRAFT{% endif %}</button></p>{% endif %}
 </form>
