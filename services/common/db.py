@@ -2527,6 +2527,34 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_prompt_registry_columns(conn)
     _ensure_prompt_bindings_schema(conn)
     _ensure_prompt_usage_events_schema(conn)
+    _backfill_video_language_values(conn)
+
+
+def _backfill_video_language_values(conn: sqlite3.Connection) -> None:
+    # Only rewrite known legacy labels to canonical codes; keep unknowns untouched.
+    mappings = (
+        ("english", "en"),
+        ("ukrainian", "uk"),
+        ("russian", "ru"),
+        ("spanish", "es"),
+    )
+    for raw_label, normalized_code in mappings:
+        conn.execute(
+            """
+            UPDATE releases
+            SET video_language = ?
+            WHERE LOWER(TRIM(COALESCE(video_language, ''))) = ?
+            """,
+            (normalized_code, raw_label),
+        )
+        conn.execute(
+            """
+            UPDATE ui_job_drafts
+            SET video_language = ?
+            WHERE LOWER(TRIM(COALESCE(video_language, ''))) = ?
+            """,
+            (normalized_code, raw_label),
+        )
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:

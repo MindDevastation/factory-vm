@@ -238,6 +238,51 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                 ],
             })
 
+    def test_bulk_create_normalizes_video_language_labels(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                assert ch is not None
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod, client = self._new_client()
+            mod._create_drive_client = lambda _env: object()
+            mod.run_preflight_for_job = lambda conn, _env, _job_id, drive: _PreflightOk()
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            item = self._create_item(channel_id, title="Legacy Language")
+            item["video_language"] = "English"
+            execute = client.post(
+                "/v1/ui/jobs/bulk-json/execute",
+                headers=h,
+                json={"mode": "create_draft_jobs", "items": [item]},
+            )
+            self.assertEqual(execute.status_code, 200)
+            body = execute.json()
+            self.assertEqual(body["results"][0]["metadata"]["video_language"], "en")
+            job_id = int(body["results"][0]["job_id"])
+
+            conn2 = dbm.connect(env)
+            try:
+                draft = conn2.execute("SELECT video_language FROM ui_job_drafts WHERE job_id = ?", (job_id,)).fetchone()
+                release = conn2.execute(
+                    "SELECT video_language FROM releases WHERE id = (SELECT release_id FROM jobs WHERE id = ?)",
+                    (job_id,),
+                ).fetchone()
+            finally:
+                conn2.close()
+
+            assert draft is not None
+            assert release is not None
+            self.assertEqual(str(draft["video_language"]), "en")
+            self.assertEqual(str(release["video_language"]), "en")
+
     def test_bulk_playlist_builder_preview_and_execute_for_create_modes(self) -> None:
         with temp_env() as (_, env):
             os.environ["GDRIVE_TOKENS_DIR"] = os.path.join(os.environ["FACTORY_STORAGE_ROOT"], "gdrive_tokens")
