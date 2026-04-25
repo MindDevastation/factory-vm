@@ -387,9 +387,20 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                 ).fetchone()
                 self.assertEqual(str(release["title"]), "Updated after upload failed")
                 self.assertEqual(str(release["video_language"]), "es")
-                dbm.update_job_state(conn3, job_id, state="UPLOADING", stage="UPLOAD")
+                job_after_metadata_edit = dbm.get_job(conn3, job_id)
             finally:
                 conn3.close()
+            self.assertEqual(str(job_after_metadata_edit["state"]), "UPLOAD_FAILED")
+
+            reupload_eligibility = client.post(f"/v1/ui/jobs/{job_id}/reupload", headers=h)
+            self.assertEqual(reupload_eligibility.status_code, 409)
+            self.assertEqual(reupload_eligibility.json()["error"]["code"], "UIJ_REUPLOAD_RENDER_MISSING")
+
+            conn3b = dbm.connect(env)
+            try:
+                dbm.update_job_state(conn3b, job_id, state="UPLOADING", stage="UPLOAD")
+            finally:
+                conn3b.close()
 
             uploading_payload = dict(update_payload)
             uploading_payload["title"] = "Blocked while uploading"
