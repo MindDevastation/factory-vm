@@ -386,10 +386,21 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                 ).fetchone()
                 self.assertEqual(str(release["title"]), "Updated after upload failed")
                 self.assertEqual(str(release["video_language"]), "es")
+                dbm.update_job_state(conn3, job_id, state="UPLOADING", stage="UPLOAD")
+            finally:
+                conn3.close()
 
-                dbm.update_job_state(conn3, job_id, state="WAIT_APPROVAL", stage="APPROVAL")
+            uploading_payload = dict(update_payload)
+            uploading_payload["title"] = "Blocked while uploading"
+            uploading_blocked = client.post(f"/v1/ui/jobs/{job_id}", json=uploading_payload, headers=h)
+            self.assertEqual(uploading_blocked.status_code, 409)
+
+            conn4 = dbm.connect(env)
+            try:
+                dbm.update_job_state(conn4, job_id, state="UPLOAD_FAILED", stage="UPLOAD")
+                dbm.update_job_state(conn4, job_id, state="WAIT_APPROVAL", stage="APPROVAL")
                 dbm.set_youtube_upload(
-                    conn3,
+                    conn4,
                     job_id,
                     video_id="yt1",
                     url="https://www.youtube.com/watch?v=yt1",
@@ -397,7 +408,7 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                     privacy="private",
                 )
             finally:
-                conn3.close()
+                conn4.close()
 
             blocked_payload = dict(update_payload)
             blocked_payload["title"] = "Should be blocked"

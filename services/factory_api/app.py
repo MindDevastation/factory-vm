@@ -5231,6 +5231,18 @@ def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
     return {k: v for k, v in errors.items() if v}
 
 
+_METADATA_EDIT_PREUPLOAD_STATES = {
+    "DRAFT",
+    "WAITING_INPUTS",
+    "FETCHING_INPUTS",
+    "READY_FOR_RENDER",
+    "RENDERING",
+    "RENDER_FAILED",
+    "FAILED",
+    "QA_RUNNING",
+    "QA_FAILED",
+}
+_UPLOAD_INFLIGHT_STATES = {"UPLOADING"}
 _UPLOAD_SUCCESS_LOCK_STATES = {"WAIT_APPROVAL", "APPROVED", "REJECTED", "PUBLISHED", "CANCELLED", "CLEANED"}
 
 
@@ -5245,6 +5257,10 @@ def _metadata_edit_allowed(conn: Any, *, job: dict[str, Any]) -> bool:
     state = str(job.get("state") or "")
     if state == "UPLOAD_FAILED":
         return True
+    if state in _UPLOAD_INFLIGHT_STATES:
+        return False
+    if state not in _METADATA_EDIT_PREUPLOAD_STATES:
+        return False
     if state in _UPLOAD_SUCCESS_LOCK_STATES:
         return False
     return not _has_successful_upload(conn, job_id=int(job["id"]))
