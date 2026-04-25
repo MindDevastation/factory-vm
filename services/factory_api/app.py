@@ -27,6 +27,7 @@ from services.common.env import Env
 from services.common.disk_guard import classify_write_block, emit_disk_pressure_event, evaluate_disk_pressure_for_env
 from services.common.disk_thresholds import DiskPressureLevel
 from services.common import db as dbm
+from services.common.video_language import DEFAULT_VIDEO_LANGUAGE, normalize_video_language
 from services.common.pydeps import ensure_py_deps_on_sys_path
 from services.factory_api.security import require_basic_auth
 from services.common.paths import logs_path, outbox_dir, preview_path, qa_path, workspace_dir
@@ -5209,6 +5210,8 @@ def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
         errors["project"].append("playlist create title must be <= 150 chars")
     if not payload.video_language.strip():
         errors["project"].append("video language is required")
+    elif normalize_video_language(payload.video_language) is None:
+        errors["project"].append("video language must be a supported 2-letter code (for example: en, uk, ru, es)")
     if not payload.title.strip():
         errors["title"].append("title is required")
     if not payload.audio_ids_text.strip():
@@ -5318,6 +5321,15 @@ def _ui_validate_playlist_builder_draft(payload: UiPlaylistBuilderDraftPayload) 
 
 def _bulk_json_invalid(message: str) -> JSONResponse:
     return _uij_error(400, "UIJ_BULK_INVALID_INPUT", message)
+
+
+def _normalized_video_language_or_default(video_language: str | None) -> str:
+    normalized = normalize_video_language(video_language)
+    if normalized:
+        return normalized
+    if not str(video_language or "").strip():
+        return DEFAULT_VIDEO_LANGUAGE
+    return DEFAULT_VIDEO_LANGUAGE
 
 
 _RECOVERY_FAIL_STATES = {"FAILED", "RENDER_FAILED", "QA_FAILED", "UPLOAD_FAILED"}
@@ -5683,7 +5695,7 @@ def _create_ui_job_draft_with_preflight(
             playlists_json=json.dumps(playlist_ids, ensure_ascii=False),
             playlist_create_title=playlist_create_title.strip() or None,
             audience_is_for_kids=1 if audience_is_for_kids else 0,
-            video_language=video_language.strip() or "en",
+            video_language=_normalized_video_language_or_default(video_language),
             cover_name=cover_name,
             cover_ext=cover_ext,
             background_name=background_name,
@@ -5895,7 +5907,7 @@ def _form_from_draft(draft: dict[str, Any]) -> dict[str, Any]:
     form["playlist_ids"] = [str(x) for x in playlist_ids if str(x).strip()]
     form["playlist_create_title"] = str(form.get("playlist_create_title") or "")
     form["audience_is_for_kids"] = bool(int(form.get("audience_is_for_kids") or 0))
-    form["video_language"] = str(form.get("video_language") or "en")
+    form["video_language"] = _normalized_video_language_or_default(str(form.get("video_language") or DEFAULT_VIDEO_LANGUAGE))
     return form
 
 
@@ -6524,7 +6536,7 @@ def api_ui_jobs_bulk_json_preview(payload: UiJobsBulkJsonPayload, _: bool = Depe
                             "playlist_ids": parsed.playlist_ids,
                             "playlist_create_title": parsed.playlist_create_title.strip(),
                             "audience_is_for_kids": parsed.audience_is_for_kids,
-                            "video_language": parsed.video_language.strip() or "en",
+                            "video_language": _normalized_video_language_or_default(parsed.video_language),
                         },
                     }
                     if playlist_preview is not None:
@@ -6588,7 +6600,7 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
                 playlists_json=json.dumps(item.playlist_ids, ensure_ascii=False),
                 playlist_create_title=item.playlist_create_title.strip() or None,
                 audience_is_for_kids=1 if item.audience_is_for_kids else 0,
-                video_language=item.video_language.strip() or "en",
+                video_language=_normalized_video_language_or_default(item.video_language),
                 cover_name=item.cover_name.strip() or None,
                 cover_ext=item.cover_ext.strip() or None,
                 background_name=item.background_name.strip(),
@@ -6641,7 +6653,7 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
                 "playlist_ids": item_payload.playlist_ids,
                 "playlist_create_title": item_payload.playlist_create_title.strip(),
                 "audience_is_for_kids": item_payload.audience_is_for_kids,
-                "video_language": item_payload.video_language.strip() or "en",
+                "video_language": _normalized_video_language_or_default(item_payload.video_language),
             },
         }
         playlist_meta = playlist_meta_by_job.get(job_id)
@@ -7133,7 +7145,7 @@ def api_update_ui_job(job_id: int, payload: UiJobDraftPayload, _: bool = Depends
             playlists_json=json.dumps(payload.playlist_ids, ensure_ascii=False),
             playlist_create_title=payload.playlist_create_title.strip() or None,
             audience_is_for_kids=1 if payload.audience_is_for_kids else 0,
-            video_language=payload.video_language.strip() or "en",
+            video_language=_normalized_video_language_or_default(payload.video_language),
             cover_name=payload.cover_name.strip() or None,
             cover_ext=(payload.cover_ext.strip() or None) if state == "DRAFT" else (str(d.get("cover_ext") or "").strip() or None),
             background_name=payload.background_name.strip() if can_edit_background else str(d.get("background_name") or "").strip(),
@@ -7175,7 +7187,7 @@ def ui_jobs_create_page(request: Request, _: bool = Depends(require_basic_auth(e
             "mode": "create",
             "channels": channels,
             "field_errors": {},
-            "form": {"playlist_ids": [], "playlist_create_title": "", "audience_is_for_kids": False, "video_language": "en"},
+            "form": {"playlist_ids": [], "playlist_create_title": "", "audience_is_for_kids": False, "video_language": DEFAULT_VIDEO_LANGUAGE},
             "job_id": None,
             "release_id": None,
             "locked": False,
@@ -7212,7 +7224,7 @@ async def ui_jobs_create_submit(
     playlist_ids = [v.strip() for v in raw.get("playlist_ids", []) if str(v).strip()]
     playlist_create_title = getv("playlist_create_title")
     audience_is_for_kids = getv("audience_is_for_kids") == "yes"
-    video_language = getv("video_language") or "en"
+    video_language = getv("video_language") or DEFAULT_VIDEO_LANGUAGE
     cover_name = getv("cover_name")
     cover_ext = getv("cover_ext")
     background_name = getv("background_name")
@@ -7284,7 +7296,7 @@ async def ui_jobs_create_submit(
                 playlists_json=json.dumps(payload.playlist_ids, ensure_ascii=False),
                 playlist_create_title=payload.playlist_create_title.strip() or None,
                 audience_is_for_kids=1 if payload.audience_is_for_kids else 0,
-                video_language=payload.video_language.strip() or "en",
+                video_language=_normalized_video_language_or_default(payload.video_language),
                 cover_name=payload.cover_name.strip() or None,
                 cover_ext=payload.cover_ext.strip() or None,
                 background_name=payload.background_name.strip(),
@@ -7394,7 +7406,7 @@ async def ui_jobs_edit_submit(
     playlist_ids = [v.strip() for v in raw.get("playlist_ids", []) if str(v).strip()]
     playlist_create_title = getv("playlist_create_title")
     audience_is_for_kids = getv("audience_is_for_kids") == "yes"
-    video_language = getv("video_language") or "en"
+    video_language = getv("video_language") or DEFAULT_VIDEO_LANGUAGE
     cover_name = getv("cover_name")
     cover_ext = getv("cover_ext")
     background_name = getv("background_name")
@@ -7480,7 +7492,7 @@ async def ui_jobs_edit_submit(
             playlists_json=json.dumps(payload.playlist_ids, ensure_ascii=False),
             playlist_create_title=payload.playlist_create_title.strip() or None,
             audience_is_for_kids=1 if payload.audience_is_for_kids else 0,
-            video_language=payload.video_language.strip() or "en",
+            video_language=_normalized_video_language_or_default(payload.video_language),
             cover_name=payload.cover_name.strip() or None,
             cover_ext=(payload.cover_ext.strip() or None) if state == "DRAFT" else (str(draft.get("cover_ext") or "").strip() or None),
             background_name=payload.background_name.strip() if can_edit_background else str(draft.get("background_name") or "").strip(),

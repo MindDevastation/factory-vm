@@ -96,6 +96,60 @@ class TestYouTubeIntegrationMocked(unittest.TestCase):
         self.assertEqual(body["snippet"]["defaultLanguage"], "es")
         self.assertEqual(body["snippet"]["defaultAudioLanguage"], "es")
 
+    def test_upload_private_normalizes_legacy_language_label(self):
+        from services.integrations import youtube as ytm
+
+        yt = SimpleNamespace()
+        req = SimpleNamespace(next_chunk=Mock(side_effect=[(None, {"id": "VID"})]))
+        yt.videos = Mock(return_value=SimpleNamespace(insert=Mock(return_value=req)))
+
+        with (
+            patch.object(ytm, "_GOOGLE_IMPORT_ERROR", None),
+            patch.object(ytm, "Credentials", SimpleNamespace(from_authorized_user_file=Mock(return_value=SimpleNamespace(valid=True)))),
+            patch.object(ytm, "build", Mock(return_value=yt)),
+            patch.object(ytm, "MediaFileUpload", Mock()),
+        ):
+            c = ytm.YouTubeClient(client_secret_json="client.json", token_json="token.json")
+            c._yt = yt
+            c.upload_private(
+                video_path=Path("/tmp/a.mp4"),
+                title="t",
+                description="d",
+                tags=["a"],
+                video_language="English",
+            )
+
+        body = yt.videos.return_value.insert.call_args.kwargs["body"]
+        self.assertEqual(body["snippet"]["defaultLanguage"], "en")
+        self.assertEqual(body["snippet"]["defaultAudioLanguage"], "en")
+
+    def test_upload_private_omits_language_fields_for_unsafe_value(self):
+        from services.integrations import youtube as ytm
+
+        yt = SimpleNamespace()
+        req = SimpleNamespace(next_chunk=Mock(side_effect=[(None, {"id": "VID"})]))
+        yt.videos = Mock(return_value=SimpleNamespace(insert=Mock(return_value=req)))
+
+        with (
+            patch.object(ytm, "_GOOGLE_IMPORT_ERROR", None),
+            patch.object(ytm, "Credentials", SimpleNamespace(from_authorized_user_file=Mock(return_value=SimpleNamespace(valid=True)))),
+            patch.object(ytm, "build", Mock(return_value=yt)),
+            patch.object(ytm, "MediaFileUpload", Mock()),
+        ):
+            c = ytm.YouTubeClient(client_secret_json="client.json", token_json="token.json")
+            c._yt = yt
+            c.upload_private(
+                video_path=Path("/tmp/a.mp4"),
+                title="t",
+                description="d",
+                tags=["a"],
+                video_language="Klingon",
+            )
+
+        body = yt.videos.return_value.insert.call_args.kwargs["body"]
+        self.assertNotIn("defaultLanguage", body["snippet"])
+        self.assertNotIn("defaultAudioLanguage", body["snippet"])
+
     def test_has_playlist_management_scope_uses_credentials(self):
         from services.integrations import youtube as ytm
 

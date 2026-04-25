@@ -10,6 +10,7 @@ from services.common import db as dbm
 from services.common.env import Env
 from services.common.logging_setup import get_logger
 from services.common.paths import cancel_flag_path, outbox_dir
+from services.common.video_language import DEFAULT_VIDEO_LANGUAGE, normalize_video_language
 from services.common.youtube_token_resolver import (
     YouTubeTokenResolutionError,
     resolve_channel_token_path,
@@ -52,7 +53,7 @@ def _resolve_playlist_targets(conn: Any, *, job_id: int) -> tuple[list[str], str
     return normalized_ids, title
 
 
-def _resolve_youtube_metadata(conn: Any, *, job_id: int) -> tuple[bool, str]:
+def _resolve_youtube_metadata(conn: Any, *, job_id: int) -> tuple[bool, str | None]:
     row = conn.execute(
         """
         SELECT r.audience_is_for_kids, r.video_language
@@ -65,7 +66,12 @@ def _resolve_youtube_metadata(conn: Any, *, job_id: int) -> tuple[bool, str]:
     if not row:
         return False, "en"
     audience_is_for_kids = bool(int(row.get("audience_is_for_kids") or 0))
-    video_language = str(row.get("video_language") or "").strip() or "en"
+    raw_video_language = str(row.get("video_language") or "").strip()
+    video_language = normalize_video_language(raw_video_language)
+    if raw_video_language and video_language is None:
+        log.warning("Unsupported persisted video_language=%r for job_id=%s; omitting language metadata", raw_video_language, job_id)
+    if not raw_video_language:
+        video_language = DEFAULT_VIDEO_LANGUAGE
     return audience_is_for_kids, video_language
 
 

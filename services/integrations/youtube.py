@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
+from services.common.video_language import normalize_video_language
+from services.common.logging_setup import get_logger
+
 # YouTube deps are optional (only required when UPLOAD_BACKEND is not 'mock').
 _GOOGLE_IMPORT_ERROR: Exception | None = None
 try:
@@ -25,6 +28,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube",
 ]
 PLAYLIST_WRITE_SCOPE = "https://www.googleapis.com/auth/youtube"
+log = get_logger("youtube.integration")
 
 
 @dataclass(frozen=True)
@@ -66,7 +70,7 @@ class YouTubeClient:
         audience_is_for_kids: bool = False,
         video_language: str = "en",
     ) -> UploadResult:
-        normalized_language = str(video_language or "").strip()
+        normalized_language = normalize_video_language(video_language)
         body = {
             "snippet": {
                 "title": title,
@@ -82,6 +86,8 @@ class YouTubeClient:
         if normalized_language:
             body["snippet"]["defaultLanguage"] = normalized_language
             body["snippet"]["defaultAudioLanguage"] = normalized_language
+        elif str(video_language or "").strip():
+            log.warning("Skipping unsafe video_language for YouTube metadata: %r", video_language)
         media = MediaFileUpload(str(video_path), chunksize=8 * 1024 * 1024, resumable=True)
         req = self._yt.videos().insert(part="snippet,status", body=body, media_body=media)
 

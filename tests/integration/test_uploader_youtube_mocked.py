@@ -91,7 +91,7 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
                 self.assertEqual(_FakeYT.last_init, ("/env/client_secret.json", str(token_path)))
                 self.assertEqual(_FakeYT.last_upload_kwargs, {"audience_is_for_kids": False, "video_language": "en"})
 
-    def test_youtube_backend_applies_audience_and_language_metadata(self) -> None:
+    def test_youtube_backend_normalizes_legacy_language_metadata(self) -> None:
         with temp_env() as (_, _env0):
             os.environ["UPLOAD_BACKEND"] = "youtube"
             os.environ["YT_CLIENT_SECRET_JSON"] = "/env/client_secret.json"
@@ -106,7 +106,7 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
                     conn.execute(
                         """
                         UPDATE releases
-                        SET audience_is_for_kids = 1, video_language = 'es'
+                        SET audience_is_for_kids = 1, video_language = 'English'
                         WHERE id = (SELECT release_id FROM jobs WHERE id = ?)
                         """,
                         (job_id,),
@@ -133,7 +133,7 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
                 finally:
                     upl.YouTubeClient = old  # type: ignore[assignment]
 
-                self.assertEqual(_FakeYT.last_upload_kwargs, {"audience_is_for_kids": True, "video_language": "es"})
+                self.assertEqual(_FakeYT.last_upload_kwargs, {"audience_is_for_kids": True, "video_language": "en"})
 
     def test_youtube_backend_missing_channel_token_is_terminal_upload_failed(self) -> None:
         with temp_env() as (_, _env0):

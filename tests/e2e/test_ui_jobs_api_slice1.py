@@ -78,6 +78,69 @@ class TestUiJobsApiSlice1(unittest.TestCase):
             finally:
                 conn2.close()
 
+    def test_create_and_update_normalize_video_language_labels(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                self.assertIsNotNone(ch)
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+
+            class _PreflightOk:
+                ok = True
+                field_errors = {}
+                resolved = {}
+
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _PreflightOk()
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+
+            payload = {
+                "channel_id": channel_id,
+                "title": "Language Legacy",
+                "description": "desc",
+                "tags_csv": "one,two",
+                "playlist_ids": [],
+                "audience_is_for_kids": False,
+                "video_language": "English",
+                "cover_name": "cover",
+                "cover_ext": "png",
+                "background_name": "bg",
+                "background_ext": "jpg",
+                "audio_ids_text": "001",
+            }
+            create = client.post("/v1/ui/jobs", json=payload, headers=h)
+            self.assertEqual(create.status_code, 200)
+            job_id = int(create.json()["job_id"])
+
+            update_payload = dict(payload)
+            update_payload["video_language"] = "EN"
+            update = client.post(f"/v1/ui/jobs/{job_id}", json=update_payload, headers=h)
+            self.assertEqual(update.status_code, 200)
+
+            conn2 = dbm.connect(env)
+            try:
+                release = conn2.execute(
+                    "SELECT video_language FROM releases WHERE id = (SELECT release_id FROM jobs WHERE id = ?)",
+                    (job_id,),
+                ).fetchone()
+                draft = conn2.execute("SELECT video_language FROM ui_job_drafts WHERE job_id = ?", (job_id,)).fetchone()
+            finally:
+                conn2.close()
+
+            assert release is not None
+            assert draft is not None
+            self.assertEqual(str(release["video_language"]), "en")
+            self.assertEqual(str(draft["video_language"]), "en")
+
 
     def test_playlist_builder_draft_create_relaxes_audio_and_background_only_for_builder_flow(self) -> None:
         with temp_env() as (_, _):
