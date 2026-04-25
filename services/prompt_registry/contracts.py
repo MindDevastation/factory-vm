@@ -14,6 +14,9 @@ SAFETY_CLASSES: Final[tuple[str, ...]] = (
 )
 BINDING_SCOPES: Final[tuple[str, ...]] = ("global", "workflow", "channel", "item")
 BINDING_STATUSES: Final[tuple[str, ...]] = ("active", "inactive")
+USAGE_EVENT_TYPES: Final[tuple[str, ...]] = ("version_preview", "resolved_preview")
+USAGE_EVENT_SOURCES: Final[tuple[str, ...]] = ("api",)
+USAGE_EVENT_STATUSES: Final[tuple[str, ...]] = ("OK", "INVALID", "ERROR")
 
 _ALLOWED_STATUS_TRANSITIONS: Final[dict[str, set[str]]] = {
     "draft": {"active", "inactive", "archived"},
@@ -80,6 +83,27 @@ def ensure_binding_status(value: Any) -> str:
     return normalized
 
 
+def ensure_usage_event_type(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in USAGE_EVENT_TYPES:
+        raise ValueError(f"event_type must be one of {', '.join(USAGE_EVENT_TYPES)}")
+    return normalized
+
+
+def ensure_usage_event_source(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in USAGE_EVENT_SOURCES:
+        raise ValueError(f"source must be one of {', '.join(USAGE_EVENT_SOURCES)}")
+    return normalized
+
+
+def ensure_usage_event_status(value: Any) -> str:
+    normalized = str(value or "").strip().upper()
+    if normalized not in USAGE_EVENT_STATUSES:
+        raise ValueError(f"status must be one of {', '.join(USAGE_EVENT_STATUSES)}")
+    return normalized
+
+
 def contracts_payload() -> dict[str, Any]:
     return {
         "record_type": list(RECORD_TYPES),
@@ -88,6 +112,9 @@ def contracts_payload() -> dict[str, Any]:
         "safety_class": list(SAFETY_CLASSES),
         "binding_scope": list(BINDING_SCOPES),
         "binding_status": list(BINDING_STATUSES),
+        "usage_event_type": list(USAGE_EVENT_TYPES),
+        "usage_event_source": list(USAGE_EVENT_SOURCES),
+        "usage_event_status": list(USAGE_EVENT_STATUSES),
     }
 
 

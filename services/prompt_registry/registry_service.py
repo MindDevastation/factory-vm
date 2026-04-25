@@ -15,6 +15,8 @@ from services.prompt_registry.contracts import (
     ensure_record_status,
     ensure_record_type,
     ensure_safety_class,
+    ensure_usage_event_status,
+    ensure_usage_event_type,
     ensure_validation_status,
 )
 from services.prompt_registry.errors import (
@@ -52,6 +54,58 @@ class PromptRegistryService:
                 event_type,
                 actor,
                 json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                self._now_iso(),
+            ),
+        )
+
+    @staticmethod
+    def _safe_variables_schema(version_variables: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        safe_items: list[dict[str, Any]] = []
+        for variable in version_variables:
+            safe_items.append(
+                {
+                    "name": str(variable.get("name") or ""),
+                    "safety_class": str(variable.get("safety_class") or ""),
+                    "required": bool(int(variable.get("required") or 0)),
+                    "has_default": bool(str(variable.get("default_value") or "")),
+                }
+            )
+        return safe_items
+
+    def _write_usage_event(
+        self,
+        *,
+        event_type: str,
+        status: str,
+        prompt_id: int | None = None,
+        version_id: int | None = None,
+        binding_id: int | None = None,
+        render_fingerprint: str | None = None,
+        context: dict[str, Any] | None = None,
+        variables_schema: list[dict[str, Any]] | None = None,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
+        normalized_event_type = ensure_usage_event_type(event_type)
+        normalized_status = ensure_usage_event_status(status)
+        self._conn.execute(
+            """
+            INSERT INTO prompt_usage_events(
+                prompt_id,version_id,binding_id,event_type,source,status,render_fingerprint,
+                context_json,variables_schema_json,diagnostics_json,created_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                prompt_id,
+                version_id,
+                binding_id,
+                normalized_event_type,
+                "api",
+                normalized_status,
+                self._nullable_text(render_fingerprint),
+                json.dumps(context or {}, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                json.dumps(variables_schema or [], ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                json.dumps(diagnostics or {}, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
                 self._now_iso(),
             ),
         )
@@ -425,7 +479,7 @@ class PromptRegistryService:
         )
         return item
 
-    def preview_version(self, version_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def preview_version(self, version_id: int, payload: dict[str, Any], *, _write_usage: bool = True) -> dict[str, Any]:
         version = self.get_version(version_id)
         raw_variables = payload.get("variables", {})
         if raw_variables is None:
@@ -501,7 +555,7 @@ class PromptRegistryService:
             "unresolved_placeholders": unresolved_placeholders,
             "declared_placeholders": sorted(declared_placeholder_names),
         }
-        return {
+        response = {
             "version_id": int(version["id"]),
             "prompt_id": int(version["prompt_id"]),
             "rendered_text": rendered_text,
@@ -512,6 +566,18 @@ class PromptRegistryService:
             "preview_status": preview_status,
             "diagnostics": diagnostics,
         }
+        if _write_usage:
+            self._write_usage_event(
+                event_type="version_preview",
+                status=preview_status,
+                prompt_id=int(version["prompt_id"]),
+                version_id=int(version["id"]),
+                render_fingerprint=render_fingerprint,
+                context={},
+                variables_schema=self._safe_variables_schema(list(declared_variables)),
+                diagnostics=diagnostics,
+            )
+        return response
 
 
     @staticmethod
@@ -693,10 +759,11 @@ class PromptRegistryService:
                 preview = self.preview_version(
                     int(active_version_id),
                     {"variables": raw_variables, "mask_sensitive": mask_sensitive},
+                    _write_usage=False,
                 )
 
         overall_status = "OK" if resolution["resolution_status"] == "matched" and preview["preview_status"] == "OK" else "INVALID"
-        return {
+        response = {
             "resolution": {
                 "winner_binding": resolution.get("winner_binding"),
                 "winner_prompt": resolution.get("winner_prompt"),
@@ -706,6 +773,164 @@ class PromptRegistryService:
             },
             "preview": preview,
             "overall_status": overall_status,
+        }
+        winner_prompt = resolution.get("winner_prompt") if isinstance(resolution.get("winner_prompt"), dict) else None
+        winner_binding = resolution.get("winner_binding") if isinstance(resolution.get("winner_binding"), dict) else None
+        version_variables: list[dict[str, Any]] = []
+        if preview.get("version_id") is not None:
+            version_row = self.get_version(int(preview["version_id"]))
+            version_variables = list(version_row.get("variables", []))
+        usage_context = {
+            "workflow_slug": self._nullable_text(payload.get("workflow_slug")),
+            "channel_slug": self._nullable_text(payload.get("channel_slug")),
+            "item_type": self._nullable_text(payload.get("item_type")),
+            "item_ref": self._nullable_text(payload.get("item_ref")),
+        }
+        self._write_usage_event(
+            event_type="resolved_preview",
+            status=overall_status,
+            prompt_id=int(winner_prompt["id"]) if isinstance(winner_prompt, dict) else None,
+            version_id=int(preview["version_id"]) if preview.get("version_id") is not None else None,
+            binding_id=int(winner_binding["binding_id"]) if isinstance(winner_binding, dict) else None,
+            render_fingerprint=self._nullable_text(preview.get("render_fingerprint")),
+            context=usage_context,
+            variables_schema=self._safe_variables_schema(version_variables),
+            diagnostics={
+                "resolution_status": resolution.get("resolution_status"),
+                "preview_status": preview.get("preview_status"),
+                "preview_diagnostics": preview.get("diagnostics"),
+            },
+        )
+        return response
+
+    @staticmethod
+    def _parse_json_object(raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, str):
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _parse_json_array(raw: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw, str):
+            return []
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [item for item in parsed if isinstance(item, dict)]
+
+    def list_usage_events(
+        self,
+        *,
+        prompt_id: int | None = None,
+        version_id: int | None = None,
+        event_type: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if prompt_id is not None:
+            where_parts.append("prompt_id = ?")
+            params.append(int(prompt_id))
+        if version_id is not None:
+            where_parts.append("version_id = ?")
+            params.append(int(version_id))
+        if event_type is not None:
+            where_parts.append("event_type = ?")
+            params.append(ensure_usage_event_type(event_type))
+        if status is not None:
+            where_parts.append("status = ?")
+            params.append(ensure_usage_event_status(status))
+        safe_limit = max(1, min(int(limit), 200))
+        where_clause = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        rows = list(
+            self._conn.execute(
+                f"SELECT * FROM prompt_usage_events{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?",
+                tuple(params + [safe_limit]),
+            ).fetchall()
+        )
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "prompt_id": row.get("prompt_id"),
+                    "version_id": row.get("version_id"),
+                    "binding_id": row.get("binding_id"),
+                    "event_type": str(row["event_type"]),
+                    "source": str(row["source"]),
+                    "status": str(row["status"]),
+                    "render_fingerprint": row.get("render_fingerprint"),
+                    "context": self._parse_json_object(row.get("context_json")),
+                    "variables_schema": self._parse_json_array(row.get("variables_schema_json")),
+                    "diagnostics": self._parse_json_object(row.get("diagnostics_json")),
+                    "created_at": str(row["created_at"]),
+                }
+            )
+        return items
+
+    def usage_summary(
+        self,
+        *,
+        prompt_id: int | None = None,
+        version_id: int | None = None,
+        event_type: str | None = None,
+    ) -> dict[str, Any]:
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if prompt_id is not None:
+            where_parts.append("prompt_id = ?")
+            params.append(int(prompt_id))
+        if version_id is not None:
+            where_parts.append("version_id = ?")
+            params.append(int(version_id))
+        if event_type is not None:
+            where_parts.append("event_type = ?")
+            params.append(ensure_usage_event_type(event_type))
+        where_clause = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        rows = list(
+            self._conn.execute(
+                f"SELECT prompt_id,version_id,event_type,status,created_at FROM prompt_usage_events{where_clause} ORDER BY created_at DESC, id DESC",
+                tuple(params),
+            ).fetchall()
+        )
+        if not rows:
+            return {
+                "total_events": 0,
+                "by_event_type": {},
+                "by_status": {},
+                "latest_event_at": None,
+                "prompt_ids": [],
+                "version_ids": [],
+            }
+        by_event_type: dict[str, int] = {}
+        by_status: dict[str, int] = {}
+        prompt_ids: set[int] = set()
+        version_ids: set[int] = set()
+        latest_event_at = str(rows[0]["created_at"])
+        for row in rows:
+            event_key = str(row["event_type"])
+            status_key = str(row["status"])
+            by_event_type[event_key] = by_event_type.get(event_key, 0) + 1
+            by_status[status_key] = by_status.get(status_key, 0) + 1
+            if row.get("prompt_id") is not None:
+                prompt_ids.add(int(row["prompt_id"]))
+            if row.get("version_id") is not None:
+                version_ids.add(int(row["version_id"]))
+        return {
+            "total_events": len(rows),
+            "by_event_type": by_event_type,
+            "by_status": by_status,
+            "latest_event_at": latest_event_at,
+            "prompt_ids": sorted(prompt_ids),
+            "version_ids": sorted(version_ids),
         }
 
     def activate_version(self, version_id: int, *, actor: str) -> dict[str, Any]:

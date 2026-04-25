@@ -565,6 +565,27 @@ class TestPromptRegistryApi(unittest.TestCase):
             )
             self.assertEqual(malformed.status_code, 422)
 
+            conn = dbm.connect(env)
+            try:
+                usage_rows = list(
+                    conn.execute(
+                        "SELECT event_type,status,prompt_id,version_id FROM prompt_usage_events ORDER BY id ASC"
+                    ).fetchall()
+                )
+                self.assertEqual(
+                    [(row["event_type"], row["status"]) for row in usage_rows],
+                    [
+                        ("version_preview", "OK"),
+                        ("version_preview", "INVALID"),
+                        ("version_preview", "OK"),
+                        ("version_preview", "OK"),
+                    ],
+                )
+                self.assertTrue(all(int(row["prompt_id"]) == prompt_id for row in usage_rows))
+                self.assertTrue(all(int(row["version_id"]) == version_id for row in usage_rows))
+            finally:
+                conn.close()
+
 
     def test_resolve_preview_endpoint_foundation_cases(self) -> None:
         with temp_env() as (_td, env):
@@ -709,3 +730,101 @@ class TestPromptRegistryApi(unittest.TestCase):
             )
             self.assertEqual(malformed_variables.status_code, 422)
             self.assertEqual(malformed_variables.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
+            conn = dbm.connect(env)
+            try:
+                usage_rows = list(
+                    conn.execute(
+                        "SELECT event_type,status,binding_id,context_json,variables_schema_json FROM prompt_usage_events ORDER BY id ASC"
+                    ).fetchall()
+                )
+                self.assertEqual(len(usage_rows), 5)
+                self.assertTrue(all(row["event_type"] == "resolved_preview" for row in usage_rows))
+                self.assertTrue(any(row["status"] == "OK" for row in usage_rows))
+                self.assertTrue(any(row["binding_id"] is not None for row in usage_rows))
+                self.assertFalse(any("Alice" in str(row["variables_schema_json"]) for row in usage_rows))
+                self.assertFalse(any("api-tok" in str(row["variables_schema_json"]) for row in usage_rows))
+                self.assertTrue(any("wf-resolve" in str(row["context_json"]) for row in usage_rows))
+            finally:
+                conn.close()
+
+    def test_usage_events_and_summary_endpoints(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            created = client.post(
+                "/v1/prompt-registry/records",
+                headers=headers,
+                json={
+                    "slug": "api-usage-events",
+                    "code": "PR-API-USAGE-1",
+                    "title": "API Usage Events",
+                    "record_type": "prompt_template",
+                    "status": "draft",
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            prompt_id = int(created.json()["id"])
+            version = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/versions",
+                headers=headers,
+                json={
+                    "body_text": "Hello {{name}}",
+                    "variables": [{"name": "name", "safety_class": "standard", "required": True}],
+                },
+            )
+            self.assertEqual(version.status_code, 200)
+            version_id = int(version.json()["id"])
+
+            self.assertEqual(
+                client.post(
+                    f"/v1/prompt-registry/versions/{version_id}/preview",
+                    headers=headers,
+                    json={"variables": {"name": "Alice"}},
+                ).status_code,
+                200,
+            )
+            self.assertEqual(
+                client.post(
+                    f"/v1/prompt-registry/versions/{version_id}/preview",
+                    headers=headers,
+                    json={"variables": {}},
+                ).status_code,
+                200,
+            )
+
+            listed = client.get(
+                f"/v1/prompt-registry/usage-events?prompt_id={prompt_id}&version_id={version_id}&event_type=version_preview&status=INVALID&limit=50",
+                headers=headers,
+            )
+            self.assertEqual(listed.status_code, 200)
+            listed_payload = listed.json()
+            self.assertEqual(len(listed_payload["items"]), 1)
+            self.assertEqual(listed_payload["items"][0]["status"], "INVALID")
+            self.assertIn("context", listed_payload["items"][0])
+            self.assertIn("variables_schema", listed_payload["items"][0])
+            self.assertNotIn("context_json", listed_payload["items"][0])
+            self.assertNotIn("variables_schema_json", listed_payload["items"][0])
+            self.assertNotIn("diagnostics_json", listed_payload["items"][0])
+
+            summary = client.get(
+                f"/v1/prompt-registry/usage-summary?prompt_id={prompt_id}&version_id={version_id}&event_type=version_preview",
+                headers=headers,
+            )
+            self.assertEqual(summary.status_code, 200)
+            summary_payload = summary.json()
+            self.assertEqual(summary_payload["total_events"], 2)
+            self.assertEqual(summary_payload["by_event_type"]["version_preview"], 2)
+            self.assertEqual(summary_payload["by_status"]["OK"], 1)
+            self.assertEqual(summary_payload["by_status"]["INVALID"], 1)
+            self.assertEqual(summary_payload["prompt_ids"], [prompt_id])
+            self.assertEqual(summary_payload["version_ids"], [version_id])
+
+            invalid_usage_filter = client.get("/v1/prompt-registry/usage-events?event_type=bad", headers=headers)
+            self.assertEqual(invalid_usage_filter.status_code, 422)
+            self.assertEqual(invalid_usage_filter.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+            invalid_limit = client.get("/v1/prompt-registry/usage-events?limit=500", headers=headers)
+            self.assertEqual(invalid_limit.status_code, 422)
+            self.assertEqual(invalid_limit.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")

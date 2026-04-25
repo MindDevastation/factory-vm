@@ -14,6 +14,8 @@ from services.prompt_registry.contracts import (
     contracts_payload,
     ensure_binding_scope,
     ensure_binding_status,
+    ensure_usage_event_status,
+    ensure_usage_event_type,
 )
 from services.prompt_registry.errors import (
     PromptRegistryConflictError,
@@ -250,6 +252,70 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
         try:
             return PromptRegistryService(conn).resolve_effective_prompt(payload)
         except PromptRegistryValidationError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.get("/usage-events")
+    def list_usage_events(
+        prompt_id: str | None = None,
+        version_id: str | None = None,
+        event_type: str | None = None,
+        status: str | None = None,
+        limit: str | None = None,
+        _: bool = Depends(require_basic_auth(env)),
+    ):
+        conn = dbm.connect(env)
+        try:
+            parsed_prompt_id: int | None = None
+            parsed_version_id: int | None = None
+            if prompt_id is not None:
+                parsed_prompt_id = int(str(prompt_id).strip())
+            if version_id is not None:
+                parsed_version_id = int(str(version_id).strip())
+            parsed_limit = 50
+            if limit is not None:
+                parsed_limit = int(str(limit).strip())
+            if parsed_limit <= 0 or parsed_limit > 200:
+                raise ValueError("limit must be between 1 and 200")
+            parsed_event_type = ensure_usage_event_type(event_type) if event_type is not None else None
+            parsed_status = ensure_usage_event_status(status) if status is not None else None
+            return {
+                "items": PromptRegistryService(conn).list_usage_events(
+                    prompt_id=parsed_prompt_id,
+                    version_id=parsed_version_id,
+                    event_type=parsed_event_type,
+                    status=parsed_status,
+                    limit=parsed_limit,
+                )
+            }
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.get("/usage-summary")
+    def usage_summary(
+        prompt_id: str | None = None,
+        version_id: str | None = None,
+        event_type: str | None = None,
+        _: bool = Depends(require_basic_auth(env)),
+    ):
+        conn = dbm.connect(env)
+        try:
+            parsed_prompt_id: int | None = None
+            parsed_version_id: int | None = None
+            if prompt_id is not None:
+                parsed_prompt_id = int(str(prompt_id).strip())
+            if version_id is not None:
+                parsed_version_id = int(str(version_id).strip())
+            parsed_event_type = ensure_usage_event_type(event_type) if event_type is not None else None
+            return PromptRegistryService(conn).usage_summary(
+                prompt_id=parsed_prompt_id,
+                version_id=parsed_version_id,
+                event_type=parsed_event_type,
+            )
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
             return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
         finally:
             conn.close()

@@ -13,7 +13,14 @@ class TestPromptRegistryService(unittest.TestCase):
             seed_minimal_db(env)
             conn = dbm.connect(env)
             try:
-                for table in ("prompt_records", "prompt_versions", "prompt_variables", "prompt_audit_events", "prompt_bindings"):
+                for table in (
+                    "prompt_records",
+                    "prompt_versions",
+                    "prompt_variables",
+                    "prompt_audit_events",
+                    "prompt_bindings",
+                    "prompt_usage_events",
+                ):
                     row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)).fetchone()
                     self.assertIsNotNone(row)
             finally:
@@ -600,5 +607,113 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(no_active_result["resolution"]["resolution_status"], "matched")
                 self.assertEqual(no_active_result["preview"]["preview_status"], "INVALID")
                 self.assertIn("no active version", no_active_result["preview"]["diagnostics"]["errors"][0])
+
+                usage_events = list(
+                    conn.execute("SELECT * FROM prompt_usage_events ORDER BY created_at DESC, id DESC").fetchall()
+                )
+                self.assertGreaterEqual(len(usage_events), 5)
+                self.assertEqual(str(usage_events[0]["event_type"]), "resolved_preview")
+                matched_event = [row for row in usage_events if str(row["status"]) == "OK"][0]
+                self.assertIsNotNone(matched_event["binding_id"])
+                self.assertIsNotNone(matched_event["version_id"])
+                self.assertIsNotNone(matched_event["prompt_id"])
+                self.assertNotEqual(str(matched_event["render_fingerprint"]), "")
+                self.assertNotIn("Alice", str(matched_event["variables_schema_json"]))
+                self.assertNotIn("tok-1", str(matched_event["variables_schema_json"]))
+            finally:
+                conn.close()
+
+    def test_usage_event_write_rules_for_preview_version(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                created = svc.create_record(
+                    {
+                        "slug": "usage-version-template",
+                        "code": "PR-USAGE-VERSION-1",
+                        "title": "Usage Version",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                version = svc.create_version(
+                    int(created["id"]),
+                    {
+                        "body_text": "Hi {{name}}",
+                        "variables": [{"name": "name", "safety_class": "standard", "required": True}],
+                    },
+                    actor="tester",
+                )
+
+                ok = svc.preview_version(int(version["id"]), {"variables": {"name": "Alice"}})
+                self.assertEqual(ok["preview_status"], "OK")
+                invalid = svc.preview_version(int(version["id"]), {"variables": {}})
+                self.assertEqual(invalid["preview_status"], "INVALID")
+
+                before_error_count = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                with self.assertRaisesRegex(Exception, "prompt version 999999 not found"):
+                    svc.preview_version(999999, {"variables": {"name": "Alice"}})
+                with self.assertRaisesRegex(Exception, "variables must be an object"):
+                    svc.preview_version(int(version["id"]), {"variables": []})
+                after_error_count = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                self.assertEqual(before_error_count, after_error_count)
+
+                usage_rows = list(
+                    conn.execute("SELECT event_type,status FROM prompt_usage_events ORDER BY id ASC").fetchall()
+                )
+                self.assertEqual([(row["event_type"], row["status"]) for row in usage_rows], [("version_preview", "OK"), ("version_preview", "INVALID")])
+            finally:
+                conn.close()
+
+    def test_usage_events_list_and_summary(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record(
+                    {
+                        "slug": "usage-list-template",
+                        "code": "PR-USAGE-LIST-1",
+                        "title": "Usage List",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                version = svc.create_version(
+                    int(rec["id"]),
+                    {
+                        "body_text": "Hello {{name}}",
+                        "variables": [{"name": "name", "safety_class": "standard", "required": True}],
+                    },
+                    actor="tester",
+                )
+                svc.preview_version(int(version["id"]), {"variables": {"name": "A"}})
+                svc.preview_version(int(version["id"]), {"variables": {}})
+
+                listed = svc.list_usage_events(
+                    prompt_id=int(rec["id"]),
+                    version_id=int(version["id"]),
+                    event_type="version_preview",
+                    status="INVALID",
+                    limit=50,
+                )
+                self.assertEqual(len(listed), 1)
+                self.assertEqual(listed[0]["status"], "INVALID")
+                self.assertNotIn("context_json", listed[0])
+                self.assertNotIn("variables_schema_json", listed[0])
+                self.assertNotIn("diagnostics_json", listed[0])
+
+                summary = svc.usage_summary(prompt_id=int(rec["id"]), version_id=int(version["id"]))
+                self.assertEqual(summary["total_events"], 2)
+                self.assertEqual(summary["by_event_type"]["version_preview"], 2)
+                self.assertEqual(summary["by_status"]["OK"], 1)
+                self.assertEqual(summary["by_status"]["INVALID"], 1)
+                self.assertEqual(summary["prompt_ids"], [int(rec["id"])])
+                self.assertEqual(summary["version_ids"], [int(version["id"])])
             finally:
                 conn.close()

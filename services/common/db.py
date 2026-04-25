@@ -2452,6 +2452,33 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_prompt_audit_events_prompt_created
             ON prompt_audit_events(prompt_id, created_at DESC);
 
+        CREATE TABLE IF NOT EXISTS prompt_usage_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NULL,
+            version_id INTEGER NULL,
+            binding_id INTEGER NULL,
+            event_type TEXT NOT NULL,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL,
+            render_fingerprint TEXT NULL,
+            context_json TEXT NOT NULL DEFAULT '{}',
+            variables_schema_json TEXT NOT NULL DEFAULT '[]',
+            diagnostics_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE SET NULL,
+            FOREIGN KEY(version_id) REFERENCES prompt_versions(id) ON DELETE SET NULL,
+            FOREIGN KEY(binding_id) REFERENCES prompt_bindings(id) ON DELETE SET NULL,
+            CHECK(event_type IN ('version_preview','resolved_preview')),
+            CHECK(source IN ('api')),
+            CHECK(status IN ('OK','INVALID','ERROR')),
+            CHECK(json_valid(context_json)),
+            CHECK(json_valid(variables_schema_json)),
+            CHECK(json_valid(diagnostics_json))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_usage_events_lookup
+            ON prompt_usage_events(created_at DESC, id DESC);
+
         CREATE TABLE IF NOT EXISTS prompt_bindings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             prompt_id INTEGER NOT NULL,
@@ -2499,6 +2526,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_releases_current_open_job_relation(conn)
     _ensure_prompt_registry_columns(conn)
     _ensure_prompt_bindings_schema(conn)
+    _ensure_prompt_usage_events_schema(conn)
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -2555,6 +2583,42 @@ def _ensure_prompt_bindings_schema(conn: sqlite3.Connection) -> None:
                 IFNULL(item_ref,'')
             )
             WHERE binding_status = 'active'
+        """
+    )
+
+
+def _ensure_prompt_usage_events_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prompt_usage_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NULL,
+            version_id INTEGER NULL,
+            binding_id INTEGER NULL,
+            event_type TEXT NOT NULL,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL,
+            render_fingerprint TEXT NULL,
+            context_json TEXT NOT NULL DEFAULT '{}',
+            variables_schema_json TEXT NOT NULL DEFAULT '[]',
+            diagnostics_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE SET NULL,
+            FOREIGN KEY(version_id) REFERENCES prompt_versions(id) ON DELETE SET NULL,
+            FOREIGN KEY(binding_id) REFERENCES prompt_bindings(id) ON DELETE SET NULL,
+            CHECK(event_type IN ('version_preview','resolved_preview')),
+            CHECK(source IN ('api')),
+            CHECK(status IN ('OK','INVALID','ERROR')),
+            CHECK(json_valid(context_json)),
+            CHECK(json_valid(variables_schema_json)),
+            CHECK(json_valid(diagnostics_json))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_prompt_usage_events_lookup
+            ON prompt_usage_events(created_at DESC, id DESC)
         """
     )
 
