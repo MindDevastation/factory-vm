@@ -25,7 +25,7 @@ class _YTStub:
         description: str,
         tags: list[str],
         audience_is_for_kids: bool = False,
-        video_language: str = "English",
+        video_language: str = "en",
     ):
         return type("R", (), {"video_id": "vid123"})()
 
@@ -112,7 +112,7 @@ class TestUploaderBranchesMore(unittest.TestCase):
                     description: str,
                     tags: list[str],
                     audience_is_for_kids: bool = False,
-                    video_language: str = "English",
+                    video_language: str = "en",
                 ):
                     raise RuntimeError("upload fail")
 

@@ -783,7 +783,7 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('name="audio_ids_text" rows="6" style="width:86ch;"', r.text)
             self.assertIn('name="audience_is_for_kids" value="yes"', r.text)
             self.assertIn('name="audience_is_for_kids" value="no" checked', r.text)
-            self.assertIn('name="video_language" value="English"', r.text)
+            self.assertIn('name="video_language" value="en"', r.text)
             self.assertIn('id="playlist-checkboxes"', r.text)
             self.assertIn('/v1/channels/${channelId}/playlists', r.text)
 
@@ -1184,7 +1184,39 @@ class TestUiPagesSlice4(unittest.TestCase):
                     "audio_ids_text": "001",
                 },
             )
-            self.assertEqual(r.status_code, 409)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("Render inputs are locked after DRAFT", r.text)
+
+            conn3 = dbm.connect(env)
+            try:
+                dbm.update_job_state(conn3, job_id, state="WAIT_APPROVAL", stage="APPROVAL")
+                dbm.set_youtube_upload(
+                    conn3,
+                    job_id,
+                    video_id="yt-final",
+                    url="https://www.youtube.com/watch?v=yt-final",
+                    studio_url="https://studio.youtube.com/video/yt-final/edit",
+                    privacy="private",
+                )
+            finally:
+                conn3.close()
+
+            blocked = client.post(
+                f"/ui/jobs/{job_id}/edit",
+                headers=h,
+                data={
+                    "channel_id": int(ch["id"]),
+                    "title": "Blocked",
+                    "description": "",
+                    "tags_csv": "",
+                    "cover_name": "",
+                    "cover_ext": "",
+                    "background_name": "bg",
+                    "background_ext": "jpg",
+                    "audio_ids_text": "001",
+                },
+            )
+            self.assertEqual(blocked.status_code, 409)
 
     def test_edit_page_reflects_applied_playlist_in_audio_ids_field(self) -> None:
         with temp_env() as (_, env):

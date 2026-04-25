@@ -63,9 +63,9 @@ def _resolve_youtube_metadata(conn: Any, *, job_id: int) -> tuple[bool, str]:
         (job_id,),
     ).fetchone()
     if not row:
-        return False, "English"
+        return False, "en"
     audience_is_for_kids = bool(int(row.get("audience_is_for_kids") or 0))
-    video_language = str(row.get("video_language") or "").strip() or "English"
+    video_language = str(row.get("video_language") or "").strip() or "en"
     return audience_is_for_kids, video_language
 
 

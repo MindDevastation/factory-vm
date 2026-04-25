@@ -30,7 +30,7 @@ class _PlaylistYT:
         description: str,
         tags: list[str],
         audience_is_for_kids: bool = False,
-        video_language: str = "English",
+        video_language: str = "en",
     ):
         return type("R", (), {"video_id": "vid123"})()
 
