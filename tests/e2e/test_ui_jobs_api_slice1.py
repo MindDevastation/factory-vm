@@ -42,7 +42,7 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                 "tags_csv": "one,two",
                 "playlist_ids": ["PL_A", "PL_B"],
                 "audience_is_for_kids": True,
-                "video_language": "English",
+                "video_language": "en",
                 "cover_name": "cover",
                 "cover_ext": "png",
                 "background_name": "bg",
@@ -73,7 +73,7 @@ class TestUiJobsApiSlice1(unittest.TestCase):
                 release = conn2.execute("SELECT playlists_json, audience_is_for_kids, video_language FROM releases WHERE id = ?", (job["release_id"],)).fetchone()
                 self.assertEqual(release["playlists_json"], '["PL_A", "PL_B"]')
                 self.assertEqual(int(release["audience_is_for_kids"]), 1)
-                self.assertEqual(release["video_language"], "English")
+                self.assertEqual(release["video_language"], "en")
             finally:
                 conn2.close()
 
@@ -323,6 +323,97 @@ class TestUiJobsApiSlice1(unittest.TestCase):
             errors = resp.json()["detail"]["field_errors"]
             self.assertIn("cover", errors)
             self.assertIn("background", errors)
+
+    def test_metadata_edit_allowed_in_upload_failed_but_locked_after_upload_success(self) -> None:
+        with temp_env() as (_, _):
+            env = Env.load()
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                ch = dbm.get_channel_by_slug(conn, "darkwood-reverie")
+                self.assertIsNotNone(ch)
+                channel_id = int(ch["id"])
+            finally:
+                conn.close()
+
+            mod = importlib.import_module("services.factory_api.app")
+            importlib.reload(mod)
+
+            class _PreflightOk:
+                ok = True
+                field_errors = {}
+                resolved = {}
+
+            mod.run_preflight_for_job = lambda _conn, _env, _job_id, _drive=None: _PreflightOk()
+            client = TestClient(mod.app)
+            h = basic_auth_header(env.basic_user, env.basic_pass)
+            payload = {
+                "channel_id": channel_id,
+                "title": "Before upload",
+                "description": "desc",
+                "tags_csv": "one,two",
+                "playlist_ids": ["PL_A"],
+                "audience_is_for_kids": False,
+                "video_language": "en",
+                "cover_name": "cover",
+                "cover_ext": "png",
+                "background_name": "bg",
+                "background_ext": "jpg",
+                "audio_ids_text": "001 015",
+            }
+            created = client.post("/v1/ui/jobs", json=payload, headers=h)
+            self.assertEqual(created.status_code, 200)
+            job_id = int(created.json()["job_id"])
+
+            conn2 = dbm.connect(env)
+            try:
+                dbm.update_job_state(conn2, job_id, state="UPLOAD_FAILED", stage="UPLOAD")
+            finally:
+                conn2.close()
+
+            update_payload = dict(payload)
+            update_payload["title"] = "Updated after upload failed"
+            update_payload["video_language"] = "es"
+            update_payload["audio_ids_text"] = "001 015"
+            updated = client.post(f"/v1/ui/jobs/{job_id}", json=update_payload, headers=h)
+            self.assertEqual(updated.status_code, 200)
+
+            conn3 = dbm.connect(env)
+            try:
+                release = conn3.execute(
+                    "SELECT title, video_language FROM releases WHERE id = (SELECT release_id FROM jobs WHERE id = ?)",
+                    (job_id,),
+                ).fetchone()
+                self.assertEqual(str(release["title"]), "Updated after upload failed")
+                self.assertEqual(str(release["video_language"]), "es")
+                dbm.update_job_state(conn3, job_id, state="UPLOADING", stage="UPLOAD")
+            finally:
+                conn3.close()
+
+            uploading_payload = dict(update_payload)
+            uploading_payload["title"] = "Blocked while uploading"
+            uploading_blocked = client.post(f"/v1/ui/jobs/{job_id}", json=uploading_payload, headers=h)
+            self.assertEqual(uploading_blocked.status_code, 409)
+
+            conn4 = dbm.connect(env)
+            try:
+                dbm.update_job_state(conn4, job_id, state="UPLOAD_FAILED", stage="UPLOAD")
+                dbm.update_job_state(conn4, job_id, state="WAIT_APPROVAL", stage="APPROVAL")
+                dbm.set_youtube_upload(
+                    conn4,
+                    job_id,
+                    video_id="yt1",
+                    url="https://www.youtube.com/watch?v=yt1",
+                    studio_url="https://studio.youtube.com/video/yt1/edit",
+                    privacy="private",
+                )
+            finally:
+                conn4.close()
+
+            blocked_payload = dict(update_payload)
+            blocked_payload["title"] = "Should be blocked"
+            blocked = client.post(f"/v1/ui/jobs/{job_id}", json=blocked_payload, headers=h)
+            self.assertEqual(blocked.status_code, 409)
 
     def test_playlist_create_title_persists_and_trims(self) -> None:
         with temp_env() as (_, _):

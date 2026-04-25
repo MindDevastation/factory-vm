@@ -5162,7 +5162,7 @@ class UiJobDraftPayload(BaseModel):
     playlist_ids: list[str] = Field(default_factory=list)
     playlist_create_title: str = ""
     audience_is_for_kids: bool = False
-    video_language: str = "English"
+    video_language: str = "en"
     cover_name: str = ""
     cover_ext: str = ""
     background_name: str
@@ -5229,6 +5229,52 @@ def _ui_validate(payload: UiJobDraftPayload) -> Dict[str, List[str]]:
     if "#" in payload.tags_csv:
         errors["tags"].append("tags must not contain #")
     return {k: v for k, v in errors.items() if v}
+
+
+_METADATA_EDIT_PREUPLOAD_STATES = {
+    "DRAFT",
+    "WAITING_INPUTS",
+    "FETCHING_INPUTS",
+    "READY_FOR_RENDER",
+    "RENDERING",
+    "RENDER_FAILED",
+    "FAILED",
+    "QA_RUNNING",
+    "QA_FAILED",
+}
+_UPLOAD_INFLIGHT_STATES = {"UPLOADING"}
+_UPLOAD_SUCCESS_LOCK_STATES = {"WAIT_APPROVAL", "APPROVED", "REJECTED", "PUBLISHED", "CANCELLED", "CLEANED"}
+
+
+def _has_successful_upload(conn: Any, *, job_id: int) -> bool:
+    row = conn.execute("SELECT video_id FROM youtube_uploads WHERE job_id = ?", (job_id,)).fetchone()
+    if not row:
+        return False
+    return bool(str(row.get("video_id") or "").strip())
+
+
+def _metadata_edit_allowed(conn: Any, *, job: dict[str, Any]) -> bool:
+    state = str(job.get("state") or "")
+    if state == "UPLOAD_FAILED":
+        return True
+    if state in _UPLOAD_INFLIGHT_STATES:
+        return False
+    if state not in _METADATA_EDIT_PREUPLOAD_STATES:
+        return False
+    if state in _UPLOAD_SUCCESS_LOCK_STATES:
+        return False
+    return not _has_successful_upload(conn, job_id=int(job["id"]))
+
+
+def _validate_render_inputs_immutable(*, payload: UiJobDraftPayload, draft: dict[str, Any]) -> None:
+    if payload.background_name.strip() != str(draft.get("background_name") or "").strip():
+        raise HTTPException(409, "background_name is immutable after DRAFT")
+    if payload.background_ext.strip().lower() != str(draft.get("background_ext") or "").strip().lower():
+        raise HTTPException(409, "background_ext is immutable after DRAFT")
+    if payload.audio_ids_text.strip() != str(draft.get("audio_ids_text") or "").strip():
+        raise HTTPException(409, "audio_ids_text is immutable after DRAFT")
+    if payload.cover_ext.strip().lower() != str(draft.get("cover_ext") or "").strip().lower():
+        raise HTTPException(409, "cover_ext is immutable after DRAFT")
 
 
 def _ui_validate_playlist_builder_draft(payload: UiPlaylistBuilderDraftPayload) -> Dict[str, List[str]]:
@@ -5613,7 +5659,7 @@ def _create_ui_job_draft_with_preflight(
             playlists_json=json.dumps(playlist_ids, ensure_ascii=False),
             playlist_create_title=playlist_create_title.strip() or None,
             audience_is_for_kids=1 if audience_is_for_kids else 0,
-            video_language=video_language.strip() or "English",
+            video_language=video_language.strip() or "en",
             cover_name=cover_name,
             cover_ext=cover_ext,
             background_name=background_name,
@@ -5825,7 +5871,7 @@ def _form_from_draft(draft: dict[str, Any]) -> dict[str, Any]:
     form["playlist_ids"] = [str(x) for x in playlist_ids if str(x).strip()]
     form["playlist_create_title"] = str(form.get("playlist_create_title") or "")
     form["audience_is_for_kids"] = bool(int(form.get("audience_is_for_kids") or 0))
-    form["video_language"] = str(form.get("video_language") or "English")
+    form["video_language"] = str(form.get("video_language") or "en")
     return form
 
 
@@ -6454,7 +6500,7 @@ def api_ui_jobs_bulk_json_preview(payload: UiJobsBulkJsonPayload, _: bool = Depe
                             "playlist_ids": parsed.playlist_ids,
                             "playlist_create_title": parsed.playlist_create_title.strip(),
                             "audience_is_for_kids": parsed.audience_is_for_kids,
-                            "video_language": parsed.video_language.strip() or "English",
+                            "video_language": parsed.video_language.strip() or "en",
                         },
                     }
                     if playlist_preview is not None:
@@ -6518,7 +6564,7 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
                 playlists_json=json.dumps(item.playlist_ids, ensure_ascii=False),
                 playlist_create_title=item.playlist_create_title.strip() or None,
                 audience_is_for_kids=1 if item.audience_is_for_kids else 0,
-                video_language=item.video_language.strip() or "English",
+                video_language=item.video_language.strip() or "en",
                 cover_name=item.cover_name.strip() or None,
                 cover_ext=item.cover_ext.strip() or None,
                 background_name=item.background_name.strip(),
@@ -6571,7 +6617,7 @@ def api_ui_jobs_bulk_json_execute(payload: UiJobsBulkJsonPayload, _: bool = Depe
                 "playlist_ids": item_payload.playlist_ids,
                 "playlist_create_title": item_payload.playlist_create_title.strip(),
                 "audience_is_for_kids": item_payload.audience_is_for_kids,
-                "video_language": item_payload.video_language.strip() or "English",
+                "video_language": item_payload.video_language.strip() or "en",
             },
         }
         playlist_meta = playlist_meta_by_job.get(job_id)
@@ -7028,10 +7074,6 @@ def api_get_ui_job(job_id: int, _: bool = Depends(require_basic_auth(env))):
 
 @app.post("/v1/ui/jobs/{job_id}")
 def api_update_ui_job(job_id: int, payload: UiJobDraftPayload, _: bool = Depends(require_basic_auth(env))):
-    errors = _ui_validate(payload)
-    if errors:
-        raise HTTPException(422, {"field_errors": errors})
-
     conn = dbm.connect(env)
     try:
         d = dbm.get_ui_job_draft(conn, job_id)
@@ -7041,11 +7083,19 @@ def api_update_ui_job(job_id: int, payload: UiJobDraftPayload, _: bool = Depends
         job = dbm.get_job(conn, job_id)
         if not job:
             raise HTTPException(404)
-        if str(job.get("state") or "") != "DRAFT":
-            raise HTTPException(409, "only DRAFT jobs can be edited")
+        if not _metadata_edit_allowed(conn, job=job):
+            raise HTTPException(409, "metadata is locked after successful upload")
 
         if int(d["channel_id"]) != payload.channel_id:
             raise HTTPException(409, "project/channel_id is immutable")
+
+        state = str(job.get("state") or "")
+        if state != "DRAFT":
+            _validate_render_inputs_immutable(payload=payload, draft=d)
+
+        errors = _ui_validate(payload)
+        if errors:
+            raise HTTPException(422, {"field_errors": errors})
 
         dbm.update_ui_job_draft(
             conn,
@@ -7056,12 +7106,12 @@ def api_update_ui_job(job_id: int, payload: UiJobDraftPayload, _: bool = Depends
             playlists_json=json.dumps(payload.playlist_ids, ensure_ascii=False),
             playlist_create_title=payload.playlist_create_title.strip() or None,
             audience_is_for_kids=1 if payload.audience_is_for_kids else 0,
-            video_language=payload.video_language.strip() or "English",
+            video_language=payload.video_language.strip() or "en",
             cover_name=payload.cover_name.strip() or None,
-            cover_ext=payload.cover_ext.strip() or None,
-            background_name=payload.background_name.strip(),
-            background_ext=payload.background_ext.strip(),
-            audio_ids_text=payload.audio_ids_text.strip(),
+            cover_ext=(payload.cover_ext.strip() or None) if state == "DRAFT" else (str(d.get("cover_ext") or "").strip() or None),
+            background_name=payload.background_name.strip() if state == "DRAFT" else str(d.get("background_name") or "").strip(),
+            background_ext=payload.background_ext.strip() if state == "DRAFT" else str(d.get("background_ext") or "").strip(),
+            audio_ids_text=payload.audio_ids_text.strip() if state == "DRAFT" else str(d.get("audio_ids_text") or "").strip(),
         )
     finally:
         conn.close()
@@ -7096,10 +7146,11 @@ def ui_jobs_create_page(request: Request, _: bool = Depends(require_basic_auth(e
             "mode": "create",
             "channels": channels,
             "field_errors": {},
-            "form": {"playlist_ids": [], "playlist_create_title": "", "audience_is_for_kids": False, "video_language": "English"},
+            "form": {"playlist_ids": [], "playlist_create_title": "", "audience_is_for_kids": False, "video_language": "en"},
             "job_id": None,
             "release_id": None,
             "locked": False,
+            "render_locked": False,
         },
     )
 
@@ -7132,7 +7183,7 @@ async def ui_jobs_create_submit(
     playlist_ids = [v.strip() for v in raw.get("playlist_ids", []) if str(v).strip()]
     playlist_create_title = getv("playlist_create_title")
     audience_is_for_kids = getv("audience_is_for_kids") == "yes"
-    video_language = getv("video_language") or "English"
+    video_language = getv("video_language") or "en"
     cover_name = getv("cover_name")
     cover_ext = getv("cover_ext")
     background_name = getv("background_name")
@@ -7170,6 +7221,7 @@ async def ui_jobs_create_submit(
                     "job_id": None,
                     "release_id": None,
                     "locked": False,
+                    "render_locked": False,
                 },
                 status_code=422,
             )
@@ -7187,6 +7239,7 @@ async def ui_jobs_create_submit(
                     "job_id": None,
                     "release_id": None,
                     "locked": False,
+                    "render_locked": False,
                 },
                 status_code=422,
             )
@@ -7202,7 +7255,7 @@ async def ui_jobs_create_submit(
                 playlists_json=json.dumps(payload.playlist_ids, ensure_ascii=False),
                 playlist_create_title=payload.playlist_create_title.strip() or None,
                 audience_is_for_kids=1 if payload.audience_is_for_kids else 0,
-                video_language=payload.video_language.strip() or "English",
+                video_language=payload.video_language.strip() or "en",
                 cover_name=payload.cover_name.strip() or None,
                 cover_ext=payload.cover_ext.strip() or None,
                 background_name=payload.background_name.strip(),
@@ -7227,6 +7280,7 @@ async def ui_jobs_create_submit(
                         "job_id": None,
                         "release_id": None,
                         "locked": False,
+                        "render_locked": False,
                     },
                     status_code=422,
                 )
@@ -7247,6 +7301,7 @@ async def ui_jobs_create_submit(
             "job_id": job_id,
             "release_id": release_id,
             "locked": False,
+            "render_locked": False,
         },
     )
 
@@ -7261,7 +7316,8 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
         if not draft or not job:
             raise HTTPException(404)
         release_id = int(job["release_id"]) if job.get("release_id") is not None else None
-        locked = str(job.get("state") or "") != "DRAFT"
+        metadata_locked = not _metadata_edit_allowed(conn, job=job)
+        render_locked = str(job.get("state") or "") != "DRAFT"
     finally:
         conn.close()
     return templates.TemplateResponse(
@@ -7274,7 +7330,8 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
             "form": _form_from_draft(draft),
             "job_id": job_id,
             "release_id": release_id,
-            "locked": locked,
+            "locked": metadata_locked,
+            "render_locked": render_locked,
         },
     )
 
@@ -7306,7 +7363,7 @@ async def ui_jobs_edit_submit(
     playlist_ids = [v.strip() for v in raw.get("playlist_ids", []) if str(v).strip()]
     playlist_create_title = getv("playlist_create_title")
     audience_is_for_kids = getv("audience_is_for_kids") == "yes"
-    video_language = getv("video_language") or "English"
+    video_language = getv("video_language") or "en"
     cover_name = getv("cover_name")
     cover_ext = getv("cover_ext")
     background_name = getv("background_name")
@@ -7334,8 +7391,11 @@ async def ui_jobs_edit_submit(
         job = dbm.get_job(conn, job_id)
         if not draft or not job:
             raise HTTPException(404)
-        if str(job.get("state") or "") != "DRAFT":
-            raise HTTPException(409, "only DRAFT jobs can be edited")
+        if not _metadata_edit_allowed(conn, job=job):
+            raise HTTPException(409, "metadata is locked after successful upload")
+        state = str(job.get("state") or "")
+        if state != "DRAFT":
+            _validate_render_inputs_immutable(payload=payload, draft=draft)
         errors = _ui_validate(payload)
         if errors:
             return templates.TemplateResponse(
@@ -7349,6 +7409,7 @@ async def ui_jobs_edit_submit(
                     "job_id": job_id,
                     "release_id": int(job["release_id"]) if job.get("release_id") is not None else None,
                     "locked": False,
+                    "render_locked": state != "DRAFT",
                 },
                 status_code=422,
             )
@@ -7366,6 +7427,7 @@ async def ui_jobs_edit_submit(
                     "job_id": job_id,
                     "release_id": int(job["release_id"]) if job.get("release_id") is not None else None,
                     "locked": False,
+                    "render_locked": state != "DRAFT",
                 },
                 status_code=422,
             )
@@ -7382,14 +7444,14 @@ async def ui_jobs_edit_submit(
             playlists_json=json.dumps(payload.playlist_ids, ensure_ascii=False),
             playlist_create_title=payload.playlist_create_title.strip() or None,
             audience_is_for_kids=1 if payload.audience_is_for_kids else 0,
-            video_language=payload.video_language.strip() or "English",
+            video_language=payload.video_language.strip() or "en",
             cover_name=payload.cover_name.strip() or None,
-            cover_ext=payload.cover_ext.strip() or None,
-            background_name=payload.background_name.strip(),
-            background_ext=payload.background_ext.strip(),
-            audio_ids_text=payload.audio_ids_text.strip(),
+            cover_ext=(payload.cover_ext.strip() or None) if state == "DRAFT" else (str(draft.get("cover_ext") or "").strip() or None),
+            background_name=payload.background_name.strip() if state == "DRAFT" else str(draft.get("background_name") or "").strip(),
+            background_ext=payload.background_ext.strip() if state == "DRAFT" else str(draft.get("background_ext") or "").strip(),
+            audio_ids_text=payload.audio_ids_text.strip() if state == "DRAFT" else str(draft.get("audio_ids_text") or "").strip(),
         )
-        preflight = run_preflight_for_job(conn, env, job_id)
+        preflight = run_preflight_for_job(conn, env, job_id) if state == "DRAFT" else None
         release_id = int(job["release_id"]) if job.get("release_id") is not None else None
     finally:
         conn.close()
@@ -7400,11 +7462,12 @@ async def ui_jobs_edit_submit(
             "request": request,
             "mode": "edit",
             "channels": channels,
-            "field_errors": preflight.field_errors,
+            "field_errors": preflight.field_errors if preflight is not None else {},
             "form": payload.model_dump(),
             "job_id": job_id,
             "release_id": release_id,
             "locked": False,
+            "render_locked": state != "DRAFT",
         },
     )
 

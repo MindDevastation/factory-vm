@@ -35,7 +35,7 @@ class _FakeYT:
         description,
         tags,
         audience_is_for_kids=False,
-        video_language="English",
+        video_language="en",
     ):
         _FakeYT.last_upload_kwargs = {
             "audience_is_for_kids": audience_is_for_kids,
@@ -89,7 +89,7 @@ class TestUploaderYoutubeMocked(unittest.TestCase):
                 assert yt is not None
                 self.assertEqual(yt["video_id"], "vid123")
                 self.assertEqual(_FakeYT.last_init, ("/env/client_secret.json", str(token_path)))
-                self.assertEqual(_FakeYT.last_upload_kwargs, {"audience_is_for_kids": False, "video_language": "English"})
+                self.assertEqual(_FakeYT.last_upload_kwargs, {"audience_is_for_kids": False, "video_language": "en"})
 
     def test_youtube_backend_applies_audience_and_language_metadata(self) -> None:
         with temp_env() as (_, _env0):

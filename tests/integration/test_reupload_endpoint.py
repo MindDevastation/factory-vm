@@ -30,7 +30,7 @@ class _FakeYT:
         description: str,
         tags: list[str],
         audience_is_for_kids: bool = False,
-        video_language: str = "English",
+        video_language: str = "en",
     ):
         _FakeYT.upload_calls += 1
         return type("R", (), {"video_id": "vid-fresh"})()
