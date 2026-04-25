@@ -11,7 +11,8 @@
   </ul>
 </details>
 
-{% if locked %}<p style="color:#b91c1c"><b>Editing is disabled: job is not in DRAFT.</b></p>{% endif %}
+{% if locked %}<p style="color:#b91c1c"><b>Metadata editing is disabled: upload already completed successfully.</b></p>{% endif %}
+{% if render_locked and not locked %}<p style="color:#92400e"><b>Render inputs are locked after DRAFT. You can still edit upload metadata.</b></p>{% endif %}
 {% set allowed_exts = ['png', 'jpg', 'jpeg'] %}
 {% set form_cover_ext = (form.cover_ext|default('')|lower) %}
 {% set form_background_ext = (form.background_ext|default('')|lower) %}
@@ -224,14 +225,14 @@
     <label><input type="radio" name="audience_is_for_kids" value="no" {% if not form.audience_is_for_kids %}checked{% endif %} {% if locked %}disabled{% endif %}> No, this video is not for kids</label>
     <p>
       <label>Video language
-        <input name="video_language" value="{{ form.video_language|default('English') }}" {% if locked %}disabled{% endif %}>
+        <input name="video_language" value="{{ form.video_language|default('en') }}" {% if locked %}disabled{% endif %}>
       </label>
     </p>
   </fieldset>
 
   <p><label>Cover name <input name="cover_name" value="{{ form.cover_name|default('') }}" {% if locked %}disabled{% endif %}></label>
      <label>ext
-       <select name="cover_ext" {% if locked %}disabled{% endif %}>
+       <select name="cover_ext" {% if locked or render_locked %}disabled{% endif %}>
          <option value="">—</option>
          {% for ext in allowed_exts %}
          <option value="{{ ext }}" {% if form_cover_ext == ext %}selected{% endif %}>{{ ext }}</option>
@@ -245,15 +246,15 @@
 
   <h3>B) Render inputs</h3>
   <p>
-    <label>Audio IDs* (space-separated) <textarea id="audio-ids-input" name="audio_ids_text" rows="6" style="width:86ch;" {% if locked %}disabled{% endif %}>{{ form.audio_ids_text|default('') }}</textarea></label>
-    <button id="playlist-builder-open-btn" type="button" {% if locked %}disabled{% endif %}>Generate Automatically</button>
+    <label>Audio IDs* (space-separated) <textarea id="audio-ids-input" name="audio_ids_text" rows="6" style="width:86ch;" {% if render_locked %}disabled{% endif %}>{{ form.audio_ids_text|default('') }}</textarea></label>
+    <button id="playlist-builder-open-btn" type="button" {% if render_locked %}disabled{% endif %}>Generate Automatically</button>
   </p>
   <p id="playlist-overwrite-warning" style="color:#92400e; {% if not form.audio_ids_text %}display:none;{% endif %}"><b>Warning:</b> existing playlist will be replaced only after Apply.</p>
   {% if field_errors.audio %}<p style="color:#b91c1c">{{ field_errors.audio|join('; ') }}</p>{% endif %}
 
-  <p><label>Background name* <input name="background_name" value="{{ form.background_name|default('') }}" {% if locked %}disabled{% endif %}></label>
+  <p><label>Background name* <input name="background_name" value="{{ form.background_name|default('') }}" {% if render_locked %}disabled{% endif %}></label>
      <label>ext*
-       <select name="background_ext" {% if locked %}disabled{% endif %}>
+       <select name="background_ext" {% if render_locked %}disabled{% endif %}>
          <option value="">—</option>
          {% for ext in allowed_exts %}
          <option value="{{ ext }}" {% if form_background_ext == ext %}selected{% endif %}>{{ ext }}</option>
@@ -265,7 +266,7 @@
      </label></p>
   {% if field_errors.background %}<p style="color:#b91c1c">{{ field_errors.background|join('; ') }}</p>{% endif %}
 
-  {% if not locked %}<p><button type="submit">Save DRAFT</button></p>{% endif %}
+  {% if not locked %}<p><button type="submit">{% if render_locked %}Save metadata{% else %}Save DRAFT{% endif %}</button></p>{% endif %}
 </form>
 
 <dialog id="playlist-builder-modal" style="width:min(980px,95vw)">

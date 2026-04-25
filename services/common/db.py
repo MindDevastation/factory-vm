@@ -95,7 +95,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             playlists_json TEXT NOT NULL DEFAULT '[]',
             playlist_create_title TEXT,
             audience_is_for_kids INTEGER NOT NULL DEFAULT 0,
-            video_language TEXT NOT NULL DEFAULT 'English',
+            video_language TEXT NOT NULL DEFAULT 'en',
             planned_at TEXT,
             origin_release_folder_id TEXT,
             origin_meta_file_id TEXT UNIQUE,
@@ -777,7 +777,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             playlists_json TEXT NOT NULL DEFAULT '[]',
             playlist_create_title TEXT,
             audience_is_for_kids INTEGER NOT NULL DEFAULT 0,
-            video_language TEXT NOT NULL DEFAULT 'English',
+            video_language TEXT NOT NULL DEFAULT 'en',
             cover_name TEXT,
             cover_ext TEXT,
             background_name TEXT NOT NULL,
@@ -3052,7 +3052,7 @@ def _ensure_ui_job_drafts_columns(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE ui_job_drafts ADD COLUMN audience_is_for_kids INTEGER NOT NULL DEFAULT 0;")
     if "video_language" not in cols:
         with suppress(Exception):
-            conn.execute("ALTER TABLE ui_job_drafts ADD COLUMN video_language TEXT NOT NULL DEFAULT 'English';")
+            conn.execute("ALTER TABLE ui_job_drafts ADD COLUMN video_language TEXT NOT NULL DEFAULT 'en';")
 
 
 def _ensure_releases_columns(conn: sqlite3.Connection) -> None:
@@ -3068,7 +3068,7 @@ def _ensure_releases_columns(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE releases ADD COLUMN audience_is_for_kids INTEGER NOT NULL DEFAULT 0;")
     if "video_language" not in cols:
         with suppress(Exception):
-            conn.execute("ALTER TABLE releases ADD COLUMN video_language TEXT NOT NULL DEFAULT 'English';")
+            conn.execute("ALTER TABLE releases ADD COLUMN video_language TEXT NOT NULL DEFAULT 'en';")
 
 
 def _ensure_tracks_columns(conn: sqlite3.Connection) -> None:
@@ -4618,7 +4618,7 @@ def create_ui_job_draft(
     playlists_json: str = "[]",
     playlist_create_title: str | None = None,
     audience_is_for_kids: int = 0,
-    video_language: str = "English",
+    video_language: str = "en",
     cover_name: Optional[str] = None,
     cover_ext: Optional[str] = None,
     background_name: str = "",

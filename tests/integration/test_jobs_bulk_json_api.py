@@ -66,7 +66,7 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             "tags_csv": "one,two",
             "playlist_ids": ["PL_ONE"],
             "audience_is_for_kids": False,
-            "video_language": "English",
+            "video_language": "en",
             "cover_name": "cover",
             "cover_ext": "png",
             "background_name": "bg",
@@ -127,7 +127,7 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                         {
                             "index": 0,
                             "valid": True,
-                            "metadata": {"playlist_ids": ["PL_ONE"], "playlist_create_title": "", "audience_is_for_kids": False, "video_language": "English"},
+                            "metadata": {"playlist_ids": ["PL_ONE"], "playlist_create_title": "", "audience_is_for_kids": False, "video_language": "en"},
                         }
                     ],
                 },
@@ -345,7 +345,7 @@ class TestJobsBulkJsonApi(unittest.TestCase):
             self.assertEqual(preview.json()["results"][0]["metadata"]["playlist_ids"], ["PL_ONE"])
             self.assertEqual(preview.json()["results"][0]["metadata"]["playlist_create_title"], "")
             self.assertEqual(preview.json()["results"][0]["metadata"]["audience_is_for_kids"], False)
-            self.assertEqual(preview.json()["results"][0]["metadata"]["video_language"], "English")
+            self.assertEqual(preview.json()["results"][0]["metadata"]["video_language"], "en")
 
             execute = client.post(
                 "/v1/ui/jobs/bulk-json/execute",
@@ -362,7 +362,7 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                 draft = dbm.get_ui_job_draft(conn2, created_job_id)
                 self.assertEqual(draft["playlists_json"], '["PL_ONE"]')
                 self.assertEqual(int(draft["audience_is_for_kids"]), 0)
-                self.assertEqual(draft["video_language"], "English")
+                self.assertEqual(draft["video_language"], "en")
             finally:
                 conn2.close()
 
@@ -384,7 +384,7 @@ class TestJobsBulkJsonApi(unittest.TestCase):
                 draft = dbm.get_ui_job_draft(conn3, compat_job_id)
                 self.assertEqual(draft["playlists_json"], "[]")
                 self.assertEqual(int(draft["audience_is_for_kids"]), 0)
-                self.assertEqual(draft["video_language"], "English")
+                self.assertEqual(draft["video_language"], "en")
             finally:
                 conn3.close()
 

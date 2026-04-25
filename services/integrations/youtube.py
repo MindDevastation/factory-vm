@@ -64,7 +64,7 @@ class YouTubeClient:
         description: str,
         tags: List[str],
         audience_is_for_kids: bool = False,
-        video_language: str = "English",
+        video_language: str = "en",
     ) -> UploadResult:
         normalized_language = str(video_language or "").strip()
         body = {
