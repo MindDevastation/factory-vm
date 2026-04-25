@@ -575,6 +575,19 @@ class TestUiPagesSlice4(unittest.TestCase):
                     background_ext="jpg",
                     audio_ids_text="001",
                 )
+                upload_failed_job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="Upload failed",
+                    description="",
+                    tags_csv="",
+                    cover_name="",
+                    cover_ext="",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                dbm.update_job_state(conn, upload_failed_job_id, state="UPLOAD_FAILED", stage="UPLOAD")
             finally:
                 conn.close()
 
@@ -736,6 +749,19 @@ class TestUiPagesSlice4(unittest.TestCase):
                     background_ext="jpg",
                     audio_ids_text="001",
                 )
+                upload_failed_job_id = dbm.create_ui_job_draft(
+                    conn,
+                    channel_id=int(ch["id"]),
+                    title="Upload failed",
+                    description="",
+                    tags_csv="",
+                    cover_name="",
+                    cover_ext="",
+                    background_name="bg",
+                    background_ext="jpg",
+                    audio_ids_text="001",
+                )
+                dbm.update_job_state(conn, upload_failed_job_id, state="UPLOAD_FAILED", stage="UPLOAD")
             finally:
                 conn.close()
 
@@ -810,6 +836,16 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('"mode": "create_and_enqueue"', r.text)
             self.assertIn('"audio_ids_text": "001 015 027"', r.text)
             self.assertIn('jobs-reupload-btn', r.text)
+            self.assertIn(
+                "status === 'DRAFT' || status === 'UPLOAD_FAILED'",
+                r.text,
+            )
+            self.assertIn(f'/ui/jobs/{job_id}/edit', r.text)
+            upload_failed_row_start = r.text.index(f'<tr data-job-id="{upload_failed_job_id}" data-job-status="UPLOAD_FAILED">')
+            upload_failed_row_end = r.text.index("</tr>", upload_failed_row_start)
+            upload_failed_row_html = r.text[upload_failed_row_start:upload_failed_row_end]
+            self.assertIn(f'/ui/jobs/{upload_failed_job_id}/edit', upload_failed_row_html)
+            self.assertIn('jobs-reupload-btn', upload_failed_row_html)
             self.assertIn('id="secondary-surfaces-drawer"', r.text)
             self.assertIn('class="secondary-drawer"', r.text)
             self.assertIn('id="secondary-surfaces-backdrop"', r.text)

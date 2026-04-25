@@ -216,7 +216,7 @@
       </td>
       <td class="muted">{{ j.updated_at }}</td>
       <td class="jobs-actions-cell">
-        {% if j.state == 'DRAFT' and j.job_type == 'UI' %}
+        {% if j.job_type == 'UI' and (j.state == 'DRAFT' or j.state|upper == 'UPLOAD_FAILED') %}
         <a href="/ui/jobs/{{ j.id }}/edit">Edit</a>
         {% endif %}
         <button type="button" class="jobs-render-btn" data-job-id="{{ j.id }}" data-job-status="{{ j.state }}" {% if j.state|upper != 'DRAFT' %}disabled{% endif %}>Render</button>
@@ -524,11 +524,12 @@
 
   function buildActionButtons(job) {
     const parts = [];
-    if (normalizeStatus(job.state) === 'DRAFT' && String(job.job_type || '').toUpperCase() === 'UI') {
+    const status = normalizeStatus(job.state);
+    if (String(job.job_type || '').toUpperCase() === 'UI' && (status === 'DRAFT' || status === 'UPLOAD_FAILED')) {
       parts.push('<a href="/ui/jobs/' + encodeURIComponent(job.id) + '/edit">Edit</a>');
     }
 
-    const isDraft = normalizeStatus(job.state) === 'DRAFT';
+    const isDraft = status === 'DRAFT';
     parts.push(
       '<button type="button" class="jobs-render-btn" data-job-id="' + esc(job.id) + '" data-job-status="' + esc(job.state) + '"' +
       (isDraft ? '' : ' disabled') +
@@ -538,7 +539,7 @@
     if (retryAllowedForJob(job)) {
       parts.push('<button type="button" class="jobs-retry-btn" data-job-id="' + esc(job.id) + '">Retry</button>');
     }
-    if (normalizeStatus(job.state) === 'UPLOAD_FAILED') {
+    if (status === 'UPLOAD_FAILED') {
       parts.push('<button type="button" class="jobs-reupload-btn" data-job-id="' + esc(job.id) + '">Reupload</button>');
     }
 
