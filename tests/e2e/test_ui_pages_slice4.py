@@ -865,6 +865,13 @@ class TestUiPagesSlice4(unittest.TestCase):
             self.assertIn('href="/ui/analyzer"', r.text)
             self.assertIn('href="/ui/ops/recovery"', r.text)
 
+            upload_failed_edit = client.get(f"/ui/jobs/{upload_failed_job_id}/edit", headers=h)
+            self.assertEqual(upload_failed_edit.status_code, 200)
+            self.assertIn('name="background_name" value="bg" >', upload_failed_edit.text)
+            self.assertIn('<select name="background_ext" >', upload_failed_edit.text)
+            self.assertIn("Changing background for an Upload Failed job requires rerender", upload_failed_edit.text)
+            self.assertIn('name="audio_ids_text" rows="6" style="width:86ch;" disabled', upload_failed_edit.text)
+
             r = client.get("/ui/ops/recovery", headers=h)
             self.assertEqual(r.status_code, 200)
             self.assertIn("Ops · Recovery Console", r.text)

@@ -5277,6 +5277,30 @@ def _validate_render_inputs_immutable(*, payload: UiJobDraftPayload, draft: dict
         raise HTTPException(409, "cover_ext is immutable after DRAFT")
 
 
+def _background_changed_from_draft(*, payload: UiJobDraftPayload, draft: dict[str, Any]) -> bool:
+    return (
+        payload.background_name.strip() != str(draft.get("background_name") or "").strip()
+        or payload.background_ext.strip().lower() != str(draft.get("background_ext") or "").strip().lower()
+    )
+
+
+def _reset_upload_failed_job_for_rerender(conn: Any, *, job_id: int) -> None:
+    conn.execute("DELETE FROM youtube_uploads WHERE job_id = ?", (job_id,))
+    conn.execute("DELETE FROM job_inputs WHERE job_id = ?", (job_id,))
+    dbm.clear_retry(conn, job_id)
+    dbm.update_job_state(
+        conn,
+        job_id,
+        state="DRAFT",
+        stage="DRAFT",
+        error_reason="",
+        progress_text="background changed; rerender required",
+    )
+    mp4 = outbox_dir(env, job_id) / "render.mp4"
+    if mp4.exists():
+        mp4.unlink()
+
+
 def _ui_validate_playlist_builder_draft(payload: UiPlaylistBuilderDraftPayload) -> Dict[str, List[str]]:
     errors: Dict[str, List[str]] = {
         "project": [],
@@ -7090,9 +7114,12 @@ def api_update_ui_job(job_id: int, payload: UiJobDraftPayload, _: bool = Depends
             raise HTTPException(409, "project/channel_id is immutable")
 
         state = str(job.get("state") or "")
+        background_changed = _background_changed_from_draft(payload=payload, draft=d)
         if state != "DRAFT":
-            _validate_render_inputs_immutable(payload=payload, draft=d)
+            if state != "UPLOAD_FAILED" or not background_changed:
+                _validate_render_inputs_immutable(payload=payload, draft=d)
 
+        can_edit_background = state in {"DRAFT", "UPLOAD_FAILED"}
         errors = _ui_validate(payload)
         if errors:
             raise HTTPException(422, {"field_errors": errors})
@@ -7109,10 +7136,12 @@ def api_update_ui_job(job_id: int, payload: UiJobDraftPayload, _: bool = Depends
             video_language=payload.video_language.strip() or "en",
             cover_name=payload.cover_name.strip() or None,
             cover_ext=(payload.cover_ext.strip() or None) if state == "DRAFT" else (str(d.get("cover_ext") or "").strip() or None),
-            background_name=payload.background_name.strip() if state == "DRAFT" else str(d.get("background_name") or "").strip(),
-            background_ext=payload.background_ext.strip() if state == "DRAFT" else str(d.get("background_ext") or "").strip(),
+            background_name=payload.background_name.strip() if can_edit_background else str(d.get("background_name") or "").strip(),
+            background_ext=payload.background_ext.strip() if can_edit_background else str(d.get("background_ext") or "").strip(),
             audio_ids_text=payload.audio_ids_text.strip() if state == "DRAFT" else str(d.get("audio_ids_text") or "").strip(),
         )
+        if state == "UPLOAD_FAILED" and background_changed:
+            _reset_upload_failed_job_for_rerender(conn, job_id=job_id)
     finally:
         conn.close()
     return {"ok": True}
@@ -7318,6 +7347,7 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
         release_id = int(job["release_id"]) if job.get("release_id") is not None else None
         metadata_locked = not _metadata_edit_allowed(conn, job=job)
         render_locked = str(job.get("state") or "") != "DRAFT"
+        background_locked = str(job.get("state") or "") not in {"DRAFT", "UPLOAD_FAILED"}
     finally:
         conn.close()
     return templates.TemplateResponse(
@@ -7332,6 +7362,7 @@ def ui_jobs_edit_page(job_id: int, request: Request, _: bool = Depends(require_b
             "release_id": release_id,
             "locked": metadata_locked,
             "render_locked": render_locked,
+            "background_locked": background_locked,
         },
     )
 
@@ -7394,8 +7425,11 @@ async def ui_jobs_edit_submit(
         if not _metadata_edit_allowed(conn, job=job):
             raise HTTPException(409, "metadata is locked after successful upload")
         state = str(job.get("state") or "")
+        background_changed = _background_changed_from_draft(payload=payload, draft=draft)
         if state != "DRAFT":
-            _validate_render_inputs_immutable(payload=payload, draft=draft)
+            if state != "UPLOAD_FAILED" or not background_changed:
+                _validate_render_inputs_immutable(payload=payload, draft=draft)
+        can_edit_background = state in {"DRAFT", "UPLOAD_FAILED"}
         errors = _ui_validate(payload)
         if errors:
             return templates.TemplateResponse(
@@ -7410,6 +7444,7 @@ async def ui_jobs_edit_submit(
                     "release_id": int(job["release_id"]) if job.get("release_id") is not None else None,
                     "locked": False,
                     "render_locked": state != "DRAFT",
+                    "background_locked": state not in {"DRAFT", "UPLOAD_FAILED"},
                 },
                 status_code=422,
             )
@@ -7428,6 +7463,7 @@ async def ui_jobs_edit_submit(
                     "release_id": int(job["release_id"]) if job.get("release_id") is not None else None,
                     "locked": False,
                     "render_locked": state != "DRAFT",
+                    "background_locked": state not in {"DRAFT", "UPLOAD_FAILED"},
                 },
                 status_code=422,
             )
@@ -7447,11 +7483,14 @@ async def ui_jobs_edit_submit(
             video_language=payload.video_language.strip() or "en",
             cover_name=payload.cover_name.strip() or None,
             cover_ext=(payload.cover_ext.strip() or None) if state == "DRAFT" else (str(draft.get("cover_ext") or "").strip() or None),
-            background_name=payload.background_name.strip() if state == "DRAFT" else str(draft.get("background_name") or "").strip(),
-            background_ext=payload.background_ext.strip() if state == "DRAFT" else str(draft.get("background_ext") or "").strip(),
+            background_name=payload.background_name.strip() if can_edit_background else str(draft.get("background_name") or "").strip(),
+            background_ext=payload.background_ext.strip() if can_edit_background else str(draft.get("background_ext") or "").strip(),
             audio_ids_text=payload.audio_ids_text.strip() if state == "DRAFT" else str(draft.get("audio_ids_text") or "").strip(),
         )
+        if state == "UPLOAD_FAILED" and background_changed:
+            _reset_upload_failed_job_for_rerender(conn, job_id=job_id)
         preflight = run_preflight_for_job(conn, env, job_id) if state == "DRAFT" else None
+        resulting_state = "DRAFT" if state == "UPLOAD_FAILED" and background_changed else state
         release_id = int(job["release_id"]) if job.get("release_id") is not None else None
     finally:
         conn.close()
@@ -7467,7 +7506,8 @@ async def ui_jobs_edit_submit(
             "job_id": job_id,
             "release_id": release_id,
             "locked": False,
-            "render_locked": state != "DRAFT",
+            "render_locked": resulting_state != "DRAFT",
+            "background_locked": resulting_state not in {"DRAFT", "UPLOAD_FAILED"},
         },
     )
 
