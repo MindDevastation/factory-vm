@@ -460,6 +460,213 @@ class TestPromptRegistryService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_export_import_foundation_roundtrip_and_privacy(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                record = svc.create_record(
+                    {
+                        "slug": "mf5-export",
+                        "code": "PR-MF5-EXP",
+                        "title": "MF5 Export",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                prompt_id = int(record["id"])
+                version = svc.create_version(
+                    prompt_id,
+                    {
+                        "body_text": "Hi {{name}}",
+                        "status": "draft",
+                        "variables": [
+                            {"name": "name", "safety_class": "standard", "required": True, "default_value": "Guest"},
+                        ],
+                    },
+                    actor="tester",
+                )
+                svc.create_binding(
+                    {
+                        "prompt_id": prompt_id,
+                        "binding_scope": "workflow",
+                        "workflow_slug": "wf-mf5",
+                        "binding_status": "active",
+                    },
+                    actor="tester",
+                )
+                svc.preview_version(int(version["id"]), {"variables": {"name": "Alice"}})
+
+                exported = svc.export_registry(prompt_id=prompt_id)
+                self.assertEqual(exported["schema_version"], "prompt_registry_export_v1")
+                self.assertIn("records", exported)
+                self.assertIn("versions", exported)
+                self.assertIn("variables", exported)
+                self.assertIn("bindings", exported)
+                self.assertNotIn("usage_events_summary", exported)
+                self.assertEqual([item["slug"] for item in exported["records"]], ["mf5-export"])
+                self.assertEqual(exported["versions"][0]["prompt_slug"], "mf5-export")
+                self.assertEqual(exported["variables"][0]["default_value"], "Guest")
+                self.assertNotIn("used_variables", str(exported))
+                self.assertNotIn("diagnostics", str(exported))
+
+                preview = svc.preview_import(exported, mode="merge_only")
+                self.assertEqual(preview["import_status"], "OK")
+                before_records = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_records").fetchone()["c"])
+                dry_run = svc.confirm_import(exported, mode="merge_only", dry_run=True, actor="tester")
+                self.assertEqual(dry_run["import_status"], "OK")
+                after_dry_run_records = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_records").fetchone()["c"])
+                self.assertEqual(before_records, after_dry_run_records)
+
+                with temp_env() as (_td2, env2):
+                    seed_minimal_db(env2)
+                    conn2 = dbm.connect(env2)
+                    try:
+                        svc2 = PromptRegistryService(conn2)
+                        applied = svc2.confirm_import(exported, mode="merge_only", dry_run=False, actor="tester")
+                        self.assertEqual(applied["import_status"], "OK")
+                        self.assertEqual(int(conn2.execute("SELECT COUNT(*) AS c FROM prompt_records").fetchone()["c"]), 1)
+                        self.assertEqual(int(conn2.execute("SELECT COUNT(*) AS c FROM prompt_versions").fetchone()["c"]), 1)
+                        self.assertEqual(int(conn2.execute("SELECT COUNT(*) AS c FROM prompt_bindings").fetchone()["c"]), 1)
+                    finally:
+                        conn2.close()
+            finally:
+                conn.close()
+
+    def test_import_preview_rejects_invalid_schema_and_duplicates(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                invalid_schema = {
+                    "schema_version": "bad_schema",
+                    "records": [],
+                    "versions": [],
+                    "variables": [],
+                    "bindings": [],
+                }
+                with self.assertRaisesRegex(Exception, "invalid schema_version"):
+                    svc.preview_import(invalid_schema, mode="merge_only")
+
+                duplicate_records = {
+                    "schema_version": "prompt_registry_export_v1",
+                    "records": [
+                        {
+                            "slug": "dup",
+                            "code": "PR-DUP-A",
+                            "title": "A",
+                            "record_type": "prompt_template",
+                            "status": "draft",
+                            "validation_status": "UNKNOWN",
+                        },
+                        {
+                            "slug": "dup",
+                            "code": "PR-DUP-B",
+                            "title": "B",
+                            "record_type": "prompt_template",
+                            "status": "draft",
+                            "validation_status": "UNKNOWN",
+                        },
+                    ],
+                    "versions": [],
+                    "variables": [],
+                    "bindings": [],
+                }
+                preview = svc.preview_import(duplicate_records, mode="merge_only")
+                self.assertEqual(preview["import_status"], "INVALID")
+                self.assertTrue(any("duplicate record slug" in item for item in preview["summary"]["validation_errors"]))
+            finally:
+                conn.close()
+
+    def test_confirm_import_atomic_rollback_and_non_destructive(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                existing = svc.create_record(
+                    {
+                        "slug": "existing-keep",
+                        "code": "PR-KEEP-1",
+                        "title": "Keep",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                payload = {
+                    "schema_version": "prompt_registry_export_v1",
+                    "records": [
+                        {
+                            "slug": "existing-keep",
+                            "code": "PR-KEEP-1",
+                            "title": "Keep Updated",
+                            "record_type": "prompt_template",
+                            "status": "draft",
+                            "validation_status": "UNKNOWN",
+                        },
+                        {
+                            "slug": "new-record",
+                            "code": "PR-NEW-1",
+                            "title": "New",
+                            "record_type": "prompt_template",
+                            "status": "draft",
+                            "validation_status": "UNKNOWN",
+                        },
+                    ],
+                    "versions": [
+                        {
+                            "prompt_slug": "new-record",
+                            "version_number": 1,
+                            "body_text": "Body {{name}}",
+                            "status": "draft",
+                            "validation_status": "UNKNOWN",
+                        }
+                    ],
+                    "variables": [
+                        {
+                            "prompt_slug": "new-record",
+                            "version_number": 1,
+                            "name": "name",
+                            "safety_class": "standard",
+                            "required": True,
+                            "default_value": "",
+                            "description": "",
+                        }
+                    ],
+                    "bindings": [
+                        {
+                            "prompt_slug": "new-record",
+                            "binding_scope": "channel",
+                            "channel_slug": "ch-new",
+                            "binding_status": "active",
+                        }
+                    ],
+                }
+                ok = svc.confirm_import(payload, mode="merge_only", dry_run=False, actor="tester")
+                self.assertEqual(ok["import_status"], "OK")
+                self.assertEqual(int(conn.execute("SELECT COUNT(*) AS c FROM prompt_records").fetchone()["c"]), 2)
+                self.assertEqual(
+                    int(conn.execute("SELECT COUNT(*) AS c FROM prompt_records WHERE slug = 'existing-keep'").fetchone()["c"]),
+                    1,
+                )
+
+                before = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_records").fetchone()["c"])
+                rollback_payload = {
+                    **payload,
+                    "versions": payload["versions"] + [dict(payload["versions"][0])],
+                }
+                preview = svc.confirm_import(rollback_payload, mode="merge_only", dry_run=False, actor="tester")
+                self.assertEqual(preview["import_status"], "INVALID")
+                after = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_records").fetchone()["c"])
+                self.assertEqual(before, after)
+                self.assertEqual(int(existing["id"]), int(svc.get_record(int(existing["id"]))["id"]))
+            finally:
+                conn.close()
+
     def test_preview_foundation_render_and_diagnostics(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)

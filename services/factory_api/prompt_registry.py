@@ -14,6 +14,7 @@ from services.prompt_registry.contracts import (
     contracts_payload,
     ensure_binding_scope,
     ensure_binding_status,
+    ensure_import_mode,
     ensure_usage_event_status,
     ensure_usage_event_type,
 )
@@ -39,6 +40,17 @@ def _actor_from_request(request: Request) -> str:
         return user.strip() or "unknown"
     except Exception:
         return "unknown"
+
+
+def _parse_bool_query(value: str | None, *, field_name: str, default: bool) -> bool:
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"{field_name} must be a boolean")
 
 
 def create_prompt_registry_router(env: Env) -> APIRouter:
@@ -315,6 +327,64 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
                 version_id=parsed_version_id,
                 event_type=parsed_event_type,
             )
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.get("/export")
+    def export_registry(
+        prompt_id: str | None = None,
+        include_inactive: str | None = None,
+        include_usage: str | None = None,
+        _: bool = Depends(require_basic_auth(env)),
+    ):
+        conn = dbm.connect(env)
+        try:
+            parsed_prompt_id: int | None = None
+            if prompt_id is not None:
+                parsed_prompt_id = int(str(prompt_id).strip())
+            parsed_include_inactive = _parse_bool_query(
+                include_inactive, field_name="include_inactive", default=True
+            )
+            parsed_include_usage = _parse_bool_query(include_usage, field_name="include_usage", default=False)
+            return PromptRegistryService(conn).export_registry(
+                prompt_id=parsed_prompt_id,
+                include_inactive=parsed_include_inactive,
+                include_usage=parsed_include_usage,
+            )
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.post("/import/preview")
+    def import_preview(payload: dict[str, Any], _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            mode = ensure_import_mode(payload.get("mode"))
+            return PromptRegistryService(conn).preview_import(payload.get("payload"), mode=mode)
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.post("/import/confirm")
+    def import_confirm(payload: dict[str, Any], request: Request, _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            mode = ensure_import_mode(payload.get("mode"))
+            dry_run = bool(payload.get("dry_run", False))
+            return PromptRegistryService(conn).confirm_import(
+                payload.get("payload"),
+                mode=mode,
+                dry_run=dry_run,
+                actor=_actor_from_request(request),
+            )
+        except PromptRegistryConflictError as exc:
+            return _error("PROMPT_REGISTRY_CONFLICT", str(exc), status_code=409)
         except (TypeError, ValueError, PromptRegistryValidationError) as exc:
             return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
         finally:
