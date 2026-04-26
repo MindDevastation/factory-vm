@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from services.prompt_registry.contracts import (
+    EXPORT_SCHEMA_VERSION,
     ensure_binding_scope,
     ensure_binding_status,
+    ensure_import_mode,
     ensure_lifecycle_transition,
     ensure_non_empty,
     ensure_record_status,
@@ -27,6 +29,8 @@ from services.prompt_registry.errors import (
 
 
 class PromptRegistryService:
+    _REDACTED_EXPORT_DEFAULT = ""
+
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
@@ -378,38 +382,13 @@ class PromptRegistryService:
         try:
             self._conn.execute("BEGIN")
             in_txn = True
-            version_no = self._next_version_no(prompt_id)
-            cur = self._conn.execute(
-                """
-                INSERT INTO prompt_versions(prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?)
-                """,
-                (prompt_id, version_no, body_text, render_fingerprint, status, validation_status, 0, now, now),
-            )
-            version_id = int(cur.lastrowid)
-            for variable in validated_variables:
-                self._conn.execute(
-                    """
-                    INSERT INTO prompt_variables(prompt_version_id,name,safety_class,required,default_value,description,created_at,updated_at)
-                    VALUES(?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        version_id,
-                        variable["name"],
-                        variable["safety_class"],
-                        variable["required"],
-                        variable["default_value"],
-                        variable["description"],
-                        now,
-                        now,
-                    ),
-                )
-            self._write_audit_event(
+            version_id = self._create_version_in_current_transaction(
                 prompt_id=prompt_id,
-                version_id=version_id,
-                event_type="version_created",
+                body_text=body_text,
+                status=status,
+                validation_status=validation_status,
+                validated_variables=validated_variables,
                 actor=actor_id,
-                payload={"version_no": version_no},
             )
             self._conn.execute("COMMIT")
             in_txn = False
@@ -420,6 +399,53 @@ class PromptRegistryService:
         if version_id is None:
             raise PromptRegistryValidationError("failed to create version")
         return self.get_version(version_id)
+
+    def _create_version_in_current_transaction(
+        self,
+        *,
+        prompt_id: int,
+        body_text: str,
+        status: str,
+        validation_status: str,
+        validated_variables: list[dict[str, Any]],
+        actor: str,
+    ) -> int:
+        now = self._now_iso()
+        render_fingerprint = self._build_render_fingerprint(body_text, validated_variables)
+        version_no = self._next_version_no(prompt_id)
+        cur = self._conn.execute(
+            """
+            INSERT INTO prompt_versions(prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (prompt_id, version_no, body_text, render_fingerprint, status, validation_status, 0, now, now),
+        )
+        version_id = int(cur.lastrowid)
+        for variable in validated_variables:
+            self._conn.execute(
+                """
+                INSERT INTO prompt_variables(prompt_version_id,name,safety_class,required,default_value,description,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    version_id,
+                    variable["name"],
+                    variable["safety_class"],
+                    variable["required"],
+                    variable["default_value"],
+                    variable["description"],
+                    now,
+                    now,
+                ),
+            )
+        self._write_audit_event(
+            prompt_id=prompt_id,
+            version_id=version_id,
+            event_type="version_created",
+            actor=actor,
+            payload={"version_no": version_no},
+        )
+        return version_id
 
     def create_binding(self, payload: dict[str, Any], *, actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
@@ -824,6 +850,473 @@ class PromptRegistryService:
         if not isinstance(parsed, list):
             return []
         return [item for item in parsed if isinstance(item, dict)]
+
+    @staticmethod
+    def _require_object(value: Any, *, field_name: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise PromptRegistryValidationError(f"{field_name} must be an object")
+        return value
+
+    @staticmethod
+    def _require_list(value: Any, *, field_name: str) -> list[dict[str, Any]]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise PromptRegistryValidationError(f"{field_name} must be a list")
+        if any(not isinstance(item, dict) for item in value):
+            raise PromptRegistryValidationError(f"{field_name} items must be objects")
+        return [item for item in value if isinstance(item, dict)]
+
+    def export_registry(
+        self,
+        *,
+        prompt_id: int | None = None,
+        include_inactive: bool = True,
+        include_usage: bool = False,
+    ) -> dict[str, Any]:
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if prompt_id is not None:
+            where_parts.append("id = ?")
+            params.append(int(prompt_id))
+        if not include_inactive:
+            where_parts.append("status != 'inactive'")
+        where_clause = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        records_rows = list(
+            self._conn.execute(
+                f"SELECT * FROM prompt_records{where_clause} ORDER BY id ASC",
+                tuple(params),
+            ).fetchall()
+        )
+        if prompt_id is not None and not records_rows:
+            raise PromptRegistryNotFoundError(f"prompt record {prompt_id} not found")
+        exported_prompt_ids = [int(row["id"]) for row in records_rows]
+        if not exported_prompt_ids:
+            result: dict[str, Any] = {
+                "schema_version": EXPORT_SCHEMA_VERSION,
+                "exported_at": self._now_iso(),
+                "records": [],
+                "versions": [],
+                "variables": [],
+                "bindings": [],
+            }
+            if include_usage:
+                result["usage_events_summary"] = self.usage_summary()
+            return result
+
+        prompt_slug_by_id = {int(row["id"]): str(row["slug"]) for row in records_rows}
+        records = [
+            {
+                "slug": str(row["slug"]),
+                "code": str(row["code"]),
+                "title": str(row["title"]),
+                "record_type": str(row["record_type"]),
+                "status": str(row["status"]),
+                "validation_status": str(row["validation_status"]),
+                "bridge_policy_hook": row.get("bridge_policy_hook"),
+            }
+            for row in records_rows
+        ]
+
+        placeholders = ",".join(["?"] * len(exported_prompt_ids))
+        versions_where = f"prompt_id IN ({placeholders})"
+        versions_params: list[Any] = list(exported_prompt_ids)
+        if not include_inactive:
+            versions_where += " AND status != 'inactive'"
+        version_rows = list(
+            self._conn.execute(
+                f"SELECT * FROM prompt_versions WHERE {versions_where} ORDER BY prompt_id ASC, version_no ASC, id ASC",
+                tuple(versions_params),
+            ).fetchall()
+        )
+        versions = [
+            {
+                "prompt_slug": prompt_slug_by_id[int(row["prompt_id"])],
+                "version_number": int(row["version_no"]),
+                "body_text": str(row["body_text"]),
+                "status": str(row["status"]),
+                "validation_status": str(row["validation_status"]),
+            }
+            for row in version_rows
+        ]
+
+        version_refs = {
+            int(row["id"]): (prompt_slug_by_id[int(row["prompt_id"])], int(row["version_no"])) for row in version_rows
+        }
+        variables: list[dict[str, Any]] = []
+        if version_refs:
+            version_ids = sorted(version_refs)
+            var_placeholders = ",".join(["?"] * len(version_ids))
+            variable_rows = list(
+                self._conn.execute(
+                    f"SELECT * FROM prompt_variables WHERE prompt_version_id IN ({var_placeholders}) ORDER BY prompt_version_id ASC, id ASC",
+                    tuple(version_ids),
+                ).fetchall()
+            )
+            for row in variable_rows:
+                prompt_slug, version_number = version_refs[int(row["prompt_version_id"])]
+                variables.append(
+                    {
+                        "prompt_slug": prompt_slug,
+                        "version_number": version_number,
+                        "name": str(row["name"]),
+                        "safety_class": str(row["safety_class"]),
+                        "required": bool(int(row["required"])),
+                        "default_value": (
+                            self._REDACTED_EXPORT_DEFAULT
+                            if str(row["safety_class"]) in {"secret", "operator_only"}
+                            else str(row["default_value"] or "")
+                        ),
+                        "description": str(row["description"] or ""),
+                    }
+                )
+
+        bindings_where = f"prompt_id IN ({placeholders})"
+        bindings_params: list[Any] = list(exported_prompt_ids)
+        if not include_inactive:
+            bindings_where += " AND binding_status != 'inactive'"
+        binding_rows = list(
+            self._conn.execute(
+                f"SELECT * FROM prompt_bindings WHERE {bindings_where} ORDER BY prompt_id ASC, id ASC",
+                tuple(bindings_params),
+            ).fetchall()
+        )
+        bindings = [
+            {
+                "prompt_slug": prompt_slug_by_id[int(row["prompt_id"])],
+                "binding_scope": str(row["binding_scope"]),
+                "workflow_slug": row.get("workflow_slug"),
+                "channel_slug": row.get("channel_slug"),
+                "item_type": row.get("item_type"),
+                "item_ref": row.get("item_ref"),
+                "binding_status": str(row["binding_status"]),
+            }
+            for row in binding_rows
+        ]
+        result = {
+            "schema_version": EXPORT_SCHEMA_VERSION,
+            "exported_at": self._now_iso(),
+            "records": records,
+            "versions": versions,
+            "variables": variables,
+            "bindings": bindings,
+        }
+        if include_usage:
+            result["usage_events_summary"] = self.usage_summary(prompt_id=prompt_id)
+        return result
+
+    def _validate_import_payload(self, payload: Any, *, mode: Any) -> dict[str, Any]:
+        ensure_import_mode(mode)
+        root = self._require_object(payload, field_name="payload")
+        schema_version = str(root.get("schema_version") or "").strip()
+        records = self._require_list(root.get("records"), field_name="payload.records")
+        versions = self._require_list(root.get("versions"), field_name="payload.versions")
+        variables = self._require_list(root.get("variables"), field_name="payload.variables")
+        bindings = self._require_list(root.get("bindings"), field_name="payload.bindings")
+        if schema_version != EXPORT_SCHEMA_VERSION:
+            raise PromptRegistryValidationError("invalid schema_version")
+        return {
+            "schema_version": schema_version,
+            "records": records,
+            "versions": versions,
+            "variables": variables,
+            "bindings": bindings,
+        }
+
+    def _preview_import_summary(self, payload: dict[str, Any], *, mode: str) -> dict[str, Any]:
+        normalized = self._validate_import_payload(payload, mode=mode)
+        records = normalized["records"]
+        versions = normalized["versions"]
+        bindings = normalized["bindings"]
+        variables = normalized["variables"]
+        conflicts: list[str] = []
+        validation_errors: list[str] = []
+
+        slug_counts: dict[str, int] = {}
+        code_counts: dict[str, int] = {}
+        for record in records:
+            try:
+                slug = ensure_non_empty(record.get("slug"), field_name="record.slug")
+                code = ensure_non_empty(record.get("code"), field_name="record.code")
+                ensure_non_empty(record.get("title"), field_name="record.title")
+                ensure_record_type(record.get("record_type"))
+                ensure_record_status(record.get("status", "draft"))
+                ensure_validation_status(record.get("validation_status", "UNKNOWN"))
+            except ValueError as exc:
+                validation_errors.append(str(exc))
+                continue
+            slug_counts[slug] = slug_counts.get(slug, 0) + 1
+            code_counts[code] = code_counts.get(code, 0) + 1
+        for slug, count in slug_counts.items():
+            if count > 1:
+                validation_errors.append(f"duplicate record slug in payload: {slug}")
+        for code, count in code_counts.items():
+            if count > 1:
+                validation_errors.append(f"duplicate record code in payload: {code}")
+
+        existing_rows = list(self._conn.execute("SELECT id,slug,code FROM prompt_records").fetchall())
+        existing_by_slug = {str(row["slug"]): row for row in existing_rows}
+        existing_by_code = {str(row["code"]): row for row in existing_rows}
+
+        records_to_create = 0
+        records_to_update = 0
+        imported_slugs: set[str] = set()
+        for record in records:
+            slug = str(record.get("slug") or "").strip()
+            code = str(record.get("code") or "").strip()
+            if not slug or not code:
+                continue
+            imported_slugs.add(slug)
+            existing_slug_row = existing_by_slug.get(slug)
+            existing_code_row = existing_by_code.get(code)
+            if existing_slug_row is None:
+                if existing_code_row is not None:
+                    conflicts.append(f"record code conflict for slug {slug}: {code} already exists")
+                    continue
+                records_to_create += 1
+            else:
+                if str(existing_slug_row["code"]) != code:
+                    conflicts.append(f"record slug conflict for {slug}: code mismatch")
+                    continue
+                records_to_update += 1
+
+        seen_versions: set[tuple[str, int]] = set()
+        versions_to_create = 0
+        for version in versions:
+            try:
+                v_slug = ensure_non_empty(version.get("prompt_slug"), field_name="version.prompt_slug")
+                v_number = int(version.get("version_number"))
+                ensure_non_empty(version.get("body_text"), field_name="version.body_text")
+                ensure_record_status(version.get("status", "draft"))
+                ensure_validation_status(version.get("validation_status", "UNKNOWN"))
+            except (TypeError, ValueError) as exc:
+                validation_errors.append(str(exc))
+                continue
+            key = (v_slug, v_number)
+            if key in seen_versions:
+                validation_errors.append(f"duplicate version in payload: {v_slug}#{v_number}")
+                continue
+            seen_versions.add(key)
+            if v_slug not in imported_slugs and v_slug not in existing_by_slug:
+                conflicts.append(f"version references unknown prompt_slug: {v_slug}")
+                continue
+            existing_prompt = existing_by_slug.get(v_slug)
+            if existing_prompt is not None:
+                existing_version = self._conn.execute(
+                    "SELECT id FROM prompt_versions WHERE prompt_id = ? AND version_no = ?",
+                    (int(existing_prompt["id"]), v_number),
+                ).fetchone()
+                if existing_version is None:
+                    versions_to_create += 1
+            else:
+                versions_to_create += 1
+
+        seen_variables: set[tuple[str, int, str]] = set()
+        for variable in variables:
+            try:
+                vv_slug = ensure_non_empty(variable.get("prompt_slug"), field_name="variable.prompt_slug")
+                vv_number = int(variable.get("version_number"))
+                vv_name = ensure_non_empty(variable.get("name"), field_name="variable.name")
+                ensure_safety_class(variable.get("safety_class"))
+            except (TypeError, ValueError) as exc:
+                validation_errors.append(str(exc))
+                continue
+            var_key = (vv_slug, vv_number, vv_name)
+            if var_key in seen_variables:
+                validation_errors.append(f"duplicate variable in payload: {vv_slug}#{vv_number}:{vv_name}")
+                continue
+            seen_variables.add(var_key)
+
+        seen_bindings: set[tuple[str, str, str | None, str | None, str | None, str | None]] = set()
+        bindings_to_create = 0
+        for binding in bindings:
+            try:
+                b_slug = ensure_non_empty(binding.get("prompt_slug"), field_name="binding.prompt_slug")
+                b_scope = ensure_binding_scope(binding.get("binding_scope"))
+                b_status = ensure_binding_status(binding.get("binding_status", "active"))
+                target = self._validate_binding_target(binding)
+            except ValueError as exc:
+                validation_errors.append(str(exc))
+                continue
+            composite = (
+                b_slug,
+                b_scope,
+                target.get("workflow_slug"),
+                target.get("channel_slug"),
+                target.get("item_type"),
+                target.get("item_ref"),
+            )
+            if composite in seen_bindings:
+                validation_errors.append(f"duplicate binding in payload for {b_slug}/{b_scope}")
+                continue
+            seen_bindings.add(composite)
+            if b_status not in ("active", "inactive"):
+                validation_errors.append("binding_status must be active or inactive")
+                continue
+            if b_slug not in imported_slugs and b_slug not in existing_by_slug:
+                conflicts.append(f"binding references unknown prompt_slug: {b_slug}")
+                continue
+            existing_prompt = existing_by_slug.get(b_slug)
+            if existing_prompt is None:
+                bindings_to_create += 1
+                continue
+            existing_binding = self._conn.execute(
+                """
+                SELECT id FROM prompt_bindings
+                WHERE prompt_id = ?
+                  AND binding_scope = ?
+                  AND IFNULL(workflow_slug,'') = IFNULL(?, '')
+                  AND IFNULL(channel_slug,'') = IFNULL(?, '')
+                  AND IFNULL(item_type,'') = IFNULL(?, '')
+                  AND IFNULL(item_ref,'') = IFNULL(?, '')
+                LIMIT 1
+                """,
+                (
+                    int(existing_prompt["id"]),
+                    b_scope,
+                    target.get("workflow_slug"),
+                    target.get("channel_slug"),
+                    target.get("item_type"),
+                    target.get("item_ref"),
+                ),
+            ).fetchone()
+            if existing_binding is None:
+                bindings_to_create += 1
+        canonical = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        import_status = "INVALID" if validation_errors or conflicts else "OK"
+        return {
+            "import_status": import_status,
+            "summary": {
+                "records_to_create": records_to_create,
+                "records_to_update": records_to_update,
+                "versions_to_create": versions_to_create,
+                "bindings_to_create": bindings_to_create,
+                "conflicts": sorted(set(conflicts)),
+                "validation_errors": sorted(set(validation_errors)),
+            },
+            "fingerprint": fingerprint,
+        }
+
+    def preview_import(self, payload: Any, *, mode: Any) -> dict[str, Any]:
+        return self._preview_import_summary(self._require_object(payload, field_name="payload"), mode=str(mode or ""))
+
+    def confirm_import(self, payload: Any, *, mode: Any, dry_run: bool = False, actor: str = "importer") -> dict[str, Any]:
+        normalized_mode = ensure_import_mode(mode)
+        preview = self.preview_import(payload, mode=normalized_mode)
+        if dry_run or preview["import_status"] != "OK":
+            return preview
+
+        normalized_payload = self._validate_import_payload(payload, mode=normalized_mode)
+        imported_records = normalized_payload["records"]
+        imported_versions = normalized_payload["versions"]
+        imported_variables = normalized_payload["variables"]
+        imported_bindings = normalized_payload["bindings"]
+
+        self._conn.execute("BEGIN")
+        in_txn = True
+        try:
+            slug_to_prompt_id: dict[str, int] = {}
+            for record in imported_records:
+                slug = str(record["slug"]).strip()
+                code = str(record["code"]).strip()
+                existing = self._conn.execute("SELECT * FROM prompt_records WHERE slug = ?", (slug,)).fetchone()
+                record_payload = {
+                    "slug": slug,
+                    "code": code,
+                    "title": str(record.get("title") or ""),
+                    "record_type": str(record.get("record_type") or "prompt_template"),
+                    "status": str(record.get("status") or "draft"),
+                    "validation_status": str(record.get("validation_status") or "UNKNOWN"),
+                    "bridge_policy_hook": self._nullable_text(record.get("bridge_policy_hook")),
+                }
+                if existing is None:
+                    created = self.create_record(record_payload, actor=actor)
+                    slug_to_prompt_id[slug] = int(created["id"])
+                else:
+                    updated = self.update_record(int(existing["id"]), record_payload, actor=actor)
+                    if str(updated["code"]) != code:
+                        raise PromptRegistryValidationError(f"record slug conflict for {slug}: code mismatch")
+                    slug_to_prompt_id[slug] = int(updated["id"])
+
+            for row in self._conn.execute("SELECT id,slug FROM prompt_records").fetchall():
+                slug_to_prompt_id[str(row["slug"])] = int(row["id"])
+
+            variables_by_version: dict[tuple[str, int], list[dict[str, Any]]] = {}
+            for variable in imported_variables:
+                slug = str(variable["prompt_slug"]).strip()
+                version_number = int(variable["version_number"])
+                variables_by_version.setdefault((slug, version_number), []).append(variable)
+
+            for version in imported_versions:
+                slug = str(version["prompt_slug"]).strip()
+                version_number = int(version["version_number"])
+                prompt_id = slug_to_prompt_id.get(slug)
+                if prompt_id is None:
+                    raise PromptRegistryValidationError(f"version references unknown prompt_slug: {slug}")
+                existing_version = self._conn.execute(
+                    "SELECT id FROM prompt_versions WHERE prompt_id = ? AND version_no = ?",
+                    (prompt_id, version_number),
+                ).fetchone()
+                if existing_version is not None:
+                    continue
+                imported_version_variables = self._validate_variables_payload(variables_by_version.get((slug, version_number), []))
+                self._create_version_in_current_transaction(
+                    prompt_id=prompt_id,
+                    body_text=ensure_non_empty(version.get("body_text"), field_name="version.body_text"),
+                    status=ensure_record_status(version.get("status", "draft")),
+                    validation_status=ensure_validation_status(version.get("validation_status", "UNKNOWN")),
+                    validated_variables=imported_version_variables,
+                    actor=actor,
+                )
+
+            for binding in imported_bindings:
+                slug = str(binding["prompt_slug"]).strip()
+                prompt_id = slug_to_prompt_id.get(slug)
+                if prompt_id is None:
+                    raise PromptRegistryValidationError(f"binding references unknown prompt_slug: {slug}")
+                target = self._validate_binding_target(binding)
+                scope = ensure_binding_scope(binding.get("binding_scope"))
+                existing_binding = self._conn.execute(
+                    """
+                    SELECT id FROM prompt_bindings
+                    WHERE prompt_id = ?
+                      AND binding_scope = ?
+                      AND IFNULL(workflow_slug,'') = IFNULL(?, '')
+                      AND IFNULL(channel_slug,'') = IFNULL(?, '')
+                      AND IFNULL(item_type,'') = IFNULL(?, '')
+                      AND IFNULL(item_ref,'') = IFNULL(?, '')
+                    LIMIT 1
+                    """,
+                    (
+                        prompt_id,
+                        scope,
+                        target.get("workflow_slug"),
+                        target.get("channel_slug"),
+                        target.get("item_type"),
+                        target.get("item_ref"),
+                    ),
+                ).fetchone()
+                if existing_binding is None:
+                    self.create_binding(
+                        {
+                            "prompt_id": prompt_id,
+                            "binding_scope": scope,
+                            "workflow_slug": target.get("workflow_slug"),
+                            "channel_slug": target.get("channel_slug"),
+                            "item_type": target.get("item_type"),
+                            "item_ref": target.get("item_ref"),
+                            "binding_status": ensure_binding_status(binding.get("binding_status", "active")),
+                        },
+                        actor=actor,
+                    )
+            self._conn.execute("COMMIT")
+            in_txn = False
+        except Exception:
+            if in_txn:
+                self._conn.execute("ROLLBACK")
+            raise
+        return preview
 
     def list_usage_events(
         self,

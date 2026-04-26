@@ -17,6 +17,8 @@ BINDING_STATUSES: Final[tuple[str, ...]] = ("active", "inactive")
 USAGE_EVENT_TYPES: Final[tuple[str, ...]] = ("version_preview", "resolved_preview")
 USAGE_EVENT_SOURCES: Final[tuple[str, ...]] = ("api",)
 USAGE_EVENT_STATUSES: Final[tuple[str, ...]] = ("OK", "INVALID", "ERROR")
+IMPORT_MODES: Final[tuple[str, ...]] = ("merge_only",)
+EXPORT_SCHEMA_VERSION: Final[str] = "prompt_registry_export_v1"
 
 _ALLOWED_STATUS_TRANSITIONS: Final[dict[str, set[str]]] = {
     "draft": {"active", "inactive", "archived"},
@@ -104,6 +106,13 @@ def ensure_usage_event_status(value: Any) -> str:
     return normalized
 
 
+def ensure_import_mode(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in IMPORT_MODES:
+        raise ValueError(f"mode must be one of {', '.join(IMPORT_MODES)}")
+    return normalized
+
+
 def contracts_payload() -> dict[str, Any]:
     return {
         "record_type": list(RECORD_TYPES),
@@ -115,6 +124,8 @@ def contracts_payload() -> dict[str, Any]:
         "usage_event_type": list(USAGE_EVENT_TYPES),
         "usage_event_source": list(USAGE_EVENT_SOURCES),
         "usage_event_status": list(USAGE_EVENT_STATUSES),
+        "import_mode": list(IMPORT_MODES),
+        "export_schema_version": EXPORT_SCHEMA_VERSION,
     }
 
 

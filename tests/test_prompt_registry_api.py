@@ -828,3 +828,123 @@ class TestPromptRegistryApi(unittest.TestCase):
             invalid_limit = client.get("/v1/prompt-registry/usage-events?limit=500", headers=headers)
             self.assertEqual(invalid_limit.status_code, 422)
             self.assertEqual(invalid_limit.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
+    def test_export_and_import_endpoints_foundation(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            created = client.post(
+                "/v1/prompt-registry/records",
+                headers=headers,
+                json={
+                    "slug": "api-mf5-export",
+                    "code": "PR-API-MF5-1",
+                    "title": "API MF5 Export",
+                    "record_type": "prompt_template",
+                    "status": "draft",
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            prompt_id = int(created.json()["id"])
+            version = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/versions",
+                headers=headers,
+                json={
+                    "body_text": "Body {{name}}",
+                    "variables": [{"name": "name", "safety_class": "standard", "required": True, "default_value": "Guest"}],
+                },
+            )
+            self.assertEqual(version.status_code, 200)
+            created_binding = client.post(
+                "/v1/prompt-registry/bindings",
+                headers=headers,
+                json={
+                    "prompt_id": prompt_id,
+                    "binding_scope": "workflow",
+                    "workflow_slug": "wf-export",
+                    "binding_status": "active",
+                },
+            )
+            self.assertEqual(created_binding.status_code, 200)
+
+            exported = client.get(f"/v1/prompt-registry/export?prompt_id={prompt_id}", headers=headers)
+            self.assertEqual(exported.status_code, 200)
+            exported_payload = exported.json()
+            self.assertEqual(exported_payload["schema_version"], "prompt_registry_export_v1")
+            self.assertIn("records", exported_payload)
+            self.assertIn("versions", exported_payload)
+            self.assertIn("variables", exported_payload)
+            self.assertIn("bindings", exported_payload)
+            self.assertNotIn("usage_events_summary", exported_payload)
+
+            preview = client.post(
+                "/v1/prompt-registry/import/preview",
+                headers=headers,
+                json={"payload": exported_payload, "mode": "merge_only"},
+            )
+            self.assertEqual(preview.status_code, 200)
+            self.assertIn(preview.json()["import_status"], ("OK", "INVALID"))
+            self.assertIn("summary", preview.json())
+            conn = dbm.connect(env)
+            try:
+                before_records = conn.execute("SELECT COUNT(*) AS c FROM prompt_records").fetchone()["c"]
+            finally:
+                conn.close()
+
+            dry_run = client.post(
+                "/v1/prompt-registry/import/confirm",
+                headers=headers,
+                json={"payload": exported_payload, "mode": "merge_only", "dry_run": True},
+            )
+            self.assertEqual(dry_run.status_code, 200)
+            conn = dbm.connect(env)
+            try:
+                after_records = conn.execute("SELECT COUNT(*) AS c FROM prompt_records").fetchone()["c"]
+            finally:
+                conn.close()
+            self.assertEqual(before_records, after_records)
+
+            invalid_schema = client.post(
+                "/v1/prompt-registry/import/preview",
+                headers=headers,
+                json={"payload": {**exported_payload, "schema_version": "bad"}, "mode": "merge_only"},
+            )
+            self.assertEqual(invalid_schema.status_code, 422)
+            self.assertEqual(invalid_schema.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
+            duplicate_payload = {
+                "schema_version": "prompt_registry_export_v1",
+                "records": [
+                    {
+                        "slug": "dup-api",
+                        "code": "PR-DUP-1",
+                        "title": "Dup",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                        "validation_status": "UNKNOWN",
+                    },
+                    {
+                        "slug": "dup-api",
+                        "code": "PR-DUP-2",
+                        "title": "Dup2",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                        "validation_status": "UNKNOWN",
+                    },
+                ],
+                "versions": [],
+                "variables": [],
+                "bindings": [],
+            }
+            duplicate_preview = client.post(
+                "/v1/prompt-registry/import/preview",
+                headers=headers,
+                json={"payload": duplicate_payload, "mode": "merge_only"},
+            )
+            self.assertEqual(duplicate_preview.status_code, 200)
+            self.assertEqual(duplicate_preview.json()["import_status"], "INVALID")
+            self.assertTrue(
+                any("duplicate record slug" in item for item in duplicate_preview.json()["summary"]["validation_errors"])
+            )
