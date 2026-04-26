@@ -29,6 +29,8 @@ from services.prompt_registry.errors import (
 
 
 class PromptRegistryService:
+    _REDACTED_EXPORT_DEFAULT = ""
+
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
@@ -380,38 +382,13 @@ class PromptRegistryService:
         try:
             self._conn.execute("BEGIN")
             in_txn = True
-            version_no = self._next_version_no(prompt_id)
-            cur = self._conn.execute(
-                """
-                INSERT INTO prompt_versions(prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?)
-                """,
-                (prompt_id, version_no, body_text, render_fingerprint, status, validation_status, 0, now, now),
-            )
-            version_id = int(cur.lastrowid)
-            for variable in validated_variables:
-                self._conn.execute(
-                    """
-                    INSERT INTO prompt_variables(prompt_version_id,name,safety_class,required,default_value,description,created_at,updated_at)
-                    VALUES(?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        version_id,
-                        variable["name"],
-                        variable["safety_class"],
-                        variable["required"],
-                        variable["default_value"],
-                        variable["description"],
-                        now,
-                        now,
-                    ),
-                )
-            self._write_audit_event(
+            version_id = self._create_version_in_current_transaction(
                 prompt_id=prompt_id,
-                version_id=version_id,
-                event_type="version_created",
+                body_text=body_text,
+                status=status,
+                validation_status=validation_status,
+                validated_variables=validated_variables,
                 actor=actor_id,
-                payload={"version_no": version_no},
             )
             self._conn.execute("COMMIT")
             in_txn = False
@@ -422,6 +399,53 @@ class PromptRegistryService:
         if version_id is None:
             raise PromptRegistryValidationError("failed to create version")
         return self.get_version(version_id)
+
+    def _create_version_in_current_transaction(
+        self,
+        *,
+        prompt_id: int,
+        body_text: str,
+        status: str,
+        validation_status: str,
+        validated_variables: list[dict[str, Any]],
+        actor: str,
+    ) -> int:
+        now = self._now_iso()
+        render_fingerprint = self._build_render_fingerprint(body_text, validated_variables)
+        version_no = self._next_version_no(prompt_id)
+        cur = self._conn.execute(
+            """
+            INSERT INTO prompt_versions(prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (prompt_id, version_no, body_text, render_fingerprint, status, validation_status, 0, now, now),
+        )
+        version_id = int(cur.lastrowid)
+        for variable in validated_variables:
+            self._conn.execute(
+                """
+                INSERT INTO prompt_variables(prompt_version_id,name,safety_class,required,default_value,description,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    version_id,
+                    variable["name"],
+                    variable["safety_class"],
+                    variable["required"],
+                    variable["default_value"],
+                    variable["description"],
+                    now,
+                    now,
+                ),
+            )
+        self._write_audit_event(
+            prompt_id=prompt_id,
+            version_id=version_id,
+            event_type="version_created",
+            actor=actor,
+            payload={"version_no": version_no},
+        )
+        return version_id
 
     def create_binding(self, payload: dict[str, Any], *, actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
@@ -938,7 +962,11 @@ class PromptRegistryService:
                         "name": str(row["name"]),
                         "safety_class": str(row["safety_class"]),
                         "required": bool(int(row["required"])),
-                        "default_value": str(row["default_value"] or ""),
+                        "default_value": (
+                            self._REDACTED_EXPORT_DEFAULT
+                            if str(row["safety_class"]) in {"secret", "operator_only"}
+                            else str(row["default_value"] or "")
+                        ),
                         "description": str(row["description"] or ""),
                     }
                 )
@@ -1185,7 +1213,9 @@ class PromptRegistryService:
         imported_variables = normalized_payload["variables"]
         imported_bindings = normalized_payload["bindings"]
 
-        with self._conn:
+        self._conn.execute("BEGIN")
+        in_txn = True
+        try:
             slug_to_prompt_id: dict[str, int] = {}
             for record in imported_records:
                 slug = str(record["slug"]).strip()
@@ -1212,7 +1242,12 @@ class PromptRegistryService:
             for row in self._conn.execute("SELECT id,slug FROM prompt_records").fetchall():
                 slug_to_prompt_id[str(row["slug"])] = int(row["id"])
 
-            created_version_map: dict[tuple[str, int], int] = {}
+            variables_by_version: dict[tuple[str, int], list[dict[str, Any]]] = {}
+            for variable in imported_variables:
+                slug = str(variable["prompt_slug"]).strip()
+                version_number = int(variable["version_number"])
+                variables_by_version.setdefault((slug, version_number), []).append(variable)
+
             for version in imported_versions:
                 slug = str(version["prompt_slug"]).strip()
                 version_number = int(version["version_number"])
@@ -1225,52 +1260,15 @@ class PromptRegistryService:
                 ).fetchone()
                 if existing_version is not None:
                     continue
-                created_version = self.create_version(
-                    prompt_id,
-                    {
-                        "body_text": str(version.get("body_text") or ""),
-                        "status": str(version.get("status") or "draft"),
-                        "validation_status": str(version.get("validation_status") or "UNKNOWN"),
-                        "variables": [],
-                    },
+                imported_version_variables = self._validate_variables_payload(variables_by_version.get((slug, version_number), []))
+                self._create_version_in_current_transaction(
+                    prompt_id=prompt_id,
+                    body_text=ensure_non_empty(version.get("body_text"), field_name="version.body_text"),
+                    status=ensure_record_status(version.get("status", "draft")),
+                    validation_status=ensure_validation_status(version.get("validation_status", "UNKNOWN")),
+                    validated_variables=imported_version_variables,
                     actor=actor,
                 )
-                created_version_map[(slug, version_number)] = int(created_version["id"])
-
-            variables_by_version: dict[tuple[str, int], list[dict[str, Any]]] = {}
-            for variable in imported_variables:
-                slug = str(variable["prompt_slug"]).strip()
-                version_number = int(variable["version_number"])
-                variables_by_version.setdefault((slug, version_number), []).append(variable)
-
-            for version_key, created_version_id in created_version_map.items():
-                existing_names = {
-                    str(row["name"])
-                    for row in self._conn.execute(
-                        "SELECT name FROM prompt_variables WHERE prompt_version_id = ?",
-                        (created_version_id,),
-                    ).fetchall()
-                }
-                for variable in variables_by_version.get(version_key, []):
-                    name = ensure_non_empty(variable.get("name"), field_name="variable.name")
-                    if name in existing_names:
-                        continue
-                    self._conn.execute(
-                        """
-                        INSERT INTO prompt_variables(prompt_version_id,name,safety_class,required,default_value,description,created_at,updated_at)
-                        VALUES(?,?,?,?,?,?,?,?)
-                        """,
-                        (
-                            created_version_id,
-                            name,
-                            ensure_safety_class(variable.get("safety_class")),
-                            1 if bool(variable.get("required", True)) else 0,
-                            str(variable.get("default_value") or ""),
-                            str(variable.get("description") or ""),
-                            self._now_iso(),
-                            self._now_iso(),
-                        ),
-                    )
 
             for binding in imported_bindings:
                 slug = str(binding["prompt_slug"]).strip()
@@ -1312,6 +1310,12 @@ class PromptRegistryService:
                         },
                         actor=actor,
                     )
+            self._conn.execute("COMMIT")
+            in_txn = False
+        except Exception:
+            if in_txn:
+                self._conn.execute("ROLLBACK")
+            raise
         return preview
 
     def list_usage_events(

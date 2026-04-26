@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
+from unittest.mock import patch
 
 from services.common import db as dbm
 from services.prompt_registry.registry_service import PromptRegistryService
@@ -535,6 +537,44 @@ class TestPromptRegistryService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_export_redacts_default_value_for_secret_and_operator_only(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                record = svc.create_record(
+                    {
+                        "slug": "mf5-export-redact",
+                        "code": "PR-MF5-RED",
+                        "title": "MF5 Redact",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                svc.create_version(
+                    int(record["id"]),
+                    {
+                        "body_text": "Hi {{role}} {{token}} {{name}}",
+                        "status": "draft",
+                        "variables": [
+                            {"name": "role", "safety_class": "operator_only", "required": False, "default_value": "operator"},
+                            {"name": "token", "safety_class": "secret", "required": False, "default_value": "s3cr3t"},
+                            {"name": "name", "safety_class": "standard", "required": False, "default_value": "Guest"},
+                        ],
+                    },
+                    actor="tester",
+                )
+
+                exported = svc.export_registry(prompt_id=int(record["id"]))
+                by_name = {str(item["name"]): item for item in exported["variables"]}
+                self.assertEqual(by_name["role"]["default_value"], "")
+                self.assertEqual(by_name["token"]["default_value"], "")
+                self.assertEqual(by_name["name"]["default_value"], "Guest")
+            finally:
+                conn.close()
+
     def test_import_preview_rejects_invalid_schema_and_duplicates(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)
@@ -664,6 +704,139 @@ class TestPromptRegistryService(unittest.TestCase):
                 after = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_records").fetchone()["c"])
                 self.assertEqual(before, after)
                 self.assertEqual(int(existing["id"]), int(svc.get_record(int(existing["id"]))["id"]))
+            finally:
+                conn.close()
+
+    def test_confirm_import_rolls_back_after_mid_apply_failure(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                payload = {
+                    "schema_version": "prompt_registry_export_v1",
+                    "records": [
+                        {
+                            "slug": "tx-record",
+                            "code": "PR-TX-1",
+                            "title": "Tx Record",
+                            "record_type": "prompt_template",
+                            "status": "draft",
+                            "validation_status": "UNKNOWN",
+                        }
+                    ],
+                    "versions": [
+                        {
+                            "prompt_slug": "tx-record",
+                            "version_number": 1,
+                            "body_text": "Body {{name}}",
+                            "status": "draft",
+                            "validation_status": "UNKNOWN",
+                        }
+                    ],
+                    "variables": [
+                        {
+                            "prompt_slug": "tx-record",
+                            "version_number": 1,
+                            "name": "name",
+                            "safety_class": "standard",
+                            "required": True,
+                            "default_value": "",
+                            "description": "",
+                        }
+                    ],
+                    "bindings": [
+                        {
+                            "prompt_slug": "tx-record",
+                            "binding_scope": "workflow",
+                            "workflow_slug": "wf-tx",
+                            "binding_status": "active",
+                        }
+                    ],
+                }
+                self.assertEqual(svc.preview_import(payload, mode="merge_only")["import_status"], "OK")
+                with patch.object(svc, "create_binding", side_effect=RuntimeError("forced binding failure")):
+                    with self.assertRaisesRegex(RuntimeError, "forced binding failure"):
+                        svc.confirm_import(payload, mode="merge_only", dry_run=False, actor="tester")
+                self.assertEqual(int(conn.execute("SELECT COUNT(*) AS c FROM prompt_records").fetchone()["c"]), 0)
+                self.assertEqual(int(conn.execute("SELECT COUNT(*) AS c FROM prompt_versions").fetchone()["c"]), 0)
+                self.assertEqual(int(conn.execute("SELECT COUNT(*) AS c FROM prompt_variables").fetchone()["c"]), 0)
+                self.assertEqual(int(conn.execute("SELECT COUNT(*) AS c FROM prompt_bindings").fetchone()["c"]), 0)
+            finally:
+                conn.close()
+
+    def test_confirm_import_sets_render_fingerprint_from_imported_variables(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                payload = {
+                    "schema_version": "prompt_registry_export_v1",
+                    "records": [
+                        {
+                            "slug": "fp-record",
+                            "code": "PR-FP-1",
+                            "title": "Fingerprint",
+                            "record_type": "prompt_template",
+                            "status": "draft",
+                            "validation_status": "UNKNOWN",
+                        }
+                    ],
+                    "versions": [
+                        {
+                            "prompt_slug": "fp-record",
+                            "version_number": 1,
+                            "body_text": "Hello {{name}} {{token}}",
+                            "status": "draft",
+                            "validation_status": "UNKNOWN",
+                        }
+                    ],
+                    "variables": [
+                        {
+                            "prompt_slug": "fp-record",
+                            "version_number": 1,
+                            "name": "token",
+                            "safety_class": "secret",
+                            "required": False,
+                            "default_value": "tok-1",
+                            "description": "",
+                        },
+                        {
+                            "prompt_slug": "fp-record",
+                            "version_number": 1,
+                            "name": "name",
+                            "safety_class": "standard",
+                            "required": True,
+                            "default_value": "Guest",
+                            "description": "",
+                        },
+                    ],
+                    "bindings": [],
+                }
+                self.assertEqual(svc.confirm_import(payload, mode="merge_only", dry_run=False, actor="tester")["import_status"], "OK")
+                imported_version = conn.execute(
+                    """
+                    SELECT pv.id,pv.body_text,pv.render_fingerprint
+                    FROM prompt_versions pv
+                    JOIN prompt_records pr ON pr.id = pv.prompt_id
+                    WHERE pr.slug = 'fp-record' AND pv.version_no = 1
+                    """
+                ).fetchone()
+                self.assertIsNotNone(imported_version)
+                imported_variables = list(
+                    conn.execute(
+                        """
+                        SELECT name,safety_class,required,default_value,description
+                        FROM prompt_variables
+                        WHERE prompt_version_id = ?
+                        ORDER BY name ASC
+                        """,
+                        (int(imported_version["id"]),),
+                    ).fetchall()
+                )
+                expected_fingerprint = svc._build_render_fingerprint(str(imported_version["body_text"]), imported_variables)
+                self.assertEqual(imported_version["render_fingerprint"], expected_fingerprint)
             finally:
                 conn.close()
 
