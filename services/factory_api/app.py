@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+from urllib.parse import parse_qs
 from datetime import date, datetime, timezone
 from contextvars import ContextVar
 from pathlib import Path
@@ -43,6 +44,8 @@ from services.factory_api.publish_queue_read import create_publish_queue_read_ro
 from services.factory_api.publish_reconcile import create_publish_reconcile_router
 from services.factory_api.growth_intelligence import create_growth_intelligence_router
 from services.factory_api.prompt_registry import create_prompt_registry_router
+from services.prompt_registry.errors import PromptRegistryNotFoundError, PromptRegistryValidationError
+from services.prompt_registry.registry_service import PromptRegistryService
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
 from services.factory_api.ux_registry import breadcrumb_context, control_center_entry, primary_nav_items, route_ownership_map
 from services.factory_api.page_templates import page_template_contract
@@ -5891,6 +5894,230 @@ def ui_tags_channel_dashboard_root_page(request: Request, _: bool = Depends(requ
 @app.get("/ui/track-catalog/custom-tags/dashboard/{channel_slug}", response_class=HTMLResponse)
 def ui_tags_channel_dashboard_page(channel_slug: str, request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("tags_channel_dashboard.html", {"request": request, "channel_slug": channel_slug})
+
+
+def _ui_prompt_registry_preview_seed(versions: list[dict[str, Any]]) -> tuple[int | None, str]:
+    if not versions:
+        return None, "{}"
+    active = next((item for item in versions if int(item.get("is_active") or 0) == 1), None)
+    selected = active or versions[0]
+    variable_map: dict[str, Any] = {}
+    for variable in selected.get("variables", []):
+        name = str(variable.get("name") or "").strip()
+        if not name:
+            continue
+        default_value = str(variable.get("default_value") or "")
+        if default_value:
+            variable_map[name] = default_value
+    if not variable_map:
+        return int(selected["id"]), "{}"
+    return int(selected["id"]), json.dumps(variable_map, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _ui_prompt_registry_masked_variables(version: dict[str, Any]) -> list[dict[str, Any]]:
+    masked: list[dict[str, Any]] = []
+    for variable in version.get("variables", []):
+        safety_class = str(variable.get("safety_class") or "")
+        displayed_default = str(variable.get("default_value") or "")
+        if safety_class in {"secret", "operator_only"} and displayed_default:
+            displayed_default = "***MASKED***"
+        masked.append(
+            {
+                "name": str(variable.get("name") or ""),
+                "safety_class": safety_class,
+                "required": int(variable.get("required") or 0),
+                "default_value": displayed_default,
+                "description": str(variable.get("description") or ""),
+            }
+        )
+    return masked
+
+
+@app.get("/ui/prompt-registry", response_class=HTMLResponse)
+def ui_prompt_registry_overview_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        records = [dict(row) for row in service.list_records()]
+        version_counts = {
+            int(row["prompt_id"]): int(row["cnt"])
+            for row in conn.execute(
+                "SELECT prompt_id, COUNT(*) AS cnt FROM prompt_versions GROUP BY prompt_id"
+            ).fetchall()
+        }
+        binding_counts = {
+            int(row["prompt_id"]): int(row["cnt"])
+            for row in conn.execute(
+                "SELECT prompt_id, COUNT(*) AS cnt FROM prompt_bindings GROUP BY prompt_id"
+            ).fetchall()
+        }
+        usage_counts = {
+            int(row["prompt_id"]): int(row["cnt"])
+            for row in conn.execute(
+                "SELECT prompt_id, COUNT(*) AS cnt FROM prompt_usage_events WHERE prompt_id IS NOT NULL GROUP BY prompt_id"
+            ).fetchall()
+        }
+        enriched_records = []
+        for row in records:
+            prompt_id = int(row["id"])
+            enriched_records.append(
+                {
+                    **row,
+                    "versions_count": version_counts.get(prompt_id, 0),
+                    "bindings_count": binding_counts.get(prompt_id, 0),
+                    "usage_events_count": usage_counts.get(prompt_id, 0),
+                }
+            )
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            {
+                "request": request,
+                "mode": "overview",
+                "records": enriched_records,
+                "record_total": len(enriched_records),
+            },
+        )
+    finally:
+        conn.close()
+
+
+@app.get("/ui/prompt-registry/{prompt_id}", response_class=HTMLResponse)
+def ui_prompt_registry_detail_page(prompt_id: int, request: Request, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        record = dict(service.get_record(prompt_id))
+        versions = [dict(row) for row in service.list_versions(prompt_id)]
+        masked_versions: list[dict[str, Any]] = []
+        for version in versions:
+            expanded = service.get_version(int(version["id"]))
+            masked_versions.append({**expanded, "variables": _ui_prompt_registry_masked_variables(expanded)})
+        bindings = [dict(row) for row in service.list_bindings(prompt_id=prompt_id)]
+        usage_summary = service.usage_summary(prompt_id=prompt_id)
+        audit = service.get_audit_diagnostics(prompt_id)
+        version_id_seed, variables_seed = _ui_prompt_registry_preview_seed(masked_versions)
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            {
+                "request": request,
+                "mode": "detail",
+                "record": record,
+                "versions": masked_versions,
+                "bindings": bindings,
+                "usage_summary": usage_summary,
+                "audit": audit,
+                "preview_form": {
+                    "version_id": version_id_seed,
+                    "variables_json": variables_seed,
+                    "mask_sensitive": True,
+                },
+                "preview_result": None,
+                "preview_error": None,
+            },
+        )
+    except PromptRegistryNotFoundError:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/{prompt_id}/preview", response_class=HTMLResponse)
+async def ui_prompt_registry_preview_action(
+    prompt_id: int,
+    request: Request,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    version_raw = str((parsed_form.get("version_id") or [""])[0]).strip()
+    variables_json = str((parsed_form.get("variables_json") or ["{}"])[0]).strip() or "{}"
+    mask_sensitive_enabled = True
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        record = dict(service.get_record(prompt_id))
+        versions = [dict(row) for row in service.list_versions(prompt_id)]
+        masked_versions: list[dict[str, Any]] = []
+        for version in versions:
+            expanded = service.get_version(int(version["id"]))
+            masked_versions.append({**expanded, "variables": _ui_prompt_registry_masked_variables(expanded)})
+        bindings = [dict(row) for row in service.list_bindings(prompt_id=prompt_id)]
+        usage_summary = service.usage_summary(prompt_id=prompt_id)
+        audit = service.get_audit_diagnostics(prompt_id)
+
+        selected_version_id: int | None = None
+        preview_result: dict[str, Any] | None = None
+        preview_error: str | None = None
+        display_variables_json = "{}"
+        selected_version: dict[str, Any] | None = None
+        if version_raw:
+            try:
+                selected_version_id = int(version_raw)
+            except ValueError:
+                preview_error = "version_id must be an integer"
+        parsed_variables: dict[str, Any] = {}
+        if preview_error is None:
+            try:
+                parsed_payload = json.loads(variables_json)
+            except json.JSONDecodeError:
+                preview_error = "variables JSON must be a valid object"
+            else:
+                if not isinstance(parsed_payload, dict):
+                    preview_error = "variables JSON must be an object"
+                else:
+                    parsed_variables = parsed_payload
+                    display_variables_json = json.dumps(parsed_payload, ensure_ascii=False, sort_keys=True)
+        if preview_error is None and selected_version_id is not None:
+            try:
+                selected_version = service.get_version(selected_version_id)
+                selected_prompt_id = int(selected_version["prompt_id"])
+                if selected_prompt_id != int(prompt_id):
+                    preview_error = "version_id does not belong to the current prompt"
+                else:
+                    preview_result = service.preview_version(
+                        selected_version_id,
+                        {"variables": parsed_variables, "mask_sensitive": mask_sensitive_enabled},
+                    )
+            except (PromptRegistryValidationError, PromptRegistryNotFoundError, ValueError) as exc:
+                preview_error = str(exc)
+        if selected_version is not None and parsed_variables:
+            sensitive_names = {
+                str(item.get("name") or "")
+                for item in selected_version.get("variables", [])
+                if str(item.get("safety_class") or "") in {"secret", "operator_only"}
+            }
+            safe_display_payload: dict[str, Any] = {}
+            for key, value in parsed_variables.items():
+                if str(key) in sensitive_names:
+                    safe_display_payload[str(key)] = "***MASKED***"
+                else:
+                    safe_display_payload[str(key)] = value
+            display_variables_json = json.dumps(safe_display_payload, ensure_ascii=False, sort_keys=True)
+
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            {
+                "request": request,
+                "mode": "detail",
+                "record": record,
+                "versions": masked_versions,
+                "bindings": bindings,
+                "usage_summary": usage_summary,
+                "audit": audit,
+                "preview_form": {
+                    "version_id": selected_version_id,
+                    "variables_json": display_variables_json,
+                    "mask_sensitive": mask_sensitive_enabled,
+                },
+                "preview_result": preview_result,
+                "preview_error": preview_error,
+            },
+        )
+    except PromptRegistryNotFoundError:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    finally:
+        conn.close()
 
 
 def _all_channels(conn) -> list:

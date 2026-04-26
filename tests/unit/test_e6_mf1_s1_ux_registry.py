@@ -54,6 +54,13 @@ class TestE6Mf1S1UxRegistry(unittest.TestCase):
         entry = control_center_entry()
         self.assertEqual(entry, {"label": "Control Center", "path": "/"})
 
+    def test_prompt_registry_navigation_and_breadcrumb(self) -> None:
+        nav = primary_nav_items(current_path="/ui/prompt-registry")
+        prompt_registry = next(item for item in nav if item["key"] == "PROMPT_REGISTRY")
+        self.assertTrue(prompt_registry["active"])
+        breadcrumb = breadcrumb_context(current_path="/ui/prompt-registry/42")
+        self.assertEqual([item["label"] for item in breadcrumb], ["Control Center", "Prompt Registry", "Prompt Detail"])
+
 
 if __name__ == "__main__":
     unittest.main()
