@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+from urllib.parse import parse_qs
 from datetime import date, datetime, timezone
 from contextvars import ContextVar
 from pathlib import Path
@@ -6020,15 +6021,17 @@ def ui_prompt_registry_detail_page(prompt_id: int, request: Request, _: bool = D
         conn.close()
 
 
-@app.get("/ui/prompt-registry/{prompt_id}/preview", response_class=HTMLResponse)
-def ui_prompt_registry_preview_action(
+@app.post("/ui/prompt-registry/{prompt_id}/preview", response_class=HTMLResponse)
+async def ui_prompt_registry_preview_action(
     prompt_id: int,
     request: Request,
     _: bool = Depends(require_basic_auth(env)),
 ):
-    version_raw = str(request.query_params.get("version_id") or "").strip()
-    variables_json = str(request.query_params.get("variables_json") or "{}").strip() or "{}"
-    mask_sensitive_enabled = str(request.query_params.get("mask_sensitive") or "").strip().lower() in {"1", "true", "yes", "on"}
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    version_raw = str((parsed_form.get("version_id") or [""])[0]).strip()
+    variables_json = str((parsed_form.get("variables_json") or ["{}"])[0]).strip() or "{}"
+    mask_sensitive_enabled = True
 
     conn = dbm.connect(env)
     try:
@@ -6046,6 +6049,8 @@ def ui_prompt_registry_preview_action(
         selected_version_id: int | None = None
         preview_result: dict[str, Any] | None = None
         preview_error: str | None = None
+        display_variables_json = "{}"
+        selected_version: dict[str, Any] | None = None
         if version_raw:
             try:
                 selected_version_id = int(version_raw)
@@ -6062,14 +6067,33 @@ def ui_prompt_registry_preview_action(
                     preview_error = "variables JSON must be an object"
                 else:
                     parsed_variables = parsed_payload
+                    display_variables_json = json.dumps(parsed_payload, ensure_ascii=False, sort_keys=True)
         if preview_error is None and selected_version_id is not None:
             try:
-                preview_result = service.preview_version(
-                    selected_version_id,
-                    {"variables": parsed_variables, "mask_sensitive": mask_sensitive_enabled},
-                )
+                selected_version = service.get_version(selected_version_id)
+                selected_prompt_id = int(selected_version["prompt_id"])
+                if selected_prompt_id != int(prompt_id):
+                    preview_error = "version_id does not belong to the current prompt"
+                else:
+                    preview_result = service.preview_version(
+                        selected_version_id,
+                        {"variables": parsed_variables, "mask_sensitive": mask_sensitive_enabled},
+                    )
             except (PromptRegistryValidationError, PromptRegistryNotFoundError, ValueError) as exc:
                 preview_error = str(exc)
+        if selected_version is not None and parsed_variables:
+            sensitive_names = {
+                str(item.get("name") or "")
+                for item in selected_version.get("variables", [])
+                if str(item.get("safety_class") or "") in {"secret", "operator_only"}
+            }
+            safe_display_payload: dict[str, Any] = {}
+            for key, value in parsed_variables.items():
+                if str(key) in sensitive_names:
+                    safe_display_payload[str(key)] = "***MASKED***"
+                else:
+                    safe_display_payload[str(key)] = value
+            display_variables_json = json.dumps(safe_display_payload, ensure_ascii=False, sort_keys=True)
 
         return templates.TemplateResponse(
             "prompt_registry.html",
@@ -6083,7 +6107,7 @@ def ui_prompt_registry_preview_action(
                 "audit": audit,
                 "preview_form": {
                     "version_id": selected_version_id,
-                    "variables_json": variables_json,
+                    "variables_json": display_variables_json,
                     "mask_sensitive": mask_sensitive_enabled,
                 },
                 "preview_result": preview_result,

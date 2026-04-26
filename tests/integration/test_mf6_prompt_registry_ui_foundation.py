@@ -17,14 +17,14 @@ class TestMf6PromptRegistryUiFoundation(unittest.TestCase):
             mod = importlib.reload(mod)
         return TestClient(mod.app)
 
-    def _seed_prompt(self, client: TestClient, headers: dict[str, str]) -> tuple[int, int]:
+    def _seed_prompt(self, client: TestClient, headers: dict[str, str], *, slug: str, code: str, title: str) -> tuple[int, int]:
         created = client.post(
             "/v1/prompt-registry/records",
             headers=headers,
             json={
-                "slug": "mf6-ui",
-                "code": "PR-MF6-UI",
-                "title": "MF6 UI Prompt",
+                "slug": slug,
+                "code": code,
+                "title": title,
                 "record_type": "prompt_template",
                 "status": "draft",
             },
@@ -70,7 +70,13 @@ class TestMf6PromptRegistryUiFoundation(unittest.TestCase):
             seed_minimal_db(env)
             client = self._client(env)
             headers = basic_auth_header(env.basic_user, env.basic_pass)
-            prompt_id, version_id = self._seed_prompt(client, headers)
+            prompt_id, version_id = self._seed_prompt(
+                client,
+                headers,
+                slug="mf6-ui",
+                code="PR-MF6-UI",
+                title="MF6 UI Prompt",
+            )
 
             unauthorized = client.get("/ui/prompt-registry")
             self.assertEqual(unauthorized.status_code, 401)
@@ -94,31 +100,96 @@ class TestMf6PromptRegistryUiFoundation(unittest.TestCase):
             self.assertIn("Audit diagnostics", detail.text)
             self.assertIn("***MASKED***", detail.text)
 
-            valid_preview = client.get(
+            self.assertIn('method="post"', detail.text)
+            self.assertIn(f'action="/ui/prompt-registry/{prompt_id}/preview"', detail.text)
+            self.assertNotIn('method="get" action="/ui/prompt-registry/', detail.text)
+            self.assertIn("Sensitive variables are always masked in UI preview.", detail.text)
+            self.assertNotIn("mask_sensitive", detail.text)
+
+            valid_preview = client.post(
                 f"/ui/prompt-registry/{prompt_id}/preview",
                 headers=headers,
-                params={
+                data={
                     "version_id": str(version_id),
                     "variables_json": '{"name": "Bob"}',
-                    "mask_sensitive": "true",
                 },
             )
             self.assertEqual(valid_preview.status_code, 200)
             self.assertIn("preview_status:</strong> OK", valid_preview.text)
             self.assertIn("Hello Bob / ***MASKED***", valid_preview.text)
 
-            invalid_preview = client.get(
+            invalid_preview = client.post(
                 f"/ui/prompt-registry/{prompt_id}/preview",
                 headers=headers,
-                params={
+                data={
                     "version_id": str(version_id),
                     "variables_json": "{}",
-                    "mask_sensitive": "true",
                 },
             )
             self.assertEqual(invalid_preview.status_code, 200)
             self.assertIn("preview_status:</strong> INVALID", invalid_preview.text)
             self.assertIn("missing_required", invalid_preview.text)
+
+            forced_unmask = client.post(
+                f"/ui/prompt-registry/{prompt_id}/preview",
+                headers=headers,
+                data={
+                    "version_id": str(version_id),
+                    "variables_json": '{"name": "Bob", "api_key": "RAW-SECRET"}',
+                    "mask_sensitive": "false",
+                },
+            )
+            self.assertEqual(forced_unmask.status_code, 200)
+            self.assertIn("***MASKED***", forced_unmask.text)
+            self.assertNotIn("RAW-SECRET", forced_unmask.text)
+
+    def test_cross_prompt_version_id_is_rejected_without_usage_event(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            prompt_a_id, _ = self._seed_prompt(
+                client,
+                headers,
+                slug="mf6-ui-a",
+                code="PR-MF6-UI-A",
+                title="MF6 UI Prompt A",
+            )
+            prompt_b_id, version_b_id = self._seed_prompt(
+                client,
+                headers,
+                slug="mf6-ui-b",
+                code="PR-MF6-UI-B",
+                title="MF6 UI Prompt B",
+            )
+
+            usage_before = client.get(
+                f"/v1/prompt-registry/usage-summary?prompt_id={prompt_b_id}&version_id={version_b_id}&event_type=version_preview",
+                headers=headers,
+            )
+            self.assertEqual(usage_before.status_code, 200)
+            before_total = int(usage_before.json()["total_events"])
+
+            rejected = client.post(
+                f"/ui/prompt-registry/{prompt_a_id}/preview",
+                headers=headers,
+                data={
+                    "version_id": str(version_b_id),
+                    "variables_json": '{"name": "CrossPrompt"}',
+                },
+            )
+            self.assertEqual(rejected.status_code, 200)
+            self.assertIn("Preview error:</strong> version_id does not belong to the current prompt", rejected.text)
+            self.assertNotIn("MF6 UI Prompt B", rejected.text)
+            self.assertNotIn("Hello CrossPrompt", rejected.text)
+
+            usage_after = client.get(
+                f"/v1/prompt-registry/usage-summary?prompt_id={prompt_b_id}&version_id={version_b_id}&event_type=version_preview",
+                headers=headers,
+            )
+            self.assertEqual(usage_after.status_code, 200)
+            after_total = int(usage_after.json()["total_events"])
+            self.assertEqual(after_total, before_total)
 
 
 if __name__ == "__main__":
