@@ -43,6 +43,8 @@ ROUTE_METADATA_REGISTRY: tuple[RouteMetadata, ...] = (
     RouteMetadata("TRACK_ANALYSIS_REPORT", "/ui/track-catalog/analysis-report", "Track Catalog", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
     RouteMetadata("CUSTOM_TAGS", "/ui/track-catalog/custom-tags", "TAGS", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
     RouteMetadata("CUSTOM_TAGS_DASHBOARD", "/ui/track-catalog/custom-tags/dashboard", "Tag Dashboard", "entities", "entity_drilldown", parent_route_key="CUSTOM_TAGS"),
+    RouteMetadata("PROMPT_REGISTRY", "/ui/prompt-registry", "Prompt Registry", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
+    RouteMetadata("PROMPT_REGISTRY_DETAIL", "/ui/prompt-registry/", "Prompt Detail", "entities", "entity_drilldown", parent_route_key="PROMPT_REGISTRY"),
 )
 
 _ROUTE_BY_KEY: dict[str, RouteMetadata] = {item.route_key: item for item in ROUTE_METADATA_REGISTRY}
