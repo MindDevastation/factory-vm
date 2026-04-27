@@ -16,6 +16,7 @@
   <a href="/ui/prompt-registry/export">Export registry JSON (UI)</a>
   · <a href="/v1/prompt-registry/export">Export registry JSON (API)</a>
   · <a href="/ui/prompt-registry/import">Import registry JSON</a>
+  · <a href="/ui/prompt-registry/usage">Usage Diagnostics</a>
   · Import API entry points:
   <code>POST /v1/prompt-registry/import/preview</code>,
   <code>POST /v1/prompt-registry/import/confirm</code>
@@ -180,6 +181,8 @@
 {% if mode == "detail" %}
 <p>
   <a href="/ui/prompt-registry">← Back to list</a>
+  · <a href="/ui/prompt-registry/usage?prompt_id={{ record.id }}">Usage for this prompt</a>
+  · <a href="/ui/prompt-registry/{{ record.id }}/audit">Audit timeline</a>
   · <a href="/v1/prompt-registry/export?prompt_id={{ record.id }}">Export this prompt</a>
   · <a href="/v1/prompt-registry/records/{{ record.id }}/audit">Audit diagnostics API</a>
 </p>
@@ -354,5 +357,99 @@
 
 <h3>Audit diagnostics snapshot</h3>
 <p>Total audit events: {{ audit["items"] | length }}</p>
+{% endif %}
+
+{% if mode == "usage" %}
+<p>
+  <a href="/ui/prompt-registry">← Back to list</a>
+</p>
+
+<h3>Usage diagnostics</h3>
+<form method="get" action="/ui/prompt-registry/usage">
+  <p><label>prompt_id (optional)</label><br><input name="prompt_id" value="{{ usage_filters.prompt_id_raw }}"></p>
+  <p><label>version_id (optional)</label><br><input name="version_id" value="{{ usage_filters.version_id_raw }}"></p>
+  <p><label>event_type (optional)</label><br><input name="event_type" value="{{ usage_filters.event_type or '' }}" placeholder="version_preview / resolved_preview"></p>
+  <p><label>status (optional)</label><br><input name="status" value="{{ usage_filters.status or '' }}" placeholder="OK / INVALID"></p>
+  <p><label>limit</label><br><input type="number" min="1" max="200" name="limit" value="{{ usage_filters.limit }}"></p>
+  <button type="submit">Apply filters</button>
+</form>
+
+{% if usage_error %}
+<p style="color:#991b1b;"><strong>Usage diagnostics error:</strong> {{ usage_error }}</p>
+{% endif %}
+
+<p class="muted">Read-only diagnostics table. Context/diagnostics are rendered as compact safe summaries.</p>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Created at</th>
+      <th>Prompt ID</th>
+      <th>Version ID</th>
+      <th>Binding ID</th>
+      <th>Event type</th>
+      <th>Source</th>
+      <th>Status</th>
+      <th>Render fingerprint</th>
+      <th>Context summary</th>
+      <th>Diagnostics summary</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for event in usage_events %}
+    <tr>
+      <td>{{ event.id }}</td>
+      <td>{{ event.created_at }}</td>
+      <td>{{ event.prompt_id if event.prompt_id is not none else "—" }}</td>
+      <td>{{ event.version_id if event.version_id is not none else "—" }}</td>
+      <td>{{ event.binding_id if event.binding_id is not none else "—" }}</td>
+      <td>{{ event.event_type }}</td>
+      <td>{{ event.source }}</td>
+      <td>{{ event.status }}</td>
+      <td>{{ event.render_fingerprint_short }}</td>
+      <td>{{ event.context_summary }}</td>
+      <td>{{ event.diagnostics_summary }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="11">No usage events for the selected filters.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if mode == "audit" %}
+<p>
+  <a href="/ui/prompt-registry/{{ prompt_id }}">← Back to prompt detail</a>
+</p>
+
+<h3>Audit timeline · Record #{{ record.id }} — {{ record.title }}</h3>
+<p class="muted">Read-only timeline with compact safe payload summaries.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Created at</th>
+      <th>Event type</th>
+      <th>Actor</th>
+      <th>Version ID</th>
+      <th>Payload summary</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in audit_events %}
+    <tr>
+      <td>{{ item.id }}</td>
+      <td>{{ item.created_at }}</td>
+      <td>{{ item.event_type }}</td>
+      <td>{{ item.actor }}</td>
+      <td>{{ item.version_id if item.version_id is not none else "—" }}</td>
+      <td>{{ item.payload_summary }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No audit events for this prompt.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% endif %}
 {% endblock %}
