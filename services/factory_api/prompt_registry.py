@@ -15,6 +15,7 @@ from services.prompt_registry.contracts import (
     ensure_binding_scope,
     ensure_binding_status,
     ensure_import_mode,
+    ensure_linked_action_status,
     ensure_usage_event_status,
     ensure_usage_event_type,
 )
@@ -241,6 +242,57 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
         except PromptRegistryValidationError as exc:
             return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
         except ValueError as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.get("/records/{prompt_id}/linked-actions")
+    def list_linked_actions(
+        prompt_id: int,
+        include_inactive: str | None = None,
+        _: bool = Depends(require_basic_auth(env)),
+    ):
+        conn = dbm.connect(env)
+        try:
+            parsed_include_inactive = _parse_bool_query(include_inactive, field_name="include_inactive", default=True)
+            return {
+                "items": PromptRegistryService(conn).list_linked_actions(
+                    prompt_id,
+                    include_inactive=parsed_include_inactive,
+                )
+            }
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.post("/records/{prompt_id}/linked-actions")
+    def create_linked_action(prompt_id: int, payload: dict[str, Any], request: Request, _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).create_linked_action(prompt_id, payload, _actor_from_request(request))
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except PromptRegistryConflictError as exc:
+            return _error("PROMPT_REGISTRY_CONFLICT", str(exc), status_code=409)
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.post("/linked-actions/{action_id}/status")
+    def update_linked_action_status(action_id: int, payload: dict[str, Any], request: Request, _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            status_payload = {"action_status": ensure_linked_action_status(payload.get("action_status"))}
+            return PromptRegistryService(conn).update_linked_action_status(action_id, status_payload, _actor_from_request(request))
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except PromptRegistryConflictError as exc:
+            return _error("PROMPT_REGISTRY_CONFLICT", str(exc), status_code=409)
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
             return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
         finally:
             conn.close()

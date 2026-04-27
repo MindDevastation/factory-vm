@@ -21,6 +21,7 @@ class TestPromptRegistryService(unittest.TestCase):
                     "prompt_variables",
                     "prompt_audit_events",
                     "prompt_bindings",
+                    "prompt_linked_actions",
                     "prompt_usage_events",
                 ):
                     row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)).fetchone()
@@ -1095,5 +1096,102 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(summary["by_status"]["INVALID"], 1)
                 self.assertEqual(summary["prompt_ids"], [int(rec["id"])])
                 self.assertEqual(summary["version_ids"], [int(version["id"])])
+            finally:
+                conn.close()
+
+    def test_linked_actions_create_list_status_and_validation(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record(
+                    {
+                        "slug": "linked-actions-a",
+                        "code": "PR-LA-A",
+                        "title": "Linked Actions A",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                prompt_id = int(rec["id"])
+
+                created = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "open-usage-page",
+                        "action_type": "ui_action",
+                        "action_status": "active",
+                        "target_kind": "route",
+                        "target_ref": "/ui/prompt-registry/usage",
+                        "config_json": {"note": "safe"},
+                    },
+                    "tester",
+                )
+                self.assertEqual(str(created["action_key"]), "open-usage-page")
+                self.assertEqual(str(created["action_status"]), "active")
+                self.assertEqual(created["config"], {"note": "safe"})
+
+                listed_all = svc.list_linked_actions(prompt_id, include_inactive=True)
+                self.assertEqual(len(listed_all), 1)
+                self.assertEqual(int(listed_all[0]["id"]), int(created["id"]))
+
+                with self.assertRaisesRegex(Exception, "action_type must be one of"):
+                    svc.create_linked_action(
+                        prompt_id,
+                        {"action_key": "bad-type", "action_type": "bad", "target_kind": "route", "config_json": {}},
+                        "tester",
+                    )
+                with self.assertRaisesRegex(Exception, "config_json must be an object"):
+                    svc.create_linked_action(
+                        prompt_id,
+                        {"action_key": "bad-json", "action_type": "ui_action", "target_kind": "route", "config_json": []},
+                        "tester",
+                    )
+                with self.assertRaisesRegex(Exception, "must not include secret/token/password-like keys"):
+                    svc.create_linked_action(
+                        prompt_id,
+                        {
+                            "action_key": "bad-secret",
+                            "action_type": "ui_action",
+                            "target_kind": "route",
+                            "config_json": {"api_token": "abc"},
+                        },
+                        "tester",
+                    )
+                with self.assertRaisesRegex(Exception, "duplicate active action_key"):
+                    svc.create_linked_action(
+                        prompt_id,
+                        {
+                            "action_key": "open-usage-page",
+                            "action_type": "api_endpoint",
+                            "target_kind": "endpoint",
+                            "config_json": {},
+                        },
+                        "tester",
+                    )
+
+                deactivated = svc.update_linked_action_status(int(created["id"]), {"action_status": "inactive"}, "tester")
+                self.assertEqual(str(deactivated["action_status"]), "inactive")
+
+                recreated = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "open-usage-page",
+                        "action_type": "ui_action",
+                        "target_kind": "route",
+                        "config_json": {},
+                    },
+                    "tester",
+                )
+                self.assertEqual(str(recreated["action_status"]), "active")
+
+                listed_active = svc.list_linked_actions(prompt_id, include_inactive=False)
+                self.assertEqual({int(row["id"]) for row in listed_active}, {int(recreated["id"])})
+
+                audit_events = svc.list_audit_events(prompt_id)
+                self.assertTrue(any(str(item["event_type"]) == "linked_action_created" for item in audit_events))
+                self.assertTrue(any(str(item["event_type"]) == "linked_action_status_updated" for item in audit_events))
             finally:
                 conn.close()

@@ -14,6 +14,9 @@ SAFETY_CLASSES: Final[tuple[str, ...]] = (
 )
 BINDING_SCOPES: Final[tuple[str, ...]] = ("global", "workflow", "channel", "item")
 BINDING_STATUSES: Final[tuple[str, ...]] = ("active", "inactive")
+LINKED_ACTION_TYPES: Final[tuple[str, ...]] = ("ui_action", "api_endpoint", "workflow", "codex_prompt", "external_note")
+LINKED_ACTION_STATUSES: Final[tuple[str, ...]] = ("active", "inactive")
+LINKED_ACTION_TARGET_KINDS: Final[tuple[str, ...]] = ("route", "endpoint", "workflow", "prompt_template", "note")
 USAGE_EVENT_TYPES: Final[tuple[str, ...]] = ("version_preview", "resolved_preview")
 USAGE_EVENT_SOURCES: Final[tuple[str, ...]] = ("api",)
 USAGE_EVENT_STATUSES: Final[tuple[str, ...]] = ("OK", "INVALID", "ERROR")
@@ -85,6 +88,27 @@ def ensure_binding_status(value: Any) -> str:
     return normalized
 
 
+def ensure_linked_action_type(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in LINKED_ACTION_TYPES:
+        raise ValueError(f"action_type must be one of {', '.join(LINKED_ACTION_TYPES)}")
+    return normalized
+
+
+def ensure_linked_action_status(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in LINKED_ACTION_STATUSES:
+        raise ValueError(f"action_status must be one of {', '.join(LINKED_ACTION_STATUSES)}")
+    return normalized
+
+
+def ensure_linked_action_target_kind(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in LINKED_ACTION_TARGET_KINDS:
+        raise ValueError(f"target_kind must be one of {', '.join(LINKED_ACTION_TARGET_KINDS)}")
+    return normalized
+
+
 def ensure_usage_event_type(value: Any) -> str:
     normalized = str(value or "").strip()
     if normalized not in USAGE_EVENT_TYPES:
@@ -121,6 +145,9 @@ def contracts_payload() -> dict[str, Any]:
         "safety_class": list(SAFETY_CLASSES),
         "binding_scope": list(BINDING_SCOPES),
         "binding_status": list(BINDING_STATUSES),
+        "linked_action_type": list(LINKED_ACTION_TYPES),
+        "linked_action_status": list(LINKED_ACTION_STATUSES),
+        "linked_action_target_kind": list(LINKED_ACTION_TARGET_KINDS),
         "usage_event_type": list(USAGE_EVENT_TYPES),
         "usage_event_source": list(USAGE_EVENT_SOURCES),
         "usage_event_status": list(USAGE_EVENT_STATUSES),

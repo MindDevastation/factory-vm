@@ -305,6 +305,82 @@
   </tbody>
 </table>
 
+<h3>Linked actions</h3>
+<p class="muted">Execution is not available in this foundation slice.</p>
+<form method="post" action="/ui/prompt-registry/{{ record.id }}/linked-actions/create">
+  <p><label>action_key</label><br><input name="action_key" value="{{ create_linked_action_form.action_key }}" required></p>
+  <p>
+    <label>action_type</label><br>
+    <select name="action_type">
+      <option value="ui_action" {% if create_linked_action_form.action_type == "ui_action" %}selected{% endif %}>ui_action</option>
+      <option value="api_endpoint" {% if create_linked_action_form.action_type == "api_endpoint" %}selected{% endif %}>api_endpoint</option>
+      <option value="workflow" {% if create_linked_action_form.action_type == "workflow" %}selected{% endif %}>workflow</option>
+      <option value="codex_prompt" {% if create_linked_action_form.action_type == "codex_prompt" %}selected{% endif %}>codex_prompt</option>
+      <option value="external_note" {% if create_linked_action_form.action_type == "external_note" %}selected{% endif %}>external_note</option>
+    </select>
+  </p>
+  <p>
+    <label>action_status</label><br>
+    <select name="action_status">
+      <option value="active" {% if create_linked_action_form.action_status == "active" %}selected{% endif %}>active</option>
+      <option value="inactive" {% if create_linked_action_form.action_status == "inactive" %}selected{% endif %}>inactive</option>
+    </select>
+  </p>
+  <p>
+    <label>target_kind</label><br>
+    <select name="target_kind">
+      <option value="route" {% if create_linked_action_form.target_kind == "route" %}selected{% endif %}>route</option>
+      <option value="endpoint" {% if create_linked_action_form.target_kind == "endpoint" %}selected{% endif %}>endpoint</option>
+      <option value="workflow" {% if create_linked_action_form.target_kind == "workflow" %}selected{% endif %}>workflow</option>
+      <option value="prompt_template" {% if create_linked_action_form.target_kind == "prompt_template" %}selected{% endif %}>prompt_template</option>
+      <option value="note" {% if create_linked_action_form.target_kind == "note" %}selected{% endif %}>note</option>
+    </select>
+  </p>
+  <p><label>target_ref (optional)</label><br><input name="target_ref" value="{{ create_linked_action_form.target_ref }}"></p>
+  <p><label>config_json</label><br><textarea name="config_json" rows="6" style="width:100%;max-width:820px;">{{ create_linked_action_form.config_json }}</textarea></p>
+  <button type="submit">Create linked action</button>
+</form>
+{% if create_linked_action_error %}
+<p style="color:#991b1b;"><strong>Create linked action error:</strong> {{ create_linked_action_error }}</p>
+{% endif %}
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Key</th>
+      <th>Type</th>
+      <th>Status</th>
+      <th>Target</th>
+      <th>Config summary</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in linked_actions %}
+    <tr>
+      <td>{{ item.id }}</td>
+      <td>{{ item.action_key }}</td>
+      <td>{{ item.action_type }}</td>
+      <td>{{ item.action_status }}</td>
+      <td>{{ item.target_kind }}{% if item.target_ref %}:{{ item.target_ref }}{% endif %}</td>
+      <td>{{ item.config_summary }}</td>
+      <td>
+        <form method="post" action="/ui/prompt-registry/{{ record.id }}/linked-actions/{{ item.id }}/status">
+          <select name="action_status">
+            <option value="active" {% if item.action_status == "active" %}selected{% endif %}>active</option>
+            <option value="inactive" {% if item.action_status == "inactive" %}selected{% endif %}>inactive</option>
+          </select>
+          <button type="submit">Update</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7">No linked actions</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
 <h3>Usage summary</h3>
 <ul>
   <li><strong>Total events:</strong> {{ usage_summary.total_events }}</li>
