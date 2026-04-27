@@ -14,6 +14,7 @@
 {% if mode == "overview" %}
 <p>
   <a href="/v1/prompt-registry/export">Export registry JSON</a>
+  · <a href="/ui/prompt-registry/import">Import registry JSON</a>
   · Import API entry points:
   <code>POST /v1/prompt-registry/import/preview</code>,
   <code>POST /v1/prompt-registry/import/confirm</code>
@@ -72,6 +73,62 @@
     {% endfor %}
   </tbody>
 </table>
+{% endif %}
+
+{% if mode == "import" %}
+<p>
+  <a href="/ui/prompt-registry">← Back to list</a>
+  · <a href="/v1/prompt-registry/export">Export registry JSON</a>
+</p>
+<p class="muted"><strong>Warning:</strong> this UI supports <code>merge_only</code> imports only. Destructive replace/delete is not available.</p>
+
+<h3>Import payload (JSON)</h3>
+<form method="post" action="/ui/prompt-registry/import/preview">
+  <p><textarea name="payload_json" rows="16" style="width:100%;max-width:960px;" placeholder='{"schema_version":"prompt_registry_export_v1","records":[],"versions":[],"variables":[],"bindings":[]}'>{{ import_payload_json }}</textarea></p>
+  <p class="muted">Mode is fixed: <code>{{ import_mode }}</code>. Payload is sent via POST body only.</p>
+  <button type="submit">Preview import</button>
+</form>
+
+<h3>Confirm import</h3>
+<form method="post" action="/ui/prompt-registry/import/confirm">
+  <p><textarea name="payload_json" rows="16" style="width:100%;max-width:960px;" placeholder='{"schema_version":"prompt_registry_export_v1","records":[],"versions":[],"variables":[],"bindings":[]}'>{{ import_payload_json }}</textarea></p>
+  <p class="muted">Choose explicit action (default recommended: dry-run).</p>
+  <button type="submit" name="confirm_action" value="dry_run">Run dry-run confirm (recommended)</button>
+  <button type="submit" name="confirm_action" value="apply">Apply import now (merge_only)</button>
+</form>
+
+{% if import_error %}
+<p style="color:#991b1b;"><strong>Import error:</strong> {{ import_error }}</p>
+{% endif %}
+
+{% if import_result %}
+<h3>Import result</h3>
+<ul>
+  <li><strong>import_status:</strong> {{ import_result.import_status }}</li>
+  <li><strong>records_to_create:</strong> {{ import_result.summary.records_to_create }}</li>
+  <li><strong>records_to_update:</strong> {{ import_result.summary.records_to_update }}</li>
+  <li><strong>versions_to_create:</strong> {{ import_result.summary.versions_to_create }}</li>
+  <li><strong>bindings_to_create:</strong> {{ import_result.summary.bindings_to_create }}</li>
+</ul>
+
+<h4>conflicts</h4>
+<ul>
+  {% for item in import_result.summary.conflicts %}
+  <li>{{ item }}</li>
+  {% else %}
+  <li>none</li>
+  {% endfor %}
+</ul>
+
+<h4>validation_errors</h4>
+<ul>
+  {% for item in import_result.summary.validation_errors %}
+  <li>{{ item }}</li>
+  {% else %}
+  <li>none</li>
+  {% endfor %}
+</ul>
+{% endif %}
 {% endif %}
 
 {% if mode == "detail" %}
