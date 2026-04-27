@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 from datetime import date, datetime, timezone
 from contextvars import ContextVar
 from pathlib import Path
@@ -44,7 +44,7 @@ from services.factory_api.publish_queue_read import create_publish_queue_read_ro
 from services.factory_api.publish_reconcile import create_publish_reconcile_router
 from services.factory_api.growth_intelligence import create_growth_intelligence_router
 from services.factory_api.prompt_registry import create_prompt_registry_router
-from services.prompt_registry.errors import PromptRegistryNotFoundError, PromptRegistryValidationError
+from services.prompt_registry.errors import PromptRegistryConflictError, PromptRegistryNotFoundError, PromptRegistryValidationError
 from services.prompt_registry.registry_service import PromptRegistryService
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
 from services.factory_api.ux_registry import breadcrumb_context, control_center_entry, primary_nav_items, route_ownership_map
@@ -5933,50 +5933,190 @@ def _ui_prompt_registry_masked_variables(version: dict[str, Any]) -> list[dict[s
     return masked
 
 
+def _ui_prompt_registry_actor() -> str:
+    return "ui.prompt_registry"
+
+
+def _ui_prompt_registry_redirect(path: str, *, success: str | None = None, error: str | None = None) -> RedirectResponse:
+    params: dict[str, str] = {}
+    if success:
+        params["success"] = success
+    if error:
+        params["error"] = error
+    target = path
+    if params:
+        target = f"{path}?{urlencode(params)}"
+    return RedirectResponse(url=target, status_code=303)
+
+
+def _ui_prompt_registry_mask_variables_json_for_display(raw_variables_json: str, *, fallback: str = "[]") -> str:
+    try:
+        payload = json.loads(raw_variables_json)
+    except json.JSONDecodeError:
+        return fallback
+    if not isinstance(payload, list):
+        return fallback
+    masked: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        rendered = dict(item)
+        if str(rendered.get("safety_class") or "") in {"secret", "operator_only"} and str(rendered.get("default_value") or ""):
+            rendered["default_value"] = "***MASKED***"
+        masked.append(rendered)
+    return json.dumps(masked, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def _ui_prompt_registry_detail_context(
+    service: PromptRegistryService,
+    prompt_id: int,
+    request: Request,
+    *,
+    preview_form: dict[str, Any] | None = None,
+    preview_result: dict[str, Any] | None = None,
+    preview_error: str | None = None,
+    create_version_form: dict[str, Any] | None = None,
+    create_version_error: str | None = None,
+) -> dict[str, Any]:
+    record = dict(service.get_record(prompt_id))
+    versions = [dict(row) for row in service.list_versions(prompt_id)]
+    masked_versions: list[dict[str, Any]] = []
+    for version in versions:
+        expanded = service.get_version(int(version["id"]))
+        masked_versions.append({**expanded, "variables": _ui_prompt_registry_masked_variables(expanded)})
+    bindings = [dict(row) for row in service.list_bindings(prompt_id=prompt_id)]
+    usage_summary = service.usage_summary(prompt_id=prompt_id)
+    audit = service.get_audit_diagnostics(prompt_id)
+    version_id_seed, variables_seed = _ui_prompt_registry_preview_seed(masked_versions)
+    query_success = str(request.query_params.get("success") or "").strip()
+    query_error = str(request.query_params.get("error") or "").strip()
+    return {
+        "request": request,
+        "mode": "detail",
+        "record": record,
+        "versions": masked_versions,
+        "bindings": bindings,
+        "usage_summary": usage_summary,
+        "audit": audit,
+        "preview_form": preview_form
+        or {
+            "version_id": version_id_seed,
+            "variables_json": variables_seed,
+            "mask_sensitive": True,
+        },
+        "preview_result": preview_result,
+        "preview_error": preview_error,
+        "create_version_form": create_version_form
+        or {
+            "body_text": "",
+            "status": "draft",
+            "validation_status": "UNKNOWN",
+            "variables_json": "[]",
+        },
+        "create_version_error": create_version_error,
+        "success_message": query_success or None,
+        "error_message": query_error or None,
+    }
+
+
+def _ui_prompt_registry_overview_context(
+    service: PromptRegistryService,
+    conn: sqlite3.Connection,
+    request: Request,
+    *,
+    create_record_form: dict[str, Any] | None = None,
+    create_record_error: str | None = None,
+) -> dict[str, Any]:
+    records = [dict(row) for row in service.list_records()]
+    version_counts = {
+        int(row["prompt_id"]): int(row["cnt"])
+        for row in conn.execute("SELECT prompt_id, COUNT(*) AS cnt FROM prompt_versions GROUP BY prompt_id").fetchall()
+    }
+    binding_counts = {
+        int(row["prompt_id"]): int(row["cnt"])
+        for row in conn.execute("SELECT prompt_id, COUNT(*) AS cnt FROM prompt_bindings GROUP BY prompt_id").fetchall()
+    }
+    usage_counts = {
+        int(row["prompt_id"]): int(row["cnt"])
+        for row in conn.execute(
+            "SELECT prompt_id, COUNT(*) AS cnt FROM prompt_usage_events WHERE prompt_id IS NOT NULL GROUP BY prompt_id"
+        ).fetchall()
+    }
+    enriched_records = []
+    for row in records:
+        prompt_id = int(row["id"])
+        enriched_records.append(
+            {
+                **row,
+                "versions_count": version_counts.get(prompt_id, 0),
+                "bindings_count": binding_counts.get(prompt_id, 0),
+                "usage_events_count": usage_counts.get(prompt_id, 0),
+            }
+        )
+    query_success = str(request.query_params.get("success") or "").strip()
+    query_error = str(request.query_params.get("error") or "").strip()
+    return {
+        "request": request,
+        "mode": "overview",
+        "records": enriched_records,
+        "record_total": len(enriched_records),
+        "create_record_form": create_record_form
+        or {
+            "slug": "",
+            "code": "",
+            "title": "",
+            "record_type": "prompt_template",
+            "status": "draft",
+            "validation_status": "UNKNOWN",
+            "bridge_policy_hook": "",
+        },
+        "create_record_error": create_record_error,
+        "success_message": query_success or None,
+        "error_message": query_error or None,
+    }
+
+
 @app.get("/ui/prompt-registry", response_class=HTMLResponse)
 def ui_prompt_registry_overview_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
     try:
         service = PromptRegistryService(conn)
-        records = [dict(row) for row in service.list_records()]
-        version_counts = {
-            int(row["prompt_id"]): int(row["cnt"])
-            for row in conn.execute(
-                "SELECT prompt_id, COUNT(*) AS cnt FROM prompt_versions GROUP BY prompt_id"
-            ).fetchall()
-        }
-        binding_counts = {
-            int(row["prompt_id"]): int(row["cnt"])
-            for row in conn.execute(
-                "SELECT prompt_id, COUNT(*) AS cnt FROM prompt_bindings GROUP BY prompt_id"
-            ).fetchall()
-        }
-        usage_counts = {
-            int(row["prompt_id"]): int(row["cnt"])
-            for row in conn.execute(
-                "SELECT prompt_id, COUNT(*) AS cnt FROM prompt_usage_events WHERE prompt_id IS NOT NULL GROUP BY prompt_id"
-            ).fetchall()
-        }
-        enriched_records = []
-        for row in records:
-            prompt_id = int(row["id"])
-            enriched_records.append(
-                {
-                    **row,
-                    "versions_count": version_counts.get(prompt_id, 0),
-                    "bindings_count": binding_counts.get(prompt_id, 0),
-                    "usage_events_count": usage_counts.get(prompt_id, 0),
-                }
-            )
-        return templates.TemplateResponse(
-            "prompt_registry.html",
-            {
-                "request": request,
-                "mode": "overview",
-                "records": enriched_records,
-                "record_total": len(enriched_records),
-            },
+        return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_overview_context(service, conn, request))
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/create-record")
+async def ui_prompt_registry_create_record_action(request: Request, _: bool = Depends(require_basic_auth(env))):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    create_record_form = {
+        "slug": str((parsed_form.get("slug") or [""])[0]).strip(),
+        "code": str((parsed_form.get("code") or [""])[0]).strip(),
+        "title": str((parsed_form.get("title") or [""])[0]).strip(),
+        "record_type": str((parsed_form.get("record_type") or ["prompt_template"])[0]).strip() or "prompt_template",
+        "status": str((parsed_form.get("status") or ["draft"])[0]).strip() or "draft",
+        "validation_status": str((parsed_form.get("validation_status") or ["UNKNOWN"])[0]).strip() or "UNKNOWN",
+        "bridge_policy_hook": str((parsed_form.get("bridge_policy_hook") or [""])[0]).strip(),
+    }
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        created = service.create_record(create_record_form, actor=_ui_prompt_registry_actor())
+        return _ui_prompt_registry_redirect(
+            f"/ui/prompt-registry/{int(created['id'])}",
+            success=f"Record created: #{int(created['id'])}",
         )
+    except (PromptRegistryConflictError, PromptRegistryValidationError, ValueError) as exc:
+        context = _ui_prompt_registry_overview_context(
+            PromptRegistryService(conn),
+            conn,
+            request,
+            create_record_form=create_record_form,
+            create_record_error=str(exc),
+        )
+        return templates.TemplateResponse("prompt_registry.html", context)
     finally:
         conn.close()
 
@@ -5986,37 +6126,115 @@ def ui_prompt_registry_detail_page(prompt_id: int, request: Request, _: bool = D
     conn = dbm.connect(env)
     try:
         service = PromptRegistryService(conn)
-        record = dict(service.get_record(prompt_id))
-        versions = [dict(row) for row in service.list_versions(prompt_id)]
-        masked_versions: list[dict[str, Any]] = []
-        for version in versions:
-            expanded = service.get_version(int(version["id"]))
-            masked_versions.append({**expanded, "variables": _ui_prompt_registry_masked_variables(expanded)})
-        bindings = [dict(row) for row in service.list_bindings(prompt_id=prompt_id)]
-        usage_summary = service.usage_summary(prompt_id=prompt_id)
-        audit = service.get_audit_diagnostics(prompt_id)
-        version_id_seed, variables_seed = _ui_prompt_registry_preview_seed(masked_versions)
-        return templates.TemplateResponse(
-            "prompt_registry.html",
-            {
-                "request": request,
-                "mode": "detail",
-                "record": record,
-                "versions": masked_versions,
-                "bindings": bindings,
-                "usage_summary": usage_summary,
-                "audit": audit,
-                "preview_form": {
-                    "version_id": version_id_seed,
-                    "variables_json": variables_seed,
-                    "mask_sensitive": True,
-                },
-                "preview_result": None,
-                "preview_error": None,
-            },
-        )
+        return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_detail_context(service, prompt_id, request))
     except PromptRegistryNotFoundError:
         raise HTTPException(status_code=404, detail="Prompt not found")
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/{prompt_id}/versions/create", response_class=HTMLResponse)
+async def ui_prompt_registry_create_version_action(
+    prompt_id: int,
+    request: Request,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    body_text = str((parsed_form.get("body_text") or [""])[0])
+    status = str((parsed_form.get("status") or ["draft"])[0]).strip() or "draft"
+    validation_status = str((parsed_form.get("validation_status") or ["UNKNOWN"])[0]).strip() or "UNKNOWN"
+    raw_variables_json = str((parsed_form.get("variables_json") or ["[]"])[0]).strip() or "[]"
+    create_version_form = {
+        "body_text": body_text,
+        "status": status,
+        "validation_status": validation_status,
+        "variables_json": _ui_prompt_registry_mask_variables_json_for_display(raw_variables_json),
+    }
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        try:
+            parsed_variables = json.loads(raw_variables_json)
+        except json.JSONDecodeError:
+            raise PromptRegistryValidationError("variables JSON must be a valid list of objects") from None
+        if not isinstance(parsed_variables, list) or any(not isinstance(item, dict) for item in parsed_variables):
+            raise PromptRegistryValidationError("variables JSON must be a valid list of objects")
+
+        created = service.create_version(
+            prompt_id,
+            {
+                "body_text": body_text,
+                "status": status,
+                "validation_status": validation_status,
+                "variables": parsed_variables,
+            },
+            actor=_ui_prompt_registry_actor(),
+        )
+        return _ui_prompt_registry_redirect(
+            f"/ui/prompt-registry/{prompt_id}",
+            success=f"Version created: #{int(created['id'])}",
+        )
+    except (PromptRegistryNotFoundError, PromptRegistryValidationError, ValueError) as exc:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_detail_context(
+                PromptRegistryService(conn),
+                prompt_id,
+                request,
+                create_version_form=create_version_form,
+                create_version_error=str(exc),
+            ),
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/{prompt_id}/versions/{version_id}/activate")
+def ui_prompt_registry_activate_version_action(
+    prompt_id: int,
+    version_id: int,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        version = service.get_version(version_id)
+        if int(version["prompt_id"]) != int(prompt_id):
+            return _ui_prompt_registry_redirect(f"/ui/prompt-registry/{prompt_id}", error="version_id does not belong to the current prompt")
+        service.activate_version(version_id, actor=_ui_prompt_registry_actor())
+        return _ui_prompt_registry_redirect(f"/ui/prompt-registry/{prompt_id}", success=f"Version activated: #{version_id}")
+    except (PromptRegistryNotFoundError, PromptRegistryValidationError, ValueError) as exc:
+        return _ui_prompt_registry_redirect(f"/ui/prompt-registry/{prompt_id}", error=str(exc))
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/{prompt_id}/bindings/{binding_id}/status")
+async def ui_prompt_registry_binding_status_action(
+    prompt_id: int,
+    binding_id: int,
+    request: Request,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    binding_status = str((parsed_form.get("binding_status") or [""])[0]).strip()
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        binding = service.get_binding(binding_id)
+        if int(binding["prompt_id"]) != int(prompt_id):
+            return _ui_prompt_registry_redirect(f"/ui/prompt-registry/{prompt_id}", error="binding_id does not belong to the current prompt")
+        service.update_binding_status(binding_id, {"binding_status": binding_status}, actor=_ui_prompt_registry_actor())
+        return _ui_prompt_registry_redirect(
+            f"/ui/prompt-registry/{prompt_id}",
+            success=f"Binding status updated: #{binding_id} -> {binding_status}",
+        )
+    except (PromptRegistryNotFoundError, PromptRegistryConflictError, PromptRegistryValidationError, ValueError) as exc:
+        return _ui_prompt_registry_redirect(f"/ui/prompt-registry/{prompt_id}", error=str(exc))
     finally:
         conn.close()
 
@@ -6036,15 +6254,6 @@ async def ui_prompt_registry_preview_action(
     conn = dbm.connect(env)
     try:
         service = PromptRegistryService(conn)
-        record = dict(service.get_record(prompt_id))
-        versions = [dict(row) for row in service.list_versions(prompt_id)]
-        masked_versions: list[dict[str, Any]] = []
-        for version in versions:
-            expanded = service.get_version(int(version["id"]))
-            masked_versions.append({**expanded, "variables": _ui_prompt_registry_masked_variables(expanded)})
-        bindings = [dict(row) for row in service.list_bindings(prompt_id=prompt_id)]
-        usage_summary = service.usage_summary(prompt_id=prompt_id)
-        audit = service.get_audit_diagnostics(prompt_id)
 
         selected_version_id: int | None = None
         preview_result: dict[str, Any] | None = None
@@ -6097,22 +6306,18 @@ async def ui_prompt_registry_preview_action(
 
         return templates.TemplateResponse(
             "prompt_registry.html",
-            {
-                "request": request,
-                "mode": "detail",
-                "record": record,
-                "versions": masked_versions,
-                "bindings": bindings,
-                "usage_summary": usage_summary,
-                "audit": audit,
-                "preview_form": {
+            _ui_prompt_registry_detail_context(
+                service,
+                prompt_id,
+                request,
+                preview_form={
                     "version_id": selected_version_id,
                     "variables_json": display_variables_json,
                     "mask_sensitive": mask_sensitive_enabled,
                 },
-                "preview_result": preview_result,
-                "preview_error": preview_error,
-            },
+                preview_result=preview_result,
+                preview_error=preview_error,
+            ),
         )
     except PromptRegistryNotFoundError:
         raise HTTPException(status_code=404, detail="Prompt not found")

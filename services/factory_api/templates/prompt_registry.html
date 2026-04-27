@@ -4,6 +4,13 @@
 <h1>Prompt Registry</h1>
 <p class="muted">Operator overview and read-only prompt diagnostics foundation.</p>
 
+{% if success_message %}
+<p style="color:#166534;"><strong>Success:</strong> {{ success_message }}</p>
+{% endif %}
+{% if error_message %}
+<p style="color:#991b1b;"><strong>Error:</strong> {{ error_message }}</p>
+{% endif %}
+
 {% if mode == "overview" %}
 <p>
   <a href="/v1/prompt-registry/export">Export registry JSON</a>
@@ -11,6 +18,22 @@
   <code>POST /v1/prompt-registry/import/preview</code>,
   <code>POST /v1/prompt-registry/import/confirm</code>
 </p>
+
+<h3>Create record</h3>
+<form method="post" action="/ui/prompt-registry/create-record">
+  <p><label>slug</label><br><input name="slug" value="{{ create_record_form.slug }}" required></p>
+  <p><label>code</label><br><input name="code" value="{{ create_record_form.code }}" required></p>
+  <p><label>title</label><br><input name="title" value="{{ create_record_form.title }}" required></p>
+  <p><label>record_type</label><br><input name="record_type" value="{{ create_record_form.record_type }}" required></p>
+  <p><label>status</label><br><input name="status" value="{{ create_record_form.status }}"></p>
+  <p><label>validation_status</label><br><input name="validation_status" value="{{ create_record_form.validation_status }}"></p>
+  <p><label>bridge_policy_hook (optional)</label><br><input name="bridge_policy_hook" value="{{ create_record_form.bridge_policy_hook }}"></p>
+  <button type="submit">Create record</button>
+</form>
+{% if create_record_error %}
+<p style="color:#991b1b;"><strong>Create record error:</strong> {{ create_record_error }}</p>
+{% endif %}
+
 <p class="muted">Total records: {{ record_total }}</p>
 <table>
   <thead>
@@ -76,6 +99,7 @@
       <th>Status</th>
       <th>Active</th>
       <th>Variables (masked defaults for secret/operator_only)</th>
+      <th>Actions</th>
     </tr>
   </thead>
   <tbody>
@@ -101,9 +125,14 @@
           —
         {% endif %}
       </td>
+      <td>
+        <form method="post" action="/ui/prompt-registry/{{ record.id }}/versions/{{ version.id }}/activate">
+          <button type="submit">Activate</button>
+        </form>
+      </td>
     </tr>
     {% else %}
-    <tr><td colspan="5">No versions</td></tr>
+    <tr><td colspan="6">No versions</td></tr>
     {% endfor %}
   </tbody>
 </table>
@@ -116,6 +145,7 @@
       <th>Scope</th>
       <th>Status</th>
       <th>Target</th>
+      <th>Action</th>
     </tr>
   </thead>
   <tbody>
@@ -125,9 +155,18 @@
       <td>{{ binding.binding_scope }}</td>
       <td>{{ binding.binding_status }}</td>
       <td>{{ binding.workflow_slug or binding.channel_slug or (binding.item_type ~ ":" ~ binding.item_ref) }}</td>
+      <td>
+        <form method="post" action="/ui/prompt-registry/{{ record.id }}/bindings/{{ binding.id }}/status">
+          <select name="binding_status">
+            <option value="active" {% if binding.binding_status == "active" %}selected{% endif %}>active</option>
+            <option value="inactive" {% if binding.binding_status == "inactive" %}selected{% endif %}>inactive</option>
+          </select>
+          <button type="submit">Update</button>
+        </form>
+      </td>
     </tr>
     {% else %}
-    <tr><td colspan="4">No bindings</td></tr>
+    <tr><td colspan="5">No bindings</td></tr>
     {% endfor %}
   </tbody>
 </table>
@@ -139,6 +178,18 @@
   <li><strong>By status:</strong> {{ usage_summary.by_status }}</li>
   <li><strong>By event type:</strong> {{ usage_summary.by_event_type }}</li>
 </ul>
+
+<h3>Create version</h3>
+<form method="post" action="/ui/prompt-registry/{{ record.id }}/versions/create">
+  <p><label>body_text</label><br><textarea name="body_text" rows="6" style="width:100%;max-width:820px;">{{ create_version_form.body_text }}</textarea></p>
+  <p><label>status</label><br><input name="status" value="{{ create_version_form.status }}"></p>
+  <p><label>validation_status</label><br><input name="validation_status" value="{{ create_version_form.validation_status }}"></p>
+  <p><label>variables_json</label><br><textarea name="variables_json" rows="8" style="width:100%;max-width:820px;">{{ create_version_form.variables_json }}</textarea></p>
+  <button type="submit">Create version</button>
+</form>
+{% if create_version_error %}
+<p style="color:#991b1b;"><strong>Create version error:</strong> {{ create_version_error }}</p>
+{% endif %}
 
 <h3>Preview version</h3>
 <form method="post" action="/ui/prompt-registry/{{ record.id }}/preview">
