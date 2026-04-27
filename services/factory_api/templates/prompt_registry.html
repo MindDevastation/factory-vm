@@ -13,7 +13,8 @@
 
 {% if mode == "overview" %}
 <p>
-  <a href="/v1/prompt-registry/export">Export registry JSON</a>
+  <a href="/ui/prompt-registry/export">Export registry JSON (UI)</a>
+  · <a href="/v1/prompt-registry/export">Export registry JSON (API)</a>
   · <a href="/ui/prompt-registry/import">Import registry JSON</a>
   · Import API entry points:
   <code>POST /v1/prompt-registry/import/preview</code>,
@@ -75,10 +76,55 @@
 </table>
 {% endif %}
 
+{% if mode == "export" %}
+<p>
+  <a href="/ui/prompt-registry">← Back to list</a>
+  · <a href="/ui/prompt-registry/import">Import UI</a>
+</p>
+<p class="muted">Usage export includes <strong>summary only</strong>; raw usage history is never included from this UI.</p>
+
+<h3>Export registry JSON</h3>
+<form method="post" action="/ui/prompt-registry/export">
+  <p><label>prompt_id (optional)</label><br><input name="prompt_id" value="{{ export_prompt_id }}" placeholder="e.g. 42"></p>
+  <p><label><input type="checkbox" name="include_inactive" value="1" {% if export_include_inactive %}checked{% endif %}> include_inactive</label></p>
+  <p><label><input type="checkbox" name="include_usage" value="1" {% if export_include_usage %}checked{% endif %}> include_usage (summary only)</label></p>
+  <p class="muted">Form data is accepted via POST body only.</p>
+  <button type="submit">Render export JSON</button>
+</form>
+
+{% if export_error %}
+<p style="color:#991b1b;"><strong>Export error:</strong> {{ export_error }}</p>
+{% endif %}
+
+{% if export_result %}
+<h3>Export result</h3>
+<ul>
+  <li><strong>schema_version:</strong> {{ export_result_summary.schema_version }}</li>
+  <li><strong>exported_at:</strong> {{ export_result_summary.exported_at }}</li>
+  <li><strong>records count:</strong> {{ export_result_summary.records_count }}</li>
+  <li><strong>versions count:</strong> {{ export_result_summary.versions_count }}</li>
+  <li><strong>variables count:</strong> {{ export_result_summary.variables_count }}</li>
+  <li><strong>bindings count:</strong> {{ export_result_summary.bindings_count }}</li>
+  <li><strong>usage summary included:</strong> {{ "yes" if usage_summary_included else "no" }}</li>
+</ul>
+
+<form method="post" action="/ui/prompt-registry/export/download">
+  <input type="hidden" name="prompt_id" value="{{ export_prompt_id }}">
+  {% if export_include_inactive %}<input type="hidden" name="include_inactive" value="1">{% endif %}
+  {% if export_include_usage %}<input type="hidden" name="include_usage" value="1">{% endif %}
+  <button type="submit">Download JSON file</button>
+</form>
+
+<p><label>Payload JSON</label><br>
+<textarea rows="18" style="width:100%;max-width:960px;">{{ export_payload_json }}</textarea></p>
+{% endif %}
+{% endif %}
+
 {% if mode == "import" %}
 <p>
   <a href="/ui/prompt-registry">← Back to list</a>
-  · <a href="/v1/prompt-registry/export">Export registry JSON</a>
+  · <a href="/ui/prompt-registry/export">Export UI</a>
+  · <a href="/v1/prompt-registry/export">Export API</a>
 </p>
 <p class="muted"><strong>Warning:</strong> this UI supports <code>merge_only</code> imports only. Destructive replace/delete is not available.</p>
 

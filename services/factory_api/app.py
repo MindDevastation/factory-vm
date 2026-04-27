@@ -6112,6 +6112,65 @@ def _ui_prompt_registry_import_context(
     }
 
 
+def _ui_prompt_registry_export_context(
+    request: Request,
+    *,
+    prompt_id_value: str = "",
+    include_inactive: bool = True,
+    include_usage: bool = False,
+    export_result: dict[str, Any] | None = None,
+    export_error: str | None = None,
+) -> dict[str, Any]:
+    payload_json = ""
+    summary = None
+    usage_summary_included = False
+    if isinstance(export_result, dict):
+        payload_json = json.dumps(export_result, ensure_ascii=False, indent=2)
+        summary = {
+            "schema_version": str(export_result.get("schema_version") or ""),
+            "exported_at": str(export_result.get("exported_at") or ""),
+            "records_count": len(export_result.get("records") or []),
+            "versions_count": len(export_result.get("versions") or []),
+            "variables_count": len(export_result.get("variables") or []),
+            "bindings_count": len(export_result.get("bindings") or []),
+        }
+        usage_summary_included = isinstance(export_result.get("usage_events_summary"), dict)
+    return {
+        "request": request,
+        "mode": "export",
+        "export_prompt_id": prompt_id_value,
+        "export_include_inactive": bool(include_inactive),
+        "export_include_usage": bool(include_usage),
+        "export_result": export_result,
+        "export_result_summary": summary,
+        "export_payload_json": payload_json,
+        "usage_summary_included": usage_summary_included,
+        "export_error": export_error,
+        "success_message": None,
+        "error_message": None,
+    }
+
+
+def _ui_parse_prompt_registry_export_form(parsed_form: dict[str, list[str]]) -> dict[str, Any]:
+    prompt_id_value = str((parsed_form.get("prompt_id") or [""])[0]).strip()
+    include_inactive_raw = str((parsed_form.get("include_inactive") or [""])[0]).strip().lower()
+    include_usage_raw = str((parsed_form.get("include_usage") or [""])[0]).strip().lower()
+    include_inactive = include_inactive_raw in {"1", "true", "yes", "on"}
+    include_usage = include_usage_raw in {"1", "true", "yes", "on"}
+    parsed_prompt_id: int | None = None
+    if prompt_id_value:
+        try:
+            parsed_prompt_id = int(prompt_id_value)
+        except ValueError as exc:
+            raise ValueError("prompt_id must be an integer") from exc
+    return {
+        "prompt_id_value": prompt_id_value,
+        "prompt_id": parsed_prompt_id,
+        "include_inactive": include_inactive,
+        "include_usage": include_usage,
+    }
+
+
 @app.get("/ui/prompt-registry", response_class=HTMLResponse)
 def ui_prompt_registry_overview_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -6160,6 +6219,118 @@ async def ui_prompt_registry_create_record_action(request: Request, _: bool = De
 @app.get("/ui/prompt-registry/import", response_class=HTMLResponse)
 def ui_prompt_registry_import_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_import_context(request))
+
+
+@app.get("/ui/prompt-registry/export", response_class=HTMLResponse)
+def ui_prompt_registry_export_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_export_context(request))
+
+
+@app.post("/ui/prompt-registry/export", response_class=HTMLResponse)
+async def ui_prompt_registry_export_action(request: Request, _: bool = Depends(require_basic_auth(env))):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    try:
+        form = _ui_parse_prompt_registry_export_form(parsed_form)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_export_context(request, prompt_id_value=str((parsed_form.get("prompt_id") or [""])[0]).strip(), export_error=str(exc)),
+        )
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        export_result = service.export_registry(
+            prompt_id=form["prompt_id"],
+            include_inactive=form["include_inactive"],
+            include_usage=form["include_usage"],
+        )
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_export_context(
+                request,
+                prompt_id_value=form["prompt_id_value"],
+                include_inactive=form["include_inactive"],
+                include_usage=form["include_usage"],
+                export_result=export_result,
+            ),
+        )
+    except PromptRegistryNotFoundError:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_export_context(
+                request,
+                prompt_id_value=form["prompt_id_value"],
+                include_inactive=form["include_inactive"],
+                include_usage=form["include_usage"],
+                export_error="prompt_id was not found",
+            ),
+        )
+    except (PromptRegistryValidationError, ValueError):
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_export_context(
+                request,
+                prompt_id_value=form["prompt_id_value"],
+                include_inactive=form["include_inactive"],
+                include_usage=form["include_usage"],
+                export_error="Export request failed validation",
+            ),
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/export/download")
+async def ui_prompt_registry_export_download_action(request: Request, _: bool = Depends(require_basic_auth(env))):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    try:
+        form = _ui_parse_prompt_registry_export_form(parsed_form)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_export_context(request, prompt_id_value=str((parsed_form.get("prompt_id") or [""])[0]).strip(), export_error=str(exc)),
+        )
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        payload = service.export_registry(
+            prompt_id=form["prompt_id"],
+            include_inactive=form["include_inactive"],
+            include_usage=form["include_usage"],
+        )
+        return Response(
+            content=json.dumps(payload, ensure_ascii=False, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="prompt-registry-export.json"'},
+        )
+    except PromptRegistryNotFoundError:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_export_context(
+                request,
+                prompt_id_value=form["prompt_id_value"],
+                include_inactive=form["include_inactive"],
+                include_usage=form["include_usage"],
+                export_error="prompt_id was not found",
+            ),
+        )
+    except (PromptRegistryValidationError, ValueError):
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_export_context(
+                request,
+                prompt_id_value=form["prompt_id_value"],
+                include_inactive=form["include_inactive"],
+                include_usage=form["include_usage"],
+                export_error="Export request failed validation",
+            ),
+        )
+    finally:
+        conn.close()
 
 
 @app.post("/ui/prompt-registry/import/preview", response_class=HTMLResponse)
