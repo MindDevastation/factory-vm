@@ -44,6 +44,7 @@ ROUTE_METADATA_REGISTRY: tuple[RouteMetadata, ...] = (
     RouteMetadata("CUSTOM_TAGS", "/ui/track-catalog/custom-tags", "TAGS", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
     RouteMetadata("CUSTOM_TAGS_DASHBOARD", "/ui/track-catalog/custom-tags/dashboard", "Tag Dashboard", "entities", "entity_drilldown", parent_route_key="CUSTOM_TAGS"),
     RouteMetadata("PROMPT_REGISTRY", "/ui/prompt-registry", "Prompt Registry", "workspaces", "workspaces", parent_route_key="CONTROL_CENTER", in_primary_nav=True),
+    RouteMetadata("PROMPT_REGISTRY_IMPORT", "/ui/prompt-registry/import", "Prompt Import", "workspaces", "entity_drilldown", parent_route_key="PROMPT_REGISTRY"),
     RouteMetadata("PROMPT_REGISTRY_DETAIL", "/ui/prompt-registry/", "Prompt Detail", "entities", "entity_drilldown", parent_route_key="PROMPT_REGISTRY"),
 )
 

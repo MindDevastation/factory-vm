@@ -6088,6 +6088,41 @@ def _ui_prompt_registry_overview_context(
     }
 
 
+def _ui_prompt_registry_import_context(
+    request: Request,
+    *,
+    import_payload_json: str = "",
+    confirm_dry_run: bool = True,
+    import_result: dict[str, Any] | None = None,
+    import_error: str | None = None,
+    success_message: str | None = None,
+) -> dict[str, Any]:
+    query_success = str(request.query_params.get("success") or "").strip()
+    query_error = str(request.query_params.get("error") or "").strip()
+    return {
+        "request": request,
+        "mode": "import",
+        "import_payload_json": import_payload_json,
+        "import_mode": "merge_only",
+        "confirm_dry_run": bool(confirm_dry_run),
+        "import_result": import_result,
+        "import_error": import_error or query_error or None,
+        "success_message": success_message or query_success or None,
+        "error_message": None,
+    }
+
+
+def _ui_prompt_registry_parse_bool_form(parsed_form: dict[str, list[str]], field_name: str, *, default: bool) -> bool:
+    raw_value = str((parsed_form.get(field_name) or [""])[0]).strip().lower()
+    if not raw_value:
+        return default
+    if raw_value in {"1", "true", "yes", "on"}:
+        return True
+    if raw_value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 @app.get("/ui/prompt-registry", response_class=HTMLResponse)
 def ui_prompt_registry_overview_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -6129,6 +6164,134 @@ async def ui_prompt_registry_create_record_action(request: Request, _: bool = De
             create_record_error=str(exc),
         )
         return templates.TemplateResponse("prompt_registry.html", context)
+    finally:
+        conn.close()
+
+
+@app.get("/ui/prompt-registry/import", response_class=HTMLResponse)
+def ui_prompt_registry_import_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_import_context(request))
+
+
+@app.post("/ui/prompt-registry/import/preview", response_class=HTMLResponse)
+async def ui_prompt_registry_import_preview_action(request: Request, _: bool = Depends(require_basic_auth(env))):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    import_payload_json = str((parsed_form.get("payload_json") or [""])[0]).strip()
+
+    if not import_payload_json:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_import_context(
+                request,
+                import_payload_json=import_payload_json,
+                import_error="Import payload JSON is required",
+            ),
+        )
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        payload = json.loads(import_payload_json)
+        import_result = service.preview_import(payload, mode="merge_only")
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_import_context(
+                request,
+                import_payload_json=import_payload_json,
+                import_result=import_result,
+            ),
+        )
+    except json.JSONDecodeError:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_import_context(
+                request,
+                import_payload_json=import_payload_json,
+                import_error="Import payload must be valid JSON",
+            ),
+        )
+    except (PromptRegistryConflictError, PromptRegistryNotFoundError, PromptRegistryValidationError, ValueError):
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_import_context(
+                request,
+                import_payload_json=import_payload_json,
+                import_error="Import preview failed validation",
+            ),
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/import/confirm", response_class=HTMLResponse)
+async def ui_prompt_registry_import_confirm_action(request: Request, _: bool = Depends(require_basic_auth(env))):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    import_payload_json = str((parsed_form.get("payload_json") or [""])[0]).strip()
+    dry_run = _ui_prompt_registry_parse_bool_form(parsed_form, "dry_run", default=True)
+
+    if not import_payload_json:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_import_context(
+                request,
+                import_payload_json=import_payload_json,
+                confirm_dry_run=dry_run,
+                import_error="Import payload JSON is required",
+            ),
+        )
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        payload = json.loads(import_payload_json)
+        import_result = service.confirm_import(
+            payload,
+            mode="merge_only",
+            dry_run=dry_run,
+            actor=_ui_prompt_registry_actor(),
+        )
+        success_message: str | None = None
+        if not dry_run and str(import_result.get("import_status") or "").upper() == "OK":
+            summary = import_result.get("summary") or {}
+            success_message = (
+                "Import applied in merge_only mode: "
+                f"records_to_create={int(summary.get('records_to_create') or 0)}, "
+                f"records_to_update={int(summary.get('records_to_update') or 0)}, "
+                f"versions_to_create={int(summary.get('versions_to_create') or 0)}, "
+                f"bindings_to_create={int(summary.get('bindings_to_create') or 0)}"
+            )
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_import_context(
+                request,
+                import_payload_json=import_payload_json,
+                confirm_dry_run=dry_run,
+                import_result=import_result,
+                success_message=success_message,
+            ),
+        )
+    except json.JSONDecodeError:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_import_context(
+                request,
+                import_payload_json=import_payload_json,
+                confirm_dry_run=dry_run,
+                import_error="Import payload must be valid JSON",
+            ),
+        )
+    except (PromptRegistryConflictError, PromptRegistryNotFoundError, PromptRegistryValidationError, ValueError):
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_import_context(
+                request,
+                import_payload_json=import_payload_json,
+                confirm_dry_run=dry_run,
+                import_error="Import confirm failed validation",
+            ),
+        )
     finally:
         conn.close()
 
