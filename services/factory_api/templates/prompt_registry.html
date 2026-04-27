@@ -138,6 +138,34 @@
 </table>
 
 <h3>Bindings</h3>
+<form method="post" action="/ui/prompt-registry/{{ record.id }}/bindings/create">
+  <p>
+    <label>binding_scope</label><br>
+    <select name="binding_scope">
+      <option value="global" {% if create_binding_form.binding_scope == "global" %}selected{% endif %}>global</option>
+      <option value="workflow" {% if create_binding_form.binding_scope == "workflow" %}selected{% endif %}>workflow</option>
+      <option value="channel" {% if create_binding_form.binding_scope == "channel" %}selected{% endif %}>channel</option>
+      <option value="item" {% if create_binding_form.binding_scope == "item" %}selected{% endif %}>item</option>
+    </select>
+  </p>
+  <p>
+    <label>binding_status</label><br>
+    <select name="binding_status">
+      <option value="active" {% if create_binding_form.binding_status == "active" %}selected{% endif %}>active</option>
+      <option value="inactive" {% if create_binding_form.binding_status == "inactive" %}selected{% endif %}>inactive</option>
+    </select>
+  </p>
+  <p><label>workflow_slug (workflow scope only)</label><br><input name="workflow_slug" value="{{ create_binding_form.workflow_slug }}"></p>
+  <p><label>channel_slug (channel scope only)</label><br><input name="channel_slug" value="{{ create_binding_form.channel_slug }}"></p>
+  <p><label>item_type (item scope only)</label><br><input name="item_type" value="{{ create_binding_form.item_type }}"></p>
+  <p><label>item_ref (item scope only)</label><br><input name="item_ref" value="{{ create_binding_form.item_ref }}"></p>
+  <p class="muted">Validation is server-side and scope-specific.</p>
+  <button type="submit">Create binding</button>
+</form>
+{% if create_binding_error %}
+<p style="color:#991b1b;"><strong>Create binding error:</strong> {{ create_binding_error }}</p>
+{% endif %}
+
 <table>
   <thead>
     <tr>
