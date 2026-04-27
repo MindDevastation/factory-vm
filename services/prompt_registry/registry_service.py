@@ -1437,8 +1437,14 @@ class PromptRegistryService:
         self._write_audit_event(prompt_id=prompt_id, version_id=version_id, event_type="version_activated", actor=actor_id)
         return self.get_version(version_id)
 
-    def list_audit_events(self, prompt_id: int) -> list[dict[str, Any]]:
-        return list(self._conn.execute("SELECT * FROM prompt_audit_events WHERE prompt_id = ? ORDER BY id ASC", (prompt_id,)).fetchall())
+    def list_audit_events(self, prompt_id: int, *, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit), 200))
+        return list(
+            self._conn.execute(
+                "SELECT * FROM prompt_audit_events WHERE prompt_id = ? ORDER BY id ASC LIMIT ?",
+                (prompt_id, safe_limit),
+            ).fetchall()
+        )
 
     def get_audit_diagnostics(self, prompt_id: int) -> dict[str, Any]:
         self.get_record(prompt_id)

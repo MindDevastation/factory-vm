@@ -6171,6 +6171,159 @@ def _ui_parse_prompt_registry_export_form(parsed_form: dict[str, list[str]]) -> 
     }
 
 
+def _ui_prompt_registry_parse_optional_int(raw_value: str, *, field_name: str) -> int | None:
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+
+
+def _ui_prompt_registry_parse_usage_filters(query_params: Any) -> dict[str, Any]:
+    prompt_id_raw = str(query_params.get("prompt_id") or "").strip()
+    version_id_raw = str(query_params.get("version_id") or "").strip()
+    event_type = str(query_params.get("event_type") or "").strip() or None
+    status = str(query_params.get("status") or "").strip() or None
+    limit_raw = str(query_params.get("limit") or "").strip()
+    limit_value = 50
+    if limit_raw:
+        try:
+            limit_value = int(limit_raw)
+        except ValueError as exc:
+            raise ValueError("limit must be an integer") from exc
+    if limit_value <= 0:
+        raise ValueError("limit must be greater than zero")
+    if limit_value > 200:
+        limit_value = 200
+    return {
+        "prompt_id_raw": prompt_id_raw,
+        "version_id_raw": version_id_raw,
+        "event_type": event_type,
+        "status": status,
+        "limit": limit_value,
+        "prompt_id": _ui_prompt_registry_parse_optional_int(prompt_id_raw, field_name="prompt_id"),
+        "version_id": _ui_prompt_registry_parse_optional_int(version_id_raw, field_name="version_id"),
+    }
+
+
+def _ui_prompt_registry_safe_summary(value: Any, *, max_items: int = 6) -> str:
+    if not isinstance(value, dict) or not value:
+        return "—"
+    sensitive_tokens = ("secret", "operator_only", "token", "password", "api_key", "authorization")
+    items: list[str] = []
+    for key in sorted(value.keys()):
+        if len(items) >= max_items:
+            break
+        normalized_key = str(key)
+        lowered_key = normalized_key.lower()
+        raw = value.get(key)
+        if any(token in lowered_key for token in sensitive_tokens):
+            rendered = "***MASKED***"
+        elif isinstance(raw, dict):
+            rendered = f"{{{len(raw)} keys}}"
+        elif isinstance(raw, list):
+            rendered = f"[{len(raw)} items]"
+        elif raw is None:
+            rendered = "null"
+        else:
+            rendered = str(raw).strip()
+            if len(rendered) > 80:
+                rendered = f"{rendered[:77]}..."
+        items.append(f"{normalized_key}={rendered}")
+    extra_count = max(0, len(value.keys()) - len(items))
+    if extra_count > 0:
+        items.append(f"... (+{extra_count} more)")
+    return "; ".join(items) if items else "—"
+
+
+def _ui_prompt_registry_usage_context(
+    request: Request,
+    *,
+    filters: dict[str, Any] | None = None,
+    usage_events: list[dict[str, Any]] | None = None,
+    usage_error: str | None = None,
+) -> dict[str, Any]:
+    if filters is None:
+        limit_raw = str(request.query_params.get("limit") or "").strip()
+        try:
+            fallback_limit = int(limit_raw) if limit_raw else 50
+        except ValueError:
+            fallback_limit = 50
+        active_filters = {
+            "prompt_id_raw": str(request.query_params.get("prompt_id") or "").strip(),
+            "version_id_raw": str(request.query_params.get("version_id") or "").strip(),
+            "event_type": str(request.query_params.get("event_type") or "").strip() or None,
+            "status": str(request.query_params.get("status") or "").strip() or None,
+            "limit": max(1, min(fallback_limit, 200)),
+            "prompt_id": None,
+            "version_id": None,
+        }
+    else:
+        active_filters = filters
+    rendered_events: list[dict[str, Any]] = []
+    for event in usage_events or []:
+        fingerprint = str(event.get("render_fingerprint") or "")
+        fingerprint_short = f"{fingerprint[:16]}..." if len(fingerprint) > 19 else (fingerprint or "—")
+        rendered_events.append(
+            {
+                **event,
+                "render_fingerprint_short": fingerprint_short,
+                "context_summary": _ui_prompt_registry_safe_summary(event.get("context")),
+                "diagnostics_summary": _ui_prompt_registry_safe_summary(event.get("diagnostics")),
+            }
+        )
+    return {
+        "request": request,
+        "mode": "usage",
+        "usage_filters": active_filters,
+        "usage_events": rendered_events,
+        "usage_error": usage_error,
+        "success_message": None,
+        "error_message": None,
+    }
+
+
+def _ui_prompt_registry_audit_context(
+    request: Request,
+    *,
+    prompt_id: int,
+    audit_events: list[dict[str, Any]],
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    rendered_events: list[dict[str, Any]] = []
+    for row in audit_events:
+        payload = row.get("payload_json")
+        payload_obj: dict[str, Any] = {}
+        if isinstance(payload, str):
+            try:
+                parsed_payload = json.loads(payload)
+            except json.JSONDecodeError:
+                parsed_payload = {}
+            if isinstance(parsed_payload, dict):
+                payload_obj = parsed_payload
+        rendered_events.append(
+            {
+                "id": int(row["id"]),
+                "created_at": str(row["created_at"]),
+                "event_type": str(row["event_type"]),
+                "actor": str(row["actor"]),
+                "version_id": row.get("version_id"),
+                "payload_summary": _ui_prompt_registry_safe_summary(payload_obj),
+            }
+        )
+    return {
+        "request": request,
+        "mode": "audit",
+        "prompt_id": prompt_id,
+        "record": record,
+        "audit_events": rendered_events,
+        "success_message": None,
+        "error_message": None,
+    }
+
+
 @app.get("/ui/prompt-registry", response_class=HTMLResponse)
 def ui_prompt_registry_overview_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -6224,6 +6377,29 @@ def ui_prompt_registry_import_page(request: Request, _: bool = Depends(require_b
 @app.get("/ui/prompt-registry/export", response_class=HTMLResponse)
 def ui_prompt_registry_export_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_export_context(request))
+
+
+@app.get("/ui/prompt-registry/usage", response_class=HTMLResponse)
+def ui_prompt_registry_usage_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        try:
+            filters = _ui_prompt_registry_parse_usage_filters(request.query_params)
+        except ValueError as exc:
+            return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_usage_context(request, usage_error=str(exc)))
+        usage_events = service.list_usage_events(
+            prompt_id=filters["prompt_id"],
+            version_id=filters["version_id"],
+            event_type=filters["event_type"],
+            status=filters["status"],
+            limit=filters["limit"],
+        )
+        return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_usage_context(request, filters=filters, usage_events=usage_events))
+    except (PromptRegistryValidationError, ValueError):
+        return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_usage_context(request, usage_error="Usage diagnostics filter validation failed"))
+    finally:
+        conn.close()
 
 
 @app.post("/ui/prompt-registry/export", response_class=HTMLResponse)
@@ -6463,6 +6639,23 @@ def ui_prompt_registry_detail_page(prompt_id: int, request: Request, _: bool = D
     try:
         service = PromptRegistryService(conn)
         return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_detail_context(service, prompt_id, request))
+    except PromptRegistryNotFoundError:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    finally:
+        conn.close()
+
+
+@app.get("/ui/prompt-registry/{prompt_id}/audit", response_class=HTMLResponse)
+def ui_prompt_registry_audit_page(prompt_id: int, request: Request, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        record = dict(service.get_record(prompt_id))
+        events = service.list_audit_events(prompt_id, limit=100)
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_audit_context(request, prompt_id=prompt_id, audit_events=events, record=record),
+        )
     except PromptRegistryNotFoundError:
         raise HTTPException(status_code=404, detail="Prompt not found")
     finally:
