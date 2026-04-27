@@ -6112,17 +6112,6 @@ def _ui_prompt_registry_import_context(
     }
 
 
-def _ui_prompt_registry_parse_bool_form(parsed_form: dict[str, list[str]], field_name: str, *, default: bool) -> bool:
-    raw_value = str((parsed_form.get(field_name) or [""])[0]).strip().lower()
-    if not raw_value:
-        return default
-    if raw_value in {"1", "true", "yes", "on"}:
-        return True
-    if raw_value in {"0", "false", "no", "off"}:
-        return False
-    return default
-
-
 @app.get("/ui/prompt-registry", response_class=HTMLResponse)
 def ui_prompt_registry_overview_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -6229,7 +6218,8 @@ async def ui_prompt_registry_import_confirm_action(request: Request, _: bool = D
     raw_body = (await request.body()).decode("utf-8", errors="ignore")
     parsed_form = parse_qs(raw_body, keep_blank_values=True)
     import_payload_json = str((parsed_form.get("payload_json") or [""])[0]).strip()
-    dry_run = _ui_prompt_registry_parse_bool_form(parsed_form, "dry_run", default=True)
+    confirm_action = str((parsed_form.get("confirm_action") or ["dry_run"])[0]).strip().lower()
+    dry_run = confirm_action != "apply"
 
     if not import_payload_json:
         return templates.TemplateResponse(

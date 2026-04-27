@@ -87,6 +87,10 @@ class TestMf9PromptRegistryImportUi(unittest.TestCase):
             self.assertEqual(page.status_code, 200)
             self.assertIn('action="/ui/prompt-registry/import/preview"', page.text)
             self.assertIn('action="/ui/prompt-registry/import/confirm"', page.text)
+            self.assertIn('name="confirm_action" value="dry_run"', page.text)
+            self.assertIn('name="confirm_action" value="apply"', page.text)
+            self.assertIn("Run dry-run confirm (recommended)", page.text)
+            self.assertIn("Apply import now (merge_only)", page.text)
             self.assertIn("merge_only", page.text)
             self.assertIn("Destructive replace/delete is not available", page.text)
             self.assertIn('href="/v1/prompt-registry/export"', page.text)
@@ -141,7 +145,7 @@ class TestMf9PromptRegistryImportUi(unittest.TestCase):
             dry_run = client.post(
                 "/ui/prompt-registry/import/confirm",
                 headers=headers,
-                data={"payload_json": json.dumps(payload), "dry_run": "true"},
+                data={"payload_json": json.dumps(payload), "confirm_action": "dry_run"},
             )
             self.assertEqual(dry_run.status_code, 200)
             self.assertIn("import_status:</strong>", dry_run.text)
@@ -166,7 +170,7 @@ class TestMf9PromptRegistryImportUi(unittest.TestCase):
             confirmed = target_client.post(
                 "/ui/prompt-registry/import/confirm",
                 headers=target_headers,
-                data={"payload_json": json.dumps(payload), "dry_run": "false"},
+                data={"payload_json": json.dumps(payload), "confirm_action": "apply"},
             )
             self.assertEqual(confirmed.status_code, 200)
             self.assertIn("Success:</strong> Import applied in merge_only mode", confirmed.text)
@@ -186,7 +190,7 @@ class TestMf9PromptRegistryImportUi(unittest.TestCase):
             invalid = client.post(
                 "/ui/prompt-registry/import/confirm",
                 headers=headers,
-                data={"payload_json": '{"schema_version":"bad"}', "dry_run": "false"},
+                data={"payload_json": '{"schema_version":"bad"}', "confirm_action": "apply"},
             )
             self.assertEqual(invalid.status_code, 200)
             self.assertIn("Import error:</strong> Import confirm failed validation", invalid.text)

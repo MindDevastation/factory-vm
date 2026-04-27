@@ -92,13 +92,9 @@
 <h3>Confirm import</h3>
 <form method="post" action="/ui/prompt-registry/import/confirm">
   <p><textarea name="payload_json" rows="16" style="width:100%;max-width:960px;" placeholder='{"schema_version":"prompt_registry_export_v1","records":[],"versions":[],"variables":[],"bindings":[]}'>{{ import_payload_json }}</textarea></p>
-  <p>
-    <label>
-      <input type="checkbox" name="dry_run" value="true" {% if confirm_dry_run %}checked{% endif %}>
-      dry_run (recommended)
-    </label>
-  </p>
-  <button type="submit">Run confirm (merge_only)</button>
+  <p class="muted">Choose explicit action (default recommended: dry-run).</p>
+  <button type="submit" name="confirm_action" value="dry_run">Run dry-run confirm (recommended)</button>
+  <button type="submit" name="confirm_action" value="apply">Apply import now (merge_only)</button>
 </form>
 
 {% if import_error %}
