@@ -5977,6 +5977,8 @@ def _ui_prompt_registry_detail_context(
     preview_error: str | None = None,
     create_version_form: dict[str, Any] | None = None,
     create_version_error: str | None = None,
+    create_binding_form: dict[str, Any] | None = None,
+    create_binding_error: str | None = None,
 ) -> dict[str, Any]:
     record = dict(service.get_record(prompt_id))
     versions = [dict(row) for row in service.list_versions(prompt_id)]
@@ -6014,6 +6016,16 @@ def _ui_prompt_registry_detail_context(
             "variables_json": "[]",
         },
         "create_version_error": create_version_error,
+        "create_binding_form": create_binding_form
+        or {
+            "binding_scope": "global",
+            "binding_status": "active",
+            "workflow_slug": "",
+            "channel_slug": "",
+            "item_type": "",
+            "item_ref": "",
+        },
+        "create_binding_error": create_binding_error,
         "success_message": query_success or None,
         "error_message": query_error or None,
     }
@@ -6235,6 +6247,52 @@ async def ui_prompt_registry_binding_status_action(
         )
     except (PromptRegistryNotFoundError, PromptRegistryConflictError, PromptRegistryValidationError, ValueError) as exc:
         return _ui_prompt_registry_redirect(f"/ui/prompt-registry/{prompt_id}", error=str(exc))
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/{prompt_id}/bindings/create", response_class=HTMLResponse)
+async def ui_prompt_registry_create_binding_action(
+    prompt_id: int,
+    request: Request,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    create_binding_form = {
+        "binding_scope": str((parsed_form.get("binding_scope") or ["global"])[0]).strip() or "global",
+        "binding_status": str((parsed_form.get("binding_status") or ["active"])[0]).strip() or "active",
+        "workflow_slug": str((parsed_form.get("workflow_slug") or [""])[0]).strip(),
+        "channel_slug": str((parsed_form.get("channel_slug") or [""])[0]).strip(),
+        "item_type": str((parsed_form.get("item_type") or [""])[0]).strip(),
+        "item_ref": str((parsed_form.get("item_ref") or [""])[0]).strip(),
+    }
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        created = service.create_binding(
+            {
+                "prompt_id": prompt_id,
+                **create_binding_form,
+            },
+            actor=_ui_prompt_registry_actor(),
+        )
+        return _ui_prompt_registry_redirect(
+            f"/ui/prompt-registry/{prompt_id}",
+            success=f"Binding created: #{int(created['id'])}",
+        )
+    except (PromptRegistryNotFoundError, PromptRegistryConflictError, PromptRegistryValidationError, ValueError) as exc:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_detail_context(
+                PromptRegistryService(conn),
+                prompt_id,
+                request,
+                create_binding_form=create_binding_form,
+                create_binding_error=str(exc),
+            ),
+        )
     finally:
         conn.close()
 
