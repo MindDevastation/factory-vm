@@ -441,11 +441,27 @@ class PromptRegistryService:
         self,
         prompt_id: int | None = None,
         action_id: int | None = None,
+        request_status: str | None = None,
+        preview_status: str | None = None,
+        requested_by: str | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         parsed_limit = int(limit)
         if parsed_limit <= 0 or parsed_limit > 200:
             raise PromptRegistryValidationError("limit must be between 1 and 200")
+        normalized_request_status: str | None = None
+        normalized_preview_status: str | None = None
+        normalized_requested_by: str | None = None
+        if request_status is not None:
+            normalized_request_status = str(request_status).strip()
+            if normalized_request_status not in {"preview_only", "blocked", "accepted"}:
+                raise PromptRegistryValidationError("request_status must be one of preview_only, blocked, accepted")
+        if preview_status is not None:
+            normalized_preview_status = str(preview_status).strip().upper()
+            if normalized_preview_status not in {"OK", "WARNING", "INVALID"}:
+                raise PromptRegistryValidationError("preview_status must be one of OK, WARNING, INVALID")
+        if requested_by is not None:
+            normalized_requested_by = ensure_non_empty(requested_by, field_name="requested_by")
         where_parts: list[str] = []
         params: list[Any] = []
         if prompt_id is not None:
@@ -454,6 +470,15 @@ class PromptRegistryService:
         if action_id is not None:
             where_parts.append("action_id = ?")
             params.append(int(action_id))
+        if normalized_request_status is not None:
+            where_parts.append("request_status = ?")
+            params.append(normalized_request_status)
+        if normalized_preview_status is not None:
+            where_parts.append("preview_status = ?")
+            params.append(normalized_preview_status)
+        if normalized_requested_by is not None:
+            where_parts.append("requested_by = ?")
+            params.append(normalized_requested_by)
         where_clause = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
         query = (
             "SELECT * FROM prompt_linked_action_execution_requests"

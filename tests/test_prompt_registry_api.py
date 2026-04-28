@@ -567,6 +567,25 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(len(list_exec.json()["items"]), 1)
             self.assertEqual(list_exec.json()["items"][0]["request_status"], "blocked")
 
+            filtered_exec = client.get(
+                (
+                    "/v1/prompt-registry/linked-action-execution-requests"
+                    f"?prompt_id={prompt_id}&action_id={action_id}"
+                    "&request_status=blocked&preview_status=WARNING&requested_by=admin&limit=50"
+                ),
+                headers=headers,
+            )
+            self.assertEqual(filtered_exec.status_code, 200)
+            self.assertEqual(len(filtered_exec.json()["items"]), 1)
+            self.assertEqual(filtered_exec.json()["items"][0]["preview_status"], "WARNING")
+
+            invalid_status = client.get(
+                "/v1/prompt-registry/linked-action-execution-requests?request_status=bad",
+                headers=headers,
+            )
+            self.assertEqual(invalid_status.status_code, 422)
+            self.assertEqual(invalid_status.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
             invalid_limit = client.get(
                 "/v1/prompt-registry/linked-action-execution-requests?limit=201",
                 headers=headers,
