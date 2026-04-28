@@ -6876,6 +6876,9 @@ async def ui_prompt_registry_create_linked_action_action(
             success=f"Linked action created: #{int(created['id'])}",
         )
     except (PromptRegistryNotFoundError, PromptRegistryConflictError, PromptRegistryValidationError, ValueError) as exc:
+        error_text = str(exc)
+        if "secret/token/password-like keys" in error_text:
+            create_linked_action_form = {**create_linked_action_form, "config_json": "{}"}
         return templates.TemplateResponse(
             "prompt_registry.html",
             _ui_prompt_registry_detail_context(
@@ -6883,7 +6886,7 @@ async def ui_prompt_registry_create_linked_action_action(
                 prompt_id,
                 request,
                 create_linked_action_form=create_linked_action_form,
-                create_linked_action_error=str(exc),
+                create_linked_action_error=error_text,
             ),
         )
     finally:

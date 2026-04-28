@@ -118,6 +118,60 @@ class TestMf12PromptRegistryLinkedActionsUi(unittest.TestCase):
             self.assertIn("config_json must be valid JSON object", invalid.text)
             self.assertNotIn("Traceback", invalid.text)
 
+    def test_secret_like_config_key_is_rejected_without_echoing_secret_value(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            prompt_id = self._create_record(client, headers, slug="mf12-secret", code="PR-MF12-SECRET", title="MF12 Secret")
+            secret_marker = "SECRET-MF12-TOPLEVEL"
+
+            rejected = client.post(
+                f"/ui/prompt-registry/{prompt_id}/linked-actions/create",
+                headers=headers,
+                data={
+                    "action_key": "secret-top-level",
+                    "action_type": "ui_action",
+                    "target_kind": "route",
+                    "config_json": f'{{"api_token":"{secret_marker}"}}',
+                },
+            )
+            self.assertEqual(rejected.status_code, 200)
+            self.assertIn("Create linked action error:</strong>", rejected.text)
+            self.assertIn("secret/token/password-like keys", rejected.text)
+            self.assertNotIn(secret_marker, rejected.text)
+            self.assertNotIn('"api_token"', rejected.text)
+            self.assertIn('name="config_json"', rejected.text)
+            self.assertIn("<textarea", rejected.text)
+            self.assertIn(">{}</textarea>", rejected.text)
+            self.assertNotIn("Traceback", rejected.text)
+
+    def test_nested_secret_like_config_key_is_rejected_without_echoing_secret_value(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            prompt_id = self._create_record(client, headers, slug="mf12-secret-nested", code="PR-MF12-SECN", title="MF12 Secret Nested")
+            secret_marker = "SECRET-MF12-NESTED"
+
+            rejected = client.post(
+                f"/ui/prompt-registry/{prompt_id}/linked-actions/create",
+                headers=headers,
+                data={
+                    "action_key": "secret-nested",
+                    "action_type": "ui_action",
+                    "target_kind": "route",
+                    "config_json": f'{{"meta":{{"authToken":"{secret_marker}"}}}}',
+                },
+            )
+            self.assertEqual(rejected.status_code, 200)
+            self.assertIn("Create linked action error:</strong>", rejected.text)
+            self.assertIn("secret/token/password-like keys", rejected.text)
+            self.assertNotIn(secret_marker, rejected.text)
+            self.assertNotIn("authToken", rejected.text)
+            self.assertIn(">{}</textarea>", rejected.text)
+            self.assertNotIn("Traceback", rejected.text)
+
 
 if __name__ == "__main__":
     unittest.main()
