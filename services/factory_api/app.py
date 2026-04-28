@@ -5981,6 +5981,7 @@ def _ui_prompt_registry_detail_context(
     create_binding_error: str | None = None,
     create_linked_action_form: dict[str, Any] | None = None,
     create_linked_action_error: str | None = None,
+    linked_action_execution_requests: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     record = dict(service.get_record(prompt_id))
     versions = [dict(row) for row in service.list_versions(prompt_id)]
@@ -5994,6 +5995,12 @@ def _ui_prompt_registry_detail_context(
         item = dict(row)
         item["config_summary"] = _ui_prompt_registry_safe_summary(item.get("config"))
         linked_actions.append(item)
+    execution_requests = linked_action_execution_requests or service.list_linked_action_execution_requests(prompt_id=prompt_id, limit=20)
+    rendered_execution_requests: list[dict[str, Any]] = []
+    for row in execution_requests:
+        item = dict(row)
+        item["diagnostics_summary"] = _ui_prompt_registry_safe_summary(item.get("diagnostics"))
+        rendered_execution_requests.append(item)
     usage_summary = service.usage_summary(prompt_id=prompt_id)
     audit = service.get_audit_diagnostics(prompt_id)
     version_id_seed, variables_seed = _ui_prompt_registry_preview_seed(masked_versions)
@@ -6006,6 +6013,7 @@ def _ui_prompt_registry_detail_context(
         "versions": masked_versions,
         "bindings": bindings,
         "linked_actions": linked_actions,
+        "linked_action_execution_requests": rendered_execution_requests,
         "usage_summary": usage_summary,
         "audit": audit,
         "preview_form": preview_form
@@ -6347,14 +6355,23 @@ def _ui_prompt_registry_linked_action_preview_context(
     *,
     record: dict[str, Any],
     linked_action_preview: dict[str, Any],
+    linked_action_execution_requests: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    query_success = str(request.query_params.get("success") or "").strip()
+    query_error = str(request.query_params.get("error") or "").strip()
+    rendered_execution_requests: list[dict[str, Any]] = []
+    for row in linked_action_execution_requests or []:
+        item = dict(row)
+        item["diagnostics_summary"] = _ui_prompt_registry_safe_summary(item.get("diagnostics"))
+        rendered_execution_requests.append(item)
     return {
         "request": request,
         "mode": "linked_action_preview",
         "record": record,
         "linked_action_preview": linked_action_preview,
-        "success_message": None,
-        "error_message": None,
+        "linked_action_execution_requests": rendered_execution_requests,
+        "success_message": query_success or None,
+        "error_message": query_error or None,
     }
 
 
@@ -6696,12 +6713,14 @@ def ui_prompt_registry_linked_action_preview_page(
                 f"/ui/prompt-registry/{prompt_id}",
                 error="linked_action_id does not belong to the current prompt",
             )
+        recent_requests = service.list_linked_action_execution_requests(prompt_id=prompt_id, action_id=action_id, limit=20)
         return templates.TemplateResponse(
             "prompt_registry.html",
             _ui_prompt_registry_linked_action_preview_context(
                 request,
                 record=record,
                 linked_action_preview=preview,
+                linked_action_execution_requests=recent_requests,
             ),
         )
     except PromptRegistryNotFoundError:
@@ -6975,6 +6994,52 @@ async def ui_prompt_registry_linked_action_status_action(
         )
     except (PromptRegistryNotFoundError, PromptRegistryConflictError, PromptRegistryValidationError, ValueError) as exc:
         return _ui_prompt_registry_redirect(f"/ui/prompt-registry/{prompt_id}", error=str(exc))
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/{prompt_id}/linked-actions/{action_id}/execution-requests")
+async def ui_prompt_registry_linked_action_execution_request_action(
+    prompt_id: int,
+    action_id: int,
+    request: Request,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    request_mode = str((parsed_form.get("request_mode") or ["preview_only"])[0]).strip().lower()
+    confirm_execution = request_mode == "accept"
+    raw_context_json = str((parsed_form.get("request_context_json") or ["{}"])[0]).strip() or "{}"
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        linked_action = service.get_linked_action(action_id)
+        if int(linked_action["prompt_id"]) != int(prompt_id):
+            return _ui_prompt_registry_redirect(
+                f"/ui/prompt-registry/{prompt_id}",
+                error="linked_action_id does not belong to the current prompt",
+            )
+        try:
+            parsed_context = json.loads(raw_context_json)
+        except json.JSONDecodeError:
+            raise PromptRegistryValidationError("request_context_json must be valid JSON object") from None
+        if not isinstance(parsed_context, dict):
+            raise PromptRegistryValidationError("request_context_json must be valid JSON object")
+        created = service.create_linked_action_execution_request(
+            action_id,
+            {"confirm_execution": confirm_execution, "request_context_json": parsed_context},
+            _ui_prompt_registry_actor(),
+        )
+        return _ui_prompt_registry_redirect(
+            f"/ui/prompt-registry/{prompt_id}/linked-actions/{action_id}/preview",
+            success=f"Execution request created: #{int(created['id'])} ({created['request_status']})",
+        )
+    except (PromptRegistryNotFoundError, PromptRegistryValidationError, ValueError) as exc:
+        return _ui_prompt_registry_redirect(
+            f"/ui/prompt-registry/{prompt_id}/linked-actions/{action_id}/preview",
+            error=str(exc),
+        )
     finally:
         conn.close()
 

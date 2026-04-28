@@ -542,6 +542,37 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(active_only.status_code, 200)
             self.assertEqual(active_only.json()["items"], [])
 
+            preview_only_req = client.post(
+                f"/v1/prompt-registry/linked-actions/{action_id}/execution-requests",
+                headers=headers,
+                json={"confirm_execution": False, "request_context_json": {"reason": "ui-click"}},
+            )
+            self.assertEqual(preview_only_req.status_code, 200)
+            self.assertEqual(preview_only_req.json()["request_status"], "blocked")
+            self.assertEqual(preview_only_req.json()["preview_status"], "WARNING")
+
+            bad_context = client.post(
+                f"/v1/prompt-registry/linked-actions/{action_id}/execution-requests",
+                headers=headers,
+                json={"confirm_execution": False, "request_context_json": {"nested": {"passwordValue": "x"}}},
+            )
+            self.assertEqual(bad_context.status_code, 422)
+            self.assertEqual(bad_context.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
+            list_exec = client.get(
+                f"/v1/prompt-registry/linked-action-execution-requests?prompt_id={prompt_id}&action_id={action_id}&limit=50",
+                headers=headers,
+            )
+            self.assertEqual(list_exec.status_code, 200)
+            self.assertEqual(len(list_exec.json()["items"]), 1)
+            self.assertEqual(list_exec.json()["items"][0]["request_status"], "blocked")
+
+            invalid_limit = client.get(
+                "/v1/prompt-registry/linked-action-execution-requests?limit=201",
+                headers=headers,
+            )
+            self.assertEqual(invalid_limit.status_code, 422)
+
     def test_resolve_rejects_partial_item_context_and_explains_same_scope_tie_break(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)

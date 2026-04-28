@@ -390,6 +390,37 @@
   <li><strong>By event type:</strong> {{ usage_summary.by_event_type }}</li>
 </ul>
 
+<h3>Recent linked action execution requests</h3>
+<p class="muted">No runtime execution is performed in this slice.</p>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Action ID</th>
+      <th>Status</th>
+      <th>Preview status</th>
+      <th>Can execute later</th>
+      <th>Diagnostics summary</th>
+      <th>Created at</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in linked_action_execution_requests %}
+    <tr>
+      <td>{{ item.id }}</td>
+      <td>{{ item.action_id }}</td>
+      <td>{{ item.request_status }}</td>
+      <td>{{ item.preview_status }}</td>
+      <td>{{ "yes" if item.can_execute_later else "no" }}</td>
+      <td>{{ item.diagnostics_summary }}</td>
+      <td>{{ item.created_at }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7">No execution requests yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
 <h3>Create version</h3>
 <form method="post" action="/ui/prompt-registry/{{ record.id }}/versions/create">
   <p><label>body_text</label><br><textarea name="body_text" rows="6" style="width:100%;max-width:820px;">{{ create_version_form.body_text }}</textarea></p>
@@ -502,6 +533,7 @@
 
 <h2>Linked action preview diagnostics</h2>
 <p class="muted">Execution is not available in this foundation slice.</p>
+<p class="muted"><strong>No runtime execution is performed in this slice.</strong></p>
 
 <h3>Action metadata</h3>
 <ul>
@@ -535,6 +567,45 @@
     </tr>
     {% else %}
     <tr><td colspan="3">No diagnostics</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>Create guarded execution request</h3>
+<form method="post" action="/ui/prompt-registry/{{ record.id }}/linked-actions/{{ linked_action_preview.action_id }}/execution-requests">
+  <p>
+    <label>request_context_json</label><br>
+    <textarea name="request_context_json" rows="4" style="width:100%;max-width:820px;">{}</textarea>
+  </p>
+  <p class="muted">Context keys with secret/token/password-like names are rejected.</p>
+  <button type="submit" name="request_mode" value="preview_only">Create preview-only request</button>
+  <button type="submit" name="request_mode" value="accept">Accept guarded execution request</button>
+</form>
+
+<h3>Recent execution requests for this action</h3>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Status</th>
+      <th>Preview status</th>
+      <th>Can execute later</th>
+      <th>Diagnostics summary</th>
+      <th>Created at</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in linked_action_execution_requests %}
+    <tr>
+      <td>{{ item.id }}</td>
+      <td>{{ item.request_status }}</td>
+      <td>{{ item.preview_status }}</td>
+      <td>{{ "yes" if item.can_execute_later else "no" }}</td>
+      <td>{{ item.diagnostics_summary }}</td>
+      <td>{{ item.created_at }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No execution requests yet.</td></tr>
     {% endfor %}
   </tbody>
 </table>
