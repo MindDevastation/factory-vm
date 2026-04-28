@@ -1160,6 +1160,17 @@ class TestPromptRegistryService(unittest.TestCase):
                         },
                         "tester",
                     )
+                with self.assertRaisesRegex(Exception, "must not include secret/token/password-like keys"):
+                    svc.create_linked_action(
+                        prompt_id,
+                        {
+                            "action_key": "bad-secret-nested",
+                            "action_type": "ui_action",
+                            "target_kind": "route",
+                            "config_json": {"meta": {"authToken": "abc"}},
+                        },
+                        "tester",
+                    )
                 with self.assertRaisesRegex(Exception, "duplicate active action_key"):
                     svc.create_linked_action(
                         prompt_id,

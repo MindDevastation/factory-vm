@@ -502,6 +502,18 @@ class TestPromptRegistryApi(unittest.TestCase):
             )
             self.assertEqual(bad_secret.status_code, 422)
 
+            bad_secret_nested = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/linked-actions",
+                headers=headers,
+                json={
+                    "action_key": "bad-secret-nested",
+                    "action_type": "ui_action",
+                    "target_kind": "route",
+                    "config_json": {"meta": {"authToken": "abc"}},
+                },
+            )
+            self.assertEqual(bad_secret_nested.status_code, 422)
+
             status_update = client.post(
                 f"/v1/prompt-registry/linked-actions/{action_id}/status",
                 headers=headers,

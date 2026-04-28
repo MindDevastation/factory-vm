@@ -198,10 +198,19 @@ class PromptRegistryService:
         if not isinstance(config_payload, dict):
             raise PromptRegistryValidationError("config_json must be an object")
         blocked_tokens = ("secret", "token", "password", "api_key", "authorization")
-        for key in config_payload.keys():
-            lowered = str(key).strip().lower()
-            if any(token in lowered for token in blocked_tokens):
-                raise PromptRegistryValidationError("config_json must not include secret/token/password-like keys")
+
+        def _validate_nested(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    lowered = str(key).strip().lower()
+                    if any(token in lowered for token in blocked_tokens):
+                        raise PromptRegistryValidationError("config_json must not include secret/token/password-like keys")
+                    _validate_nested(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    _validate_nested(nested)
+
+        _validate_nested(config_payload)
         return config_payload
 
     def get_linked_action(self, action_id: int) -> dict[str, Any]:
