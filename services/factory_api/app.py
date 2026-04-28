@@ -5979,6 +5979,8 @@ def _ui_prompt_registry_detail_context(
     create_version_error: str | None = None,
     create_binding_form: dict[str, Any] | None = None,
     create_binding_error: str | None = None,
+    create_linked_action_form: dict[str, Any] | None = None,
+    create_linked_action_error: str | None = None,
 ) -> dict[str, Any]:
     record = dict(service.get_record(prompt_id))
     versions = [dict(row) for row in service.list_versions(prompt_id)]
@@ -5987,6 +5989,11 @@ def _ui_prompt_registry_detail_context(
         expanded = service.get_version(int(version["id"]))
         masked_versions.append({**expanded, "variables": _ui_prompt_registry_masked_variables(expanded)})
     bindings = [dict(row) for row in service.list_bindings(prompt_id=prompt_id)]
+    linked_actions = []
+    for row in service.list_linked_actions(prompt_id, include_inactive=True):
+        item = dict(row)
+        item["config_summary"] = _ui_prompt_registry_safe_summary(item.get("config"))
+        linked_actions.append(item)
     usage_summary = service.usage_summary(prompt_id=prompt_id)
     audit = service.get_audit_diagnostics(prompt_id)
     version_id_seed, variables_seed = _ui_prompt_registry_preview_seed(masked_versions)
@@ -5998,6 +6005,7 @@ def _ui_prompt_registry_detail_context(
         "record": record,
         "versions": masked_versions,
         "bindings": bindings,
+        "linked_actions": linked_actions,
         "usage_summary": usage_summary,
         "audit": audit,
         "preview_form": preview_form
@@ -6026,6 +6034,16 @@ def _ui_prompt_registry_detail_context(
             "item_ref": "",
         },
         "create_binding_error": create_binding_error,
+        "create_linked_action_form": create_linked_action_form
+        or {
+            "action_key": "",
+            "action_type": "ui_action",
+            "action_status": "active",
+            "target_kind": "route",
+            "target_ref": "",
+            "config_json": "{}",
+        },
+        "create_linked_action_error": create_linked_action_error,
         "success_message": query_success or None,
         "error_message": query_error or None,
     }
@@ -6810,6 +6828,98 @@ async def ui_prompt_registry_create_binding_action(
                 create_binding_error=str(exc),
             ),
         )
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/{prompt_id}/linked-actions/create", response_class=HTMLResponse)
+async def ui_prompt_registry_create_linked_action_action(
+    prompt_id: int,
+    request: Request,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    raw_config_json = str((parsed_form.get("config_json") or ["{}"])[0]).strip() or "{}"
+    create_linked_action_form = {
+        "action_key": str((parsed_form.get("action_key") or [""])[0]).strip(),
+        "action_type": str((parsed_form.get("action_type") or ["ui_action"])[0]).strip() or "ui_action",
+        "action_status": str((parsed_form.get("action_status") or ["active"])[0]).strip() or "active",
+        "target_kind": str((parsed_form.get("target_kind") or ["route"])[0]).strip() or "route",
+        "target_ref": str((parsed_form.get("target_ref") or [""])[0]).strip(),
+        "config_json": raw_config_json,
+    }
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        try:
+            parsed_config = json.loads(raw_config_json)
+        except json.JSONDecodeError:
+            raise PromptRegistryValidationError("config_json must be valid JSON object") from None
+        if not isinstance(parsed_config, dict):
+            raise PromptRegistryValidationError("config_json must be valid JSON object")
+        created = service.create_linked_action(
+            prompt_id,
+            {
+                "action_key": create_linked_action_form["action_key"],
+                "action_type": create_linked_action_form["action_type"],
+                "action_status": create_linked_action_form["action_status"],
+                "target_kind": create_linked_action_form["target_kind"],
+                "target_ref": create_linked_action_form["target_ref"],
+                "config_json": parsed_config,
+            },
+            _ui_prompt_registry_actor(),
+        )
+        return _ui_prompt_registry_redirect(
+            f"/ui/prompt-registry/{prompt_id}",
+            success=f"Linked action created: #{int(created['id'])}",
+        )
+    except (PromptRegistryNotFoundError, PromptRegistryConflictError, PromptRegistryValidationError, ValueError) as exc:
+        error_text = str(exc)
+        if "secret/token/password-like keys" in error_text:
+            create_linked_action_form = {**create_linked_action_form, "config_json": "{}"}
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_detail_context(
+                PromptRegistryService(conn),
+                prompt_id,
+                request,
+                create_linked_action_form=create_linked_action_form,
+                create_linked_action_error=error_text,
+            ),
+        )
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/{prompt_id}/linked-actions/{action_id}/status")
+async def ui_prompt_registry_linked_action_status_action(
+    prompt_id: int,
+    action_id: int,
+    request: Request,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    action_status = str((parsed_form.get("action_status") or [""])[0]).strip()
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        linked_action = service.get_linked_action(action_id)
+        if int(linked_action["prompt_id"]) != int(prompt_id):
+            return _ui_prompt_registry_redirect(
+                f"/ui/prompt-registry/{prompt_id}",
+                error="linked_action_id does not belong to the current prompt",
+            )
+        service.update_linked_action_status(action_id, {"action_status": action_status}, _ui_prompt_registry_actor())
+        return _ui_prompt_registry_redirect(
+            f"/ui/prompt-registry/{prompt_id}",
+            success=f"Linked action status updated: #{action_id} -> {action_status}",
+        )
+    except (PromptRegistryNotFoundError, PromptRegistryConflictError, PromptRegistryValidationError, ValueError) as exc:
+        return _ui_prompt_registry_redirect(f"/ui/prompt-registry/{prompt_id}", error=str(exc))
     finally:
         conn.close()
 

@@ -13,6 +13,9 @@ from services.prompt_registry.contracts import (
     ensure_binding_status,
     ensure_import_mode,
     ensure_lifecycle_transition,
+    ensure_linked_action_status,
+    ensure_linked_action_target_kind,
+    ensure_linked_action_type,
     ensure_non_empty,
     ensure_record_status,
     ensure_record_type,
@@ -189,6 +192,139 @@ class PromptRegistryService:
         if row is None:
             raise PromptRegistryNotFoundError(f"prompt binding {binding_id} not found")
         return row
+
+    @staticmethod
+    def _validate_linked_action_config(config_payload: Any) -> dict[str, Any]:
+        if not isinstance(config_payload, dict):
+            raise PromptRegistryValidationError("config_json must be an object")
+        blocked_tokens = ("secret", "token", "password", "api_key", "authorization")
+
+        def _validate_nested(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    lowered = str(key).strip().lower()
+                    if any(token in lowered for token in blocked_tokens):
+                        raise PromptRegistryValidationError("config_json must not include secret/token/password-like keys")
+                    _validate_nested(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    _validate_nested(nested)
+
+        _validate_nested(config_payload)
+        return config_payload
+
+    def get_linked_action(self, action_id: int) -> dict[str, Any]:
+        row = self._conn.execute("SELECT * FROM prompt_linked_actions WHERE id = ?", (action_id,)).fetchone()
+        if row is None:
+            raise PromptRegistryNotFoundError(f"prompt linked action {action_id} not found")
+        item = dict(row)
+        raw_config = item.get("config_json")
+        if isinstance(raw_config, str):
+            try:
+                parsed = json.loads(raw_config)
+            except json.JSONDecodeError:
+                parsed = {}
+            item["config"] = parsed if isinstance(parsed, dict) else {}
+        else:
+            item["config"] = {}
+        return item
+
+    def list_linked_actions(self, prompt_id: int, *, include_inactive: bool = True) -> list[dict[str, Any]]:
+        self.get_record(prompt_id)
+        if include_inactive:
+            rows = list(
+                self._conn.execute(
+                    "SELECT * FROM prompt_linked_actions WHERE prompt_id = ? ORDER BY updated_at DESC, id DESC",
+                    (prompt_id,),
+                ).fetchall()
+            )
+        else:
+            rows = list(
+                self._conn.execute(
+                    "SELECT * FROM prompt_linked_actions WHERE prompt_id = ? AND action_status = 'active' ORDER BY updated_at DESC, id DESC",
+                    (prompt_id,),
+                ).fetchall()
+            )
+        return [self.get_linked_action(int(row["id"])) for row in rows]
+
+    def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
+        actor_id = self._validated_actor(actor)
+        self.get_record(prompt_id)
+        action_key = ensure_non_empty(payload.get("action_key"), field_name="action_key")
+        action_type = ensure_linked_action_type(payload.get("action_type"))
+        action_status = ensure_linked_action_status(payload.get("action_status", "active"))
+        target_kind = ensure_linked_action_target_kind(payload.get("target_kind"))
+        target_ref = self._nullable_text(payload.get("target_ref"))
+        config_payload = self._validate_linked_action_config(payload.get("config_json", {}))
+        now = self._now_iso()
+        try:
+            cur = self._conn.execute(
+                """
+                INSERT INTO prompt_linked_actions(prompt_id,action_key,action_type,action_status,target_kind,target_ref,config_json,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    prompt_id,
+                    action_key,
+                    action_type,
+                    action_status,
+                    target_kind,
+                    target_ref,
+                    json.dumps(config_payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            message = str(exc)
+            if (
+                "idx_prompt_linked_actions_unique_active_key_per_prompt" in message
+                or "prompt_linked_actions.prompt_id, prompt_linked_actions.action_key" in message
+            ):
+                raise PromptRegistryConflictError("duplicate active action_key for this prompt is not allowed") from None
+            raise PromptRegistryValidationError("linked action create failed validation") from None
+        action_id = int(cur.lastrowid)
+        self._write_audit_event(
+            prompt_id=prompt_id,
+            event_type="linked_action_created",
+            actor=actor_id,
+            payload={"linked_action_id": action_id, "action_key": action_key, "action_status": action_status},
+        )
+        return self.get_linked_action(action_id)
+
+    def update_linked_action_status(self, action_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
+        actor_id = self._validated_actor(actor)
+        current = self.get_linked_action(action_id)
+        next_status = ensure_linked_action_status(payload.get("action_status"))
+        if str(current["action_status"]) == next_status:
+            return current
+        now = self._now_iso()
+        try:
+            self._conn.execute(
+                "UPDATE prompt_linked_actions SET action_status = ?, updated_at = ? WHERE id = ?",
+                (next_status, now, action_id),
+            )
+        except sqlite3.IntegrityError as exc:
+            message = str(exc)
+            if (
+                "idx_prompt_linked_actions_unique_active_key_per_prompt" in message
+                or "prompt_linked_actions.prompt_id, prompt_linked_actions.action_key" in message
+            ):
+                raise PromptRegistryConflictError("duplicate active action_key for this prompt is not allowed") from None
+            raise PromptRegistryValidationError("linked action status update failed validation") from None
+        updated = self.get_linked_action(action_id)
+        self._write_audit_event(
+            prompt_id=int(updated["prompt_id"]),
+            event_type="linked_action_status_updated",
+            actor=actor_id,
+            payload={
+                "linked_action_id": int(updated["id"]),
+                "action_key": str(updated["action_key"]),
+                "from_status": str(current["action_status"]),
+                "to_status": next_status,
+            },
+        )
+        return updated
 
     @staticmethod
     def _validated_actor(actor: str) -> str:

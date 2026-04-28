@@ -407,6 +407,128 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(miss.json()["resolution_status"], "miss")
             self.assertIsNone(miss.json()["winner_binding"])
 
+    def test_linked_actions_endpoints(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+
+            created_record = client.post(
+                "/v1/prompt-registry/records",
+                headers=headers,
+                json={
+                    "slug": "api-linked-actions",
+                    "code": "PR-API-LINK",
+                    "title": "API Linked Actions",
+                    "record_type": "prompt_template",
+                    "status": "draft",
+                },
+            )
+            self.assertEqual(created_record.status_code, 200)
+            prompt_id = int(created_record.json()["id"])
+
+            created_action = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/linked-actions",
+                headers=headers,
+                json={
+                    "action_key": "open-audit",
+                    "action_type": "ui_action",
+                    "action_status": "active",
+                    "target_kind": "route",
+                    "target_ref": "/ui/prompt-registry/1/audit",
+                    "config_json": {"tab": "audit"},
+                },
+            )
+            self.assertEqual(created_action.status_code, 200)
+            action_id = int(created_action.json()["id"])
+            self.assertEqual(created_action.json()["config"], {"tab": "audit"})
+
+            listed = client.get(f"/v1/prompt-registry/records/{prompt_id}/linked-actions", headers=headers)
+            self.assertEqual(listed.status_code, 200)
+            self.assertEqual(len(listed.json()["items"]), 1)
+
+            filtered = client.get(
+                f"/v1/prompt-registry/records/{prompt_id}/linked-actions?include_inactive=false",
+                headers=headers,
+            )
+            self.assertEqual(filtered.status_code, 200)
+            self.assertEqual(len(filtered.json()["items"]), 1)
+
+            duplicate = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/linked-actions",
+                headers=headers,
+                json={
+                    "action_key": "open-audit",
+                    "action_type": "api_endpoint",
+                    "target_kind": "endpoint",
+                    "config_json": {},
+                },
+            )
+            self.assertEqual(duplicate.status_code, 409)
+
+            invalid_enum = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/linked-actions",
+                headers=headers,
+                json={
+                    "action_key": "invalid-enum",
+                    "action_type": "not-allowed",
+                    "target_kind": "route",
+                    "config_json": {},
+                },
+            )
+            self.assertEqual(invalid_enum.status_code, 422)
+
+            invalid_json = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/linked-actions",
+                headers=headers,
+                json={
+                    "action_key": "invalid-json",
+                    "action_type": "ui_action",
+                    "target_kind": "route",
+                    "config_json": [],
+                },
+            )
+            self.assertEqual(invalid_json.status_code, 422)
+
+            bad_secret = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/linked-actions",
+                headers=headers,
+                json={
+                    "action_key": "bad-secret",
+                    "action_type": "ui_action",
+                    "target_kind": "route",
+                    "config_json": {"password_value": "abc"},
+                },
+            )
+            self.assertEqual(bad_secret.status_code, 422)
+
+            bad_secret_nested = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/linked-actions",
+                headers=headers,
+                json={
+                    "action_key": "bad-secret-nested",
+                    "action_type": "ui_action",
+                    "target_kind": "route",
+                    "config_json": {"meta": {"authToken": "abc"}},
+                },
+            )
+            self.assertEqual(bad_secret_nested.status_code, 422)
+
+            status_update = client.post(
+                f"/v1/prompt-registry/linked-actions/{action_id}/status",
+                headers=headers,
+                json={"action_status": "inactive"},
+            )
+            self.assertEqual(status_update.status_code, 200)
+            self.assertEqual(status_update.json()["action_status"], "inactive")
+
+            active_only = client.get(
+                f"/v1/prompt-registry/records/{prompt_id}/linked-actions?include_inactive=false",
+                headers=headers,
+            )
+            self.assertEqual(active_only.status_code, 200)
+            self.assertEqual(active_only.json()["items"], [])
+
     def test_resolve_rejects_partial_item_context_and_explains_same_scope_tie_break(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)

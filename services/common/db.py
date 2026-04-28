@@ -2509,6 +2509,31 @@ def migrate(conn: sqlite3.Connection) -> None:
             )
             WHERE binding_status = 'active';
 
+        CREATE TABLE IF NOT EXISTS prompt_linked_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NOT NULL,
+            action_key TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            action_status TEXT NOT NULL DEFAULT 'active',
+            target_kind TEXT NOT NULL,
+            target_ref TEXT NULL,
+            config_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            CHECK(action_type IN ('ui_action','api_endpoint','workflow','codex_prompt','external_note')),
+            CHECK(action_status IN ('active','inactive')),
+            CHECK(target_kind IN ('route','endpoint','workflow','prompt_template','note')),
+            CHECK(json_valid(config_json))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_linked_actions_lookup
+            ON prompt_linked_actions(prompt_id, action_status, updated_at DESC, id DESC);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_linked_actions_unique_active_key_per_prompt
+            ON prompt_linked_actions(prompt_id, action_key)
+            WHERE action_status = 'active';
+
         """
     )
 
@@ -2526,6 +2551,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_releases_current_open_job_relation(conn)
     _ensure_prompt_registry_columns(conn)
     _ensure_prompt_bindings_schema(conn)
+    _ensure_prompt_linked_actions_schema(conn)
     _ensure_prompt_usage_events_schema(conn)
     _backfill_video_language_values(conn)
 
@@ -2647,6 +2673,43 @@ def _ensure_prompt_usage_events_schema(conn: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_prompt_usage_events_lookup
             ON prompt_usage_events(created_at DESC, id DESC)
+        """
+    )
+
+
+def _ensure_prompt_linked_actions_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prompt_linked_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NOT NULL,
+            action_key TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            action_status TEXT NOT NULL DEFAULT 'active',
+            target_kind TEXT NOT NULL,
+            target_ref TEXT NULL,
+            config_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            CHECK(action_type IN ('ui_action','api_endpoint','workflow','codex_prompt','external_note')),
+            CHECK(action_status IN ('active','inactive')),
+            CHECK(target_kind IN ('route','endpoint','workflow','prompt_template','note')),
+            CHECK(json_valid(config_json))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_prompt_linked_actions_lookup
+            ON prompt_linked_actions(prompt_id, action_status, updated_at DESC, id DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_linked_actions_unique_active_key_per_prompt
+            ON prompt_linked_actions(prompt_id, action_key)
+            WHERE action_status = 'active'
         """
     )
 
