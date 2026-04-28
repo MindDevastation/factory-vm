@@ -1206,3 +1206,121 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertTrue(any(str(item["event_type"]) == "linked_action_status_updated" for item in audit_events))
             finally:
                 conn.close()
+
+    def test_linked_action_preview_diagnostics_and_read_only_behavior(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record(
+                    {
+                        "slug": "linked-preview",
+                        "code": "PR-LINK-PREVIEW",
+                        "title": "Linked Preview",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                prompt_id = int(rec["id"])
+
+                active = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "active-route",
+                        "action_type": "ui_action",
+                        "action_status": "active",
+                        "target_kind": "route",
+                        "target_ref": "/ui/prompt-registry/usage",
+                        "config_json": {"note": "safe", "deep": {"count": 2}},
+                    },
+                    "tester",
+                )
+                inactive = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "inactive-route",
+                        "action_type": "ui_action",
+                        "action_status": "inactive",
+                        "target_kind": "route",
+                        "target_ref": "/ui/prompt-registry/usage",
+                        "config_json": {"note": "safe"},
+                    },
+                    "tester",
+                )
+                missing_ref = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "missing-ref",
+                        "action_type": "workflow",
+                        "action_status": "active",
+                        "target_kind": "workflow",
+                        "target_ref": "",
+                        "config_json": {},
+                    },
+                    "tester",
+                )
+                mismatch = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "mismatch",
+                        "action_type": "api_endpoint",
+                        "action_status": "active",
+                        "target_kind": "route",
+                        "target_ref": "/ui/mismatch",
+                        "config_json": {},
+                    },
+                    "tester",
+                )
+                note_ok = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "note-ok",
+                        "action_type": "external_note",
+                        "action_status": "active",
+                        "target_kind": "note",
+                        "target_ref": "",
+                        "config_json": {"title": "Reminder"},
+                    },
+                    "tester",
+                )
+
+                initial_audit_count = int(
+                    conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events WHERE prompt_id = ?", (prompt_id,)).fetchone()["c"]
+                )
+
+                active_preview = svc.preview_linked_action(int(active["id"]))
+                self.assertEqual(active_preview["preview_status"], "OK")
+                self.assertTrue(active_preview["can_execute_later"])
+                self.assertEqual(active_preview["normalized_target"]["kind"], "route")
+                self.assertEqual(active_preview["normalized_target"]["ref"], "/ui/prompt-registry/usage")
+
+                inactive_preview = svc.preview_linked_action(int(inactive["id"]))
+                self.assertEqual(inactive_preview["preview_status"], "WARNING")
+                self.assertFalse(inactive_preview["can_execute_later"])
+                self.assertTrue(any(item["code"] == "LINKED_ACTION_INACTIVE" for item in inactive_preview["diagnostics"]))
+
+                missing_ref_preview = svc.preview_linked_action(int(missing_ref["id"]))
+                self.assertEqual(missing_ref_preview["preview_status"], "INVALID")
+                self.assertFalse(missing_ref_preview["can_execute_later"])
+                self.assertTrue(any(item["severity"] == "BLOCKING" for item in missing_ref_preview["diagnostics"]))
+
+                mismatch_preview = svc.preview_linked_action(int(mismatch["id"]))
+                self.assertEqual(mismatch_preview["preview_status"], "WARNING")
+                self.assertTrue(mismatch_preview["can_execute_later"])
+                self.assertTrue(any(item["code"] == "LINKED_ACTION_TARGET_KIND_MISMATCH" for item in mismatch_preview["diagnostics"]))
+
+                note_preview = svc.preview_linked_action(int(note_ok["id"]))
+                self.assertEqual(note_preview["preview_status"], "OK")
+                self.assertTrue(note_preview["can_execute_later"])
+                self.assertTrue(
+                    any(item["code"] == "LINKED_ACTION_NOTE_TARGET_REF_OPTIONAL" for item in note_preview["diagnostics"])
+                )
+
+                final_audit_count = int(
+                    conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events WHERE prompt_id = ?", (prompt_id,)).fetchone()["c"]
+                )
+                self.assertEqual(initial_audit_count, final_audit_count)
+            finally:
+                conn.close()

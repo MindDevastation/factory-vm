@@ -6342,6 +6342,22 @@ def _ui_prompt_registry_audit_context(
     }
 
 
+def _ui_prompt_registry_linked_action_preview_context(
+    request: Request,
+    *,
+    record: dict[str, Any],
+    linked_action_preview: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "request": request,
+        "mode": "linked_action_preview",
+        "record": record,
+        "linked_action_preview": linked_action_preview,
+        "success_message": None,
+        "error_message": None,
+    }
+
+
 @app.get("/ui/prompt-registry", response_class=HTMLResponse)
 def ui_prompt_registry_overview_page(request: Request, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
@@ -6659,6 +6675,45 @@ def ui_prompt_registry_detail_page(prompt_id: int, request: Request, _: bool = D
         return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_detail_context(service, prompt_id, request))
     except PromptRegistryNotFoundError:
         raise HTTPException(status_code=404, detail="Prompt not found")
+    finally:
+        conn.close()
+
+
+@app.get("/ui/prompt-registry/{prompt_id}/linked-actions/{action_id}/preview", response_class=HTMLResponse)
+def ui_prompt_registry_linked_action_preview_page(
+    prompt_id: int,
+    action_id: int,
+    request: Request,
+    _: bool = Depends(require_basic_auth(env)),
+):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        record = dict(service.get_record(prompt_id))
+        preview = service.preview_linked_action(action_id)
+        if int(preview["prompt_id"]) != int(prompt_id):
+            return _ui_prompt_registry_redirect(
+                f"/ui/prompt-registry/{prompt_id}",
+                error="linked_action_id does not belong to the current prompt",
+            )
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_linked_action_preview_context(
+                request,
+                record=record,
+                linked_action_preview=preview,
+            ),
+        )
+    except PromptRegistryNotFoundError:
+        return _ui_prompt_registry_redirect(
+            f"/ui/prompt-registry/{prompt_id}",
+            error="linked action preview is unavailable for this prompt",
+        )
+    except (PromptRegistryValidationError, ValueError):
+        return _ui_prompt_registry_redirect(
+            f"/ui/prompt-registry/{prompt_id}",
+            error="linked action preview validation failed",
+        )
     finally:
         conn.close()
 
