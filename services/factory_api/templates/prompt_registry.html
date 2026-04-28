@@ -373,6 +373,7 @@
           </select>
           <button type="submit">Update</button>
         </form>
+        <a href="/ui/prompt-registry/{{ record.id }}/linked-actions/{{ item.id }}/preview">Preview diagnostics</a>
       </td>
     </tr>
     {% else %}
@@ -488,6 +489,52 @@
     </tr>
     {% else %}
     <tr><td colspan="11">No usage events for the selected filters.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if mode == "linked_action_preview" %}
+<p>
+  <a href="/ui/prompt-registry/{{ record.id }}">← Back to prompt detail</a>
+  · <a href="/ui/prompt-registry">Prompt registry list</a>
+</p>
+
+<h2>Linked action preview diagnostics</h2>
+<p class="muted">Execution is not available in this foundation slice.</p>
+
+<h3>Action metadata</h3>
+<ul>
+  <li><strong>Action ID:</strong> {{ linked_action_preview.action_id }}</li>
+  <li><strong>Prompt ID:</strong> {{ linked_action_preview.prompt_id }}</li>
+  <li><strong>Action key:</strong> {{ linked_action_preview.action_key }}</li>
+  <li><strong>Action type:</strong> {{ linked_action_preview.action_type }}</li>
+  <li><strong>Action status:</strong> {{ linked_action_preview.action_status }}</li>
+  <li><strong>Target:</strong> {{ linked_action_preview.target_kind }}{% if linked_action_preview.target_ref %}:{{ linked_action_preview.target_ref }}{% endif %}</li>
+  <li><strong>Preview status:</strong> {{ linked_action_preview.preview_status }}</li>
+  <li><strong>Can execute later:</strong> {{ "yes" if linked_action_preview.can_execute_later else "no" }}</li>
+  <li><strong>Normalized target:</strong> {{ linked_action_preview.normalized_target.display_label }}</li>
+  <li><strong>Config summary:</strong> {{ linked_action_preview.config_summary }}</li>
+</ul>
+
+<h3>Diagnostics</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Code</th>
+      <th>Severity</th>
+      <th>Message</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in linked_action_preview.diagnostics %}
+    <tr>
+      <td>{{ item.code }}</td>
+      <td>{{ item.severity }}</td>
+      <td>{{ item.message }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">No diagnostics</td></tr>
     {% endfor %}
   </tbody>
 </table>

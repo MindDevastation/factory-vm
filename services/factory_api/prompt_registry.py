@@ -297,6 +297,18 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
         finally:
             conn.close()
 
+    @router.get("/linked-actions/{action_id}/preview")
+    def preview_linked_action(action_id: int, _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).preview_linked_action(action_id)
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
 
     @router.post("/resolve-preview")
     def resolve_preview(payload: dict[str, Any], _: bool = Depends(require_basic_auth(env))):

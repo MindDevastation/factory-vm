@@ -522,6 +522,19 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(status_update.status_code, 200)
             self.assertEqual(status_update.json()["action_status"], "inactive")
 
+            preview = client.get(f"/v1/prompt-registry/linked-actions/{action_id}/preview", headers=headers)
+            self.assertEqual(preview.status_code, 200)
+            preview_payload = preview.json()
+            self.assertEqual(preview_payload["action_id"], action_id)
+            self.assertEqual(preview_payload["preview_status"], "WARNING")
+            self.assertFalse(preview_payload["can_execute_later"])
+            self.assertIn("diagnostics", preview_payload)
+            self.assertTrue(any(item["code"] == "LINKED_ACTION_INACTIVE" for item in preview_payload["diagnostics"]))
+
+            missing_preview = client.get("/v1/prompt-registry/linked-actions/999999/preview", headers=headers)
+            self.assertEqual(missing_preview.status_code, 404)
+            self.assertEqual(missing_preview.json()["error"]["code"], "PROMPT_REGISTRY_NOT_FOUND")
+
             active_only = client.get(
                 f"/v1/prompt-registry/records/{prompt_id}/linked-actions?include_inactive=false",
                 headers=headers,

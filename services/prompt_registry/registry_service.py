@@ -229,6 +229,120 @@ class PromptRegistryService:
             item["config"] = {}
         return item
 
+    @staticmethod
+    def _linked_action_expected_target_kind(action_type: str) -> str | None:
+        expected_by_type = {
+            "ui_action": "route",
+            "api_endpoint": "endpoint",
+            "workflow": "workflow",
+            "codex_prompt": "prompt_template",
+            "external_note": "note",
+        }
+        return expected_by_type.get(action_type)
+
+    @staticmethod
+    def _safe_linked_action_config_summary(config: Any, *, max_items: int = 4) -> str:
+        if not isinstance(config, dict) or not config:
+            return "—"
+        masked_tokens = ("secret", "token", "password", "api_key", "authorization")
+        items: list[str] = []
+        for key in sorted(config.keys()):
+            if len(items) >= max_items:
+                break
+            key_text = str(key)
+            lowered = key_text.lower()
+            raw = config.get(key)
+            if any(token in lowered for token in masked_tokens):
+                rendered = "***MASKED***"
+            elif isinstance(raw, dict):
+                rendered = f"{{{len(raw)} keys}}"
+            elif isinstance(raw, list):
+                rendered = f"[{len(raw)} items]"
+            elif raw is None:
+                rendered = "null"
+            else:
+                rendered = str(raw).strip()
+                if len(rendered) > 48:
+                    rendered = f"{rendered[:45]}..."
+            items.append(f"{key_text}={rendered}")
+        if len(config.keys()) > len(items):
+            items.append(f"... (+{len(config.keys()) - len(items)} more)")
+        return "; ".join(items) if items else "—"
+
+    def preview_linked_action(self, action_id: int) -> dict[str, Any]:
+        action = self.get_linked_action(action_id)
+        action_type = str(action["action_type"])
+        action_status = str(action["action_status"])
+        target_kind = str(action["target_kind"])
+        target_ref = self._nullable_text(action.get("target_ref"))
+        config_summary = self._safe_linked_action_config_summary(action.get("config"))
+        diagnostics: list[dict[str, str]] = []
+        preview_status = "OK"
+        has_blocking = False
+
+        def _add_diagnostic(code: str, severity: str, message: str) -> None:
+            nonlocal preview_status, has_blocking
+            diagnostics.append({"code": code, "severity": severity, "message": message})
+            if severity == "BLOCKING":
+                preview_status = "INVALID"
+                has_blocking = True
+            elif severity == "WARNING" and preview_status == "OK":
+                preview_status = "WARNING"
+
+        expected_target_kind = self._linked_action_expected_target_kind(action_type)
+        if expected_target_kind and expected_target_kind != target_kind:
+            _add_diagnostic(
+                "LINKED_ACTION_TARGET_KIND_MISMATCH",
+                "WARNING",
+                f"{action_type} should target {expected_target_kind}, got {target_kind}",
+            )
+
+        required_ref_kinds = {"route", "endpoint", "workflow", "prompt_template"}
+        if target_kind in required_ref_kinds and not target_ref:
+            _add_diagnostic(
+                "LINKED_ACTION_TARGET_REF_REQUIRED",
+                "BLOCKING",
+                f"target_ref is required for target_kind={target_kind}",
+            )
+        elif target_kind == "note" and not target_ref:
+            _add_diagnostic(
+                "LINKED_ACTION_NOTE_TARGET_REF_OPTIONAL",
+                "INFO",
+                "target_ref is optional for note target_kind",
+            )
+
+        if action_status != "active":
+            _add_diagnostic(
+                "LINKED_ACTION_INACTIVE",
+                "WARNING",
+                "linked action is inactive and cannot be executed later until reactivated",
+            )
+
+        if not diagnostics:
+            _add_diagnostic("LINKED_ACTION_PREVIEW_OK", "INFO", "linked action preview checks passed")
+
+        normalized_display_ref = target_ref or "—"
+        normalized_target = {
+            "kind": target_kind,
+            "ref": target_ref,
+            "display_label": f"{target_kind}:{normalized_display_ref}",
+        }
+        can_execute_later = action_status == "active" and not has_blocking
+        return {
+            "action_id": int(action["id"]),
+            "prompt_id": int(action["prompt_id"]),
+            "action_key": str(action["action_key"]),
+            "action_type": action_type,
+            "action_status": action_status,
+            "target_kind": target_kind,
+            "target_ref": target_ref,
+            "preview_status": preview_status,
+            "can_execute_later": bool(can_execute_later),
+            "diagnostics": diagnostics,
+            "normalized_target": normalized_target,
+            "config_summary": config_summary,
+        }
+
     def list_linked_actions(self, prompt_id: int, *, include_inactive: bool = True) -> list[dict[str, Any]]:
         self.get_record(prompt_id)
         if include_inactive:
