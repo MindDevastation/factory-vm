@@ -22,6 +22,7 @@ class TestPromptRegistryService(unittest.TestCase):
                     "prompt_audit_events",
                     "prompt_bindings",
                     "prompt_linked_actions",
+                    "prompt_linked_action_execution_requests",
                     "prompt_usage_events",
                 ):
                     row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", (table,)).fetchone()
@@ -1322,5 +1323,182 @@ class TestPromptRegistryService(unittest.TestCase):
                     conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events WHERE prompt_id = ?", (prompt_id,)).fetchone()["c"]
                 )
                 self.assertEqual(initial_audit_count, final_audit_count)
+            finally:
+                conn.close()
+
+    def test_linked_action_execution_requests_create_and_filters(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record(
+                    {
+                        "slug": "linked-exec",
+                        "code": "PR-LINK-EXEC",
+                        "title": "Linked Exec",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                prompt_id = int(rec["id"])
+                ok_action = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "ok-action",
+                        "action_type": "ui_action",
+                        "action_status": "active",
+                        "target_kind": "route",
+                        "target_ref": "/ui/prompt-registry/usage",
+                        "config_json": {"note": "safe"},
+                    },
+                    "tester",
+                )
+                inactive_action = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "inactive-action",
+                        "action_type": "ui_action",
+                        "action_status": "inactive",
+                        "target_kind": "route",
+                        "target_ref": "/ui/prompt-registry/usage",
+                        "config_json": {"note": "safe"},
+                    },
+                    "tester",
+                )
+                invalid_action = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "invalid-action",
+                        "action_type": "workflow",
+                        "action_status": "active",
+                        "target_kind": "workflow",
+                        "target_ref": "",
+                        "config_json": {},
+                    },
+                    "tester",
+                )
+                preview_only = svc.create_linked_action_execution_request(
+                    int(ok_action["id"]),
+                    {"confirm_execution": False, "request_context_json": {"reason": "dry-run"}},
+                    "tester",
+                )
+                self.assertEqual(preview_only["request_status"], "preview_only")
+                self.assertEqual(preview_only["preview_status"], "OK")
+                self.assertTrue(preview_only["can_execute_later"])
+
+                accepted = svc.create_linked_action_execution_request(
+                    int(ok_action["id"]),
+                    {"confirm_execution": True, "request_context_json": {"reason": "approve"}},
+                    "tester",
+                )
+                self.assertEqual(accepted["request_status"], "accepted")
+
+                inactive_blocked = svc.create_linked_action_execution_request(
+                    int(inactive_action["id"]),
+                    {"confirm_execution": True, "request_context_json": {"reason": "inactive"}},
+                    "tester",
+                )
+                self.assertEqual(inactive_blocked["request_status"], "blocked")
+                self.assertEqual(inactive_blocked["preview_status"], "WARNING")
+
+                invalid_blocked = svc.create_linked_action_execution_request(
+                    int(invalid_action["id"]),
+                    {"confirm_execution": True, "request_context_json": {"reason": "invalid"}},
+                    "tester",
+                )
+                self.assertEqual(invalid_blocked["request_status"], "blocked")
+                self.assertEqual(invalid_blocked["preview_status"], "INVALID")
+
+                with self.assertRaisesRegex(Exception, "must not include secret/token/password-like keys"):
+                    svc.create_linked_action_execution_request(
+                        int(ok_action["id"]),
+                        {"confirm_execution": False, "request_context_json": {"nested": {"apiToken": "x"}}},
+                        "tester",
+                    )
+
+                by_prompt = svc.list_linked_action_execution_requests(prompt_id=prompt_id, limit=50)
+                self.assertGreaterEqual(len(by_prompt), 4)
+                by_action = svc.list_linked_action_execution_requests(action_id=int(ok_action["id"]), limit=50)
+                self.assertEqual({str(item["request_status"]) for item in by_action}, {"preview_only", "accepted"})
+                with self.assertRaisesRegex(Exception, "limit must be between 1 and 200"):
+                    svc.list_linked_action_execution_requests(limit=0)
+
+                audit_events = svc.list_audit_events(prompt_id)
+                self.assertTrue(any(str(item["event_type"]) == "linked_action_execution_requested" for item in audit_events))
+            finally:
+                conn.close()
+
+    def test_linked_action_execution_requests_table_constraints_smoke(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record(
+                    {
+                        "slug": "linked-exec-constraints",
+                        "code": "PR-LINK-EXEC-C",
+                        "title": "Linked Exec Constraints",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                action = svc.create_linked_action(
+                    int(rec["id"]),
+                    {
+                        "action_key": "constraints-action",
+                        "action_type": "ui_action",
+                        "target_kind": "route",
+                        "target_ref": "/ui/prompt-registry/usage",
+                        "config_json": {},
+                    },
+                    "tester",
+                )
+                now = svc._now_iso()
+                with self.assertRaises(Exception):
+                    conn.execute(
+                        """
+                        INSERT INTO prompt_linked_action_execution_requests(
+                            action_id,prompt_id,request_status,requested_by,preview_status,can_execute_later,
+                            diagnostics_json,request_context_json,created_at,updated_at
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            int(action["id"]),
+                            int(rec["id"]),
+                            "bad_status",
+                            "tester",
+                            "OK",
+                            1,
+                            "[]",
+                            "{}",
+                            now,
+                            now,
+                        ),
+                    )
+                with self.assertRaises(Exception):
+                    conn.execute(
+                        """
+                        INSERT INTO prompt_linked_action_execution_requests(
+                            action_id,prompt_id,request_status,requested_by,preview_status,can_execute_later,
+                            diagnostics_json,request_context_json,created_at,updated_at
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            int(action["id"]),
+                            int(rec["id"]),
+                            "preview_only",
+                            "tester",
+                            "OK",
+                            1,
+                            "{bad json",
+                            "{}",
+                            now,
+                            now,
+                        ),
+                    )
             finally:
                 conn.close()

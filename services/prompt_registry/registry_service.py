@@ -213,6 +213,26 @@ class PromptRegistryService:
         _validate_nested(config_payload)
         return config_payload
 
+    @staticmethod
+    def _validate_linked_action_request_context(context_payload: Any) -> dict[str, Any]:
+        if not isinstance(context_payload, dict):
+            raise PromptRegistryValidationError("request_context_json must be an object")
+        blocked_tokens = ("secret", "token", "password", "api_key", "authorization")
+
+        def _validate_nested(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    lowered = str(key).strip().lower()
+                    if any(token in lowered for token in blocked_tokens):
+                        raise PromptRegistryValidationError("request_context_json must not include secret/token/password-like keys")
+                    _validate_nested(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    _validate_nested(nested)
+
+        _validate_nested(context_payload)
+        return context_payload
+
     def get_linked_action(self, action_id: int) -> dict[str, Any]:
         row = self._conn.execute("SELECT * FROM prompt_linked_actions WHERE id = ?", (action_id,)).fetchone()
         if row is None:
@@ -360,6 +380,105 @@ class PromptRegistryService:
                 ).fetchall()
             )
         return [self.get_linked_action(int(row["id"])) for row in rows]
+
+    def create_linked_action_execution_request(self, action_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
+        actor_id = self._validated_actor(actor)
+        preview = self.preview_linked_action(action_id)
+        prompt_id = int(preview["prompt_id"])
+        self.get_record(prompt_id)
+        confirm_execution = bool(payload.get("confirm_execution", False))
+        request_context = self._validate_linked_action_request_context(payload.get("request_context_json", {}))
+        preview_status = str(preview.get("preview_status") or "INVALID")
+        can_execute_later = bool(preview.get("can_execute_later"))
+        diagnostics = preview.get("diagnostics") if isinstance(preview.get("diagnostics"), list) else []
+
+        if preview_status == "INVALID" or not can_execute_later:
+            request_status = "blocked"
+        elif confirm_execution:
+            request_status = "accepted"
+        else:
+            request_status = "preview_only"
+
+        now = self._now_iso()
+        cur = self._conn.execute(
+            """
+            INSERT INTO prompt_linked_action_execution_requests(
+                action_id,prompt_id,request_status,requested_by,preview_status,can_execute_later,
+                diagnostics_json,request_context_json,created_at,updated_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                int(action_id),
+                prompt_id,
+                request_status,
+                actor_id,
+                preview_status,
+                1 if can_execute_later else 0,
+                json.dumps(diagnostics, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                json.dumps(request_context, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                now,
+                now,
+            ),
+        )
+        request_id = int(cur.lastrowid)
+        self._write_audit_event(
+            prompt_id=prompt_id,
+            event_type="linked_action_execution_requested",
+            actor=actor_id,
+            payload={
+                "linked_action_id": int(action_id),
+                "execution_request_id": request_id,
+                "request_status": request_status,
+                "preview_status": preview_status,
+                "can_execute_later": can_execute_later,
+                "confirm_execution": confirm_execution,
+            },
+        )
+        return self.list_linked_action_execution_requests(action_id=int(action_id), limit=1)[0]
+
+    def list_linked_action_execution_requests(
+        self,
+        prompt_id: int | None = None,
+        action_id: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        parsed_limit = int(limit)
+        if parsed_limit <= 0 or parsed_limit > 200:
+            raise PromptRegistryValidationError("limit must be between 1 and 200")
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if prompt_id is not None:
+            where_parts.append("prompt_id = ?")
+            params.append(int(prompt_id))
+        if action_id is not None:
+            where_parts.append("action_id = ?")
+            params.append(int(action_id))
+        where_clause = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        query = (
+            "SELECT * FROM prompt_linked_action_execution_requests"
+            f"{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?"
+        )
+        rows = list(self._conn.execute(query, (*params, parsed_limit)).fetchall())
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            for field, default in (("diagnostics_json", []), ("request_context_json", {})):
+                raw = item.get(field)
+                parsed: Any = default
+                if isinstance(raw, str):
+                    try:
+                        decoded = json.loads(raw)
+                    except json.JSONDecodeError:
+                        decoded = default
+                    if field == "diagnostics_json" and isinstance(decoded, list):
+                        parsed = decoded
+                    if field == "request_context_json" and isinstance(decoded, dict):
+                        parsed = decoded
+                item[field.replace("_json", "")] = parsed
+            item["can_execute_later"] = bool(int(item.get("can_execute_later") or 0))
+            items.append(item)
+        return items
 
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)

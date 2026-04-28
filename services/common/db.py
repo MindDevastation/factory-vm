@@ -2534,6 +2534,30 @@ def migrate(conn: sqlite3.Connection) -> None:
             ON prompt_linked_actions(prompt_id, action_key)
             WHERE action_status = 'active';
 
+        CREATE TABLE IF NOT EXISTS prompt_linked_action_execution_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_id INTEGER NOT NULL,
+            prompt_id INTEGER NOT NULL,
+            request_status TEXT NOT NULL,
+            requested_by TEXT NOT NULL,
+            preview_status TEXT NOT NULL,
+            can_execute_later INTEGER NOT NULL DEFAULT 0,
+            diagnostics_json TEXT NOT NULL DEFAULT '[]',
+            request_context_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(action_id) REFERENCES prompt_linked_actions(id) ON DELETE CASCADE,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            CHECK(request_status IN ('preview_only','blocked','accepted')),
+            CHECK(preview_status IN ('OK','WARNING','INVALID')),
+            CHECK(can_execute_later IN (0,1)),
+            CHECK(json_valid(diagnostics_json)),
+            CHECK(json_valid(request_context_json))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_linked_action_exec_requests_lookup
+            ON prompt_linked_action_execution_requests(prompt_id, action_id, created_at DESC, id DESC);
+
         """
     )
 
@@ -2552,6 +2576,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_prompt_registry_columns(conn)
     _ensure_prompt_bindings_schema(conn)
     _ensure_prompt_linked_actions_schema(conn)
+    _ensure_prompt_linked_action_execution_requests_schema(conn)
     _ensure_prompt_usage_events_schema(conn)
     _backfill_video_language_values(conn)
 
@@ -2710,6 +2735,39 @@ def _ensure_prompt_linked_actions_schema(conn: sqlite3.Connection) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_linked_actions_unique_active_key_per_prompt
             ON prompt_linked_actions(prompt_id, action_key)
             WHERE action_status = 'active'
+        """
+    )
+
+
+def _ensure_prompt_linked_action_execution_requests_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prompt_linked_action_execution_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_id INTEGER NOT NULL,
+            prompt_id INTEGER NOT NULL,
+            request_status TEXT NOT NULL,
+            requested_by TEXT NOT NULL,
+            preview_status TEXT NOT NULL,
+            can_execute_later INTEGER NOT NULL DEFAULT 0,
+            diagnostics_json TEXT NOT NULL DEFAULT '[]',
+            request_context_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(action_id) REFERENCES prompt_linked_actions(id) ON DELETE CASCADE,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            CHECK(request_status IN ('preview_only','blocked','accepted')),
+            CHECK(preview_status IN ('OK','WARNING','INVALID')),
+            CHECK(can_execute_later IN (0,1)),
+            CHECK(json_valid(diagnostics_json)),
+            CHECK(json_valid(request_context_json))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_prompt_linked_action_exec_requests_lookup
+            ON prompt_linked_action_execution_requests(prompt_id, action_id, created_at DESC, id DESC)
         """
     )
 
