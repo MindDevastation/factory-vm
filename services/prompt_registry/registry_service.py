@@ -289,6 +289,35 @@ class PromptRegistryService:
             items.append(f"... (+{len(config.keys()) - len(items)} more)")
         return "; ".join(items) if items else "—"
 
+    @staticmethod
+    def _safe_compact_summary(value: Any, *, max_items: int = 6) -> str:
+        if not isinstance(value, dict) or not value:
+            return "—"
+        masked_tokens = ("secret", "operator_only", "token", "password", "api_key", "authorization")
+        items: list[str] = []
+        for key in sorted(value.keys()):
+            if len(items) >= max_items:
+                break
+            key_text = str(key)
+            lowered = key_text.lower()
+            raw = value.get(key)
+            if any(token in lowered for token in masked_tokens):
+                rendered = "***MASKED***"
+            elif isinstance(raw, dict):
+                rendered = f"{{{len(raw)} keys}}"
+            elif isinstance(raw, list):
+                rendered = f"[{len(raw)} items]"
+            elif raw is None:
+                rendered = "null"
+            else:
+                rendered = str(raw).strip()
+                if len(rendered) > 48:
+                    rendered = f"{rendered[:45]}..."
+            items.append(f"{key_text}={rendered}")
+        if len(value.keys()) > len(items):
+            items.append(f"... (+{len(value.keys()) - len(items)} more)")
+        return "; ".join(items) if items else "—"
+
     def preview_linked_action(self, action_id: int) -> dict[str, Any]:
         action = self.get_linked_action(action_id)
         action_type = str(action["action_type"])
@@ -504,6 +533,110 @@ class PromptRegistryService:
             item["can_execute_later"] = bool(int(item.get("can_execute_later") or 0))
             items.append(item)
         return items
+
+    def preview_linked_action_dispatch_plan(self, execution_request_id: int) -> dict[str, Any]:
+        row = self._conn.execute(
+            "SELECT * FROM prompt_linked_action_execution_requests WHERE id = ?",
+            (int(execution_request_id),),
+        ).fetchone()
+        if row is None:
+            raise PromptRegistryNotFoundError("linked action execution request not found")
+
+        item = dict(row)
+        request_status = str(item.get("request_status") or "")
+        action_id = int(item.get("action_id"))
+        action = self.get_linked_action(action_id)
+        preview = self.preview_linked_action(action_id)
+        action_type = str(action.get("action_type") or "")
+        target_kind = str(action.get("target_kind") or "")
+        target_ref = self._nullable_text(action.get("target_ref"))
+
+        parsed_request_context: dict[str, Any] = {}
+        raw_request_context = item.get("request_context_json")
+        if isinstance(raw_request_context, str):
+            try:
+                decoded_context = json.loads(raw_request_context)
+            except json.JSONDecodeError:
+                decoded_context = {}
+            if isinstance(decoded_context, dict):
+                parsed_request_context = decoded_context
+
+        reason_codes: list[str] = []
+        diagnostics: list[dict[str, str]] = []
+        has_blocking = False
+
+        def _add_reason(code: str) -> None:
+            if code not in reason_codes:
+                reason_codes.append(code)
+
+        def _add_diag(code: str, severity: str, message: str) -> None:
+            nonlocal has_blocking
+            diagnostics.append({"code": code, "severity": severity, "message": message})
+            if severity == "BLOCKING":
+                has_blocking = True
+                _add_reason(code)
+            elif severity == "WARNING":
+                _add_reason(code)
+
+        if request_status != "accepted":
+            _add_diag("REQUEST_NOT_ACCEPTED", "BLOCKING", "dispatch preview is blocked until request_status=accepted")
+
+        if str(preview.get("preview_status") or "") == "INVALID":
+            _add_diag("LINKED_ACTION_PREVIEW_INVALID", "BLOCKING", "linked action preview_status is INVALID")
+
+        if not bool(preview.get("can_execute_later")):
+            _add_diag("LINKED_ACTION_CANNOT_EXECUTE_LATER", "BLOCKING", "linked action can_execute_later is false")
+
+        dispatch_map = {
+            ("ui_action", "route"): "ui_route",
+            ("api_endpoint", "endpoint"): "api_endpoint",
+            ("workflow", "workflow"): "workflow_ref",
+            ("codex_prompt", "prompt_template"): "codex_prompt_ref",
+            ("external_note", "note"): "note_ref",
+        }
+        dispatch_kind = dispatch_map.get((action_type, target_kind), "unknown")
+        if dispatch_kind == "unknown":
+            _add_diag(
+                "DISPATCH_KIND_UNKNOWN",
+                "WARNING",
+                f"no deterministic dispatch kind mapping for action_type={action_type}, target_kind={target_kind}",
+            )
+
+        if target_kind != "note" and not target_ref:
+            _add_diag(
+                "TARGET_REF_REQUIRED",
+                "BLOCKING",
+                f"target_ref is required for dispatch when target_kind={target_kind}",
+            )
+        elif target_kind == "note" and not target_ref:
+            _add_diag("NOTE_TARGET_REF_OPTIONAL", "INFO", "target_ref is optional for note dispatch previews")
+
+        if not diagnostics:
+            diagnostics.append(
+                {
+                    "code": "DISPATCH_PREVIEW_READY",
+                    "severity": "INFO",
+                    "message": "dispatch preview is ready and remains read-only",
+                }
+            )
+
+        return {
+            "execution_request_id": int(item.get("id")),
+            "request_status": request_status,
+            "action_id": int(action.get("id")),
+            "prompt_id": int(action.get("prompt_id")),
+            "action_key": str(action.get("action_key") or ""),
+            "action_type": action_type,
+            "target_kind": target_kind,
+            "target_ref": target_ref,
+            "dispatch_status": "BLOCKED" if has_blocking else "READY",
+            "dispatch_kind": dispatch_kind,
+            "dispatch_target": target_ref or "",
+            "reason_codes": reason_codes,
+            "diagnostics": diagnostics,
+            "safe_context_summary": self._safe_compact_summary(parsed_request_context),
+            "safe_config_summary": self._safe_linked_action_config_summary(action.get("config")),
+        }
 
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)

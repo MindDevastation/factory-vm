@@ -669,6 +669,7 @@
         {% if item.can_preview_link %}
         <br><a href="/ui/prompt-registry/{{ item.prompt_id }}/linked-actions/{{ item.action_id }}/preview">Action preview</a>
         {% endif %}
+        <br><a href="/ui/prompt-registry/linked-action-requests/{{ item.id }}/dispatch-preview">Dispatch preview</a>
       </td>
     </tr>
     {% else %}
@@ -676,6 +677,67 @@
     {% endfor %}
   </tbody>
 </table>
+{% endif %}
+
+{% if mode == "linked_action_dispatch_preview" %}
+<p>
+  <a href="/ui/prompt-registry/linked-action-requests">← Back to linked action request review</a>
+</p>
+
+<h3>Linked action dispatch plan preview</h3>
+<p class="muted"><strong>This is a dispatch preview only. No runtime execution is performed.</strong></p>
+
+{% if dispatch_error %}
+<p style="color:#991b1b;"><strong>Dispatch preview error:</strong> {{ dispatch_error }}</p>
+{% else %}
+<h4>Execution request metadata</h4>
+<ul>
+  <li><strong>Execution request ID:</strong> {{ dispatch_preview.execution_request_id }}</li>
+  <li><strong>Request status:</strong> {{ dispatch_preview.request_status }}</li>
+  <li><strong>Action ID:</strong> {{ dispatch_preview.action_id }}</li>
+  <li><strong>Prompt ID:</strong> {{ dispatch_preview.prompt_id }}</li>
+</ul>
+
+<h4>Linked action metadata</h4>
+<ul>
+  <li><strong>Action key:</strong> {{ dispatch_preview.action_key }}</li>
+  <li><strong>Action type:</strong> {{ dispatch_preview.action_type }}</li>
+  <li><strong>Target kind:</strong> {{ dispatch_preview.target_kind }}</li>
+  <li><strong>Target ref:</strong> {{ dispatch_preview.target_ref if dispatch_preview.target_ref else "—" }}</li>
+</ul>
+
+<h4>Dispatch plan</h4>
+<ul>
+  <li><strong>Dispatch status:</strong> {{ dispatch_preview.dispatch_status }}</li>
+  <li><strong>Dispatch kind:</strong> {{ dispatch_preview.dispatch_kind }}</li>
+  <li><strong>Dispatch target:</strong> {{ dispatch_preview.dispatch_target if dispatch_preview.dispatch_target else "—" }}</li>
+  <li><strong>Reason codes:</strong> {{ dispatch_preview.reason_codes|join(", ") if dispatch_preview.reason_codes else "—" }}</li>
+  <li><strong>Safe context summary:</strong> {{ dispatch_preview.safe_context_summary }}</li>
+  <li><strong>Safe config summary:</strong> {{ dispatch_preview.safe_config_summary }}</li>
+</ul>
+
+<h4>Diagnostics</h4>
+<table>
+  <thead>
+    <tr>
+      <th>Code</th>
+      <th>Severity</th>
+      <th>Message</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in dispatch_preview.diagnostics %}
+    <tr>
+      <td>{{ item.code }}</td>
+      <td>{{ item.severity }}</td>
+      <td>{{ item.message }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">No diagnostics.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% endif %}
 
 {% if mode == "audit" %}

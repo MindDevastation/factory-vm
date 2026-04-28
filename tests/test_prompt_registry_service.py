@@ -1511,3 +1511,116 @@ class TestPromptRegistryService(unittest.TestCase):
                     )
             finally:
                 conn.close()
+
+    def test_preview_linked_action_dispatch_plan_ready_blocked_unknown_and_read_only(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record(
+                    {
+                        "slug": "dispatch-preview",
+                        "code": "PR-DISPATCH-PREVIEW",
+                        "title": "Dispatch Preview",
+                        "record_type": "prompt_template",
+                        "status": "draft",
+                    },
+                    actor="tester",
+                )
+                prompt_id = int(rec["id"])
+                ready_action = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "dispatch-ready",
+                        "action_type": "ui_action",
+                        "action_status": "active",
+                        "target_kind": "route",
+                        "target_ref": "/ui/prompt-registry/linked-action-requests",
+                        "config_json": {"ui_label": "Open", "channel": "ops"},
+                    },
+                    "tester",
+                )
+                preview_only_req = svc.create_linked_action_execution_request(
+                    int(ready_action["id"]),
+                    {"confirm_execution": False, "request_context_json": {"reason": "dry-run", "operator": "qa"}},
+                    "tester",
+                )
+                accepted_req = svc.create_linked_action_execution_request(
+                    int(ready_action["id"]),
+                    {"confirm_execution": True, "request_context_json": {"reason": "approved", "operator": "alice"}},
+                    "tester",
+                )
+
+                blocked_action = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "dispatch-blocked",
+                        "action_type": "ui_action",
+                        "action_status": "active",
+                        "target_kind": "route",
+                        "target_ref": "",
+                        "config_json": {"note": "missing target"},
+                    },
+                    "tester",
+                )
+                blocked_req = svc.create_linked_action_execution_request(
+                    int(blocked_action["id"]),
+                    {"confirm_execution": True, "request_context_json": {"reason": "bad-target"}},
+                    "tester",
+                )
+
+                unknown_action = svc.create_linked_action(
+                    prompt_id,
+                    {
+                        "action_key": "dispatch-unknown",
+                        "action_type": "workflow",
+                        "action_status": "active",
+                        "target_kind": "route",
+                        "target_ref": "/v1/example",
+                        "config_json": {"note": "kind mismatch"},
+                    },
+                    "tester",
+                )
+                unknown_req = svc.create_linked_action_execution_request(
+                    int(unknown_action["id"]),
+                    {"confirm_execution": True, "request_context_json": {"reason": "mismatch"}},
+                    "tester",
+                )
+
+                before_audit = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"])
+                before_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                before_requests = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_linked_action_execution_requests").fetchone()["c"])
+
+                ready_plan = svc.preview_linked_action_dispatch_plan(int(accepted_req["id"]))
+                self.assertEqual(ready_plan["dispatch_status"], "READY")
+                self.assertEqual(ready_plan["dispatch_kind"], "ui_route")
+                self.assertEqual(ready_plan["dispatch_target"], "/ui/prompt-registry/linked-action-requests")
+                self.assertEqual(ready_plan["reason_codes"], [])
+                self.assertIn("ui_label=Open", ready_plan["safe_config_summary"])
+
+                preview_only_plan = svc.preview_linked_action_dispatch_plan(int(preview_only_req["id"]))
+                self.assertEqual(preview_only_plan["dispatch_status"], "BLOCKED")
+                self.assertIn("REQUEST_NOT_ACCEPTED", preview_only_plan["reason_codes"])
+
+                blocked_plan = svc.preview_linked_action_dispatch_plan(int(blocked_req["id"]))
+                self.assertEqual(blocked_plan["dispatch_status"], "BLOCKED")
+                self.assertIn("TARGET_REF_REQUIRED", blocked_plan["reason_codes"])
+                self.assertIn("LINKED_ACTION_PREVIEW_INVALID", blocked_plan["reason_codes"])
+
+                unknown_plan = svc.preview_linked_action_dispatch_plan(int(unknown_req["id"]))
+                self.assertEqual(unknown_plan["dispatch_status"], "READY")
+                self.assertEqual(unknown_plan["dispatch_kind"], "unknown")
+                self.assertIn("DISPATCH_KIND_UNKNOWN", unknown_plan["reason_codes"])
+
+                with self.assertRaisesRegex(Exception, "linked action execution request not found"):
+                    svc.preview_linked_action_dispatch_plan(999999)
+
+                after_audit = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"])
+                after_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                after_requests = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_linked_action_execution_requests").fetchone()["c"])
+                self.assertEqual(after_audit, before_audit)
+                self.assertEqual(after_usage, before_usage)
+                self.assertEqual(after_requests, before_requests)
+            finally:
+                conn.close()

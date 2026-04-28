@@ -592,6 +592,65 @@ class TestPromptRegistryApi(unittest.TestCase):
             )
             self.assertEqual(invalid_limit.status_code, 422)
 
+    def test_linked_action_execution_request_dispatch_preview_endpoint(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+            created = client.post(
+                "/v1/prompt-registry/records",
+                headers=headers,
+                json={
+                    "slug": "dispatch-api",
+                    "code": "PR-DISPATCH-API",
+                    "title": "Dispatch API",
+                    "record_type": "prompt_template",
+                    "status": "draft",
+                },
+            )
+            self.assertEqual(created.status_code, 200)
+            prompt_id = int(created.json()["id"])
+
+            action = client.post(
+                f"/v1/prompt-registry/records/{prompt_id}/linked-actions",
+                headers=headers,
+                json={
+                    "action_key": "dispatch-api-action",
+                    "action_type": "ui_action",
+                    "action_status": "active",
+                    "target_kind": "route",
+                    "target_ref": "/ui/prompt-registry/linked-action-requests",
+                    "config_json": {"ui_label": "Go"},
+                },
+            )
+            self.assertEqual(action.status_code, 200)
+            action_id = int(action.json()["id"])
+
+            execution_request = client.post(
+                f"/v1/prompt-registry/linked-actions/{action_id}/execution-requests",
+                headers=headers,
+                json={"confirm_execution": True, "request_context_json": {"reason": "approved"}},
+            )
+            self.assertEqual(execution_request.status_code, 200)
+            request_id = int(execution_request.json()["id"])
+
+            preview = client.get(
+                f"/v1/prompt-registry/linked-action-execution-requests/{request_id}/dispatch-preview",
+                headers=headers,
+            )
+            self.assertEqual(preview.status_code, 200)
+            body = preview.json()
+            self.assertEqual(body["execution_request_id"], request_id)
+            self.assertEqual(body["dispatch_status"], "READY")
+            self.assertEqual(body["dispatch_kind"], "ui_route")
+
+            missing = client.get(
+                "/v1/prompt-registry/linked-action-execution-requests/999999/dispatch-preview",
+                headers=headers,
+            )
+            self.assertEqual(missing.status_code, 404)
+            self.assertEqual(missing.json()["error"]["code"], "PROMPT_REGISTRY_NOT_FOUND")
+
     def test_resolve_rejects_partial_item_context_and_explains_same_scope_tie_break(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)
