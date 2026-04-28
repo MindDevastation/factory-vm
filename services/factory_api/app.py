@@ -6234,6 +6234,45 @@ def _ui_prompt_registry_parse_usage_filters(query_params: Any) -> dict[str, Any]
     }
 
 
+def _ui_prompt_registry_parse_linked_action_request_filters(query_params: Any) -> dict[str, Any]:
+    prompt_id_raw = str(query_params.get("prompt_id") or "").strip()
+    action_id_raw = str(query_params.get("action_id") or "").strip()
+    request_status_raw = str(query_params.get("request_status") or "").strip()
+    preview_status_raw = str(query_params.get("preview_status") or "").strip()
+    requested_by_raw = str(query_params.get("requested_by") or "").strip()
+    limit_raw = str(query_params.get("limit") or "").strip()
+    limit_value = 50
+    if limit_raw:
+        try:
+            limit_value = int(limit_raw)
+        except ValueError as exc:
+            raise ValueError("limit must be an integer") from exc
+    if limit_value <= 0:
+        raise ValueError("limit must be greater than zero")
+    if limit_value > 200:
+        limit_value = 200
+
+    request_status = request_status_raw or None
+    if request_status is not None and request_status not in {"preview_only", "blocked", "accepted"}:
+        raise ValueError("request_status must be one of preview_only, blocked, accepted")
+    preview_status = (preview_status_raw.upper() if preview_status_raw else "") or None
+    if preview_status is not None and preview_status not in {"OK", "WARNING", "INVALID"}:
+        raise ValueError("preview_status must be one of OK, WARNING, INVALID")
+    requested_by = requested_by_raw or None
+    if requested_by is not None and not requested_by.strip():
+        raise ValueError("requested_by must be non-empty when provided")
+    return {
+        "prompt_id_raw": prompt_id_raw,
+        "action_id_raw": action_id_raw,
+        "request_status": request_status,
+        "preview_status": preview_status,
+        "requested_by": requested_by,
+        "limit": limit_value,
+        "prompt_id": _ui_prompt_registry_parse_optional_int(prompt_id_raw, field_name="prompt_id"),
+        "action_id": _ui_prompt_registry_parse_optional_int(action_id_raw, field_name="action_id"),
+    }
+
+
 def _ui_prompt_registry_safe_summary(value: Any, *, max_items: int = 6) -> str:
     if not isinstance(value, dict) or not value:
         return "—"
@@ -6262,6 +6301,13 @@ def _ui_prompt_registry_safe_summary(value: Any, *, max_items: int = 6) -> str:
     if extra_count > 0:
         items.append(f"... (+{extra_count} more)")
     return "; ".join(items) if items else "—"
+
+
+def _ui_prompt_registry_can_link_action_preview(item: dict[str, Any]) -> bool:
+    try:
+        return int(item.get("prompt_id")) > 0 and int(item.get("action_id")) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def _ui_prompt_registry_usage_context(
@@ -6306,6 +6352,47 @@ def _ui_prompt_registry_usage_context(
         "usage_filters": active_filters,
         "usage_events": rendered_events,
         "usage_error": usage_error,
+        "success_message": None,
+        "error_message": None,
+    }
+
+
+def _ui_prompt_registry_linked_action_requests_context(
+    request: Request,
+    *,
+    filters: dict[str, Any] | None = None,
+    request_items: list[dict[str, Any]] | None = None,
+    requests_error: str | None = None,
+) -> dict[str, Any]:
+    if filters is None:
+        limit_raw = str(request.query_params.get("limit") or "").strip()
+        try:
+            fallback_limit = int(limit_raw) if limit_raw else 50
+        except ValueError:
+            fallback_limit = 50
+        active_filters = {
+            "prompt_id_raw": str(request.query_params.get("prompt_id") or "").strip(),
+            "action_id_raw": str(request.query_params.get("action_id") or "").strip(),
+            "request_status": str(request.query_params.get("request_status") or "").strip() or None,
+            "preview_status": str(request.query_params.get("preview_status") or "").strip() or None,
+            "requested_by": str(request.query_params.get("requested_by") or "").strip() or None,
+            "limit": max(1, min(fallback_limit, 200)),
+        }
+    else:
+        active_filters = filters
+    rendered_requests: list[dict[str, Any]] = []
+    for row in request_items or []:
+        item = dict(row)
+        item["diagnostics_summary"] = _ui_prompt_registry_safe_summary(item.get("diagnostics"))
+        item["request_context_summary"] = _ui_prompt_registry_safe_summary(item.get("request_context"))
+        item["can_preview_link"] = bool(item.get("can_preview_link")) if "can_preview_link" in item else _ui_prompt_registry_can_link_action_preview(item)
+        rendered_requests.append(item)
+    return {
+        "request": request,
+        "mode": "linked_action_requests",
+        "request_filters": active_filters,
+        "linked_action_request_items": rendered_requests,
+        "requests_error": requests_error,
         "success_message": None,
         "error_message": None,
     }
@@ -6449,6 +6536,47 @@ def ui_prompt_registry_usage_page(request: Request, _: bool = Depends(require_ba
         return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_usage_context(request, filters=filters, usage_events=usage_events))
     except (PromptRegistryValidationError, ValueError):
         return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_usage_context(request, usage_error="Usage diagnostics filter validation failed"))
+    finally:
+        conn.close()
+
+
+@app.get("/ui/prompt-registry/linked-action-requests", response_class=HTMLResponse)
+def ui_prompt_registry_linked_action_requests_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        try:
+            filters = _ui_prompt_registry_parse_linked_action_request_filters(request.query_params)
+        except ValueError as exc:
+            return templates.TemplateResponse(
+                "prompt_registry.html",
+                _ui_prompt_registry_linked_action_requests_context(request, requests_error=str(exc)),
+            )
+        items = service.list_linked_action_execution_requests(
+            prompt_id=filters["prompt_id"],
+            action_id=filters["action_id"],
+            request_status=filters["request_status"],
+            preview_status=filters["preview_status"],
+            requested_by=filters["requested_by"],
+            limit=filters["limit"],
+        )
+        for row in items:
+            can_preview_link = False
+            try:
+                linked_action = service.get_linked_action(int(row.get("action_id")))
+                can_preview_link = int(linked_action.get("prompt_id")) == int(row.get("prompt_id"))
+            except (PromptRegistryNotFoundError, TypeError, ValueError):
+                can_preview_link = False
+            row["can_preview_link"] = can_preview_link
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_linked_action_requests_context(request, filters=filters, request_items=items),
+        )
+    except (PromptRegistryValidationError, ValueError):
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_linked_action_requests_context(request, requests_error="Linked action request filter validation failed"),
+        )
     finally:
         conn.close()
 

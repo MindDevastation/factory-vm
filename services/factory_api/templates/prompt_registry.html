@@ -17,6 +17,7 @@
   · <a href="/v1/prompt-registry/export">Export registry JSON (API)</a>
   · <a href="/ui/prompt-registry/import">Import registry JSON</a>
   · <a href="/ui/prompt-registry/usage">Usage Diagnostics</a>
+  · <a href="/ui/prompt-registry/linked-action-requests">Linked action requests</a>
   · Import API entry points:
   <code>POST /v1/prompt-registry/import/preview</code>,
   <code>POST /v1/prompt-registry/import/confirm</code>
@@ -182,6 +183,7 @@
 <p>
   <a href="/ui/prompt-registry">← Back to list</a>
   · <a href="/ui/prompt-registry/usage?prompt_id={{ record.id }}">Usage for this prompt</a>
+  · <a href="/ui/prompt-registry/linked-action-requests?prompt_id={{ record.id }}">Linked action requests for this prompt</a>
   · <a href="/ui/prompt-registry/{{ record.id }}/audit">Audit timeline</a>
   · <a href="/v1/prompt-registry/export?prompt_id={{ record.id }}">Export this prompt</a>
   · <a href="/v1/prompt-registry/records/{{ record.id }}/audit">Audit diagnostics API</a>
@@ -529,6 +531,7 @@
 <p>
   <a href="/ui/prompt-registry/{{ record.id }}">← Back to prompt detail</a>
   · <a href="/ui/prompt-registry">Prompt registry list</a>
+  · <a href="/ui/prompt-registry/linked-action-requests?action_id={{ linked_action_preview.action_id }}">Linked action request review</a>
 </p>
 
 <h2>Linked action preview diagnostics</h2>
@@ -606,6 +609,70 @@
     </tr>
     {% else %}
     <tr><td colspan="6">No execution requests yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if mode == "linked_action_requests" %}
+<p>
+  <a href="/ui/prompt-registry">← Back to list</a>
+</p>
+
+<h3>Linked action execution request review</h3>
+<form method="get" action="/ui/prompt-registry/linked-action-requests">
+  <p><label>prompt_id (optional)</label><br><input name="prompt_id" value="{{ request_filters.prompt_id_raw }}"></p>
+  <p><label>action_id (optional)</label><br><input name="action_id" value="{{ request_filters.action_id_raw }}"></p>
+  <p><label>request_status (optional)</label><br><input name="request_status" value="{{ request_filters.request_status or '' }}" placeholder="preview_only / blocked / accepted"></p>
+  <p><label>preview_status (optional)</label><br><input name="preview_status" value="{{ request_filters.preview_status or '' }}" placeholder="OK / WARNING / INVALID"></p>
+  <p><label>requested_by (optional)</label><br><input name="requested_by" value="{{ request_filters.requested_by or '' }}"></p>
+  <p><label>limit</label><br><input type="number" min="1" max="200" name="limit" value="{{ request_filters.limit }}"></p>
+  <button type="submit">Apply filters</button>
+</form>
+
+{% if requests_error %}
+<p style="color:#991b1b;"><strong>Linked action requests error:</strong> {{ requests_error }}</p>
+{% endif %}
+
+<p class="muted">Read-only review table. Diagnostics/context are compact summaries only; raw JSON is not dumped here.</p>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Created at</th>
+      <th>Prompt ID</th>
+      <th>Action ID</th>
+      <th>Request status</th>
+      <th>Requested by</th>
+      <th>Preview status</th>
+      <th>Can execute later</th>
+      <th>Diagnostics summary</th>
+      <th>Request context summary</th>
+      <th>Links</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in linked_action_request_items %}
+    <tr>
+      <td>{{ item.id }}</td>
+      <td>{{ item.created_at }}</td>
+      <td>{{ item.prompt_id }}</td>
+      <td>{{ item.action_id }}</td>
+      <td>{{ item.request_status }}</td>
+      <td>{{ item.requested_by }}</td>
+      <td>{{ item.preview_status }}</td>
+      <td>{{ "yes" if item.can_execute_later else "no" }}</td>
+      <td>{{ item.diagnostics_summary }}</td>
+      <td>{{ item.request_context_summary }}</td>
+      <td>
+        <a href="/ui/prompt-registry/{{ item.prompt_id }}">Prompt</a>
+        {% if item.can_preview_link %}
+        <br><a href="/ui/prompt-registry/{{ item.prompt_id }}/linked-actions/{{ item.action_id }}/preview">Action preview</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="11">No linked action execution requests for the selected filters.</td></tr>
     {% endfor %}
   </tbody>
 </table>

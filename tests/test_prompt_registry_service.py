@@ -1422,6 +1422,15 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertGreaterEqual(len(by_prompt), 4)
                 by_action = svc.list_linked_action_execution_requests(action_id=int(ok_action["id"]), limit=50)
                 self.assertEqual({str(item["request_status"]) for item in by_action}, {"preview_only", "accepted"})
+                by_status = svc.list_linked_action_execution_requests(prompt_id=prompt_id, request_status="accepted", limit=50)
+                self.assertEqual({str(item["request_status"]) for item in by_status}, {"accepted"})
+                by_preview_status = svc.list_linked_action_execution_requests(prompt_id=prompt_id, preview_status="WARNING", limit=50)
+                self.assertTrue(by_preview_status)
+                self.assertEqual({str(item["preview_status"]) for item in by_preview_status}, {"WARNING"})
+                by_actor = svc.list_linked_action_execution_requests(prompt_id=prompt_id, requested_by="tester", limit=50)
+                self.assertGreaterEqual(len(by_actor), 4)
+                with self.assertRaisesRegex(Exception, "request_status must be one of"):
+                    svc.list_linked_action_execution_requests(request_status="bad", limit=50)
                 with self.assertRaisesRegex(Exception, "limit must be between 1 and 200"):
                     svc.list_linked_action_execution_requests(limit=0)
 

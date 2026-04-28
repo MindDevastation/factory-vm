@@ -325,6 +325,9 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
     def list_linked_action_execution_requests(
         prompt_id: str | None = None,
         action_id: str | None = None,
+        request_status: str | None = None,
+        preview_status: str | None = None,
+        requested_by: str | None = None,
         limit: str | None = None,
         _: bool = Depends(require_basic_auth(env)),
     ):
@@ -333,10 +336,16 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
             parsed_prompt_id: int | None = int(str(prompt_id).strip()) if prompt_id is not None else None
             parsed_action_id: int | None = int(str(action_id).strip()) if action_id is not None else None
             parsed_limit = 50 if limit is None else int(str(limit).strip())
+            parsed_request_status = str(request_status).strip() if request_status is not None else None
+            parsed_preview_status = str(preview_status).strip() if preview_status is not None else None
+            parsed_requested_by = str(requested_by).strip() if requested_by is not None else None
             return {
                 "items": PromptRegistryService(conn).list_linked_action_execution_requests(
                     prompt_id=parsed_prompt_id,
                     action_id=parsed_action_id,
+                    request_status=parsed_request_status,
+                    preview_status=parsed_preview_status,
+                    requested_by=parsed_requested_by,
                     limit=parsed_limit,
                 )
             }
