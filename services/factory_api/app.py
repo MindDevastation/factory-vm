@@ -6398,6 +6398,22 @@ def _ui_prompt_registry_linked_action_requests_context(
     }
 
 
+def _ui_prompt_registry_dispatch_preview_context(
+    request: Request,
+    *,
+    dispatch_preview: dict[str, Any] | None = None,
+    dispatch_error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "request": request,
+        "mode": "linked_action_dispatch_preview",
+        "dispatch_preview": dispatch_preview or {},
+        "dispatch_error": dispatch_error,
+        "success_message": None,
+        "error_message": None,
+    }
+
+
 def _ui_prompt_registry_audit_context(
     request: Request,
     *,
@@ -6577,6 +6593,26 @@ def ui_prompt_registry_linked_action_requests_page(request: Request, _: bool = D
             "prompt_registry.html",
             _ui_prompt_registry_linked_action_requests_context(request, requests_error="Linked action request filter validation failed"),
         )
+    finally:
+        conn.close()
+
+
+@app.get("/ui/prompt-registry/linked-action-requests/{request_id}/dispatch-preview", response_class=HTMLResponse)
+def ui_prompt_registry_linked_action_dispatch_preview_page(request: Request, request_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        try:
+            dispatch_preview = service.preview_linked_action_dispatch_plan(request_id)
+            return templates.TemplateResponse(
+                "prompt_registry.html",
+                _ui_prompt_registry_dispatch_preview_context(request, dispatch_preview=dispatch_preview),
+            )
+        except (PromptRegistryNotFoundError, PromptRegistryValidationError, ValueError) as exc:
+            return templates.TemplateResponse(
+                "prompt_registry.html",
+                _ui_prompt_registry_dispatch_preview_context(request, dispatch_error=str(exc)),
+            )
     finally:
         conn.close()
 
