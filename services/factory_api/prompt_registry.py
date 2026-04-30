@@ -366,6 +366,48 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
         finally:
             conn.close()
 
+    @router.post("/linked-action-execution-requests/{request_id}/dispatch-attempts")
+    def create_linked_action_dispatch_attempt(request_id: int, payload: dict[str, Any], request: Request, _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).create_linked_action_dispatch_attempt(request_id, payload, _actor_from_request(request))
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except (PromptRegistryValidationError, TypeError, ValueError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.get("/linked-action-dispatch-attempts")
+    def list_linked_action_dispatch_attempts(
+        prompt_id: str | None = None,
+        action_id: str | None = None,
+        execution_request_id: str | None = None,
+        attempt_status: str | None = None,
+        limit: str | None = None,
+        _: bool = Depends(require_basic_auth(env)),
+    ):
+        conn = dbm.connect(env)
+        try:
+            parsed_prompt_id: int | None = int(str(prompt_id).strip()) if prompt_id is not None else None
+            parsed_action_id: int | None = int(str(action_id).strip()) if action_id is not None else None
+            parsed_execution_request_id: int | None = int(str(execution_request_id).strip()) if execution_request_id is not None else None
+            parsed_attempt_status = str(attempt_status).strip() if attempt_status is not None else None
+            parsed_limit = 50 if limit is None else int(str(limit).strip())
+            return {
+                "items": PromptRegistryService(conn).list_linked_action_dispatch_attempts(
+                    prompt_id=parsed_prompt_id,
+                    action_id=parsed_action_id,
+                    execution_request_id=parsed_execution_request_id,
+                    attempt_status=parsed_attempt_status,
+                    limit=parsed_limit,
+                )
+            }
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
 
     @router.post("/resolve-preview")
     def resolve_preview(payload: dict[str, Any], _: bool = Depends(require_basic_auth(env))):

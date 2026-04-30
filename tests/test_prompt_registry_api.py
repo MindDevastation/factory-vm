@@ -592,6 +592,118 @@ class TestPromptRegistryApi(unittest.TestCase):
             )
             self.assertEqual(invalid_limit.status_code, 422)
 
+            reactivate = client.post(
+                f"/v1/prompt-registry/linked-actions/{action_id}/status",
+                headers=headers,
+                json={"action_status": "active"},
+            )
+            self.assertEqual(reactivate.status_code, 200)
+
+            ready_request = client.post(
+                f"/v1/prompt-registry/linked-actions/{action_id}/execution-requests",
+                headers=headers,
+                json={"confirm_execution": True, "request_context_json": {"reason": "ready-dispatch"}},
+            )
+            self.assertEqual(ready_request.status_code, 200)
+            ready_request_id = int(ready_request.json()["id"])
+            self.assertEqual(ready_request.json()["request_status"], "accepted")
+
+            dispatch_ready = client.post(
+                f"/v1/prompt-registry/linked-action-execution-requests/{ready_request_id}/dispatch-attempts",
+                headers=headers,
+                json={"dry_run_only": True, "note": "operator note"},
+            )
+            self.assertEqual(dispatch_ready.status_code, 200)
+            self.assertEqual(dispatch_ready.json()["attempt_status"], "dry_run_recorded")
+            self.assertEqual(dispatch_ready.json()["attempted_by"], "admin")
+
+            dispatch_blocked = client.post(
+                f"/v1/prompt-registry/linked-action-execution-requests/{int(preview_only_req.json()['id'])}/dispatch-attempts",
+                headers=headers,
+                json={"dry_run_only": True, "note": "blocked note"},
+            )
+            self.assertEqual(dispatch_blocked.status_code, 200)
+            self.assertEqual(dispatch_blocked.json()["attempt_status"], "blocked")
+
+            dispatch_non_dry = client.post(
+                f"/v1/prompt-registry/linked-action-execution-requests/{ready_request_id}/dispatch-attempts",
+                headers=headers,
+                json={"dry_run_only": False},
+            )
+            self.assertEqual(dispatch_non_dry.status_code, 422)
+            self.assertEqual(dispatch_non_dry.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
+            dispatch_bad_note = client.post(
+                f"/v1/prompt-registry/linked-action-execution-requests/{ready_request_id}/dispatch-attempts",
+                headers=headers,
+                json={"dry_run_only": True, "note": "token=abcd"},
+            )
+            self.assertEqual(dispatch_bad_note.status_code, 422)
+            self.assertEqual(dispatch_bad_note.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
+            dispatch_missing = client.post(
+                "/v1/prompt-registry/linked-action-execution-requests/999999/dispatch-attempts",
+                headers=headers,
+                json={"dry_run_only": True},
+            )
+            self.assertEqual(dispatch_missing.status_code, 404)
+            self.assertEqual(dispatch_missing.json()["error"]["code"], "PROMPT_REGISTRY_NOT_FOUND")
+
+            list_attempts = client.get("/v1/prompt-registry/linked-action-dispatch-attempts", headers=headers)
+            self.assertEqual(list_attempts.status_code, 200)
+            self.assertGreaterEqual(len(list_attempts.json()["items"]), 2)
+
+            by_prompt = client.get(
+                f"/v1/prompt-registry/linked-action-dispatch-attempts?prompt_id={prompt_id}",
+                headers=headers,
+            )
+            self.assertEqual(by_prompt.status_code, 200)
+            self.assertTrue(all(int(item["prompt_id"]) == prompt_id for item in by_prompt.json()["items"]))
+
+            by_action = client.get(
+                f"/v1/prompt-registry/linked-action-dispatch-attempts?action_id={action_id}",
+                headers=headers,
+            )
+            self.assertEqual(by_action.status_code, 200)
+            self.assertTrue(all(int(item["action_id"]) == action_id for item in by_action.json()["items"]))
+
+            by_request = client.get(
+                f"/v1/prompt-registry/linked-action-dispatch-attempts?execution_request_id={ready_request_id}",
+                headers=headers,
+            )
+            self.assertEqual(by_request.status_code, 200)
+            self.assertTrue(all(int(item["execution_request_id"]) == ready_request_id for item in by_request.json()["items"]))
+
+            by_status = client.get(
+                "/v1/prompt-registry/linked-action-dispatch-attempts?attempt_status=blocked",
+                headers=headers,
+            )
+            self.assertEqual(by_status.status_code, 200)
+            self.assertTrue(all(item["attempt_status"] == "blocked" for item in by_status.json()["items"]))
+
+            bad_int_filter = client.get(
+                "/v1/prompt-registry/linked-action-dispatch-attempts?prompt_id=not-int",
+                headers=headers,
+            )
+            self.assertEqual(bad_int_filter.status_code, 422)
+            self.assertEqual(bad_int_filter.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
+            bad_attempt_status = client.get(
+                "/v1/prompt-registry/linked-action-dispatch-attempts?attempt_status=bad",
+                headers=headers,
+            )
+            self.assertEqual(bad_attempt_status.status_code, 422)
+            self.assertEqual(bad_attempt_status.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
+            unauth_post = client.post(
+                f"/v1/prompt-registry/linked-action-execution-requests/{ready_request_id}/dispatch-attempts",
+                json={"dry_run_only": True},
+            )
+            self.assertEqual(unauth_post.status_code, 401)
+
+            unauth_get = client.get("/v1/prompt-registry/linked-action-dispatch-attempts")
+            self.assertEqual(unauth_get.status_code, 401)
+
     def test_linked_action_execution_request_dispatch_preview_endpoint(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)
