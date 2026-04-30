@@ -649,7 +649,13 @@ class PromptRegistryService:
         dispatch_status = str(plan.get("dispatch_status") or "BLOCKED")
         attempt_status = "dry_run_recorded" if dispatch_status == "READY" else "blocked"
         note = payload.get("note")
-        note_text = None if note is None else str(note)
+        note_text: str | None = None
+        if note is not None:
+            if not isinstance(note, str):
+                raise PromptRegistryValidationError("note must be plain text")
+            note_text = note
+            if re.search(r"(?i)(api[_-]?token|api[_-]?key|password|authorization|token)\s*[:=]", note_text):
+                raise PromptRegistryValidationError("note must not contain secret-like key syntax")
         now = self._now_iso()
         cur = self._conn.execute(
             """

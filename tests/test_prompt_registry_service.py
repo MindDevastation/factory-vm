@@ -1682,6 +1682,22 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertIsInstance(ready_attempt["diagnostics"], list)
                 with self.assertRaisesRegex(Exception, "dry_run_only must be true"):
                     svc.create_linked_action_dispatch_attempt(int(ready_req["id"]), {"dry_run_only": False}, "tester")
+                with self.assertRaisesRegex(Exception, "note must be plain text"):
+                    svc.create_linked_action_dispatch_attempt(
+                        int(ready_req["id"]), {"dry_run_only": True, "note": {"api_token": "SECRET-123"}}, "tester"
+                    )
+                with self.assertRaisesRegex(Exception, "note must be plain text"):
+                    svc.create_linked_action_dispatch_attempt(
+                        int(ready_req["id"]), {"dry_run_only": True, "note": ["token=abc"]}, "tester"
+                    )
+                with self.assertRaisesRegex(Exception, "note must not contain secret-like key syntax"):
+                    svc.create_linked_action_dispatch_attempt(
+                        int(ready_req["id"]), {"dry_run_only": True, "note": "api_token=SECRET"}, "tester"
+                    )
+                allowed_note = svc.create_linked_action_dispatch_attempt(
+                    int(ready_req["id"]), {"dry_run_only": True, "note": "operator approved dry run"}, "tester"
+                )
+                self.assertEqual(allowed_note["attempt_status"], "dry_run_recorded")
 
                 by_prompt = svc.list_linked_action_dispatch_attempts(prompt_id=prompt_id)
                 by_action = svc.list_linked_action_dispatch_attempts(action_id=int(ready_action["id"]))
