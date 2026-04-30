@@ -2558,6 +2558,33 @@ def migrate(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_prompt_linked_action_exec_requests_lookup
             ON prompt_linked_action_execution_requests(prompt_id, action_id, created_at DESC, id DESC);
 
+        CREATE TABLE IF NOT EXISTS prompt_linked_action_dispatch_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            execution_request_id INTEGER NOT NULL,
+            action_id INTEGER NOT NULL,
+            prompt_id INTEGER NOT NULL,
+            attempt_status TEXT NOT NULL,
+            attempted_by TEXT NOT NULL,
+            dispatch_status TEXT NOT NULL,
+            dispatch_kind TEXT NOT NULL,
+            dispatch_target TEXT NULL,
+            dry_run_only INTEGER NOT NULL DEFAULT 1,
+            plan_json TEXT NOT NULL DEFAULT '{}',
+            diagnostics_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(execution_request_id) REFERENCES prompt_linked_action_execution_requests(id) ON DELETE CASCADE,
+            FOREIGN KEY(action_id) REFERENCES prompt_linked_actions(id) ON DELETE CASCADE,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            CHECK(attempt_status IN ('dry_run_recorded','blocked')),
+            CHECK(dispatch_status IN ('READY','BLOCKED')),
+            CHECK(dry_run_only IN (1)),
+            CHECK(json_valid(plan_json)),
+            CHECK(json_valid(diagnostics_json))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_linked_action_dispatch_attempts_lookup
+            ON prompt_linked_action_dispatch_attempts(prompt_id, action_id, execution_request_id, attempt_status, created_at DESC, id DESC);
+
         """
     )
 
@@ -2577,6 +2604,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_prompt_bindings_schema(conn)
     _ensure_prompt_linked_actions_schema(conn)
     _ensure_prompt_linked_action_execution_requests_schema(conn)
+    _ensure_prompt_linked_action_dispatch_attempts_schema(conn)
     _ensure_prompt_usage_events_schema(conn)
     _backfill_video_language_values(conn)
 
@@ -2768,6 +2796,42 @@ def _ensure_prompt_linked_action_execution_requests_schema(conn: sqlite3.Connect
         """
         CREATE INDEX IF NOT EXISTS idx_prompt_linked_action_exec_requests_lookup
             ON prompt_linked_action_execution_requests(prompt_id, action_id, created_at DESC, id DESC)
+        """
+    )
+
+
+def _ensure_prompt_linked_action_dispatch_attempts_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prompt_linked_action_dispatch_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            execution_request_id INTEGER NOT NULL,
+            action_id INTEGER NOT NULL,
+            prompt_id INTEGER NOT NULL,
+            attempt_status TEXT NOT NULL,
+            attempted_by TEXT NOT NULL,
+            dispatch_status TEXT NOT NULL,
+            dispatch_kind TEXT NOT NULL,
+            dispatch_target TEXT NULL,
+            dry_run_only INTEGER NOT NULL DEFAULT 1,
+            plan_json TEXT NOT NULL DEFAULT '{}',
+            diagnostics_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(execution_request_id) REFERENCES prompt_linked_action_execution_requests(id) ON DELETE CASCADE,
+            FOREIGN KEY(action_id) REFERENCES prompt_linked_actions(id) ON DELETE CASCADE,
+            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            CHECK(attempt_status IN ('dry_run_recorded','blocked')),
+            CHECK(dispatch_status IN ('READY','BLOCKED')),
+            CHECK(dry_run_only IN (1)),
+            CHECK(json_valid(plan_json)),
+            CHECK(json_valid(diagnostics_json))
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_prompt_linked_action_dispatch_attempts_lookup
+            ON prompt_linked_action_dispatch_attempts(prompt_id, action_id, execution_request_id, attempt_status, created_at DESC, id DESC)
         """
     )
 

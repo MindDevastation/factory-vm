@@ -686,6 +686,7 @@
 
 <h3>Linked action dispatch plan preview</h3>
 <p class="muted"><strong>This is a dispatch preview only. No runtime execution is performed.</strong></p>
+<p class="muted"><strong>Dry-run ledger only. No runtime execution is performed.</strong></p>
 
 {% if dispatch_error %}
 <p style="color:#991b1b;"><strong>Dispatch preview error:</strong> {{ dispatch_error }}</p>
@@ -734,6 +735,51 @@
     </tr>
     {% else %}
     <tr><td colspan="3">No diagnostics.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h4>Record dry-run dispatch attempt</h4>
+{% if dispatch_attempt_success %}
+<p style="color:#166534;"><strong>{{ dispatch_attempt_success }}</strong></p>
+{% endif %}
+{% if dispatch_attempt_error %}
+<p style="color:#991b1b;"><strong>Dispatch attempt error:</strong> {{ dispatch_attempt_error }}</p>
+{% endif %}
+<form method="post" action="/ui/prompt-registry/linked-action-requests/{{ dispatch_preview.execution_request_id }}/dispatch-attempts">
+  <label for="dispatch-attempt-note">Operator note (optional)</label><br>
+  <textarea id="dispatch-attempt-note" name="note" rows="3" style="width:100%;">{{ dispatch_attempt_note if dispatch_attempt_note else "" }}</textarea><br>
+  <button type="submit">Record dry-run dispatch attempt</button>
+</form>
+
+<h4>Recent dispatch attempts</h4>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Created at</th>
+      <th>Attempt status</th>
+      <th>Dispatch status</th>
+      <th>Dispatch kind</th>
+      <th>Dispatch target</th>
+      <th>Attempted by</th>
+      <th>Diagnostics summary</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in dispatch_attempts %}
+    <tr>
+      <td>{{ item.id }}</td>
+      <td>{{ item.created_at }}</td>
+      <td>{{ item.attempt_status }}</td>
+      <td>{{ item.dispatch_status }}</td>
+      <td>{{ item.dispatch_kind }}</td>
+      <td>{{ item.dispatch_target if item.dispatch_target else "—" }}</td>
+      <td>{{ item.attempted_by }}</td>
+      <td>{{ item.diagnostics_summary }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8">No dispatch attempts recorded yet.</td></tr>
     {% endfor %}
   </tbody>
 </table>

@@ -638,6 +638,110 @@ class PromptRegistryService:
             "safe_config_summary": self._safe_linked_action_config_summary(action.get("config")),
         }
 
+    def create_linked_action_dispatch_attempt(
+        self, execution_request_id: int, payload: dict[str, Any], actor: str
+    ) -> dict[str, Any]:
+        actor_id = self._validated_actor(actor)
+        dry_run_only = payload.get("dry_run_only", True)
+        if not bool(dry_run_only):
+            raise PromptRegistryValidationError("dry_run_only must be true")
+        plan = self.preview_linked_action_dispatch_plan(execution_request_id)
+        dispatch_status = str(plan.get("dispatch_status") or "BLOCKED")
+        attempt_status = "dry_run_recorded" if dispatch_status == "READY" else "blocked"
+        note = payload.get("note")
+        note_text: str | None = None
+        if note is not None:
+            if not isinstance(note, str):
+                raise PromptRegistryValidationError("note must be plain text")
+            note_text = note
+            if re.search(r"(?i)(api[_-]?token|api[_-]?key|password|authorization|token)\s*[:=]", note_text):
+                raise PromptRegistryValidationError("note must not contain secret-like key syntax")
+        now = self._now_iso()
+        cur = self._conn.execute(
+            """
+            INSERT INTO prompt_linked_action_dispatch_attempts(
+                execution_request_id,action_id,prompt_id,attempt_status,attempted_by,dispatch_status,dispatch_kind,
+                dispatch_target,dry_run_only,plan_json,diagnostics_json,created_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                int(execution_request_id),
+                int(plan["action_id"]),
+                int(plan["prompt_id"]),
+                attempt_status,
+                actor_id,
+                dispatch_status,
+                str(plan.get("dispatch_kind") or ""),
+                self._nullable_text(plan.get("dispatch_target")),
+                1,
+                json.dumps({**plan, "note": note_text}, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                json.dumps(plan.get("diagnostics") or [], ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                now,
+            ),
+        )
+        attempt_id = int(cur.lastrowid)
+        self._write_audit_event(
+            prompt_id=int(plan["prompt_id"]),
+            event_type="linked_action_dispatch_attempt_recorded",
+            actor=actor_id,
+            payload={"execution_request_id": int(execution_request_id), "dispatch_attempt_id": attempt_id},
+        )
+        return self.list_linked_action_dispatch_attempts(execution_request_id=int(execution_request_id), limit=1)[0]
+
+    def list_linked_action_dispatch_attempts(
+        self,
+        prompt_id: int | None = None,
+        action_id: int | None = None,
+        execution_request_id: int | None = None,
+        attempt_status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        parsed_limit = int(limit)
+        if parsed_limit <= 0 or parsed_limit > 200:
+            raise PromptRegistryValidationError("limit must be between 1 and 200")
+        normalized_attempt_status = None
+        if attempt_status is not None:
+            normalized_attempt_status = str(attempt_status).strip()
+            if normalized_attempt_status not in {"dry_run_recorded", "blocked"}:
+                raise PromptRegistryValidationError("attempt_status must be one of dry_run_recorded, blocked")
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if prompt_id is not None:
+            where_parts.append("prompt_id = ?")
+            params.append(int(prompt_id))
+        if action_id is not None:
+            where_parts.append("action_id = ?")
+            params.append(int(action_id))
+        if execution_request_id is not None:
+            where_parts.append("execution_request_id = ?")
+            params.append(int(execution_request_id))
+        if normalized_attempt_status is not None:
+            where_parts.append("attempt_status = ?")
+            params.append(normalized_attempt_status)
+        where_clause = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        rows = list(
+            self._conn.execute(
+                f"SELECT * FROM prompt_linked_action_dispatch_attempts{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*params, parsed_limit),
+            ).fetchall()
+        )
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["dry_run_only"] = bool(int(item.get("dry_run_only") or 0))
+            try:
+                item["plan"] = json.loads(str(item.get("plan_json") or "{}"))
+            except json.JSONDecodeError:
+                item["plan"] = {}
+            try:
+                decoded = json.loads(str(item.get("diagnostics_json") or "[]"))
+                item["diagnostics"] = decoded if isinstance(decoded, list) else []
+            except json.JSONDecodeError:
+                item["diagnostics"] = []
+            items.append(item)
+        return items
+
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         self.get_record(prompt_id)

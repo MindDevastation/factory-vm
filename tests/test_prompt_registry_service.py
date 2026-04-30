@@ -1624,3 +1624,96 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(after_requests, before_requests)
             finally:
                 conn.close()
+
+    def test_linked_action_dispatch_attempts_table_constraints_smoke(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record(
+                    {"slug": "dispatch-constraints", "code": "PR-DISPATCH-C", "title": "Dispatch Constraints", "record_type": "prompt_template", "status": "draft"},
+                    actor="tester",
+                )
+                action = svc.create_linked_action(
+                    int(rec["id"]),
+                    {"action_key": "dc", "action_type": "ui_action", "target_kind": "route", "target_ref": "/ui/x", "config_json": {}},
+                    "tester",
+                )
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True}, "tester")
+                now = svc._now_iso()
+                with self.assertRaises(Exception):
+                    conn.execute("INSERT INTO prompt_linked_action_dispatch_attempts(execution_request_id,action_id,prompt_id,attempt_status,attempted_by,dispatch_status,dispatch_kind,dry_run_only,plan_json,diagnostics_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (int(req["id"]), int(action["id"]), int(rec["id"]), "bad", "a", "READY", "k", 1, "{}", "[]", now))
+                with self.assertRaises(Exception):
+                    conn.execute("INSERT INTO prompt_linked_action_dispatch_attempts(execution_request_id,action_id,prompt_id,attempt_status,attempted_by,dispatch_status,dispatch_kind,dry_run_only,plan_json,diagnostics_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (int(req["id"]), int(action["id"]), int(rec["id"]), "blocked", "a", "BAD", "k", 1, "{}", "[]", now))
+                with self.assertRaises(Exception):
+                    conn.execute("INSERT INTO prompt_linked_action_dispatch_attempts(execution_request_id,action_id,prompt_id,attempt_status,attempted_by,dispatch_status,dispatch_kind,dry_run_only,plan_json,diagnostics_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (int(req["id"]), int(action["id"]), int(rec["id"]), "blocked", "a", "BLOCKED", "k", 0, "{}", "[]", now))
+                with self.assertRaises(Exception):
+                    conn.execute("INSERT INTO prompt_linked_action_dispatch_attempts(execution_request_id,action_id,prompt_id,attempt_status,attempted_by,dispatch_status,dispatch_kind,dry_run_only,plan_json,diagnostics_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (int(req["id"]), int(action["id"]), int(rec["id"]), "blocked", "a", "BLOCKED", "k", 1, "{", "[]", now))
+                with self.assertRaises(Exception):
+                    conn.execute("INSERT INTO prompt_linked_action_dispatch_attempts(execution_request_id,action_id,prompt_id,attempt_status,attempted_by,dispatch_status,dispatch_kind,dry_run_only,plan_json,diagnostics_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (int(req["id"]), int(action["id"]), int(rec["id"]), "blocked", "a", "BLOCKED", "k", 1, "{}", "[", now))
+            finally:
+                conn.close()
+
+    def test_linked_action_dispatch_attempts_service_foundation(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record(
+                    {"slug": "dispatch-service", "code": "PR-DISPATCH-SVC", "title": "Dispatch Service", "record_type": "prompt_template", "status": "draft"},
+                    actor="tester",
+                )
+                prompt_id = int(rec["id"])
+                ready_action = svc.create_linked_action(prompt_id, {"action_key": "ready", "action_type": "ui_action", "target_kind": "route", "target_ref": "/ui/ready", "config_json": {}}, "tester")
+                blocked_action = svc.create_linked_action(prompt_id, {"action_key": "blocked", "action_type": "ui_action", "target_kind": "route", "target_ref": "", "config_json": {}}, "tester")
+                ready_req = svc.create_linked_action_execution_request(int(ready_action["id"]), {"confirm_execution": True}, "tester")
+                blocked_req = svc.create_linked_action_execution_request(int(blocked_action["id"]), {"confirm_execution": True}, "tester")
+                before_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                before_req_status = conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(ready_req["id"]),)).fetchone()["request_status"]
+
+                ready_attempt = svc.create_linked_action_dispatch_attempt(int(ready_req["id"]), {"dry_run_only": True, "note": "ok"}, "tester")
+                blocked_attempt = svc.create_linked_action_dispatch_attempt(int(blocked_req["id"]), {"dry_run_only": True}, "tester")
+                self.assertEqual(ready_attempt["attempt_status"], "dry_run_recorded")
+                self.assertEqual(blocked_attempt["attempt_status"], "blocked")
+                self.assertTrue(ready_attempt["dry_run_only"])
+                self.assertIsInstance(ready_attempt["plan"], dict)
+                self.assertIsInstance(ready_attempt["diagnostics"], list)
+                with self.assertRaisesRegex(Exception, "dry_run_only must be true"):
+                    svc.create_linked_action_dispatch_attempt(int(ready_req["id"]), {"dry_run_only": False}, "tester")
+                with self.assertRaisesRegex(Exception, "note must be plain text"):
+                    svc.create_linked_action_dispatch_attempt(
+                        int(ready_req["id"]), {"dry_run_only": True, "note": {"api_token": "SECRET-123"}}, "tester"
+                    )
+                with self.assertRaisesRegex(Exception, "note must be plain text"):
+                    svc.create_linked_action_dispatch_attempt(
+                        int(ready_req["id"]), {"dry_run_only": True, "note": ["token=abc"]}, "tester"
+                    )
+                with self.assertRaisesRegex(Exception, "note must not contain secret-like key syntax"):
+                    svc.create_linked_action_dispatch_attempt(
+                        int(ready_req["id"]), {"dry_run_only": True, "note": "api_token=SECRET"}, "tester"
+                    )
+                allowed_note = svc.create_linked_action_dispatch_attempt(
+                    int(ready_req["id"]), {"dry_run_only": True, "note": "operator approved dry run"}, "tester"
+                )
+                self.assertEqual(allowed_note["attempt_status"], "dry_run_recorded")
+
+                by_prompt = svc.list_linked_action_dispatch_attempts(prompt_id=prompt_id)
+                by_action = svc.list_linked_action_dispatch_attempts(action_id=int(ready_action["id"]))
+                by_req = svc.list_linked_action_dispatch_attempts(execution_request_id=int(ready_req["id"]))
+                by_status = svc.list_linked_action_dispatch_attempts(attempt_status="blocked")
+                self.assertTrue(by_prompt and by_action and by_req and by_status)
+                self.assertTrue(all(item["attempt_status"] == "blocked" for item in by_status))
+                with self.assertRaisesRegex(Exception, "attempt_status must be one of"):
+                    svc.list_linked_action_dispatch_attempts(attempt_status="bad")
+                with self.assertRaisesRegex(Exception, "limit must be between 1 and 200"):
+                    svc.list_linked_action_dispatch_attempts(limit=201)
+
+                after_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                after_req_status = conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(ready_req["id"]),)).fetchone()["request_status"]
+                self.assertEqual(before_usage, after_usage)
+                self.assertEqual(before_req_status, after_req_status)
+                self.assertTrue(any(item["event_type"] == "linked_action_dispatch_attempt_recorded" for item in svc.list_audit_events(prompt_id)))
+            finally:
+                conn.close()
