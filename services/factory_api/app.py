@@ -6402,12 +6402,25 @@ def _ui_prompt_registry_dispatch_preview_context(
     request: Request,
     *,
     dispatch_preview: dict[str, Any] | None = None,
+    dispatch_attempts: list[dict[str, Any]] | None = None,
+    dispatch_attempt_note: str = "",
+    dispatch_attempt_error: str | None = None,
+    dispatch_attempt_success: str | None = None,
     dispatch_error: str | None = None,
 ) -> dict[str, Any]:
+    rendered_attempts: list[dict[str, Any]] = []
+    for row in dispatch_attempts or []:
+        item = dict(row)
+        item["diagnostics_summary"] = _ui_prompt_registry_safe_summary(item.get("diagnostics"))
+        rendered_attempts.append(item)
     return {
         "request": request,
         "mode": "linked_action_dispatch_preview",
         "dispatch_preview": dispatch_preview or {},
+        "dispatch_attempts": rendered_attempts,
+        "dispatch_attempt_note": dispatch_attempt_note,
+        "dispatch_attempt_error": dispatch_attempt_error,
+        "dispatch_attempt_success": dispatch_attempt_success,
         "dispatch_error": dispatch_error,
         "success_message": None,
         "error_message": None,
@@ -6604,15 +6617,64 @@ def ui_prompt_registry_linked_action_dispatch_preview_page(request: Request, req
         service = PromptRegistryService(conn)
         try:
             dispatch_preview = service.preview_linked_action_dispatch_plan(request_id)
+            dispatch_attempts = service.list_linked_action_dispatch_attempts(execution_request_id=request_id, limit=10)
             return templates.TemplateResponse(
                 "prompt_registry.html",
-                _ui_prompt_registry_dispatch_preview_context(request, dispatch_preview=dispatch_preview),
+                _ui_prompt_registry_dispatch_preview_context(request, dispatch_preview=dispatch_preview, dispatch_attempts=dispatch_attempts),
             )
         except (PromptRegistryNotFoundError, PromptRegistryValidationError, ValueError) as exc:
             return templates.TemplateResponse(
                 "prompt_registry.html",
                 _ui_prompt_registry_dispatch_preview_context(request, dispatch_error=str(exc)),
             )
+    finally:
+        conn.close()
+
+
+@app.post("/ui/prompt-registry/linked-action-requests/{request_id}/dispatch-attempts", response_class=HTMLResponse)
+async def ui_prompt_registry_create_dispatch_attempt_action(request: Request, request_id: int, _: bool = Depends(require_basic_auth(env))):
+    raw_body = (await request.body()).decode("utf-8", errors="ignore")
+    parsed_form = parse_qs(raw_body, keep_blank_values=True)
+    note = str((parsed_form.get("note") or [""])[0]).strip()
+    payload: dict[str, Any] = {"dry_run_only": True}
+    if note:
+        payload["note"] = note
+
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        dispatch_preview = service.preview_linked_action_dispatch_plan(request_id)
+        try:
+            created = service.create_linked_action_dispatch_attempt(request_id, payload, _ui_prompt_registry_actor())
+            dispatch_attempts = service.list_linked_action_dispatch_attempts(execution_request_id=request_id, limit=10)
+            return templates.TemplateResponse(
+                "prompt_registry.html",
+                _ui_prompt_registry_dispatch_preview_context(
+                    request,
+                    dispatch_preview=dispatch_preview,
+                    dispatch_attempts=dispatch_attempts,
+                    dispatch_attempt_success=f"Dispatch attempt recorded: #{int(created['id'])} ({created['attempt_status']})",
+                ),
+            )
+        except (PromptRegistryNotFoundError, PromptRegistryValidationError, ValueError) as exc:
+            error_text = str(exc)
+            safe_note = "" if ("secret/token/password-like" in error_text or "secret-like key syntax" in error_text) else note
+            dispatch_attempts = service.list_linked_action_dispatch_attempts(execution_request_id=request_id, limit=10)
+            return templates.TemplateResponse(
+                "prompt_registry.html",
+                _ui_prompt_registry_dispatch_preview_context(
+                    request,
+                    dispatch_preview=dispatch_preview,
+                    dispatch_attempts=dispatch_attempts,
+                    dispatch_attempt_note=safe_note,
+                    dispatch_attempt_error=error_text,
+                ),
+            )
+    except (PromptRegistryNotFoundError, PromptRegistryValidationError, ValueError) as exc:
+        return templates.TemplateResponse(
+            "prompt_registry.html",
+            _ui_prompt_registry_dispatch_preview_context(request, dispatch_error=str(exc)),
+        )
     finally:
         conn.close()
 
