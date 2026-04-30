@@ -18,6 +18,7 @@
   · <a href="/ui/prompt-registry/import">Import registry JSON</a>
   · <a href="/ui/prompt-registry/usage">Usage Diagnostics</a>
   · <a href="/ui/prompt-registry/linked-action-requests">Linked action requests</a>
+  · <a href="/ui/prompt-registry/linked-action-dispatch-attempts">Dispatch attempts</a>
   · Import API entry points:
   <code>POST /v1/prompt-registry/import/preview</code>,
   <code>POST /v1/prompt-registry/import/confirm</code>
@@ -184,6 +185,7 @@
   <a href="/ui/prompt-registry">← Back to list</a>
   · <a href="/ui/prompt-registry/usage?prompt_id={{ record.id }}">Usage for this prompt</a>
   · <a href="/ui/prompt-registry/linked-action-requests?prompt_id={{ record.id }}">Linked action requests for this prompt</a>
+  · <a href="/ui/prompt-registry/linked-action-dispatch-attempts?prompt_id={{ record.id }}">Dispatch attempts for this prompt</a>
   · <a href="/ui/prompt-registry/{{ record.id }}/audit">Audit timeline</a>
   · <a href="/v1/prompt-registry/export?prompt_id={{ record.id }}">Export this prompt</a>
   · <a href="/v1/prompt-registry/records/{{ record.id }}/audit">Audit diagnostics API</a>
@@ -617,6 +619,7 @@
 {% if mode == "linked_action_requests" %}
 <p>
   <a href="/ui/prompt-registry">← Back to list</a>
+  · <a href="/ui/prompt-registry/linked-action-dispatch-attempts">Dispatch attempts</a>
 </p>
 
 <h3>Linked action execution request review</h3>
@@ -670,6 +673,7 @@
         <br><a href="/ui/prompt-registry/{{ item.prompt_id }}/linked-actions/{{ item.action_id }}/preview">Action preview</a>
         {% endif %}
         <br><a href="/ui/prompt-registry/linked-action-requests/{{ item.id }}/dispatch-preview">Dispatch preview</a>
+        <br><a href="/ui/prompt-registry/linked-action-dispatch-attempts?execution_request_id={{ item.id }}">Dispatch attempts</a>
       </td>
     </tr>
     {% else %}
@@ -682,6 +686,7 @@
 {% if mode == "linked_action_dispatch_preview" %}
 <p>
   <a href="/ui/prompt-registry/linked-action-requests">← Back to linked action request review</a>
+  · <a href="/ui/prompt-registry/linked-action-dispatch-attempts?execution_request_id={{ dispatch_preview.execution_request_id if dispatch_preview else "" }}">All dispatch attempts for this request</a>
 </p>
 
 <h3>Linked action dispatch plan preview</h3>
@@ -784,6 +789,44 @@
   </tbody>
 </table>
 {% endif %}
+{% endif %}
+
+
+{% if mode == "linked_action_dispatch_attempts" %}
+<p>
+  <a href="/ui/prompt-registry">← Back to list</a>
+  · <a href="/ui/prompt-registry/linked-action-requests">Linked action request review</a>
+</p>
+
+<h3>Linked action dispatch attempt review</h3>
+<form method="get" action="/ui/prompt-registry/linked-action-dispatch-attempts">
+  <p><label>prompt_id (optional)</label><br><input name="prompt_id" value="{{ attempt_filters.prompt_id_raw }}"></p>
+  <p><label>action_id (optional)</label><br><input name="action_id" value="{{ attempt_filters.action_id_raw }}"></p>
+  <p><label>execution_request_id (optional)</label><br><input name="execution_request_id" value="{{ attempt_filters.execution_request_id_raw }}"></p>
+  <p><label>attempt_status (optional)</label><br><input name="attempt_status" value="{{ attempt_filters.attempt_status or '' }}" placeholder="dry_run_recorded / blocked"></p>
+  <p><label>limit</label><br><input type="number" min="1" max="200" name="limit" value="{{ attempt_filters.limit }}"></p>
+  <button type="submit">Apply filters</button>
+</form>
+
+{% if attempts_error %}
+<p style="color:#991b1b;"><strong>Dispatch attempts error:</strong> {{ attempts_error }}</p>
+{% endif %}
+
+<p class="muted">Read-only review table. Diagnostics are compact safe summaries only; raw plan/diagnostics JSON is not dumped here.</p>
+<table>
+  <thead><tr><th>ID</th><th>Created at</th><th>Prompt ID</th><th>Action ID</th><th>Execution request ID</th><th>Attempt status</th><th>Attempted by</th><th>Dispatch status</th><th>Dispatch kind</th><th>Dispatch target</th><th>Diagnostics summary</th><th>Links</th></tr></thead>
+  <tbody>
+    {% for item in dispatch_attempt_items %}
+    <tr>
+      <td>{{ item.id }}</td><td>{{ item.created_at }}</td><td>{{ item.prompt_id }}</td><td>{{ item.action_id }}</td><td>{{ item.execution_request_id }}</td>
+      <td>{{ item.attempt_status }}</td><td>{{ item.attempted_by }}</td><td>{{ item.dispatch_status }}</td><td>{{ item.dispatch_kind }}</td><td>{{ item.dispatch_target if item.dispatch_target else "—" }}</td><td>{{ item.diagnostics_summary }}</td>
+      <td><a href="/ui/prompt-registry/{{ item.prompt_id }}">Prompt</a><br><a href="/ui/prompt-registry/linked-action-requests/{{ item.execution_request_id }}/dispatch-preview">Dispatch preview</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="12">No dispatch attempts for the selected filters.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% endif %}
 
 {% if mode == "audit" %}

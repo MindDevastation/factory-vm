@@ -48,6 +48,7 @@ ROUTE_METADATA_REGISTRY: tuple[RouteMetadata, ...] = (
     RouteMetadata("PROMPT_REGISTRY_IMPORT", "/ui/prompt-registry/import", "Prompt Import", "workspaces", "entity_drilldown", parent_route_key="PROMPT_REGISTRY"),
     RouteMetadata("PROMPT_REGISTRY_USAGE", "/ui/prompt-registry/usage", "Prompt Usage Diagnostics", "workspaces", "entity_drilldown", parent_route_key="PROMPT_REGISTRY"),
     RouteMetadata("PROMPT_REGISTRY_LINKED_ACTION_REQUESTS", "/ui/prompt-registry/linked-action-requests", "Prompt Linked Action Requests", "workspaces", "entity_drilldown", parent_route_key="PROMPT_REGISTRY"),
+    RouteMetadata("PROMPT_REGISTRY_DISPATCH_ATTEMPTS", "/ui/prompt-registry/linked-action-dispatch-attempts", "Prompt Dispatch Attempts", "workspaces", "entity_drilldown", parent_route_key="PROMPT_REGISTRY"),
     RouteMetadata("PROMPT_REGISTRY_DETAIL", "/ui/prompt-registry/", "Prompt Detail", "entities", "entity_drilldown", parent_route_key="PROMPT_REGISTRY"),
 )
 
