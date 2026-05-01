@@ -846,6 +846,33 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(missing.status_code, 404)
             self.assertEqual(missing.json()["error"]["code"], "PROMPT_REGISTRY_NOT_FOUND")
 
+
+    def test_dispatch_execution_preflight_endpoint_read_only(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+            created = client.post("/v1/prompt-registry/records", headers=headers, json={"slug": "mf25-api", "code": "PR-MF25-API", "title": "MF25 API", "record_type": "prompt_template", "status": "draft"})
+            prompt_id = int(created.json()["id"])
+            action = client.post(f"/v1/prompt-registry/records/{prompt_id}/linked-actions", headers=headers, json={"action_key": "mf25-action", "action_type": "ui_action", "action_status": "active", "target_kind": "route", "target_ref": "/ui/prompt-registry", "config_json": {}})
+            action_id = int(action.json()["id"])
+            req = client.post(f"/v1/prompt-registry/linked-actions/{action_id}/execution-requests", headers=headers, json={"confirm_execution": True})
+            request_id = int(req.json()["id"])
+            attempt = client.post(f"/v1/prompt-registry/linked-action-execution-requests/{request_id}/dispatch-attempts", headers=headers, json={"dry_run_only": True})
+            attempt_id = int(attempt.json()["id"])
+
+            ok = client.get(f"/v1/prompt-registry/linked-action-dispatch-attempts/{attempt_id}/execution-preflight", headers=headers)
+            self.assertEqual(ok.status_code, 200)
+            body = ok.json()
+            self.assertIn(body["preflight_status"], ("BLOCKED", "READY_BUT_EXECUTION_DISABLED"))
+            self.assertFalse(body["execution_enabled"])
+            self.assertFalse(body["would_write_audit"])
+            self.assertEqual(body["reason_code"], "DISPATCH_EXECUTION_NOT_IMPLEMENTED")
+
+            missing = client.get("/v1/prompt-registry/linked-action-dispatch-attempts/999999/execution-preflight", headers=headers)
+            self.assertEqual(missing.status_code, 404)
+            self.assertEqual(missing.json()["error"]["code"], "PROMPT_REGISTRY_NOT_FOUND")
+
     def test_resolve_rejects_partial_item_context_and_explains_same_scope_tie_break(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)

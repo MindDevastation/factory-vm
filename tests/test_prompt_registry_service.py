@@ -1931,3 +1931,33 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(before_req_status, after_req_status)
             finally:
                 conn.close()
+
+    def test_preview_linked_action_dispatch_execution_preflight_read_only(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                prompt = svc.create_record({"slug": "mf25-svc", "code": "PR-MF25-SVC", "title": "mf25", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action = svc.create_linked_action(int(prompt["id"]), {"action_key": "mf25", "action_type": "ui_action", "target_kind": "route", "target_ref": "/ui/prompt-registry", "action_status": "active", "config_json": {}}, actor="tester")
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True}, actor="tester")
+                attempt = svc.create_linked_action_dispatch_attempt(int(req["id"]), {"dry_run_only": True}, actor="tester")
+                before_audit = conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"]
+                before_usage = conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"]
+                before_status = conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"]
+                preview = svc.preview_linked_action_dispatch_execution_preflight(int(attempt["id"]))
+                self.assertIn(preview["preflight_status"], ("BLOCKED", "READY_BUT_EXECUTION_DISABLED"))
+                self.assertFalse(preview["execution_enabled"])
+                self.assertFalse(preview["would_write_audit"])
+                self.assertEqual(preview["reason_code"], "DISPATCH_EXECUTION_NOT_IMPLEMENTED")
+                codes = [row.get("code") for row in preview["notes"] if isinstance(row, dict)]
+                self.assertIn("PREFLIGHT_SUMMARY_ONLY", codes)
+                after_audit = conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"]
+                after_usage = conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"]
+                after_status = conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"]
+                self.assertEqual(before_audit, after_audit)
+                self.assertEqual(before_usage, after_usage)
+                self.assertEqual(before_status, after_status)
+            finally:
+                conn.close()
+

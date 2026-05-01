@@ -1032,6 +1032,95 @@ class PromptRegistryService:
             "notes": notes,
         }
 
+
+    def preview_linked_action_dispatch_execution_preflight(self, attempt_id: int) -> dict[str, Any]:
+        attempt = self.get_linked_action_dispatch_attempt(attempt_id)
+        recheck = self.recheck_linked_action_dispatch_attempt(attempt_id)
+        readiness = self.evaluate_linked_action_dispatch_readiness(attempt_id)
+        capability = self.evaluate_linked_action_dispatch_execution_capability(attempt_id)
+        execution_guard = self.guard_linked_action_dispatch_execution(attempt_id, payload={}, actor="system")
+        audit_preview = self.preview_linked_action_dispatch_execution_audit(attempt_id)
+
+        def _codes(items: Any) -> list[str]:
+            if not isinstance(items, list):
+                return []
+            out: list[str] = []
+            for row in items:
+                if isinstance(row, dict):
+                    code = row.get("code")
+                    if isinstance(code, str) and code and code not in out:
+                        out.append(code)
+            return out
+
+        blocking_codes: list[str] = []
+        for codes in (
+            _codes(readiness.get("blockers")),
+            _codes(capability.get("blockers")),
+            _codes(execution_guard.get("blockers")),
+            _codes(audit_preview.get("blockers")),
+        ):
+            for code in codes:
+                if code not in blocking_codes:
+                    blocking_codes.append(code)
+
+        warning_codes: list[str] = []
+        for codes in (
+            _codes(readiness.get("warnings")),
+            _codes(capability.get("warnings")),
+            _codes(execution_guard.get("warnings")),
+            _codes(audit_preview.get("warnings")),
+        ):
+            for code in codes:
+                if code not in warning_codes:
+                    warning_codes.append(code)
+
+        readiness_status = readiness.get("readiness_status")
+        capability_status = capability.get("capability_status")
+        execution_status = execution_guard.get("execution_status")
+        preflight_status = (
+            "READY_BUT_EXECUTION_DISABLED"
+            if readiness_status == "ELIGIBLE" and capability_status == "DISABLED" and execution_status == "DISABLED"
+            else "BLOCKED"
+        )
+
+        notes = [
+            {"code": "PREFLIGHT_SUMMARY_ONLY", "message": "Preflight summary only. No runtime execution is performed."},
+            {"code": "EXECUTION_DISABLED_IN_THIS_RELEASE", "message": "Execution remains disabled in this release."},
+        ]
+        for row in audit_preview.get("notes") if isinstance(audit_preview.get("notes"), list) else []:
+            if isinstance(row, dict):
+                code = row.get("code")
+                if code not in {"PREFLIGHT_SUMMARY_ONLY", "EXECUTION_DISABLED_IN_THIS_RELEASE"}:
+                    notes.append(row)
+
+        return {
+            "attempt_id": int(attempt["id"]),
+            "preflight_status": preflight_status,
+            "execution_enabled": False,
+            "reason_code": "DISPATCH_EXECUTION_NOT_IMPLEMENTED",
+            "readiness_status": readiness_status,
+            "recheck_status": recheck.get("recheck_status"),
+            "capability_status": capability_status,
+            "execution_status": execution_status,
+            "audit_preview_status": audit_preview.get("preview_status"),
+            "would_write_audit": False,
+            "blocking_codes": blocking_codes,
+            "warning_codes": warning_codes,
+            "summary": {
+                "attempt_status": attempt.get("attempt_status"),
+                "dispatch_status": attempt.get("dispatch_status"),
+                "dispatch_kind": attempt.get("dispatch_kind"),
+                "dispatch_target": attempt.get("dispatch_target"),
+                "support_level": capability.get("support_level"),
+                "readiness_level": readiness.get("readiness_level"),
+                "next_allowed_action": execution_guard.get("next_allowed_action"),
+            },
+            "blockers": [row for row in (audit_preview.get("blockers") if isinstance(audit_preview.get("blockers"), list) else readiness.get("blockers") if isinstance(readiness.get("blockers"), list) else []) if isinstance(row, dict)],
+            "warnings": [row for row in (audit_preview.get("warnings") if isinstance(audit_preview.get("warnings"), list) else readiness.get("warnings") if isinstance(readiness.get("warnings"), list) else []) if isinstance(row, dict)],
+            "notes": notes,
+            "recommended_operator_action": "review_readiness",
+        }
+
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         self.get_record(prompt_id)
