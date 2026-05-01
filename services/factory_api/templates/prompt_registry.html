@@ -880,6 +880,41 @@
     <tr><td>safe_config_summary</td><td>{{ dispatch_attempt_detail.safe_plan.safe_config_summary }}</td></tr>
   </tbody>
 </table>
+
+<h4>Current recheck</h4>
+<p class="muted">Read-only recheck. No runtime execution is performed.</p>
+<table>
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>recheck_status</td><td>{{ dispatch_attempt_detail.recheck.recheck_status if dispatch_attempt_detail.recheck.recheck_status else "—" }}</td></tr>
+    <tr><td>saved_dispatch_status</td><td>{{ dispatch_attempt_detail.recheck.saved_dispatch_status if dispatch_attempt_detail.recheck.saved_dispatch_status else "—" }}</td></tr>
+    <tr><td>current_dispatch_status</td><td>{{ dispatch_attempt_detail.recheck.current_dispatch_status if dispatch_attempt_detail.recheck.current_dispatch_status else "—" }}</td></tr>
+    <tr><td>saved_dispatch_kind</td><td>{{ dispatch_attempt_detail.recheck.saved_dispatch_kind if dispatch_attempt_detail.recheck.saved_dispatch_kind else "—" }}</td></tr>
+    <tr><td>current_dispatch_kind</td><td>{{ dispatch_attempt_detail.recheck.current_dispatch_kind if dispatch_attempt_detail.recheck.current_dispatch_kind else "—" }}</td></tr>
+    <tr><td>saved_dispatch_target</td><td>{{ dispatch_attempt_detail.recheck.saved_dispatch_target if dispatch_attempt_detail.recheck.saved_dispatch_target else "—" }}</td></tr>
+    <tr><td>current_dispatch_target</td><td>{{ dispatch_attempt_detail.recheck.current_dispatch_target if dispatch_attempt_detail.recheck.current_dispatch_target else "—" }}</td></tr>
+    <tr><td>saved_reason_codes</td><td>{{ dispatch_attempt_detail.recheck.saved_reason_codes if dispatch_attempt_detail.recheck.saved_reason_codes else "—" }}</td></tr>
+    <tr><td>current_reason_codes</td><td>{{ dispatch_attempt_detail.recheck.current_reason_codes if dispatch_attempt_detail.recheck.current_reason_codes else "—" }}</td></tr>
+    <tr><td>changed_fields</td><td>{{ dispatch_attempt_detail.recheck.changed_fields if dispatch_attempt_detail.recheck.changed_fields else "—" }}</td></tr>
+  </tbody>
+</table>
+
+<h4>Recheck diagnostics (safe summary)</h4>
+<p class="muted">{{ dispatch_attempt_detail.recheck.diagnostics_summary }}</p>
+<table>
+  <thead><tr><th>Code</th><th>Severity</th><th>Message</th></tr></thead>
+  <tbody>
+    {% for item in dispatch_attempt_detail.recheck.diagnostics %}
+    <tr>
+      <td>{{ item.code if item.code else "—" }}</td>
+      <td>{{ item.severity if item.severity else "—" }}</td>
+      <td>{{ item.message if item.message else "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">No diagnostics.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% endif %}
 {% endif %}
 

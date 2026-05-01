@@ -6492,6 +6492,22 @@ def _ui_prompt_registry_dispatch_attempt_detail_context(
         "safe_config_summary": _ui_prompt_registry_safe_summary(plan.get("config_snapshot")),
         "can_action_preview_link": bool(plan.get("action_id")) and bool(plan.get("prompt_id")),
     }
+    recheck = item.get("recheck") if isinstance(item.get("recheck"), dict) else {}
+    item["recheck"] = {
+        "attempt_id": recheck.get("attempt_id"),
+        "recheck_status": recheck.get("recheck_status"),
+        "saved_dispatch_status": recheck.get("saved_dispatch_status"),
+        "current_dispatch_status": recheck.get("current_dispatch_status"),
+        "saved_dispatch_kind": recheck.get("saved_dispatch_kind"),
+        "current_dispatch_kind": recheck.get("current_dispatch_kind"),
+        "saved_dispatch_target": recheck.get("saved_dispatch_target"),
+        "current_dispatch_target": recheck.get("current_dispatch_target"),
+        "saved_reason_codes": recheck.get("saved_reason_codes") if recheck.get("saved_reason_codes") else [],
+        "current_reason_codes": recheck.get("current_reason_codes") if recheck.get("current_reason_codes") else [],
+        "changed_fields": recheck.get("changed_fields") if recheck.get("changed_fields") else [],
+        "diagnostics": recheck.get("diagnostics") if isinstance(recheck.get("diagnostics"), list) else [],
+        "diagnostics_summary": _ui_prompt_registry_safe_summary(recheck.get("diagnostics")),
+    }
     return {
         "request": request,
         "mode": "linked_action_dispatch_attempt_detail",
@@ -6746,6 +6762,8 @@ def ui_prompt_registry_dispatch_attempt_detail_page(request: Request, attempt_id
         service = PromptRegistryService(conn)
         try:
             attempt = service.get_linked_action_dispatch_attempt(attempt_id)
+            recheck = service.recheck_linked_action_dispatch_attempt(attempt_id)
+            attempt["recheck"] = recheck
             return templates.TemplateResponse(
                 "prompt_registry.html",
                 _ui_prompt_registry_dispatch_attempt_detail_context(request, attempt_id=attempt_id, attempt=attempt),
