@@ -763,6 +763,34 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(missing.status_code, 404)
             self.assertEqual(missing.json()["error"]["code"], "PROMPT_REGISTRY_NOT_FOUND")
 
+    def test_dispatch_execution_guard_endpoint_disabled_placeholder(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+            created = client.post("/v1/prompt-registry/records", headers=headers, json={"slug": "mf22-api", "code": "PR-MF22-API", "title": "MF22 API", "record_type": "prompt_template", "status": "draft"})
+            prompt_id = int(created.json()["id"])
+            action = client.post(f"/v1/prompt-registry/records/{prompt_id}/linked-actions", headers=headers, json={"action_key": "mf22-action", "action_type": "ui_action", "action_status": "active", "target_kind": "route", "target_ref": "/ui/prompt-registry", "config_json": {}})
+            action_id = int(action.json()["id"])
+            req = client.post(f"/v1/prompt-registry/linked-actions/{action_id}/execution-requests", headers=headers, json={"confirm_execution": True})
+            request_id = int(req.json()["id"])
+            attempt = client.post(f"/v1/prompt-registry/linked-action-execution-requests/{request_id}/dispatch-attempts", headers=headers, json={"dry_run_only": True})
+            attempt_id = int(attempt.json()["id"])
+
+            safe = client.post(f"/v1/prompt-registry/linked-action-dispatch-attempts/{attempt_id}/execute", headers=headers, json={})
+            self.assertEqual(safe.status_code, 200)
+            self.assertEqual(safe.json()["execution_status"], "DISABLED")
+            self.assertEqual(safe.json()["reason_code"], "DISPATCH_EXECUTION_NOT_IMPLEMENTED")
+
+            for payload in ({"force": True}, {"execute": True}, {"dry_run_only": False}):
+                bad = client.post(f"/v1/prompt-registry/linked-action-dispatch-attempts/{attempt_id}/execute", headers=headers, json=payload)
+                self.assertEqual(bad.status_code, 422)
+                self.assertEqual(bad.json()["error"]["code"], "PROMPT_REGISTRY_VALIDATION_ERROR")
+
+            missing = client.post("/v1/prompt-registry/linked-action-dispatch-attempts/999999/execute", headers=headers, json={})
+            self.assertEqual(missing.status_code, 404)
+            self.assertEqual(missing.json()["error"]["code"], "PROMPT_REGISTRY_NOT_FOUND")
+
     def test_resolve_rejects_partial_item_context_and_explains_same_scope_tie_break(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)

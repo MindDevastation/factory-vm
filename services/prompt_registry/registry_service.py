@@ -906,6 +906,35 @@ class PromptRegistryService:
             "dispatch_target": dispatch_target,
         }
 
+    def guard_linked_action_dispatch_execution(self, attempt_id: int, payload: dict[str, Any] | None = None, actor: str = "system") -> dict[str, Any]:
+        _ = self._validated_actor(actor)
+        request_payload = payload if isinstance(payload, dict) else {}
+        force = bool(request_payload.get("force"))
+        execute = bool(request_payload.get("execute"))
+        dry_run_only_value = request_payload.get("dry_run_only")
+        if force:
+            raise PromptRegistryValidationError("force=true is not allowed")
+        if execute:
+            raise PromptRegistryValidationError("execute=true is not allowed")
+        if dry_run_only_value is False:
+            raise PromptRegistryValidationError("dry_run_only=false is not allowed")
+
+        attempt = self.get_linked_action_dispatch_attempt(attempt_id)
+        readiness = self.evaluate_linked_action_dispatch_readiness(attempt_id)
+        return {
+            "attempt_id": int(attempt["id"]),
+            "execution_status": "DISABLED",
+            "execution_available": False,
+            "reason_code": "DISPATCH_EXECUTION_NOT_IMPLEMENTED",
+            "message": "Dispatch execution is not implemented in this release.",
+            "readiness_status": readiness.get("readiness_status"),
+            "readiness_level": readiness.get("readiness_level"),
+            "blockers": readiness.get("blockers") if isinstance(readiness.get("blockers"), list) else [],
+            "warnings": readiness.get("warnings") if isinstance(readiness.get("warnings"), list) else [],
+            "next_allowed_action": "review_readiness",
+            "dry_run_only": True,
+        }
+
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         self.get_record(prompt_id)
