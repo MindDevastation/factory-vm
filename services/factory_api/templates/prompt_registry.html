@@ -1021,6 +1021,40 @@
 <tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
 {% else %}<tr><td colspan="2">No notes.</td></tr>{% endfor %}
 </tbody></table>
+<h4>Execution preflight summary</h4>
+<p class="muted"><strong>Preflight summary only. No runtime execution is performed.</strong></p>
+<table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>preflight_status</td><td>{{ dispatch_attempt_detail.execution_preflight.preflight_status if dispatch_attempt_detail.execution_preflight.preflight_status else "—" }}</td></tr>
+<tr><td>execution_enabled</td><td>{{ "yes" if dispatch_attempt_detail.execution_preflight.execution_enabled else "no" }}</td></tr>
+<tr><td>reason_code</td><td>{{ dispatch_attempt_detail.execution_preflight.reason_code if dispatch_attempt_detail.execution_preflight.reason_code else "—" }}</td></tr>
+<tr><td>readiness_status</td><td>{{ dispatch_attempt_detail.execution_preflight.readiness_status if dispatch_attempt_detail.execution_preflight.readiness_status else "—" }}</td></tr>
+<tr><td>recheck_status</td><td>{{ dispatch_attempt_detail.execution_preflight.recheck_status if dispatch_attempt_detail.execution_preflight.recheck_status else "—" }}</td></tr>
+<tr><td>capability_status</td><td>{{ dispatch_attempt_detail.execution_preflight.capability_status if dispatch_attempt_detail.execution_preflight.capability_status else "—" }}</td></tr>
+<tr><td>execution_status</td><td>{{ dispatch_attempt_detail.execution_preflight.execution_status if dispatch_attempt_detail.execution_preflight.execution_status else "—" }}</td></tr>
+<tr><td>audit_preview_status</td><td>{{ dispatch_attempt_detail.execution_preflight.audit_preview_status if dispatch_attempt_detail.execution_preflight.audit_preview_status else "—" }}</td></tr>
+<tr><td>would_write_audit</td><td>{{ "yes" if dispatch_attempt_detail.execution_preflight.would_write_audit else "no" }}</td></tr>
+<tr><td>blocking_codes</td><td>{{ (dispatch_attempt_detail.execution_preflight.blocking_codes | join(", ")) if dispatch_attempt_detail.execution_preflight.blocking_codes else "—" }}</td></tr>
+<tr><td>warning_codes</td><td>{{ (dispatch_attempt_detail.execution_preflight.warning_codes | join(", ")) if dispatch_attempt_detail.execution_preflight.warning_codes else "—" }}</td></tr>
+<tr><td>recommended_operator_action</td><td>{{ dispatch_attempt_detail.execution_preflight.recommended_operator_action if dispatch_attempt_detail.execution_preflight.recommended_operator_action else "—" }}</td></tr>
+</tbody></table>
+<h4>Execution preflight blockers</h4>
+<table><thead><tr><th>Code</th><th>Message</th></tr></thead><tbody>
+{% for item in dispatch_attempt_detail.execution_preflight.blockers %}
+<tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
+{% else %}<tr><td colspan="2">No blockers.</td></tr>{% endfor %}
+</tbody></table>
+<h4>Execution preflight warnings</h4>
+<table><thead><tr><th>Code</th><th>Message</th></tr></thead><tbody>
+{% for item in dispatch_attempt_detail.execution_preflight.warnings %}
+<tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
+{% else %}<tr><td colspan="2">No warnings.</td></tr>{% endfor %}
+</tbody></table>
+<h4>Execution preflight notes</h4>
+<table><thead><tr><th>Code</th><th>Message</th></tr></thead><tbody>
+{% for item in dispatch_attempt_detail.execution_preflight.notes %}
+<tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
+{% else %}<tr><td colspan="2">No notes.</td></tr>{% endfor %}
+</tbody></table>
 <h4>Audit payload preview</h4>
 <table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
 <tr><td>attempt_id</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.attempt_id if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.attempt_id is not none else "—" }}</td></tr>
