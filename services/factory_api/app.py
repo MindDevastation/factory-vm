@@ -6469,6 +6469,39 @@ def _ui_prompt_registry_dispatch_attempts_context(
         "error_message": None,
     }
 
+
+def _ui_prompt_registry_dispatch_attempt_detail_context(
+    request: Request,
+    *,
+    attempt_id: int,
+    attempt: dict[str, Any] | None = None,
+    detail_error: str | None = None,
+) -> dict[str, Any]:
+    item = dict(attempt or {})
+    item["diagnostics_summary"] = _ui_prompt_registry_safe_summary(item.get("diagnostics"))
+    plan = item.get("plan") if isinstance(item.get("plan"), dict) else {}
+    item["safe_plan"] = {
+        "execution_request_id": plan.get("execution_request_id"),
+        "request_status": plan.get("request_status"),
+        "action_key": plan.get("action_key"),
+        "action_type": plan.get("action_type"),
+        "target_kind": plan.get("target_kind"),
+        "target_ref": plan.get("target_ref"),
+        "reason_codes": plan.get("reason_codes"),
+        "safe_context_summary": _ui_prompt_registry_safe_summary(plan.get("request_context")),
+        "safe_config_summary": _ui_prompt_registry_safe_summary(plan.get("config_snapshot")),
+        "can_action_preview_link": bool(plan.get("action_id")) and bool(plan.get("prompt_id")),
+    }
+    return {
+        "request": request,
+        "mode": "linked_action_dispatch_attempt_detail",
+        "dispatch_attempt_detail_id": attempt_id,
+        "dispatch_attempt_detail": item,
+        "dispatch_attempt_detail_error": detail_error,
+        "success_message": None,
+        "error_message": None,
+    }
+
 def _ui_prompt_registry_dispatch_preview_context(
     request: Request,
     *,
@@ -6702,6 +6735,26 @@ def ui_prompt_registry_dispatch_attempts_page(request: Request, _: bool = Depend
         return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_dispatch_attempts_context(request, filters=filters, attempt_items=items))
     except (PromptRegistryValidationError, ValueError):
         return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_dispatch_attempts_context(request, attempts_error="Dispatch attempt filter validation failed"))
+    finally:
+        conn.close()
+
+
+@app.get("/ui/prompt-registry/linked-action-dispatch-attempts/{attempt_id}", response_class=HTMLResponse)
+def ui_prompt_registry_dispatch_attempt_detail_page(request: Request, attempt_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        try:
+            attempt = service.get_linked_action_dispatch_attempt(attempt_id)
+            return templates.TemplateResponse(
+                "prompt_registry.html",
+                _ui_prompt_registry_dispatch_attempt_detail_context(request, attempt_id=attempt_id, attempt=attempt),
+            )
+        except (PromptRegistryNotFoundError, PromptRegistryValidationError, ValueError) as exc:
+            return templates.TemplateResponse(
+                "prompt_registry.html",
+                _ui_prompt_registry_dispatch_attempt_detail_context(request, attempt_id=attempt_id, detail_error=str(exc)),
+            )
     finally:
         conn.close()
 

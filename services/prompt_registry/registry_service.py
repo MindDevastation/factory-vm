@@ -742,6 +742,23 @@ class PromptRegistryService:
             items.append(item)
         return items
 
+    def get_linked_action_dispatch_attempt(self, attempt_id: int) -> dict[str, Any]:
+        row = self._conn.execute("SELECT * FROM prompt_linked_action_dispatch_attempts WHERE id = ?", (int(attempt_id),)).fetchone()
+        if row is None:
+            raise PromptRegistryNotFoundError(f"prompt linked action dispatch attempt {attempt_id} not found")
+        item = dict(row)
+        item["dry_run_only"] = bool(int(item.get("dry_run_only") or 0))
+        try:
+            item["plan"] = json.loads(str(item.get("plan_json") or "{}"))
+        except json.JSONDecodeError:
+            item["plan"] = {}
+        try:
+            decoded = json.loads(str(item.get("diagnostics_json") or "[]"))
+            item["diagnostics"] = decoded if isinstance(decoded, list) else []
+        except json.JSONDecodeError:
+            item["diagnostics"] = []
+        return item
+
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         self.get_record(prompt_id)
