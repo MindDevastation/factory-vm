@@ -6273,6 +6273,38 @@ def _ui_prompt_registry_parse_linked_action_request_filters(query_params: Any) -
     }
 
 
+
+
+def _ui_prompt_registry_parse_dispatch_attempt_filters(query_params: Any) -> dict[str, Any]:
+    prompt_id_raw = str(query_params.get("prompt_id") or "").strip()
+    action_id_raw = str(query_params.get("action_id") or "").strip()
+    execution_request_id_raw = str(query_params.get("execution_request_id") or "").strip()
+    attempt_status_raw = str(query_params.get("attempt_status") or "").strip()
+    limit_raw = str(query_params.get("limit") or "").strip()
+    limit_value = 50
+    if limit_raw:
+        try:
+            limit_value = int(limit_raw)
+        except ValueError as exc:
+            raise ValueError("limit must be an integer") from exc
+    if limit_value <= 0:
+        raise ValueError("limit must be greater than zero")
+    if limit_value > 200:
+        limit_value = 200
+    attempt_status = attempt_status_raw or None
+    if attempt_status is not None and attempt_status not in {"dry_run_recorded", "blocked"}:
+        raise ValueError("attempt_status must be one of dry_run_recorded, blocked")
+    return {
+        "prompt_id_raw": prompt_id_raw,
+        "action_id_raw": action_id_raw,
+        "execution_request_id_raw": execution_request_id_raw,
+        "attempt_status": attempt_status,
+        "limit": limit_value,
+        "prompt_id": _ui_prompt_registry_parse_optional_int(prompt_id_raw, field_name="prompt_id"),
+        "action_id": _ui_prompt_registry_parse_optional_int(action_id_raw, field_name="action_id"),
+        "execution_request_id": _ui_prompt_registry_parse_optional_int(execution_request_id_raw, field_name="execution_request_id"),
+    }
+
 def _ui_prompt_registry_safe_summary(value: Any, *, max_items: int = 6) -> str:
     if not isinstance(value, dict) or not value:
         return "—"
@@ -6397,6 +6429,45 @@ def _ui_prompt_registry_linked_action_requests_context(
         "error_message": None,
     }
 
+
+
+
+def _ui_prompt_registry_dispatch_attempts_context(
+    request: Request,
+    *,
+    filters: dict[str, Any] | None = None,
+    attempt_items: list[dict[str, Any]] | None = None,
+    attempts_error: str | None = None,
+) -> dict[str, Any]:
+    if filters is None:
+        limit_raw = str(request.query_params.get("limit") or "").strip()
+        try:
+            fallback_limit = int(limit_raw) if limit_raw else 50
+        except ValueError:
+            fallback_limit = 50
+        active_filters = {
+            "prompt_id_raw": str(request.query_params.get("prompt_id") or "").strip(),
+            "action_id_raw": str(request.query_params.get("action_id") or "").strip(),
+            "execution_request_id_raw": str(request.query_params.get("execution_request_id") or "").strip(),
+            "attempt_status": str(request.query_params.get("attempt_status") or "").strip() or None,
+            "limit": max(1, min(fallback_limit, 200)),
+        }
+    else:
+        active_filters = filters
+    rendered_attempts: list[dict[str, Any]] = []
+    for row in attempt_items or []:
+        item = dict(row)
+        item["diagnostics_summary"] = _ui_prompt_registry_safe_summary(item.get("diagnostics"))
+        rendered_attempts.append(item)
+    return {
+        "request": request,
+        "mode": "linked_action_dispatch_attempts",
+        "attempt_filters": active_filters,
+        "dispatch_attempt_items": rendered_attempts,
+        "attempts_error": attempts_error,
+        "success_message": None,
+        "error_message": None,
+    }
 
 def _ui_prompt_registry_dispatch_preview_context(
     request: Request,
@@ -6609,6 +6680,30 @@ def ui_prompt_registry_linked_action_requests_page(request: Request, _: bool = D
     finally:
         conn.close()
 
+
+
+
+@app.get("/ui/prompt-registry/linked-action-dispatch-attempts", response_class=HTMLResponse)
+def ui_prompt_registry_dispatch_attempts_page(request: Request, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        try:
+            filters = _ui_prompt_registry_parse_dispatch_attempt_filters(request.query_params)
+        except ValueError as exc:
+            return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_dispatch_attempts_context(request, attempts_error=str(exc)))
+        items = service.list_linked_action_dispatch_attempts(
+            prompt_id=filters["prompt_id"],
+            action_id=filters["action_id"],
+            execution_request_id=filters["execution_request_id"],
+            attempt_status=filters["attempt_status"],
+            limit=filters["limit"],
+        )
+        return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_dispatch_attempts_context(request, filters=filters, attempt_items=items))
+    except (PromptRegistryValidationError, ValueError):
+        return templates.TemplateResponse("prompt_registry.html", _ui_prompt_registry_dispatch_attempts_context(request, attempts_error="Dispatch attempt filter validation failed"))
+    finally:
+        conn.close()
 
 @app.get("/ui/prompt-registry/linked-action-requests/{request_id}/dispatch-preview", response_class=HTMLResponse)
 def ui_prompt_registry_linked_action_dispatch_preview_page(request: Request, request_id: int, _: bool = Depends(require_basic_auth(env))):
