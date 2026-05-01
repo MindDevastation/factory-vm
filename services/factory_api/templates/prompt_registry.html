@@ -987,6 +987,54 @@
     <tr><td>next_allowed_action</td><td>{{ dispatch_attempt_detail.execution_guard.next_allowed_action if dispatch_attempt_detail.execution_guard.next_allowed_action else "—" }}</td></tr>
   </tbody>
 </table>
+
+<h4>Execution audit preview</h4>
+<p class="muted"><strong>Audit preview only. No audit event is written.</strong></p>
+<table>
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>preview_status</td><td>{{ dispatch_attempt_detail.execution_audit_preview.preview_status if dispatch_attempt_detail.execution_audit_preview.preview_status else "—" }}</td></tr>
+    <tr><td>would_write_event_type</td><td>{{ dispatch_attempt_detail.execution_audit_preview.would_write_event_type if dispatch_attempt_detail.execution_audit_preview.would_write_event_type else "—" }}</td></tr>
+    <tr><td>would_write</td><td>{{ "yes" if dispatch_attempt_detail.execution_audit_preview.would_write else "no" }}</td></tr>
+    <tr><td>reason_code</td><td>{{ dispatch_attempt_detail.execution_audit_preview.reason_code if dispatch_attempt_detail.execution_audit_preview.reason_code else "—" }}</td></tr>
+    <tr><td>execution_status</td><td>{{ dispatch_attempt_detail.execution_audit_preview.execution_status if dispatch_attempt_detail.execution_audit_preview.execution_status else "—" }}</td></tr>
+    <tr><td>readiness_status</td><td>{{ dispatch_attempt_detail.execution_audit_preview.readiness_status if dispatch_attempt_detail.execution_audit_preview.readiness_status else "—" }}</td></tr>
+    <tr><td>capability_status</td><td>{{ dispatch_attempt_detail.execution_audit_preview.capability_status if dispatch_attempt_detail.execution_audit_preview.capability_status else "—" }}</td></tr>
+    <tr><td>runtime_available</td><td>{{ "yes" if dispatch_attempt_detail.execution_audit_preview.runtime_available else "no" }}</td></tr>
+  </tbody>
+</table>
+<h4>Execution audit preview blockers</h4>
+<table><thead><tr><th>Code</th><th>Message</th></tr></thead><tbody>
+{% for item in dispatch_attempt_detail.execution_audit_preview.blockers %}
+<tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
+{% else %}<tr><td colspan="2">No blockers.</td></tr>{% endfor %}
+</tbody></table>
+<h4>Execution audit preview warnings</h4>
+<table><thead><tr><th>Code</th><th>Message</th></tr></thead><tbody>
+{% for item in dispatch_attempt_detail.execution_audit_preview.warnings %}
+<tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
+{% else %}<tr><td colspan="2">No warnings.</td></tr>{% endfor %}
+</tbody></table>
+<h4>Execution audit preview notes</h4>
+<table><thead><tr><th>Code</th><th>Message</th></tr></thead><tbody>
+{% for item in dispatch_attempt_detail.execution_audit_preview.notes %}
+<tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
+{% else %}<tr><td colspan="2">No notes.</td></tr>{% endfor %}
+</tbody></table>
+<h4>Audit payload preview</h4>
+<table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>attempt_id</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.attempt_id if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.attempt_id is not none else "—" }}</td></tr>
+<tr><td>execution_request_id</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.execution_request_id if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.execution_request_id is not none else "—" }}</td></tr>
+<tr><td>prompt_id</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.prompt_id if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.prompt_id is not none else "—" }}</td></tr>
+<tr><td>action_id</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.action_id if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.action_id is not none else "—" }}</td></tr>
+<tr><td>dispatch_status</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.dispatch_status if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.dispatch_status else "—" }}</td></tr>
+<tr><td>dispatch_kind</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.dispatch_kind if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.dispatch_kind else "—" }}</td></tr>
+<tr><td>dispatch_target</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.dispatch_target if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.dispatch_target else "—" }}</td></tr>
+<tr><td>readiness_status</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.readiness_status if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.readiness_status else "—" }}</td></tr>
+<tr><td>capability_status</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.capability_status if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.capability_status else "—" }}</td></tr>
+<tr><td>reason_code</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.reason_code if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.reason_code else "—" }}</td></tr>
+<tr><td>dry_run_only</td><td>{{ "yes" if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.dry_run_only else "no" }}</td></tr>
+</tbody></table>
 <p><a href="/ui/prompt-registry/linked-action-dispatch-attempts/{{ dispatch_attempt_detail_id }}">Back to dispatch attempt detail review</a></p>
 
 <h4>Readiness checks</h4>

@@ -816,6 +816,36 @@ class TestPromptRegistryApi(unittest.TestCase):
             self.assertEqual(missing.status_code, 404)
             self.assertEqual(missing.json()["error"]["code"], "PROMPT_REGISTRY_NOT_FOUND")
 
+    def test_dispatch_execution_audit_preview_endpoint_read_only(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            client = self._client(env)
+            headers = basic_auth_header("admin", "testpass")
+            created = client.post("/v1/prompt-registry/records", headers=headers, json={"slug": "mf24-api", "code": "PR-MF24-API", "title": "MF24 API", "record_type": "prompt_template", "status": "draft"})
+            prompt_id = int(created.json()["id"])
+            action = client.post(f"/v1/prompt-registry/records/{prompt_id}/linked-actions", headers=headers, json={"action_key": "mf24-action", "action_type": "ui_action", "action_status": "active", "target_kind": "route", "target_ref": "/ui/prompt-registry", "config_json": {}})
+            action_id = int(action.json()["id"])
+            req = client.post(f"/v1/prompt-registry/linked-actions/{action_id}/execution-requests", headers=headers, json={"confirm_execution": True})
+            request_id = int(req.json()["id"])
+            attempt = client.post(f"/v1/prompt-registry/linked-action-execution-requests/{request_id}/dispatch-attempts", headers=headers, json={"dry_run_only": True})
+            attempt_id = int(attempt.json()["id"])
+
+            ok = client.get(f"/v1/prompt-registry/linked-action-dispatch-attempts/{attempt_id}/execution-audit-preview", headers=headers)
+            self.assertEqual(ok.status_code, 200)
+            body = ok.json()
+            self.assertEqual(body["preview_status"], "PREVIEW_ONLY")
+            self.assertEqual(body["would_write_event_type"], "linked_action_dispatch_execution_blocked")
+            self.assertFalse(body["would_write"])
+            self.assertEqual(body["reason_code"], "DISPATCH_EXECUTION_NOT_IMPLEMENTED")
+            self.assertEqual(body["audit_payload_preview"]["attempt_id"], attempt_id)
+            self.assertEqual(body["audit_payload_preview"]["execution_request_id"], request_id)
+            self.assertEqual(body["audit_payload_preview"]["prompt_id"], prompt_id)
+            self.assertEqual(body["audit_payload_preview"]["action_id"], action_id)
+
+            missing = client.get("/v1/prompt-registry/linked-action-dispatch-attempts/999999/execution-audit-preview", headers=headers)
+            self.assertEqual(missing.status_code, 404)
+            self.assertEqual(missing.json()["error"]["code"], "PROMPT_REGISTRY_NOT_FOUND")
+
     def test_resolve_rejects_partial_item_context_and_explains_same_scope_tie_break(self) -> None:
         with temp_env() as (_td, env):
             seed_minimal_db(env)
