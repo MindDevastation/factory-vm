@@ -818,15 +818,69 @@
   <tbody>
     {% for item in dispatch_attempt_items %}
     <tr>
-      <td>{{ item.id }}</td><td>{{ item.created_at }}</td><td>{{ item.prompt_id }}</td><td>{{ item.action_id }}</td><td>{{ item.execution_request_id }}</td>
+      <td><a href="/ui/prompt-registry/linked-action-dispatch-attempts/{{ item.id }}">#{{ item.id }}</a></td><td>{{ item.created_at }}</td><td>{{ item.prompt_id }}</td><td>{{ item.action_id }}</td><td>{{ item.execution_request_id }}</td>
       <td>{{ item.attempt_status }}</td><td>{{ item.attempted_by }}</td><td>{{ item.dispatch_status }}</td><td>{{ item.dispatch_kind }}</td><td>{{ item.dispatch_target if item.dispatch_target else "—" }}</td><td>{{ item.diagnostics_summary }}</td>
-      <td><a href="/ui/prompt-registry/{{ item.prompt_id }}">Prompt</a><br><a href="/ui/prompt-registry/linked-action-requests/{{ item.execution_request_id }}/dispatch-preview">Dispatch preview</a></td>
+      <td><a href="/ui/prompt-registry/linked-action-dispatch-attempts/{{ item.id }}">Attempt detail</a><br><a href="/ui/prompt-registry/{{ item.prompt_id }}">Prompt</a><br><a href="/ui/prompt-registry/linked-action-requests/{{ item.execution_request_id }}/dispatch-preview">Dispatch preview</a></td>
     </tr>
     {% else %}
     <tr><td colspan="12">No dispatch attempts for the selected filters.</td></tr>
     {% endfor %}
   </tbody>
 </table>
+{% endif %}
+
+{% if mode == "linked_action_dispatch_attempt_detail" %}
+<p>
+  <a href="/ui/prompt-registry/linked-action-dispatch-attempts">← Back to dispatch attempts review</a>
+</p>
+<h3>Linked action dispatch attempt detail · Attempt #{{ dispatch_attempt_detail_id }}</h3>
+{% if dispatch_attempt_detail_error %}
+<p style="color:#991b1b;"><strong>Dispatch attempt detail error:</strong> {{ dispatch_attempt_detail_error }}</p>
+{% else %}
+<p>
+  <a href="/ui/prompt-registry/{{ dispatch_attempt_detail.prompt_id }}">Prompt detail</a>
+  · <a href="/ui/prompt-registry/linked-action-requests/{{ dispatch_attempt_detail.execution_request_id }}/dispatch-preview">Request dispatch preview</a>
+  {% if dispatch_attempt_detail.safe_plan.can_action_preview_link %}
+  · <a href="/ui/prompt-registry/{{ dispatch_attempt_detail.plan.prompt_id }}/linked-actions/{{ dispatch_attempt_detail.plan.action_id }}/preview">Linked action preview</a>
+  {% endif %}
+</p>
+
+<table>
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>ID</td><td>{{ dispatch_attempt_detail.id }}</td></tr>
+    <tr><td>Created at</td><td>{{ dispatch_attempt_detail.created_at }}</td></tr>
+    <tr><td>Prompt ID</td><td>{{ dispatch_attempt_detail.prompt_id }}</td></tr>
+    <tr><td>Action ID</td><td>{{ dispatch_attempt_detail.action_id }}</td></tr>
+    <tr><td>Execution request ID</td><td>{{ dispatch_attempt_detail.execution_request_id }}</td></tr>
+    <tr><td>Attempt status</td><td>{{ dispatch_attempt_detail.attempt_status }}</td></tr>
+    <tr><td>Attempted by</td><td>{{ dispatch_attempt_detail.attempted_by }}</td></tr>
+    <tr><td>Dispatch status</td><td>{{ dispatch_attempt_detail.dispatch_status }}</td></tr>
+    <tr><td>Dispatch kind</td><td>{{ dispatch_attempt_detail.dispatch_kind }}</td></tr>
+    <tr><td>Dispatch target</td><td>{{ dispatch_attempt_detail.dispatch_target if dispatch_attempt_detail.dispatch_target else "—" }}</td></tr>
+    <tr><td>Dry run only</td><td>{{ "yes" if dispatch_attempt_detail.dry_run_only else "no" }}</td></tr>
+  </tbody>
+</table>
+
+<h4>Diagnostics (safe summary)</h4>
+<p class="muted">{{ dispatch_attempt_detail.diagnostics_summary }}</p>
+
+<h4>Safe plan summary</h4>
+<table>
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>execution_request_id</td><td>{{ dispatch_attempt_detail.safe_plan.execution_request_id if dispatch_attempt_detail.safe_plan.execution_request_id is not none else "—" }}</td></tr>
+    <tr><td>request_status</td><td>{{ dispatch_attempt_detail.safe_plan.request_status if dispatch_attempt_detail.safe_plan.request_status else "—" }}</td></tr>
+    <tr><td>action_key</td><td>{{ dispatch_attempt_detail.safe_plan.action_key if dispatch_attempt_detail.safe_plan.action_key else "—" }}</td></tr>
+    <tr><td>action_type</td><td>{{ dispatch_attempt_detail.safe_plan.action_type if dispatch_attempt_detail.safe_plan.action_type else "—" }}</td></tr>
+    <tr><td>target_kind</td><td>{{ dispatch_attempt_detail.safe_plan.target_kind if dispatch_attempt_detail.safe_plan.target_kind else "—" }}</td></tr>
+    <tr><td>target_ref</td><td>{{ dispatch_attempt_detail.safe_plan.target_ref if dispatch_attempt_detail.safe_plan.target_ref else "—" }}</td></tr>
+    <tr><td>reason_codes</td><td>{{ dispatch_attempt_detail.safe_plan.reason_codes if dispatch_attempt_detail.safe_plan.reason_codes else "—" }}</td></tr>
+    <tr><td>safe_context_summary</td><td>{{ dispatch_attempt_detail.safe_plan.safe_context_summary }}</td></tr>
+    <tr><td>safe_config_summary</td><td>{{ dispatch_attempt_detail.safe_plan.safe_config_summary }}</td></tr>
+  </tbody>
+</table>
+{% endif %}
 {% endif %}
 
 {% if mode == "audit" %}

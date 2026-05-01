@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import patch
 
 from services.common import db as dbm
+from services.prompt_registry.errors import PromptRegistryNotFoundError
 from services.prompt_registry.registry_service import PromptRegistryService
 from tests._helpers import seed_minimal_db, temp_env
 
@@ -1715,5 +1716,43 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(before_usage, after_usage)
                 self.assertEqual(before_req_status, after_req_status)
                 self.assertTrue(any(item["event_type"] == "linked_action_dispatch_attempt_recorded" for item in svc.list_audit_events(prompt_id)))
+            finally:
+                conn.close()
+
+    def test_get_linked_action_dispatch_attempt_returns_parsed_shape_and_not_found(self) -> None:
+        with temp_env() as (_td, env):
+            conn = dbm.connect(env)
+            try:
+                seed_minimal_db(env)
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record(
+                    {"slug": "mf19-service", "code": "MF19_SERVICE", "title": "MF19 Service", "record_type": "prompt_template", "status": "draft"},
+                    actor="tester",
+                )
+                action = svc.create_linked_action(
+                    int(rec["id"]),
+                    {
+                        "action_key": "mf19-service-action",
+                        "action_type": "ui_action",
+                        "action_status": "active",
+                        "target_kind": "route",
+                        "target_ref": "/ui/prompt-registry/linked-action-requests",
+                        "config_json": {"ui_label": "open"},
+                    },
+                    actor="tester",
+                )
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True}, actor="tester")
+                created = svc.create_linked_action_dispatch_attempt(int(req["id"]), {"dry_run_only": True, "note": "safe"}, actor="tester")
+                attempt_id = int(created["id"])
+
+                got = svc.get_linked_action_dispatch_attempt(attempt_id)
+                self.assertEqual(int(got["id"]), attempt_id)
+                self.assertEqual(got["attempt_status"], created["attempt_status"])
+                self.assertIsInstance(got["plan"], dict)
+                self.assertIsInstance(got["diagnostics"], list)
+                self.assertTrue(got["dry_run_only"])
+
+                with self.assertRaises(PromptRegistryNotFoundError):
+                    svc.get_linked_action_dispatch_attempt(999999)
             finally:
                 conn.close()
