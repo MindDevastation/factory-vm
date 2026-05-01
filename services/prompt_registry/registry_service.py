@@ -994,6 +994,44 @@ class PromptRegistryService:
             "notes": notes,
         }
 
+    def preview_linked_action_dispatch_execution_audit(self, attempt_id: int) -> dict[str, Any]:
+        attempt = self.get_linked_action_dispatch_attempt(attempt_id)
+        readiness = self.evaluate_linked_action_dispatch_readiness(attempt_id)
+        capability = self.evaluate_linked_action_dispatch_execution_capability(attempt_id)
+        execution_guard = self.guard_linked_action_dispatch_execution(attempt_id, payload={}, actor="system")
+
+        blockers = capability.get("blockers") if isinstance(capability.get("blockers"), list) else []
+        warnings = readiness.get("warnings") if isinstance(readiness.get("warnings"), list) else []
+        notes = capability.get("notes") if isinstance(capability.get("notes"), list) else []
+
+        return {
+            "attempt_id": int(attempt["id"]),
+            "preview_status": "PREVIEW_ONLY",
+            "would_write_event_type": "linked_action_dispatch_execution_blocked",
+            "would_write": False,
+            "reason_code": "DISPATCH_EXECUTION_NOT_IMPLEMENTED",
+            "execution_status": execution_guard.get("execution_status"),
+            "readiness_status": readiness.get("readiness_status"),
+            "capability_status": capability.get("capability_status"),
+            "runtime_available": bool(capability.get("runtime_available")),
+            "audit_payload_preview": {
+                "attempt_id": int(attempt["id"]),
+                "execution_request_id": int(attempt["execution_request_id"]),
+                "prompt_id": int(attempt["prompt_id"]),
+                "action_id": int(attempt["action_id"]),
+                "dispatch_status": attempt.get("dispatch_status"),
+                "dispatch_kind": attempt.get("dispatch_kind"),
+                "dispatch_target": self._nullable_text(attempt.get("dispatch_target")),
+                "readiness_status": readiness.get("readiness_status"),
+                "capability_status": capability.get("capability_status"),
+                "reason_code": "DISPATCH_EXECUTION_NOT_IMPLEMENTED",
+                "dry_run_only": bool(execution_guard.get("dry_run_only")),
+            },
+            "blockers": blockers,
+            "warnings": warnings,
+            "notes": notes,
+        }
+
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         self.get_record(prompt_id)

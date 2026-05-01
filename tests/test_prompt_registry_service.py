@@ -1898,3 +1898,36 @@ class TestPromptRegistryService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_preview_linked_action_dispatch_execution_audit_read_only(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record({"slug": "mf24-ready", "code": "PR-MF24-R", "title": "MF24", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action = svc.create_linked_action(int(rec["id"]), {"action_key": "mf24-a", "action_type": "ui_action", "action_status": "active", "target_kind": "route", "target_ref": "/ui/ok", "config_json": {}}, actor="tester")
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True}, actor="tester")
+                attempt = svc.create_linked_action_dispatch_attempt(int(req["id"]), {"dry_run_only": True}, actor="tester")
+
+                before_audit = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"])
+                before_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                before_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
+                preview = svc.preview_linked_action_dispatch_execution_audit(int(attempt["id"]))
+                self.assertEqual(preview["preview_status"], "PREVIEW_ONLY")
+                self.assertFalse(preview["would_write"])
+                self.assertEqual(preview["would_write_event_type"], "linked_action_dispatch_execution_blocked")
+                self.assertEqual(preview["reason_code"], "DISPATCH_EXECUTION_NOT_IMPLEMENTED")
+                self.assertIn("audit_payload_preview", preview)
+                self.assertEqual(preview["audit_payload_preview"]["attempt_id"], int(attempt["id"]))
+                self.assertEqual(preview["audit_payload_preview"]["execution_request_id"], int(req["id"]))
+                self.assertEqual(preview["audit_payload_preview"]["prompt_id"], int(rec["id"]))
+                self.assertEqual(preview["audit_payload_preview"]["action_id"], int(action["id"]))
+
+                after_audit = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"])
+                after_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                after_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
+                self.assertEqual(before_audit, after_audit)
+                self.assertEqual(before_usage, after_usage)
+                self.assertEqual(before_req_status, after_req_status)
+            finally:
+                conn.close()

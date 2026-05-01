@@ -6539,6 +6539,34 @@ def _ui_prompt_registry_dispatch_attempt_detail_context(
         "blockers": [row for row in capability_blockers if isinstance(row, dict)],
         "notes": [row for row in capability_notes if isinstance(row, dict)],
     }
+    execution_audit_preview = item.get("execution_audit_preview") if isinstance(item.get("execution_audit_preview"), dict) else {}
+    preview_payload = execution_audit_preview.get("audit_payload_preview") if isinstance(execution_audit_preview.get("audit_payload_preview"), dict) else {}
+    item["execution_audit_preview"] = {
+        "preview_status": execution_audit_preview.get("preview_status"),
+        "would_write_event_type": execution_audit_preview.get("would_write_event_type"),
+        "would_write": bool(execution_audit_preview.get("would_write")),
+        "reason_code": execution_audit_preview.get("reason_code"),
+        "execution_status": execution_audit_preview.get("execution_status"),
+        "readiness_status": execution_audit_preview.get("readiness_status"),
+        "capability_status": execution_audit_preview.get("capability_status"),
+        "runtime_available": bool(execution_audit_preview.get("runtime_available")),
+        "blockers": execution_audit_preview.get("blockers") if isinstance(execution_audit_preview.get("blockers"), list) else [],
+        "warnings": execution_audit_preview.get("warnings") if isinstance(execution_audit_preview.get("warnings"), list) else [],
+        "notes": execution_audit_preview.get("notes") if isinstance(execution_audit_preview.get("notes"), list) else [],
+        "audit_payload_preview": {
+            "attempt_id": preview_payload.get("attempt_id"),
+            "execution_request_id": preview_payload.get("execution_request_id"),
+            "prompt_id": preview_payload.get("prompt_id"),
+            "action_id": preview_payload.get("action_id"),
+            "dispatch_status": preview_payload.get("dispatch_status"),
+            "dispatch_kind": preview_payload.get("dispatch_kind"),
+            "dispatch_target": preview_payload.get("dispatch_target"),
+            "readiness_status": preview_payload.get("readiness_status"),
+            "capability_status": preview_payload.get("capability_status"),
+            "reason_code": preview_payload.get("reason_code"),
+            "dry_run_only": bool(preview_payload.get("dry_run_only")),
+        },
+    }
     execution_guard = item.get("execution_guard") if isinstance(item.get("execution_guard"), dict) else {}
     item["execution_guard"] = {
         "execution_status": execution_guard.get("execution_status"),
@@ -6808,10 +6836,12 @@ def ui_prompt_registry_dispatch_attempt_detail_page(request: Request, attempt_id
             readiness = service.evaluate_linked_action_dispatch_readiness(attempt_id)
             execution_guard = service.guard_linked_action_dispatch_execution(attempt_id, payload={}, actor=_ui_prompt_registry_actor())
             execution_capability = service.evaluate_linked_action_dispatch_execution_capability(attempt_id)
+            execution_audit_preview = service.preview_linked_action_dispatch_execution_audit(attempt_id)
             attempt["recheck"] = recheck
             attempt["readiness"] = readiness
             attempt["execution_guard"] = execution_guard
             attempt["execution_capability"] = execution_capability
+            attempt["execution_audit_preview"] = execution_audit_preview
             return templates.TemplateResponse(
                 "prompt_registry.html",
                 _ui_prompt_registry_dispatch_attempt_detail_context(request, attempt_id=attempt_id, attempt=attempt),
