@@ -1858,3 +1858,43 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(before_req_status, after_req_status)
             finally:
                 conn.close()
+
+    def test_evaluate_linked_action_dispatch_execution_capability_matrix_read_only(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record({"slug": "mf23-ready", "code": "PR-MF23-R", "title": "MF23", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action = svc.create_linked_action(int(rec["id"]), {"action_key": "mf23-a", "action_type": "ui_action", "action_status": "active", "target_kind": "route", "target_ref": "/ui/ok", "config_json": {}}, actor="tester")
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True}, actor="tester")
+                attempt = svc.create_linked_action_dispatch_attempt(int(req["id"]), {"dry_run_only": True}, actor="tester")
+
+                before_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                before_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
+                result = svc.evaluate_linked_action_dispatch_execution_capability(int(attempt["id"]))
+                self.assertEqual(result["capability_status"], "DISABLED")
+                self.assertEqual(result["support_level"], "PLACEHOLDER_ONLY")
+                self.assertFalse(result["runtime_available"])
+                self.assertTrue(any(b["code"] == "RUNTIME_EXECUTION_DISABLED" for b in result["blockers"]))
+
+                svc.update_linked_action_status(int(action["id"]), {"action_status": "inactive"}, actor="tester")
+                blocked = svc.evaluate_linked_action_dispatch_execution_capability(int(attempt["id"]))
+                self.assertTrue(any(b["code"] == "READINESS_NOT_ELIGIBLE" for b in blocked["blockers"]))
+
+                rec_u = svc.create_record({"slug": "mf23-unsup", "code": "PR-MF23-U", "title": "MF23 U", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action_u = svc.create_linked_action(int(rec_u["id"]), {"action_key": "mf23-u", "action_type": "external_note", "action_status": "active", "target_kind": "route", "target_ref": "/ui/bad", "config_json": {}}, actor="tester")
+                req_u = svc.create_linked_action_execution_request(int(action_u["id"]), {"confirm_execution": True}, actor="tester")
+                attempt_u = svc.create_linked_action_dispatch_attempt(int(req_u["id"]), {"dry_run_only": True}, actor="tester")
+                unsupported = svc.evaluate_linked_action_dispatch_execution_capability(int(attempt_u["id"]))
+                self.assertEqual(unsupported["capability_status"], "UNSUPPORTED")
+                self.assertEqual(unsupported["support_level"], "NONE")
+                self.assertTrue(any(b["code"] == "UNSUPPORTED_ACTION_TARGET" for b in unsupported["blockers"]))
+
+                after_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                after_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
+                self.assertEqual(before_usage, after_usage)
+                self.assertEqual(before_req_status, after_req_status)
+            finally:
+                conn.close()
+

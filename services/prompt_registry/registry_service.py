@@ -935,6 +935,65 @@ class PromptRegistryService:
             "dry_run_only": True,
         }
 
+
+    def evaluate_linked_action_dispatch_execution_capability(self, attempt_id: int) -> dict[str, Any]:
+        attempt = self.get_linked_action_dispatch_attempt(attempt_id)
+        readiness = self.evaluate_linked_action_dispatch_readiness(attempt_id)
+
+        plan = attempt.get("plan") if isinstance(attempt.get("plan"), dict) else {}
+        action_type = str(plan.get("action_type") or attempt.get("action_type") or "").strip()
+        target_kind = str(plan.get("target_kind") or attempt.get("target_kind") or "").strip()
+        dispatch_kind = str(attempt.get("dispatch_kind") or "").strip()
+        dispatch_target = self._nullable_text(attempt.get("dispatch_target"))
+        readiness_status = str(readiness.get("readiness_status") or "")
+        readiness_level = str(readiness.get("readiness_level") or "")
+
+        supported_pairs = {
+            ("ui_action", "route"),
+            ("api_endpoint", "endpoint"),
+            ("workflow", "workflow"),
+            ("codex_prompt", "prompt_template"),
+            ("external_note", "note"),
+        }
+        is_supported_pair = (action_type, target_kind) in supported_pairs
+
+        support_level = "PLACEHOLDER_ONLY" if is_supported_pair else "NONE"
+        capability_status = "DISABLED" if is_supported_pair else "UNSUPPORTED"
+
+        blockers: list[dict[str, str]] = [
+            {"code": "RUNTIME_EXECUTION_DISABLED", "message": "Runtime dispatch execution is disabled in this release."}
+        ]
+        if readiness_status != "ELIGIBLE":
+            blockers.append({"code": "READINESS_NOT_ELIGIBLE", "message": "Dispatch readiness status is not ELIGIBLE."})
+        if support_level == "NONE":
+            blockers.append({"code": "UNSUPPORTED_ACTION_TARGET", "message": "Action type and target kind are not in the supported capability matrix."})
+
+        capability_codes = ["RUNTIME_EXECUTION_DISABLED"]
+        if readiness_status != "ELIGIBLE":
+            capability_codes.append("READINESS_NOT_ELIGIBLE")
+        if support_level == "NONE":
+            capability_codes.append("UNSUPPORTED_ACTION_TARGET")
+
+        notes = [
+            {"code": "EXECUTION_PLACEHOLDER_ONLY", "message": "Capability matrix only. No runtime execution is performed."}
+        ]
+
+        return {
+            "attempt_id": int(attempt["id"]),
+            "capability_status": capability_status,
+            "runtime_available": False,
+            "action_type": action_type,
+            "target_kind": target_kind,
+            "dispatch_kind": dispatch_kind,
+            "dispatch_target": dispatch_target,
+            "readiness_status": readiness_status,
+            "readiness_level": readiness_level,
+            "support_level": support_level,
+            "capability_codes": capability_codes,
+            "blockers": blockers,
+            "notes": notes,
+        }
+
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         self.get_record(prompt_id)
