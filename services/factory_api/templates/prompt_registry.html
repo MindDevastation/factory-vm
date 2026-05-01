@@ -915,6 +915,65 @@
     {% endfor %}
   </tbody>
 </table>
+
+<h4>Dispatch readiness gate</h4>
+<p class="muted">Readiness gate only. No runtime execution is performed.</p>
+<table>
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>readiness_status</td><td>{{ dispatch_attempt_detail.readiness.readiness_status if dispatch_attempt_detail.readiness.readiness_status else "—" }}</td></tr>
+    <tr><td>readiness_level</td><td>{{ dispatch_attempt_detail.readiness.readiness_level if dispatch_attempt_detail.readiness.readiness_level else "—" }}</td></tr>
+    <tr><td>attempt_status</td><td>{{ dispatch_attempt_detail.readiness.attempt_status if dispatch_attempt_detail.readiness.attempt_status else "—" }}</td></tr>
+    <tr><td>dispatch_status</td><td>{{ dispatch_attempt_detail.readiness.dispatch_status if dispatch_attempt_detail.readiness.dispatch_status else "—" }}</td></tr>
+    <tr><td>recheck_status</td><td>{{ dispatch_attempt_detail.readiness.recheck_status if dispatch_attempt_detail.readiness.recheck_status else "—" }}</td></tr>
+  </tbody>
+</table>
+
+<h4>Readiness checks</h4>
+<table>
+  <thead><tr><th>Code</th><th>Status</th><th>Message</th></tr></thead>
+  <tbody>
+    {% for item in dispatch_attempt_detail.readiness.checks %}
+    <tr>
+      <td>{{ item.code if item.code else "—" }}</td>
+      <td>{{ item.status if item.status else "—" }}</td>
+      <td>{{ item.message if item.message else "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3">No checks.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h4>Readiness blockers</h4>
+<table>
+  <thead><tr><th>Code</th><th>Message</th></tr></thead>
+  <tbody>
+    {% for item in dispatch_attempt_detail.readiness.blockers %}
+    <tr>
+      <td>{{ item.code if item.code else "—" }}</td>
+      <td>{{ item.message if item.message else "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2">No blockers.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h4>Readiness warnings</h4>
+<table>
+  <thead><tr><th>Code</th><th>Message</th></tr></thead>
+  <tbody>
+    {% for item in dispatch_attempt_detail.readiness.warnings %}
+    <tr>
+      <td>{{ item.code if item.code else "—" }}</td>
+      <td>{{ item.message if item.message else "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2">No warnings.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% endif %}
 {% endif %}
 

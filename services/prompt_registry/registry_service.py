@@ -799,6 +799,113 @@ class PromptRegistryService:
             "diagnostics": diagnostics,
         }
 
+    def evaluate_linked_action_dispatch_readiness(self, attempt_id: int) -> dict[str, Any]:
+        attempt = self.get_linked_action_dispatch_attempt(attempt_id)
+        recheck = self.recheck_linked_action_dispatch_attempt(attempt_id)
+
+        checks: list[dict[str, str]] = []
+        blockers: list[dict[str, str]] = []
+        warnings: list[dict[str, str]] = []
+
+        def _required_check(*, code: str, ok: bool, message: str, blocker_message: str) -> None:
+            checks.append({"code": code, "status": "PASS" if ok else "FAIL", "message": message})
+            if not ok:
+                blockers.append({"code": code, "message": blocker_message})
+
+        attempt_status = str(attempt.get("attempt_status") or "")
+        dispatch_status = str(attempt.get("dispatch_status") or "")
+        dispatch_kind = str(attempt.get("dispatch_kind") or "")
+        dispatch_target = str(attempt.get("dispatch_target") or "").strip()
+        dry_run_only = bool(attempt.get("dry_run_only"))
+        recheck_status = str(recheck.get("recheck_status") or "")
+
+        _required_check(
+            code="ATTEMPT_NOT_DRY_RUN_RECORDED",
+            ok=attempt_status == "dry_run_recorded",
+            message="attempt_status must be dry_run_recorded",
+            blocker_message="Dispatch attempt is not in dry_run_recorded status.",
+        )
+        _required_check(
+            code="DISPATCH_NOT_READY",
+            ok=dispatch_status == "READY",
+            message="dispatch_status must be READY",
+            blocker_message="Dispatch status is not READY.",
+        )
+        _required_check(
+            code="RECHECK_NOT_CURRENT",
+            ok=recheck_status == "CURRENT",
+            message="recheck_status must be CURRENT",
+            blocker_message="Recheck status is not CURRENT.",
+        )
+        _required_check(
+            code="NOT_DRY_RUN_LEDGER",
+            ok=dry_run_only,
+            message="dry_run_only must be true",
+            blocker_message="Dispatch attempt is not a dry-run ledger entry.",
+        )
+        _required_check(
+            code="UNKNOWN_DISPATCH_KIND",
+            ok=dispatch_kind != "unknown",
+            message="dispatch_kind must not be unknown",
+            blocker_message="Dispatch kind is unknown.",
+        )
+        _required_check(
+            code="MISSING_DISPATCH_TARGET",
+            ok=bool(dispatch_target),
+            message="dispatch_target must not be empty",
+            blocker_message="Dispatch target is missing.",
+        )
+
+        changed_fields = recheck.get("changed_fields") if isinstance(recheck.get("changed_fields"), list) else []
+        if changed_fields:
+            warnings.append(
+                {
+                    "code": "RECHECK_CHANGED_FIELDS",
+                    "message": f"Recheck detected changed fields: {', '.join(str(v) for v in changed_fields[:5])}",
+                }
+            )
+            checks.append(
+                {
+                    "code": "RECHECK_CHANGED_FIELDS",
+                    "status": "WARNING",
+                    "message": "Recheck changed_fields is non-empty.",
+                }
+            )
+
+        diagnostics = attempt.get("diagnostics") if isinstance(attempt.get("diagnostics"), list) else []
+        has_warning_diag = any(str(item.get("severity") or "").upper() == "WARNING" for item in diagnostics if isinstance(item, dict))
+        if has_warning_diag:
+            warnings.append(
+                {
+                    "code": "DISPATCH_DIAGNOSTICS_WARNING",
+                    "message": "Dispatch diagnostics contain warning-level entries.",
+                }
+            )
+            checks.append(
+                {
+                    "code": "DISPATCH_DIAGNOSTICS_WARNING",
+                    "status": "WARNING",
+                    "message": "Dispatch diagnostics include WARNING severity.",
+                }
+            )
+
+        readiness_status = "ELIGIBLE" if not blockers else "BLOCKED"
+        readiness_level = "READY_FOR_FUTURE_EXECUTION" if readiness_status == "ELIGIBLE" else "NOT_READY"
+
+        return {
+            "attempt_id": int(attempt["id"]),
+            "readiness_status": readiness_status,
+            "readiness_level": readiness_level,
+            "blockers": blockers,
+            "warnings": warnings,
+            "checks": checks,
+            "recheck_status": recheck_status,
+            "attempt_status": attempt_status,
+            "dispatch_status": dispatch_status,
+            "dispatch_kind": dispatch_kind,
+            "dispatch_target": dispatch_target,
+        }
+
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         self.get_record(prompt_id)

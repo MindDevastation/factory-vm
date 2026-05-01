@@ -1787,3 +1787,43 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(str(request_row["request_status"]), "accepted")
             finally:
                 conn.close()
+
+    def test_evaluate_linked_action_dispatch_readiness_eligible_and_blocked_paths(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record({"slug": "mf21-ready", "code": "PR-MF21-R", "title": "MF21", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action = svc.create_linked_action(int(rec["id"]), {"action_key": "mf21-a", "action_type": "ui_action", "action_status": "active", "target_kind": "route", "target_ref": "/ui/ok", "config_json": {}}, actor="tester")
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True, "request_context_json": {"k": "v"}}, actor="tester")
+                attempt = svc.create_linked_action_dispatch_attempt(int(req["id"]), {"dry_run_only": True}, actor="tester")
+
+                before_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                before_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
+                ready = svc.evaluate_linked_action_dispatch_readiness(int(attempt["id"]))
+                self.assertEqual(ready["readiness_status"], "ELIGIBLE")
+                self.assertEqual(ready["readiness_level"], "READY_FOR_FUTURE_EXECUTION")
+                self.assertEqual(ready["blockers"], [])
+                self.assertEqual(ready["recheck_status"], "CURRENT")
+
+                conn.execute("UPDATE prompt_linked_actions SET target_ref = ? WHERE id = ?", ("/ui/changed", int(action["id"])))
+                stale = svc.evaluate_linked_action_dispatch_readiness(int(attempt["id"]))
+                self.assertEqual(stale["readiness_status"], "BLOCKED")
+                self.assertTrue(any(b["code"] == "RECHECK_NOT_CURRENT" for b in stale["blockers"]))
+                self.assertTrue(any(w["code"] == "RECHECK_CHANGED_FIELDS" for w in stale["warnings"]))
+
+                rec_blocked = svc.create_record({"slug": "mf21-blocked", "code": "PR-MF21-B", "title": "MF21 blocked", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action_blocked = svc.create_linked_action(int(rec_blocked["id"]), {"action_key": "mf21-b", "action_type": "ui_action", "action_status": "inactive", "target_kind": "route", "target_ref": "/ui/blocked", "config_json": {}}, actor="tester")
+                req_blocked = svc.create_linked_action_execution_request(int(action_blocked["id"]), {"confirm_execution": True}, actor="tester")
+                attempt_blocked = svc.create_linked_action_dispatch_attempt(int(req_blocked["id"]), {"dry_run_only": True}, actor="tester")
+                blocked = svc.evaluate_linked_action_dispatch_readiness(int(attempt_blocked["id"]))
+                self.assertEqual(blocked["readiness_status"], "BLOCKED")
+                self.assertTrue(any(b["code"] == "DISPATCH_NOT_READY" for b in blocked["blockers"]))
+
+                after_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                after_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
+                self.assertEqual(before_usage, after_usage)
+                self.assertEqual(before_req_status, after_req_status)
+            finally:
+                conn.close()
