@@ -759,6 +759,46 @@ class PromptRegistryService:
             item["diagnostics"] = []
         return item
 
+    def recheck_linked_action_dispatch_attempt(self, attempt_id: int) -> dict[str, Any]:
+        saved = self.get_linked_action_dispatch_attempt(attempt_id)
+        current = self.preview_linked_action_dispatch_plan(int(saved["execution_request_id"]))
+        saved_reason_codes = list(saved.get("plan", {}).get("reason_codes") or [])
+        current_reason_codes = list(current.get("reason_codes") or [])
+        changed_fields: list[str] = []
+        compare_pairs = (
+            ("dispatch_status", saved.get("dispatch_status"), current.get("dispatch_status")),
+            ("dispatch_kind", saved.get("dispatch_kind"), current.get("dispatch_kind")),
+            ("dispatch_target", saved.get("dispatch_target"), current.get("dispatch_target")),
+            ("reason_codes", saved_reason_codes, current_reason_codes),
+        )
+        for field_name, saved_value, current_value in compare_pairs:
+            if saved_value != current_value:
+                changed_fields.append(field_name)
+
+        current_status = str(current.get("dispatch_status") or "")
+        if current_status == "BLOCKED":
+            recheck_status = "BLOCKED"
+        elif changed_fields:
+            recheck_status = "STALE"
+        else:
+            recheck_status = "CURRENT"
+
+        diagnostics = current.get("diagnostics") if isinstance(current.get("diagnostics"), list) else []
+        return {
+            "attempt_id": int(saved["id"]),
+            "recheck_status": recheck_status,
+            "saved_dispatch_status": saved.get("dispatch_status"),
+            "current_dispatch_status": current.get("dispatch_status"),
+            "saved_dispatch_kind": saved.get("dispatch_kind"),
+            "current_dispatch_kind": current.get("dispatch_kind"),
+            "saved_dispatch_target": saved.get("dispatch_target"),
+            "current_dispatch_target": current.get("dispatch_target"),
+            "saved_reason_codes": saved_reason_codes,
+            "current_reason_codes": current_reason_codes,
+            "changed_fields": changed_fields,
+            "diagnostics": diagnostics,
+        }
+
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         self.get_record(prompt_id)

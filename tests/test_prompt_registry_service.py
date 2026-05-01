@@ -1756,3 +1756,34 @@ class TestPromptRegistryService(unittest.TestCase):
                     svc.get_linked_action_dispatch_attempt(999999)
             finally:
                 conn.close()
+
+    def test_recheck_linked_action_dispatch_attempt_current_stale_blocked(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record({"slug": "mf20-recheck", "code": "PR-MF20-R", "title": "MF20", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action = svc.create_linked_action(int(rec["id"]), {"action_key": "mf20-a", "action_type": "ui_action", "action_status": "active", "target_kind": "route", "target_ref": "/ui/ok", "config_json": {}}, actor="tester")
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True, "request_context_json": {"k": "v"}}, actor="tester")
+                attempt = svc.create_linked_action_dispatch_attempt(int(req["id"]), {"dry_run_only": True}, actor="tester")
+
+                current = svc.recheck_linked_action_dispatch_attempt(int(attempt["id"]))
+                self.assertEqual(current["recheck_status"], "CURRENT")
+                self.assertEqual(current["changed_fields"], [])
+
+                conn.execute("UPDATE prompt_linked_actions SET target_ref = ? WHERE id = ?", ("/ui/changed", int(action["id"])))
+                stale = svc.recheck_linked_action_dispatch_attempt(int(attempt["id"]))
+                self.assertEqual(stale["recheck_status"], "STALE")
+                self.assertIn("dispatch_target", stale["changed_fields"])
+
+                svc.update_linked_action_status(int(action["id"]), {"action_status": "inactive"}, actor="tester")
+                blocked = svc.recheck_linked_action_dispatch_attempt(int(attempt["id"]))
+                self.assertEqual(blocked["recheck_status"], "BLOCKED")
+
+                usage_count = conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"]
+                self.assertEqual(int(usage_count), 0)
+                request_row = conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()
+                self.assertEqual(str(request_row["request_status"]), "accepted")
+            finally:
+                conn.close()
