@@ -6508,6 +6508,23 @@ def _ui_prompt_registry_dispatch_attempt_detail_context(
         "diagnostics": recheck.get("diagnostics") if isinstance(recheck.get("diagnostics"), list) else [],
         "diagnostics_summary": _ui_prompt_registry_safe_summary(recheck.get("diagnostics")),
     }
+    readiness = item.get("readiness") if isinstance(item.get("readiness"), dict) else {}
+    readiness_checks = readiness.get("checks") if isinstance(readiness.get("checks"), list) else []
+    readiness_blockers = readiness.get("blockers") if isinstance(readiness.get("blockers"), list) else []
+    readiness_warnings = readiness.get("warnings") if isinstance(readiness.get("warnings"), list) else []
+    item["readiness"] = {
+        "attempt_id": readiness.get("attempt_id"),
+        "readiness_status": readiness.get("readiness_status"),
+        "readiness_level": readiness.get("readiness_level"),
+        "checks": [row for row in readiness_checks if isinstance(row, dict)],
+        "blockers": [row for row in readiness_blockers if isinstance(row, dict)],
+        "warnings": [row for row in readiness_warnings if isinstance(row, dict)],
+        "recheck_status": readiness.get("recheck_status"),
+        "attempt_status": readiness.get("attempt_status"),
+        "dispatch_status": readiness.get("dispatch_status"),
+        "dispatch_kind": readiness.get("dispatch_kind"),
+        "dispatch_target": readiness.get("dispatch_target"),
+    }
     return {
         "request": request,
         "mode": "linked_action_dispatch_attempt_detail",
@@ -6763,7 +6780,9 @@ def ui_prompt_registry_dispatch_attempt_detail_page(request: Request, attempt_id
         try:
             attempt = service.get_linked_action_dispatch_attempt(attempt_id)
             recheck = service.recheck_linked_action_dispatch_attempt(attempt_id)
+            readiness = service.evaluate_linked_action_dispatch_readiness(attempt_id)
             attempt["recheck"] = recheck
+            attempt["readiness"] = readiness
             return templates.TemplateResponse(
                 "prompt_registry.html",
                 _ui_prompt_registry_dispatch_attempt_detail_context(request, attempt_id=attempt_id, attempt=attempt),
