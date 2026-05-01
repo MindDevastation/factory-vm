@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import patch
 
 from services.common import db as dbm
-from services.prompt_registry.errors import PromptRegistryNotFoundError
+from services.prompt_registry.errors import PromptRegistryNotFoundError, PromptRegistryValidationError
 from services.prompt_registry.registry_service import PromptRegistryService
 from tests._helpers import seed_minimal_db, temp_env
 
@@ -1821,6 +1821,37 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(blocked["readiness_status"], "BLOCKED")
                 self.assertTrue(any(b["code"] == "DISPATCH_NOT_READY" for b in blocked["blockers"]))
 
+                after_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                after_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
+                self.assertEqual(before_usage, after_usage)
+                self.assertEqual(before_req_status, after_req_status)
+            finally:
+                conn.close()
+
+    def test_guard_linked_action_dispatch_execution_disabled_and_read_only(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record({"slug": "mf22-ready", "code": "PR-MF22-R", "title": "MF22", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action = svc.create_linked_action(int(rec["id"]), {"action_key": "mf22-a", "action_type": "ui_action", "action_status": "active", "target_kind": "route", "target_ref": "/ui/ok", "config_json": {}}, actor="tester")
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True}, actor="tester")
+                attempt = svc.create_linked_action_dispatch_attempt(int(req["id"]), {"dry_run_only": True}, actor="tester")
+                before_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                before_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
+                eligible = svc.guard_linked_action_dispatch_execution(int(attempt["id"]), payload={}, actor="tester")
+                self.assertEqual(eligible["execution_status"], "DISABLED")
+                self.assertEqual(eligible["readiness_status"], "ELIGIBLE")
+
+                svc.update_linked_action_status(int(action["id"]), {"action_status": "inactive"}, actor="tester")
+                blocked = svc.guard_linked_action_dispatch_execution(int(attempt["id"]), payload={}, actor="tester")
+                self.assertEqual(blocked["execution_status"], "DISABLED")
+                self.assertEqual(blocked["readiness_status"], "BLOCKED")
+
+                for bad_payload in ({"force": True}, {"execute": True}, {"dry_run_only": False}):
+                    with self.assertRaises(PromptRegistryValidationError):
+                        svc.guard_linked_action_dispatch_execution(int(attempt["id"]), payload=bad_payload, actor="tester")
                 after_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
                 after_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
                 self.assertEqual(before_usage, after_usage)

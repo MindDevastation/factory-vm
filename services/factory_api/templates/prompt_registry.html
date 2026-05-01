@@ -929,6 +929,21 @@
   </tbody>
 </table>
 
+<h4>Dispatch execution</h4>
+<p class="muted"><strong>Execution is disabled in this release.</strong></p>
+<p class="muted"><strong>No runtime execution is performed.</strong></p>
+<table>
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>execution_status</td><td>{{ dispatch_attempt_detail.execution_guard.execution_status if dispatch_attempt_detail.execution_guard.execution_status else "—" }}</td></tr>
+    <tr><td>reason_code</td><td>{{ dispatch_attempt_detail.execution_guard.reason_code if dispatch_attempt_detail.execution_guard.reason_code else "—" }}</td></tr>
+    <tr><td>readiness_status</td><td>{{ dispatch_attempt_detail.execution_guard.readiness_status if dispatch_attempt_detail.execution_guard.readiness_status else "—" }}</td></tr>
+    <tr><td>readiness_level</td><td>{{ dispatch_attempt_detail.execution_guard.readiness_level if dispatch_attempt_detail.execution_guard.readiness_level else "—" }}</td></tr>
+    <tr><td>next_allowed_action</td><td>{{ dispatch_attempt_detail.execution_guard.next_allowed_action if dispatch_attempt_detail.execution_guard.next_allowed_action else "—" }}</td></tr>
+  </tbody>
+</table>
+<p><a href="/ui/prompt-registry/linked-action-dispatch-attempts/{{ dispatch_attempt_detail_id }}">Back to dispatch attempt detail review</a></p>
+
 <h4>Readiness checks</h4>
 <table>
   <thead><tr><th>Code</th><th>Status</th><th>Message</th></tr></thead>

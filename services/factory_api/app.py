@@ -6525,6 +6525,17 @@ def _ui_prompt_registry_dispatch_attempt_detail_context(
         "dispatch_kind": readiness.get("dispatch_kind"),
         "dispatch_target": readiness.get("dispatch_target"),
     }
+    execution_guard = item.get("execution_guard") if isinstance(item.get("execution_guard"), dict) else {}
+    item["execution_guard"] = {
+        "execution_status": execution_guard.get("execution_status"),
+        "execution_available": bool(execution_guard.get("execution_available")),
+        "reason_code": execution_guard.get("reason_code"),
+        "message": execution_guard.get("message"),
+        "readiness_status": execution_guard.get("readiness_status"),
+        "readiness_level": execution_guard.get("readiness_level"),
+        "next_allowed_action": execution_guard.get("next_allowed_action"),
+        "dry_run_only": bool(execution_guard.get("dry_run_only", True)),
+    }
     return {
         "request": request,
         "mode": "linked_action_dispatch_attempt_detail",
@@ -6781,8 +6792,10 @@ def ui_prompt_registry_dispatch_attempt_detail_page(request: Request, attempt_id
             attempt = service.get_linked_action_dispatch_attempt(attempt_id)
             recheck = service.recheck_linked_action_dispatch_attempt(attempt_id)
             readiness = service.evaluate_linked_action_dispatch_readiness(attempt_id)
+            execution_guard = service.guard_linked_action_dispatch_execution(attempt_id, payload={}, actor=_ui_prompt_registry_actor())
             attempt["recheck"] = recheck
             attempt["readiness"] = readiness
+            attempt["execution_guard"] = execution_guard
             return templates.TemplateResponse(
                 "prompt_registry.html",
                 _ui_prompt_registry_dispatch_attempt_detail_context(request, attempt_id=attempt_id, attempt=attempt),
