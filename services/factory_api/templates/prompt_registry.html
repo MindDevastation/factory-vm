@@ -929,6 +929,51 @@
   </tbody>
 </table>
 
+<h4>Execution capability</h4>
+<p class="muted"><strong>Capability matrix only. No runtime execution is performed.</strong></p>
+<table>
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>capability_status</td><td>{{ dispatch_attempt_detail.execution_capability.capability_status if dispatch_attempt_detail.execution_capability.capability_status else "—" }}</td></tr>
+    <tr><td>runtime_available</td><td>{{ "yes" if dispatch_attempt_detail.execution_capability.runtime_available else "no" }}</td></tr>
+    <tr><td>support_level</td><td>{{ dispatch_attempt_detail.execution_capability.support_level if dispatch_attempt_detail.execution_capability.support_level else "—" }}</td></tr>
+    <tr><td>action_type</td><td>{{ dispatch_attempt_detail.execution_capability.action_type if dispatch_attempt_detail.execution_capability.action_type else "—" }}</td></tr>
+    <tr><td>target_kind</td><td>{{ dispatch_attempt_detail.execution_capability.target_kind if dispatch_attempt_detail.execution_capability.target_kind else "—" }}</td></tr>
+    <tr><td>dispatch_kind</td><td>{{ dispatch_attempt_detail.execution_capability.dispatch_kind if dispatch_attempt_detail.execution_capability.dispatch_kind else "—" }}</td></tr>
+    <tr><td>dispatch_target</td><td>{{ dispatch_attempt_detail.execution_capability.dispatch_target if dispatch_attempt_detail.execution_capability.dispatch_target else "—" }}</td></tr>
+  </tbody>
+</table>
+
+<h4>Execution capability blockers</h4>
+<table>
+  <thead><tr><th>Code</th><th>Message</th></tr></thead>
+  <tbody>
+    {% for item in dispatch_attempt_detail.execution_capability.blockers %}
+    <tr>
+      <td>{{ item.code if item.code else "—" }}</td>
+      <td>{{ item.message if item.message else "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2">No blockers.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h4>Execution capability notes</h4>
+<table>
+  <thead><tr><th>Code</th><th>Message</th></tr></thead>
+  <tbody>
+    {% for item in dispatch_attempt_detail.execution_capability.notes %}
+    <tr>
+      <td>{{ item.code if item.code else "—" }}</td>
+      <td>{{ item.message if item.message else "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2">No notes.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
 <h4>Dispatch execution</h4>
 <p class="muted"><strong>Execution is disabled in this release.</strong></p>
 <p class="muted"><strong>No runtime execution is performed.</strong></p>

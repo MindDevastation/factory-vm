@@ -6525,6 +6525,20 @@ def _ui_prompt_registry_dispatch_attempt_detail_context(
         "dispatch_kind": readiness.get("dispatch_kind"),
         "dispatch_target": readiness.get("dispatch_target"),
     }
+    execution_capability = item.get("execution_capability") if isinstance(item.get("execution_capability"), dict) else {}
+    capability_blockers = execution_capability.get("blockers") if isinstance(execution_capability.get("blockers"), list) else []
+    capability_notes = execution_capability.get("notes") if isinstance(execution_capability.get("notes"), list) else []
+    item["execution_capability"] = {
+        "capability_status": execution_capability.get("capability_status"),
+        "runtime_available": bool(execution_capability.get("runtime_available")),
+        "support_level": execution_capability.get("support_level"),
+        "action_type": execution_capability.get("action_type"),
+        "target_kind": execution_capability.get("target_kind"),
+        "dispatch_kind": execution_capability.get("dispatch_kind"),
+        "dispatch_target": execution_capability.get("dispatch_target"),
+        "blockers": [row for row in capability_blockers if isinstance(row, dict)],
+        "notes": [row for row in capability_notes if isinstance(row, dict)],
+    }
     execution_guard = item.get("execution_guard") if isinstance(item.get("execution_guard"), dict) else {}
     item["execution_guard"] = {
         "execution_status": execution_guard.get("execution_status"),
@@ -6793,9 +6807,11 @@ def ui_prompt_registry_dispatch_attempt_detail_page(request: Request, attempt_id
             recheck = service.recheck_linked_action_dispatch_attempt(attempt_id)
             readiness = service.evaluate_linked_action_dispatch_readiness(attempt_id)
             execution_guard = service.guard_linked_action_dispatch_execution(attempt_id, payload={}, actor=_ui_prompt_registry_actor())
+            execution_capability = service.evaluate_linked_action_dispatch_execution_capability(attempt_id)
             attempt["recheck"] = recheck
             attempt["readiness"] = readiness
             attempt["execution_guard"] = execution_guard
+            attempt["execution_capability"] = execution_capability
             return templates.TemplateResponse(
                 "prompt_registry.html",
                 _ui_prompt_registry_dispatch_attempt_detail_context(request, attempt_id=attempt_id, attempt=attempt),
