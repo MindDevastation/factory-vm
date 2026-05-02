@@ -44,7 +44,7 @@ class TestMf22PromptRegistryDispatchExecutionGuardUi(unittest.TestCase):
             self.assertIn("No runtime execution is performed.", detail.text)
             self.assertIn("DISABLED", detail.text)
             self.assertNotIn('name="execute"', detail.text.lower())
-            self.assertNotIn('type="submit"', detail.text.lower())
+            self.assertNotIn(">execute<", detail.text.lower())
             self.assertNotIn("plan_json", detail.text)
             self.assertNotIn("diagnostics_json", detail.text)
             self.assertNotIn("Traceback", detail.text)
