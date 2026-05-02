@@ -1055,6 +1055,23 @@
 <tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
 {% else %}<tr><td colspan="2">No notes.</td></tr>{% endfor %}
 </tbody></table>
+<h4>Execution operator checklist</h4>
+<p class="muted"><strong>Operator checklist only. No runtime execution is performed.</strong></p>
+<table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>checklist_status</td><td>{{ dispatch_attempt_detail.execution_operator_checklist.checklist_status if dispatch_attempt_detail.execution_operator_checklist.checklist_status else "—" }}</td></tr>
+<tr><td>operator_message</td><td>{{ dispatch_attempt_detail.execution_operator_checklist.operator_message if dispatch_attempt_detail.execution_operator_checklist.operator_message else "—" }}</td></tr>
+<tr><td>recommended_operator_action</td><td>{{ dispatch_attempt_detail.execution_operator_checklist.recommended_operator_action if dispatch_attempt_detail.execution_operator_checklist.recommended_operator_action else "—" }}</td></tr>
+<tr><td>source_preflight_status</td><td>{{ dispatch_attempt_detail.execution_operator_checklist.source_preflight_status if dispatch_attempt_detail.execution_operator_checklist.source_preflight_status else "—" }}</td></tr>
+<tr><td>source_reason_code</td><td>{{ dispatch_attempt_detail.execution_operator_checklist.source_reason_code if dispatch_attempt_detail.execution_operator_checklist.source_reason_code else "—" }}</td></tr>
+<tr><td>blocking_codes</td><td>{{ (dispatch_attempt_detail.execution_operator_checklist.blocking_codes | join(", ")) if dispatch_attempt_detail.execution_operator_checklist.blocking_codes else "—" }}</td></tr>
+<tr><td>warning_codes</td><td>{{ (dispatch_attempt_detail.execution_operator_checklist.warning_codes | join(", ")) if dispatch_attempt_detail.execution_operator_checklist.warning_codes else "—" }}</td></tr>
+</tbody></table>
+<h4>Execution operator checklist items</h4>
+<table><thead><tr><th>Code</th><th>Label</th><th>Status</th><th>Message</th></tr></thead><tbody>
+{% for item in dispatch_attempt_detail.execution_operator_checklist.checklist_items %}
+<tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.label if item.label else "—" }}</td><td>{{ item.status if item.status else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
+{% else %}<tr><td colspan="4">No checklist items.</td></tr>{% endfor %}
+</tbody></table>
 <h4>Audit payload preview</h4>
 <table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
 <tr><td>attempt_id</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.attempt_id if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.attempt_id is not none else "—" }}</td></tr>

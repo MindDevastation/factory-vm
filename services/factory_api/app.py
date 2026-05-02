@@ -6866,12 +6866,14 @@ def ui_prompt_registry_dispatch_attempt_detail_page(request: Request, attempt_id
             execution_capability = service.evaluate_linked_action_dispatch_execution_capability(attempt_id)
             execution_audit_preview = service.preview_linked_action_dispatch_execution_audit(attempt_id)
             execution_preflight = service.preview_linked_action_dispatch_execution_preflight(attempt_id)
+            execution_operator_checklist = service.preview_linked_action_dispatch_execution_operator_checklist(attempt_id)
             attempt["recheck"] = recheck
             attempt["readiness"] = readiness
             attempt["execution_guard"] = execution_guard
             attempt["execution_capability"] = execution_capability
             attempt["execution_audit_preview"] = execution_audit_preview
             attempt["execution_preflight"] = execution_preflight
+            attempt["execution_operator_checklist"] = execution_operator_checklist
             return templates.TemplateResponse(
                 "prompt_registry.html",
                 _ui_prompt_registry_dispatch_attempt_detail_context(request, attempt_id=attempt_id, attempt=attempt),
