@@ -1074,6 +1074,9 @@
 </tbody></table>
 <h4>Execution operator handoff</h4>
 <p class="muted"><strong>Handoff snapshot only. No runtime execution is performed.</strong></p>
+<form method="post" action="/ui/prompt-registry/linked-action-dispatch-attempts/{{ dispatch_attempt_detail.id }}/execution-operator-handoff/download" style="margin:8px 0 12px 0;">
+<button type="submit">Download handoff snapshot JSON</button>
+</form>
 <table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
 <tr><td>handoff_status</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.handoff_status if dispatch_attempt_detail.execution_operator_handoff.handoff_status else "—" }}</td></tr>
 <tr><td>recommended_operator_action</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.recommended_operator_action if dispatch_attempt_detail.execution_operator_handoff.recommended_operator_action else "—" }}</td></tr>

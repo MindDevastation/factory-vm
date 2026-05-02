@@ -6902,6 +6902,25 @@ def ui_prompt_registry_dispatch_attempt_detail_page(request: Request, attempt_id
     finally:
         conn.close()
 
+
+@app.post("/ui/prompt-registry/linked-action-dispatch-attempts/{attempt_id}/execution-operator-handoff/download")
+def ui_prompt_registry_dispatch_execution_operator_handoff_download_action(attempt_id: int, _: bool = Depends(require_basic_auth(env))):
+    conn = dbm.connect(env)
+    try:
+        service = PromptRegistryService(conn)
+        payload = service.preview_linked_action_dispatch_execution_operator_handoff(attempt_id)
+        return Response(
+            content=json.dumps(payload, ensure_ascii=False, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="dispatch-handoff-attempt-{attempt_id}.json"'},
+        )
+    except PromptRegistryNotFoundError:
+        return JSONResponse(status_code=404, content={"error": {"code": "PROMPT_REGISTRY_NOT_FOUND", "message": "Dispatch attempt was not found"}})
+    except (PromptRegistryValidationError, ValueError):
+        return JSONResponse(status_code=422, content={"error": {"code": "PROMPT_REGISTRY_VALIDATION_ERROR", "message": "Dispatch handoff download failed validation"}})
+    finally:
+        conn.close()
+
 @app.get("/ui/prompt-registry/linked-action-requests/{request_id}/dispatch-preview", response_class=HTMLResponse)
 def ui_prompt_registry_linked_action_dispatch_preview_page(request: Request, request_id: int, _: bool = Depends(require_basic_auth(env))):
     conn = dbm.connect(env)
