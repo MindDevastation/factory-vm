@@ -1072,6 +1072,43 @@
 <tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.label if item.label else "—" }}</td><td>{{ item.status if item.status else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
 {% else %}<tr><td colspan="4">No checklist items.</td></tr>{% endfor %}
 </tbody></table>
+<h4>Execution operator handoff</h4>
+<p class="muted"><strong>Handoff snapshot only. No runtime execution is performed.</strong></p>
+<table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>handoff_status</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.handoff_status if dispatch_attempt_detail.execution_operator_handoff.handoff_status else "—" }}</td></tr>
+<tr><td>recommended_operator_action</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.recommended_operator_action if dispatch_attempt_detail.execution_operator_handoff.recommended_operator_action else "—" }}</td></tr>
+<tr><td>execution_enabled</td><td>{{ "yes" if dispatch_attempt_detail.execution_operator_handoff.execution_enabled else "no" }}</td></tr>
+<tr><td>runtime_available</td><td>{{ "yes" if dispatch_attempt_detail.execution_operator_handoff.runtime_available else "no" }}</td></tr>
+</tbody></table>
+<h4>Execution operator handoff summary</h4>
+<table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+{% for key, value in dispatch_attempt_detail.execution_operator_handoff.summary.items() %}<tr><td>{{ key }}</td><td>{{ value if value is not none and value != '' else '—' }}</td></tr>{% else %}<tr><td colspan="2">No summary.</td></tr>{% endfor %}
+</tbody></table>
+<h4>Execution operator handoff codes</h4>
+<table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>blocking_codes</td><td>{{ (dispatch_attempt_detail.execution_operator_handoff.blocking_codes | join(", ")) if dispatch_attempt_detail.execution_operator_handoff.blocking_codes else "—" }}</td></tr>
+<tr><td>warning_codes</td><td>{{ (dispatch_attempt_detail.execution_operator_handoff.warning_codes | join(", ")) if dispatch_attempt_detail.execution_operator_handoff.warning_codes else "—" }}</td></tr>
+</tbody></table>
+<h4>Execution operator handoff checklist items</h4>
+<table><thead><tr><th>Code</th><th>Label</th><th>Status</th><th>Message</th></tr></thead><tbody>
+{% for item in dispatch_attempt_detail.execution_operator_handoff.checklist_items %}
+<tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.label if item.label else "—" }}</td><td>{{ item.status if item.status else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
+{% else %}<tr><td colspan="4">No checklist items.</td></tr>{% endfor %}
+</tbody></table>
+<h4>Execution operator handoff audit payload preview</h4>
+<table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>attempt_id</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.attempt_id if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.attempt_id is not none else "—" }}</td></tr>
+<tr><td>execution_request_id</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.execution_request_id if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.execution_request_id is not none else "—" }}</td></tr>
+<tr><td>prompt_id</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.prompt_id if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.prompt_id is not none else "—" }}</td></tr>
+<tr><td>action_id</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.action_id if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.action_id is not none else "—" }}</td></tr>
+<tr><td>dispatch_status</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.dispatch_status if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.dispatch_status else "—" }}</td></tr>
+<tr><td>dispatch_kind</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.dispatch_kind if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.dispatch_kind else "—" }}</td></tr>
+<tr><td>dispatch_target</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.dispatch_target if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.dispatch_target else "—" }}</td></tr>
+<tr><td>readiness_status</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.readiness_status if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.readiness_status else "—" }}</td></tr>
+<tr><td>capability_status</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.capability_status if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.capability_status else "—" }}</td></tr>
+<tr><td>reason_code</td><td>{{ dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.reason_code if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.reason_code else "—" }}</td></tr>
+<tr><td>dry_run_only</td><td>{{ "yes" if dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview.dry_run_only else "no" }}</td></tr>
+</tbody></table>
 <h4>Audit payload preview</h4>
 <table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
 <tr><td>attempt_id</td><td>{{ dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.attempt_id if dispatch_attempt_detail.execution_audit_preview.audit_payload_preview.attempt_id is not none else "—" }}</td></tr>

@@ -1990,3 +1990,35 @@ class TestPromptRegistryService(unittest.TestCase):
                 self.assertEqual(before_status, after_status)
             finally:
                 conn.close()
+    def test_preview_linked_action_dispatch_execution_operator_handoff_read_only(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                prompt = svc.create_record({"slug": "mf27-svc", "code": "PR-MF27-SVC", "title": "mf27", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action = svc.create_linked_action(int(prompt["id"]), {"action_key": "mf27", "action_type": "ui_action", "target_kind": "route", "target_ref": "/ui/prompt-registry", "action_status": "active", "config_json": {}}, actor="tester")
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True}, actor="tester")
+                attempt = svc.create_linked_action_dispatch_attempt(int(req["id"]), {"dry_run_only": True}, actor="tester")
+                before_audit = conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"]
+                before_usage = conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"]
+                before_status = conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"]
+                handoff = svc.preview_linked_action_dispatch_execution_operator_handoff(int(attempt["id"]))
+                self.assertIn(handoff["handoff_status"], ("BLOCKED", "REVIEW_REQUIRED"))
+                self.assertFalse(handoff["execution_enabled"])
+                self.assertFalse(handoff["runtime_available"])
+                self.assertEqual(handoff["recommended_operator_action"], "review_checklist")
+                self.assertIsInstance(handoff["summary"], dict)
+                self.assertIsInstance(handoff["checklist_items"], list)
+                self.assertIsInstance(handoff["audit_payload_preview"], dict)
+                codes = [row.get("code") for row in handoff["notes"] if isinstance(row, dict)]
+                self.assertIn("HANDOFF_SNAPSHOT_ONLY", codes)
+                after_audit = conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"]
+                after_usage = conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"]
+                after_status = conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"]
+                self.assertEqual(before_audit, after_audit)
+                self.assertEqual(before_usage, after_usage)
+                self.assertEqual(before_status, after_status)
+            finally:
+                conn.close()
+
