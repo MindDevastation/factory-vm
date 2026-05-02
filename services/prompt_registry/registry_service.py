@@ -1121,6 +1121,59 @@ class PromptRegistryService:
             "recommended_operator_action": "review_readiness",
         }
 
+    def preview_linked_action_dispatch_execution_operator_checklist(self, attempt_id: int) -> dict[str, Any]:
+        attempt = self.get_linked_action_dispatch_attempt(attempt_id)
+        preflight = self.preview_linked_action_dispatch_execution_preflight(attempt_id)
+
+        checklist_items: list[dict[str, str]] = [
+            {"code": "PREFLIGHT_LOADED", "label": "Preflight loaded", "status": "PASS", "message": "Execution preflight summary loaded."},
+            {"code": "READINESS_REVIEWED", "label": "Readiness reviewed", "status": "REVIEW", "message": "Review readiness status before any runtime action."},
+            {"code": "RECHECK_REVIEWED", "label": "Recheck reviewed", "status": "REVIEW", "message": "Review recheck outcome for fresh dispatch attempt state."},
+            {"code": "CAPABILITY_REVIEWED", "label": "Capability reviewed", "status": "REVIEW", "message": "Review execution capability; runtime support remains disabled."},
+            {"code": "AUDIT_PREVIEW_REVIEWED", "label": "Audit preview reviewed", "status": "REVIEW", "message": "Review audit preview payload only; no write is performed."},
+            {"code": "EXECUTION_DISABLED_CONFIRMED", "label": "Execution disabled confirmed", "status": "PASS", "message": "Execution remains disabled in this release."},
+            {"code": "NO_RUNTIME_ACTION_AVAILABLE", "label": "No runtime action available", "status": "BLOCKED", "message": "Runtime execution is not available for this dispatch attempt."},
+        ]
+
+        blocking_codes = preflight.get("blocking_codes") if isinstance(preflight.get("blocking_codes"), list) else []
+        for code in blocking_codes:
+            if not isinstance(code, str) or not code:
+                continue
+            checklist_items.append(
+                {
+                    "code": f"PREFLIGHT_BLOCKER_{code}",
+                    "label": f"Preflight blocker: {code}",
+                    "status": "BLOCKED",
+                    "message": f"Preflight reported blocking code: {code}.",
+                }
+            )
+
+        execution_enabled = False
+        has_blocked = any(item.get("status") == "BLOCKED" for item in checklist_items)
+        checklist_status = "BLOCKED" if has_blocked else "REVIEW_ONLY"
+        warning_codes = preflight.get("warning_codes") if isinstance(preflight.get("warning_codes"), list) else []
+        source_preflight_status = str(preflight.get("preflight_status") or "")
+        source_reason_code = str(preflight.get("reason_code") or "")
+        operator_message = (
+            "Checklist blocked: runtime execution is unavailable in this release."
+            if checklist_status == "BLOCKED"
+            else "Checklist is review-only. Runtime execution remains disabled."
+        )
+
+        return {
+            "attempt_id": int(attempt["id"]),
+            "checklist_status": checklist_status,
+            "execution_enabled": execution_enabled,
+            "checklist_title": "Dispatch execution operator checklist",
+            "operator_message": operator_message,
+            "checklist_items": checklist_items,
+            "blocking_codes": blocking_codes,
+            "warning_codes": warning_codes,
+            "recommended_operator_action": "review_preflight",
+            "source_preflight_status": source_preflight_status,
+            "source_reason_code": source_reason_code,
+        }
+
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         self.get_record(prompt_id)

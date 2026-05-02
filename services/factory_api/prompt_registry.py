@@ -432,6 +432,18 @@ def create_prompt_registry_router(env: Env) -> APIRouter:
         finally:
             conn.close()
 
+    @router.get("/linked-action-dispatch-attempts/{attempt_id}/execution-operator-checklist")
+    def get_linked_action_dispatch_execution_operator_checklist(attempt_id: int, _: bool = Depends(require_basic_auth(env))):
+        conn = dbm.connect(env)
+        try:
+            return PromptRegistryService(conn).preview_linked_action_dispatch_execution_operator_checklist(attempt_id)
+        except PromptRegistryNotFoundError as exc:
+            return _error("PROMPT_REGISTRY_NOT_FOUND", str(exc), status_code=404)
+        except (TypeError, ValueError, PromptRegistryValidationError) as exc:
+            return _error("PROMPT_REGISTRY_VALIDATION_ERROR", str(exc), status_code=422)
+        finally:
+            conn.close()
+
     @router.get("/linked-action-dispatch-attempts/{attempt_id}/execution-audit-preview")
     def get_linked_action_dispatch_execution_audit_preview(attempt_id: int, _: bool = Depends(require_basic_auth(env))):
         conn = dbm.connect(env)

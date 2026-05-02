@@ -1961,3 +1961,32 @@ class TestPromptRegistryService(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_preview_linked_action_dispatch_execution_operator_checklist_read_only(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                prompt = svc.create_record({"slug": "mf26-svc", "code": "PR-MF26-SVC", "title": "mf26", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action = svc.create_linked_action(int(prompt["id"]), {"action_key": "mf26", "action_type": "ui_action", "target_kind": "route", "target_ref": "/ui/prompt-registry", "action_status": "active", "config_json": {}}, actor="tester")
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True}, actor="tester")
+                attempt = svc.create_linked_action_dispatch_attempt(int(req["id"]), {"dry_run_only": True}, actor="tester")
+                before_audit = conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"]
+                before_usage = conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"]
+                before_status = conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"]
+                checklist = svc.preview_linked_action_dispatch_execution_operator_checklist(int(attempt["id"]))
+                self.assertEqual(checklist["checklist_status"], "BLOCKED")
+                self.assertFalse(checklist["execution_enabled"])
+                self.assertEqual(checklist["recommended_operator_action"], "review_preflight")
+                codes = [row.get("code") for row in checklist["checklist_items"] if isinstance(row, dict)]
+                for required in ("PREFLIGHT_LOADED", "READINESS_REVIEWED", "RECHECK_REVIEWED", "CAPABILITY_REVIEWED", "AUDIT_PREVIEW_REVIEWED", "EXECUTION_DISABLED_CONFIRMED", "NO_RUNTIME_ACTION_AVAILABLE"):
+                    self.assertIn(required, codes)
+                self.assertTrue(any(str(code).startswith("PREFLIGHT_BLOCKER_") for code in codes))
+                after_audit = conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"]
+                after_usage = conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"]
+                after_status = conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"]
+                self.assertEqual(before_audit, after_audit)
+                self.assertEqual(before_usage, after_usage)
+                self.assertEqual(before_status, after_status)
+            finally:
+                conn.close()
