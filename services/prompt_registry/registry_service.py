@@ -1174,6 +1174,52 @@ class PromptRegistryService:
             "source_reason_code": source_reason_code,
         }
 
+    def preview_linked_action_dispatch_execution_operator_handoff(self, attempt_id: int) -> dict[str, Any]:
+        attempt = self.get_linked_action_dispatch_attempt(attempt_id)
+        preflight = self.preview_linked_action_dispatch_execution_preflight(attempt_id)
+        checklist = self.preview_linked_action_dispatch_execution_operator_checklist(attempt_id)
+        audit_preview = self.preview_linked_action_dispatch_execution_audit(attempt_id)
+        capability = self.evaluate_linked_action_dispatch_execution_capability(attempt_id)
+        execution_guard = self.guard_linked_action_dispatch_execution(attempt_id, payload={}, actor="system")
+        handoff_status = (
+            "BLOCKED"
+            if checklist.get("checklist_status") == "BLOCKED" or preflight.get("preflight_status") == "BLOCKED"
+            else "REVIEW_REQUIRED"
+        )
+        notes = [{"code": "HANDOFF_SNAPSHOT_ONLY", "message": "Handoff snapshot only. No runtime execution is performed."}]
+        for row in preflight.get("notes") if isinstance(preflight.get("notes"), list) else []:
+            if isinstance(row, dict) and row.get("code") != "HANDOFF_SNAPSHOT_ONLY":
+                notes.append(row)
+        return {
+            "attempt_id": int(attempt["id"]),
+            "handoff_status": handoff_status,
+            "handoff_title": "Dispatch execution operator handoff",
+            "execution_enabled": False,
+            "runtime_available": False,
+            "recommended_operator_action": "review_checklist",
+            "summary": {
+                "prompt_id": int(attempt["prompt_id"]),
+                "action_id": int(attempt["action_id"]),
+                "execution_request_id": int(attempt["execution_request_id"]),
+                "attempt_status": attempt.get("attempt_status"),
+                "dispatch_status": attempt.get("dispatch_status"),
+                "dispatch_kind": attempt.get("dispatch_kind"),
+                "dispatch_target": attempt.get("dispatch_target"),
+                "readiness_status": preflight.get("readiness_status"),
+                "recheck_status": preflight.get("recheck_status"),
+                "capability_status": capability.get("capability_status"),
+                "checklist_status": checklist.get("checklist_status"),
+                "preflight_status": preflight.get("preflight_status"),
+                "audit_preview_status": audit_preview.get("preview_status"),
+                "execution_status": execution_guard.get("execution_status"),
+            },
+            "blocking_codes": preflight.get("blocking_codes") if isinstance(preflight.get("blocking_codes"), list) else [],
+            "warning_codes": preflight.get("warning_codes") if isinstance(preflight.get("warning_codes"), list) else [],
+            "checklist_items": checklist.get("checklist_items") if isinstance(checklist.get("checklist_items"), list) else [],
+            "audit_payload_preview": audit_preview.get("audit_payload_preview") if isinstance(audit_preview.get("audit_payload_preview"), dict) else {},
+            "notes": notes,
+        }
+
     def create_linked_action(self, prompt_id: int, payload: dict[str, Any], actor: str) -> dict[str, Any]:
         actor_id = self._validated_actor(actor)
         self.get_record(prompt_id)

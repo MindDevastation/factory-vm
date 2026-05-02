@@ -6595,6 +6595,20 @@ def _ui_prompt_registry_dispatch_attempt_detail_context(
         "notes": execution_preflight.get("notes") if isinstance(execution_preflight.get("notes"), list) else [],
         "recommended_operator_action": execution_preflight.get("recommended_operator_action"),
     }
+    execution_operator_handoff = item.get("execution_operator_handoff") if isinstance(item.get("execution_operator_handoff"), dict) else {}
+    handoff_summary = execution_operator_handoff.get("summary") if isinstance(execution_operator_handoff.get("summary"), dict) else {}
+    item["execution_operator_handoff"] = {
+        "handoff_status": execution_operator_handoff.get("handoff_status"),
+        "recommended_operator_action": execution_operator_handoff.get("recommended_operator_action"),
+        "execution_enabled": bool(execution_operator_handoff.get("execution_enabled")),
+        "runtime_available": bool(execution_operator_handoff.get("runtime_available")),
+        "summary": handoff_summary,
+        "blocking_codes": execution_operator_handoff.get("blocking_codes") if isinstance(execution_operator_handoff.get("blocking_codes"), list) else [],
+        "warning_codes": execution_operator_handoff.get("warning_codes") if isinstance(execution_operator_handoff.get("warning_codes"), list) else [],
+        "checklist_items": execution_operator_handoff.get("checklist_items") if isinstance(execution_operator_handoff.get("checklist_items"), list) else [],
+        "audit_payload_preview": execution_operator_handoff.get("audit_payload_preview") if isinstance(execution_operator_handoff.get("audit_payload_preview"), dict) else {},
+        "notes": execution_operator_handoff.get("notes") if isinstance(execution_operator_handoff.get("notes"), list) else [],
+    }
     execution_guard = item.get("execution_guard") if isinstance(item.get("execution_guard"), dict) else {}
     item["execution_guard"] = {
         "execution_status": execution_guard.get("execution_status"),
@@ -6867,6 +6881,7 @@ def ui_prompt_registry_dispatch_attempt_detail_page(request: Request, attempt_id
             execution_audit_preview = service.preview_linked_action_dispatch_execution_audit(attempt_id)
             execution_preflight = service.preview_linked_action_dispatch_execution_preflight(attempt_id)
             execution_operator_checklist = service.preview_linked_action_dispatch_execution_operator_checklist(attempt_id)
+            execution_operator_handoff = service.preview_linked_action_dispatch_execution_operator_handoff(attempt_id)
             attempt["recheck"] = recheck
             attempt["readiness"] = readiness
             attempt["execution_guard"] = execution_guard
@@ -6874,6 +6889,7 @@ def ui_prompt_registry_dispatch_attempt_detail_page(request: Request, attempt_id
             attempt["execution_audit_preview"] = execution_audit_preview
             attempt["execution_preflight"] = execution_preflight
             attempt["execution_operator_checklist"] = execution_operator_checklist
+            attempt["execution_operator_handoff"] = execution_operator_handoff
             return templates.TemplateResponse(
                 "prompt_registry.html",
                 _ui_prompt_registry_dispatch_attempt_detail_context(request, attempt_id=attempt_id, attempt=attempt),
