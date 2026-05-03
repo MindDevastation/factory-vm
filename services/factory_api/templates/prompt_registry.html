@@ -881,7 +881,21 @@
   </tbody>
 </table>
 
-<h4>Current recheck</h4>
+<h4>Dispatch execution review map</h4>
+<ul>
+  <li><a href="#dispatch-recheck">Recheck</a></li>
+  <li><a href="#dispatch-readiness">Readiness</a></li>
+  <li><a href="#dispatch-execution-disabled">Execution disabled</a></li>
+  <li><a href="#dispatch-capability">Capability</a></li>
+  <li><a href="#dispatch-audit-preview">Audit preview</a></li>
+  <li><a href="#dispatch-preflight">Preflight summary</a></li>
+  <li><a href="#dispatch-operator-checklist">Operator checklist</a></li>
+  <li><a href="#dispatch-operator-handoff">Operator handoff</a></li>
+  <li><a href="#dispatch-handoff-preview">Handoff preview/export</a></li>
+</ul>
+<p class="muted"><strong>Execution foundation review only. No runtime execution, audit write, queue job, or external call is performed from this page.</strong></p>
+
+<h4 id="dispatch-recheck">Current recheck</h4>
 <p class="muted">Read-only recheck. No runtime execution is performed.</p>
 <table>
   <thead><tr><th>Field</th><th>Value</th></tr></thead>
@@ -916,7 +930,7 @@
   </tbody>
 </table>
 
-<h4>Dispatch readiness gate</h4>
+<h4 id="dispatch-readiness">Dispatch readiness gate</h4>
 <p class="muted">Readiness gate only. No runtime execution is performed.</p>
 <table>
   <thead><tr><th>Field</th><th>Value</th></tr></thead>
@@ -929,7 +943,21 @@
   </tbody>
 </table>
 
-<h4>Execution capability</h4>
+<h4 id="dispatch-execution-disabled">Dispatch execution</h4>
+<p class="muted"><strong>Execution is disabled in this release.</strong></p>
+<p class="muted"><strong>No runtime execution is performed.</strong></p>
+<table>
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>execution_status</td><td>{{ dispatch_attempt_detail.execution_guard.execution_status if dispatch_attempt_detail.execution_guard.execution_status else "—" }}</td></tr>
+    <tr><td>reason_code</td><td>{{ dispatch_attempt_detail.execution_guard.reason_code if dispatch_attempt_detail.execution_guard.reason_code else "—" }}</td></tr>
+    <tr><td>readiness_status</td><td>{{ dispatch_attempt_detail.execution_guard.readiness_status if dispatch_attempt_detail.execution_guard.readiness_status else "—" }}</td></tr>
+    <tr><td>readiness_level</td><td>{{ dispatch_attempt_detail.execution_guard.readiness_level if dispatch_attempt_detail.execution_guard.readiness_level else "—" }}</td></tr>
+    <tr><td>next_allowed_action</td><td>{{ dispatch_attempt_detail.execution_guard.next_allowed_action if dispatch_attempt_detail.execution_guard.next_allowed_action else "—" }}</td></tr>
+  </tbody>
+</table>
+
+<h4 id="dispatch-capability">Execution capability</h4>
 <p class="muted"><strong>Capability matrix only. No runtime execution is performed.</strong></p>
 <table>
   <thead><tr><th>Field</th><th>Value</th></tr></thead>
@@ -974,21 +1002,7 @@
   </tbody>
 </table>
 
-<h4>Dispatch execution</h4>
-<p class="muted"><strong>Execution is disabled in this release.</strong></p>
-<p class="muted"><strong>No runtime execution is performed.</strong></p>
-<table>
-  <thead><tr><th>Field</th><th>Value</th></tr></thead>
-  <tbody>
-    <tr><td>execution_status</td><td>{{ dispatch_attempt_detail.execution_guard.execution_status if dispatch_attempt_detail.execution_guard.execution_status else "—" }}</td></tr>
-    <tr><td>reason_code</td><td>{{ dispatch_attempt_detail.execution_guard.reason_code if dispatch_attempt_detail.execution_guard.reason_code else "—" }}</td></tr>
-    <tr><td>readiness_status</td><td>{{ dispatch_attempt_detail.execution_guard.readiness_status if dispatch_attempt_detail.execution_guard.readiness_status else "—" }}</td></tr>
-    <tr><td>readiness_level</td><td>{{ dispatch_attempt_detail.execution_guard.readiness_level if dispatch_attempt_detail.execution_guard.readiness_level else "—" }}</td></tr>
-    <tr><td>next_allowed_action</td><td>{{ dispatch_attempt_detail.execution_guard.next_allowed_action if dispatch_attempt_detail.execution_guard.next_allowed_action else "—" }}</td></tr>
-  </tbody>
-</table>
-
-<h4>Execution audit preview</h4>
+<h4 id="dispatch-audit-preview">Execution audit preview</h4>
 <p class="muted"><strong>Audit preview only. No audit event is written.</strong></p>
 <table>
   <thead><tr><th>Field</th><th>Value</th></tr></thead>
@@ -1021,7 +1035,7 @@
 <tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
 {% else %}<tr><td colspan="2">No notes.</td></tr>{% endfor %}
 </tbody></table>
-<h4>Execution preflight summary</h4>
+<h4 id="dispatch-preflight">Execution preflight summary</h4>
 <p class="muted"><strong>Preflight summary only. No runtime execution is performed.</strong></p>
 <table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
 <tr><td>preflight_status</td><td>{{ dispatch_attempt_detail.execution_preflight.preflight_status if dispatch_attempt_detail.execution_preflight.preflight_status else "—" }}</td></tr>
@@ -1055,7 +1069,7 @@
 <tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
 {% else %}<tr><td colspan="2">No notes.</td></tr>{% endfor %}
 </tbody></table>
-<h4>Execution operator checklist</h4>
+<h4 id="dispatch-operator-checklist">Execution operator checklist</h4>
 <p class="muted"><strong>Operator checklist only. No runtime execution is performed.</strong></p>
 <table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
 <tr><td>checklist_status</td><td>{{ dispatch_attempt_detail.execution_operator_checklist.checklist_status if dispatch_attempt_detail.execution_operator_checklist.checklist_status else "—" }}</td></tr>
@@ -1072,8 +1086,8 @@
 <tr><td>{{ item.code if item.code else "—" }}</td><td>{{ item.label if item.label else "—" }}</td><td>{{ item.status if item.status else "—" }}</td><td>{{ item.message if item.message else "—" }}</td></tr>
 {% else %}<tr><td colspan="4">No checklist items.</td></tr>{% endfor %}
 </tbody></table>
-<h4>Execution operator handoff</h4>
-<h4>Handoff snapshot preview</h4>
+<h4 id="dispatch-operator-handoff">Execution operator handoff</h4>
+<h4 id="dispatch-handoff-preview">Handoff snapshot preview</h4>
 <p class="muted"><strong>Preview only. No runtime execution is performed.</strong></p>
 {% set handoff_preview = {
   "attempt_id": dispatch_attempt_detail.id,
