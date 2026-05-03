@@ -1073,6 +1073,22 @@
 {% else %}<tr><td colspan="4">No checklist items.</td></tr>{% endfor %}
 </tbody></table>
 <h4>Execution operator handoff</h4>
+<h4>Handoff snapshot preview</h4>
+<p class="muted"><strong>Preview only. No runtime execution is performed.</strong></p>
+{% set handoff_preview = {
+  "attempt_id": dispatch_attempt_detail.id,
+  "handoff_status": dispatch_attempt_detail.execution_operator_handoff.handoff_status,
+  "recommended_operator_action": dispatch_attempt_detail.execution_operator_handoff.recommended_operator_action,
+  "execution_enabled": dispatch_attempt_detail.execution_operator_handoff.execution_enabled,
+  "runtime_available": dispatch_attempt_detail.execution_operator_handoff.runtime_available,
+  "summary": dispatch_attempt_detail.execution_operator_handoff.summary,
+  "blocking_codes": dispatch_attempt_detail.execution_operator_handoff.blocking_codes,
+  "warning_codes": dispatch_attempt_detail.execution_operator_handoff.warning_codes,
+  "checklist_items": dispatch_attempt_detail.execution_operator_handoff.checklist_items,
+  "audit_payload_preview": dispatch_attempt_detail.execution_operator_handoff.audit_payload_preview,
+  "notes": dispatch_attempt_detail.execution_operator_handoff.notes
+} %}
+<pre data-testid="handoff-snapshot-preview">{{ handoff_preview|tojson }}</pre>
 <p class="muted"><strong>Handoff snapshot only. No runtime execution is performed.</strong></p>
 <form method="post" action="/ui/prompt-registry/linked-action-dispatch-attempts/{{ dispatch_attempt_detail.id }}/execution-operator-handoff/download" style="margin:8px 0 12px 0;">
 <button type="submit">Download handoff snapshot JSON</button>
