@@ -1,0 +1,919 @@
+SPEC_PROMPT_REGISTRY_REAL_EXECUTION_RUNTIME_v1.0
+
+Conflict / Fullness Check
+
+Hard conflicts inside the REQ were not found.
+
+The REQ is internally aligned on the key runtime boundaries:
+- current baseline is intentionally read-only and stops at review/export/handoff
+- real runtime execution is not implemented in the closed baseline
+- v1 runtime must support only the exact frozen whitelist of linked action capabilities
+- explicit operator confirmation is mandatory before execution admission
+- runtime state ownership, idempotency, locks, audit trail, lifecycle events, and usage summary are mandatory
+- hybrid execution model is mandatory:
+  - synchronous only for request-commit style internal actions
+  - asynchronous only for internal prompt job enqueue and handoff export generation
+- runtime must remain Basic-Auth-protected, SQLite-compatible, secret-safe, crash-safe, and duplicate-safe
+- no hidden execution from preview/detail/review/recheck/readiness/handoff pages is allowed
+- no arbitrary shell/network/provider execution is allowed
+
+No REQ-level critical gaps remain. The remaining unspecified details are implementation decomposition and adapter-internal choices, not blockers.
+
+SPEC_PROMPT_REGISTRY_REAL_EXECUTION_RUNTIME_v1.0
+
+1. Overview / цель
+
+Prompt Registry Real Execution Runtime turns the current Prompt Registry dispatch foundation from a review/export-only subsystem into a controlled operational execution runtime.
+
+Its purpose is to:
+- support explicit operator-confirmed execution of whitelisted linked actions
+- establish runtime state ownership
+- enforce idempotent and duplicate-safe execution admission
+- support crash-safe sync/async execution
+- write immutable audit trail
+- write append-only lifecycle events
+- write admitted-execution usage summaries
+- support bounded retries and exact cancellation behavior where allowed
+- expose execution status clearly in API and UI
+- preserve Basic Auth, SQLite compatibility, and secret safety
+
+2. Scope / Non-goals
+
+2.1. In scope
+- real runtime execution for exact whitelisted v1 capabilities
+- explicit runtime preflight
+- explicit operator confirmation
+- execution admission
+- sync and async execution dispatch
+- runtime state machine
+- immutable audit writes
+- append-only lifecycle events
+- admitted-execution usage writes
+- idempotency and deduplication
+- locking / leasing / reclaim
+- retry handling where allowed
+- cancellation handling where allowed
+- operator/admin API surfaces
+- operator UI runtime status/control surfaces
+- queue/job/worker integration through controlled persisted runtime
+
+2.2. Out of scope
+- no production code in this spec
+- no branch creation
+- no APPLY
+- no uncontrolled external execution
+- no direct execution from preview/detail/readiness pages
+- no free-form autonomous agent behavior
+- no replacement of Basic Auth
+- no general-purpose workflow engine for the whole product
+- no real YouTube upload tests
+- no network dependencies in tests
+- no hidden semantics outside explicitly whitelisted linked action capabilities
+- no secret material in UI, export, audit preview, usage summaries, logs, or operator-readable outputs
+
+2.3. Boundary rules
+- runtime must not execute anything outside frozen whitelist
+- runtime must not admit execution without explicit confirmation
+- runtime must not silently bypass existing domain workflows
+- runtime must not expose secrets
+- runtime must not degrade current read-only surfaces into hidden execution surfaces
+
+3. Baseline / current state
+
+3.1. Closed read-only foundation
+Existing baseline includes:
+- dispatch attempt ledger
+- review/detail/recheck/readiness surfaces
+- execution guard placeholder
+- capability matrix
+- audit preview
+- preflight summary
+- operator checklist
+- operator handoff
+- handoff export/download
+- handoff preview UI
+- MF31 contract snapshots
+- MF32 closure handoff confirming no real runtime implementation
+
+3.2. Baseline rule
+The existing foundation may:
+- prepare execution intent
+- review execution intent
+- export and hand off execution intent
+
+The existing foundation may not:
+- safely execute linked actions
+- own runtime state
+- support execution-side operator control
+
+4. Actor / permission model
+
+4.1. Actor classes
+The runtime must support:
+- Read-only operator
+- Standard operator
+- Privileged operator
+- Runtime worker/system actor
+
+4.2. Product identity rule
+Product operator identity is the source of truth for permissions.
+
+4.3. Runtime permission rule
+Execution rights are determined by:
+- product operator identity
+- linked action capability class
+
+4.4. Auth rule
+Basic Auth remains required for all admin/operator runtime surfaces.
+
+4.5. Role semantics
+
+Read-only operator:
+- may inspect review/detail/recheck/readiness
+- may inspect audit-safe execution details, statuses, and timelines
+- may not confirm, retry, cancel, or force execution
+
+Standard operator:
+- may confirm non-privileged whitelisted actions
+- may inspect execution detail/result
+- may retry retryable non-privileged actions
+- may cancel execution before irreversible commit where cancellation is allowed
+
+Privileged operator:
+- may confirm privileged whitelisted actions
+- may retry privileged retryable actions
+- may cancel privileged executions where cancellation is allowed
+- may perform explicitly permitted runtime recovery actions
+
+Runtime worker/system:
+- claims admitted async executions
+- updates runtime states
+- renews lease while running
+- writes terminal result
+- never bypasses safety gates or capability matrix
+
+5. Whitelisted capability model
+
+5.1. Exact allowed v1 capability list
+The runtime must support only these capabilities:
+- CREATE_BULK_JSON_DRAFT
+- CREATE_METADATA_REQUEST
+- CREATE_VISUAL_REQUEST
+- CREATE_ANALYTICS_REQUEST
+- ENQUEUE_INTERNAL_PROMPT_JOB
+- GENERATE_OPERATOR_HANDOFF_EXPORT
+
+5.2. Capability semantics
+
+CREATE_BULK_JSON_DRAFT
+- creates or updates an internal bulk JSON draft target from a confirmed rendered prompt payload
+
+CREATE_METADATA_REQUEST
+- creates an internal metadata request target using a confirmed rendered prompt payload
+
+CREATE_VISUAL_REQUEST
+- creates an internal visual workflow request target using a confirmed rendered prompt payload
+
+CREATE_ANALYTICS_REQUEST
+- creates an internal analytics/recommendation workflow request target using a confirmed rendered prompt payload
+
+ENQUEUE_INTERNAL_PROMPT_JOB
+- creates and enqueues an internal runtime job for approved prompt-linked processing
+
+GENERATE_OPERATOR_HANDOFF_EXPORT
+- generates a controlled operator handoff/export artifact from the confirmed rendered prompt payload
+
+5.3. Hard runtime restrictions
+- no direct arbitrary shell execution
+- no arbitrary network calls
+- no external AI provider execution from runtime v1
+- no unregistered capability execution
+- no capability execution outside capability matrix allow rules
+
+6. Execution mode mapping
+
+6.1. Frozen execution mode mapping
+
+Synchronous only:
+- CREATE_BULK_JSON_DRAFT
+- CREATE_METADATA_REQUEST
+- CREATE_VISUAL_REQUEST
+- CREATE_ANALYTICS_REQUEST
+
+Asynchronous only:
+- ENQUEUE_INTERNAL_PROMPT_JOB
+- GENERATE_OPERATOR_HANDOFF_EXPORT
+
+6.2. Dynamic-switch rule
+No capability in v1 may choose sync or async dynamically.
+
+7. Execution lifecycle
+
+7.1. Frozen runtime states
+Exact runtime states:
+- PREPARED
+- PREFLIGHT_REJECTED
+- CONFIRMATION_REQUIRED
+- ADMITTED
+- DISPATCHED
+- RUNNING
+- RETRY_PENDING
+- SUCCEEDED
+- FAILED_TERMINAL
+- CANCELLED
+- STALE_BLOCKED
+- CONFLICT_BLOCKED
+
+7.2. Terminal states
+- PREFLIGHT_REJECTED
+- SUCCEEDED
+- FAILED_TERMINAL
+- CANCELLED
+- STALE_BLOCKED
+- CONFLICT_BLOCKED
+
+7.3. Non-terminal states
+- PREPARED
+- CONFIRMATION_REQUIRED
+- ADMITTED
+- DISPATCHED
+- RUNNING
+- RETRY_PENDING
+
+7.4. Exact allowed transitions
+- PREPARED -> PREFLIGHT_REJECTED
+- PREPARED -> CONFIRMATION_REQUIRED
+- PREPARED -> STALE_BLOCKED
+- PREPARED -> CONFLICT_BLOCKED
+- CONFIRMATION_REQUIRED -> ADMITTED
+- CONFIRMATION_REQUIRED -> CANCELLED
+- CONFIRMATION_REQUIRED -> STALE_BLOCKED
+- CONFIRMATION_REQUIRED -> CONFLICT_BLOCKED
+- ADMITTED -> DISPATCHED
+- ADMITTED -> RUNNING
+- ADMITTED -> FAILED_TERMINAL
+- ADMITTED -> CANCELLED
+- DISPATCHED -> RUNNING
+- DISPATCHED -> SUCCEEDED
+- DISPATCHED -> RETRY_PENDING
+- DISPATCHED -> FAILED_TERMINAL
+- DISPATCHED -> CANCELLED
+- RUNNING -> SUCCEEDED
+- RUNNING -> RETRY_PENDING
+- RUNNING -> FAILED_TERMINAL
+- RUNNING -> CANCELLED
+- RETRY_PENDING -> ADMITTED
+- RETRY_PENDING -> FAILED_TERMINAL
+- RETRY_PENDING -> CANCELLED
+- RETRY_PENDING -> STALE_BLOCKED
+- RETRY_PENDING -> CONFLICT_BLOCKED
+
+7.5. State invariants
+- no state may bypass CONFIRMATION_REQUIRED into execution admission for operator-triggered execution
+- no terminal state may transition to another state except via creation of a new execution attempt record
+- STALE_BLOCKED and CONFLICT_BLOCKED are blocked outcomes, not failures
+- FAILED_TERMINAL is not stale/conflict and is not cancellable as a state reinterpretation
+
+8. Safety-gate contract
+
+8.1. Exact gate order
+Every execution attempt must pass these gates in exact order:
+1. capability exists in capability matrix
+2. capability is execution-enabled
+3. operator identity is authenticated under Basic Auth
+4. operator has permission for capability class
+5. prompt version is executable and not archived/inactive for runtime use
+6. binding resolution is complete and unambiguous
+7. rendered payload validation succeeds
+8. target entity exists
+9. target entity state is compatible with capability
+10. reviewed target snapshot hash matches current target snapshot hash
+11. dedup/idempotency gate passes
+12. concurrency lock can be acquired
+13. secret-safe adapter precheck passes
+14. operator explicitly confirms the exact execution intent
+
+8.2. Hard safety rules
+- no execution from page load
+- no execution from preview-only action
+- no silent execution from detail/review/recheck/readiness pages
+- no execution when target snapshot changed after review without new confirm cycle
+- no execution when capability matrix says review-only
+- no execution when secret-safe precheck fails
+
+9. Idempotency / deduplication model
+
+9.1. Idempotency rule
+Execution runtime is fully idempotent.
+
+9.2. Frozen dedup key
+Canonical dedup key for v1:
+sha256(
+  capability_code |
+  target_type |
+  target_id |
+  prompt_record_id |
+  prompt_version_id |
+  binding_resolution_fingerprint |
+  rendered_payload_hash |
+  action_payload_hash |
+  reviewed_target_state_hash
+)
+
+9.3. Dedup rules
+- duplicate confirm clicks with the same dedup key must resolve to the same admitted execution record
+- retries do not reuse the original execution record; they create a new execution attempt linked to the same execution group and same dedup lineage
+- a new review/recheck that changes rendered payload, binding resolution, or target snapshot produces a new dedup key
+- operator identity is not part of dedup key; duplicate execution must collapse across operators if execution intent is the same
+
+10. Lock / concurrency model
+
+10.1. Frozen concurrency model
+The runtime must use:
+- one execution-group lock per (capability_code, target_type, target_id)
+- one execution-record lease for async running attempts
+- one stale confirmation guard bound to reviewed_target_state_hash
+
+10.2. Required lock behavior
+- target capability lock is acquired before ADMITTED
+- async worker lease is acquired before RUNNING
+- stale locks are reclaimable after lease expiry
+- only one RUNNING or DISPATCHED attempt may exist per execution group at a time
+- RETRY_PENDING does not release execution-group conflict semantics for duplicate admission until resolved by retry/cancel/terminal close
+
+10.3. Crash-safety rules
+- if worker dies mid-run, lease eventually expires
+- reclaimed execution must resume or terminalize the same execution attempt without creating duplicate side effects
+- crash recovery never bypasses audit/event writes
+
+11. Retry policy
+
+11.1. Frozen retry eligibility
+Only asynchronous capabilities may enter RETRY_PENDING.
+
+11.2. Retry-eligible capabilities
+- ENQUEUE_INTERNAL_PROMPT_JOB
+- GENERATE_OPERATOR_HANDOFF_EXPORT
+
+11.3. Retry rules for synchronous capabilities
+Synchronous capabilities never auto-retry.
+Synchronous failures are terminal unless operator explicitly starts a new execution attempt from a new confirm cycle.
+
+11.4. Exact automatic retry policy
+- max automatic retries per execution attempt: 3
+- retry schedule: exponential backoff
+  - 30s
+  - 120s
+  - 600s
+- after retries are exhausted:
+  - FAILED_TERMINAL with result code RETRIES_EXHAUSTED
+
+11.5. Retry invariants
+- retry preserves dedup lineage and execution_group_id
+- retry creates a new attempt_id
+- retry requires the same capability/target lineage and same admitted payload lineage
+- retry must be skipped and converted to STALE_BLOCKED or CONFLICT_BLOCKED if target or binding state is no longer compatible
+
+12. Cancellation / rollback boundary model
+
+12.1. Exact capability cancellation boundaries
+
+CREATE_BULK_JSON_DRAFT
+- cancellation allowed before commit
+- after commit no automatic rollback
+- follow-up compensating action is outside this runtime
+
+CREATE_METADATA_REQUEST
+- cancellation allowed before commit
+- after commit no automatic rollback
+
+CREATE_VISUAL_REQUEST
+- cancellation allowed before commit
+- after commit no automatic rollback
+
+CREATE_ANALYTICS_REQUEST
+- cancellation allowed before commit
+- after commit no automatic rollback
+
+ENQUEUE_INTERNAL_PROMPT_JOB
+- cancellation allowed until downstream queue admission is committed
+- after downstream queue admission there is no generic rollback
+- later domain-specific cancel/reset is separate from runtime rollback
+
+GENERATE_OPERATOR_HANDOFF_EXPORT
+- cancellation allowed until artifact finalize commit
+- partial/incomplete artifact must be discarded on cancellation
+- finalized artifact is not automatically rolled back; later delete/expire is separate lifecycle
+
+12.2. Global rollback rule
+Runtime v1 does not provide generic automatic rollback after irreversible commit.
+Compensation is explicit and action-family specific.
+
+13. Audit / lifecycle / usage write model
+
+13.1. Immutable audit trail
+Audit trail is mandatory and immutable.
+
+13.2. Mandatory audit write points
+- runtime_preflight_started
+- runtime_preflight_rejected
+- runtime_confirmation_required
+- runtime_confirmed
+- runtime_admitted
+- runtime_dispatched
+- runtime_running
+- runtime_retry_scheduled
+- runtime_succeeded
+- runtime_failed_terminal
+- runtime_cancelled
+- runtime_stale_blocked
+- runtime_conflict_blocked
+- runtime_reclaimed
+
+13.3. Audit entry contract
+Each audit entry must include:
+- execution_group_id
+- execution_attempt_id
+- correlation_id
+- operator_id or system actor
+- capability_code
+- target_type
+- target_id
+- prompt_record_id
+- prompt_version_id
+- dedup_key_hash
+- state_before
+- state_after
+- result_code
+- secret_safe_message
+- timestamp
+
+13.4. Audit secrecy rule
+Audit must never store:
+- raw secrets
+- raw secret-resolved prompt material
+- tokens/credentials
+- unsafe external payload dumps
+
+13.5. Lifecycle event stream
+Lifecycle writes are mandatory as append-only state progression events.
+They must be written on every state transition including:
+- retry scheduling
+- reclaim
+- block outcomes
+- terminal outcomes
+
+13.6. Usage writes
+Usage writes are mandatory and distinct from audit/lifecycle writes.
+
+Usage record behavior:
+- one usage record is created at ADMITTED
+- the same usage record is updated with terminal outcome summary
+
+Usage record fields:
+- execution_group_id
+- first_admitted_attempt_id
+- latest_attempt_id
+- prompt_record_id
+- prompt_version_id
+- rendered_payload_hash
+- binding_resolution_fingerprint
+- capability_code
+- target_type
+- target_id
+- operator_id who admitted execution
+- first_admitted_at
+- terminal_outcome
+- terminal_at
+- artifact_ref if any
+
+13.7. Non-admitted write rule
+Usage writes are not created for:
+- PREFLIGHT_REJECTED
+- STALE_BLOCKED
+- CONFLICT_BLOCKED
+
+These blocked/rejected outcomes are audit and lifecycle events only.
+
+14. Error/result class model
+
+14.1. Exact operator-visible result classes
+- PERMISSION_DENIED
+- CAPABILITY_NOT_ALLOWED
+- EXECUTION_DISABLED
+- PROMPT_NOT_EXECUTABLE
+- BINDING_UNRESOLVED
+- PAYLOAD_INVALID
+- TARGET_NOT_FOUND
+- TARGET_STATE_INCOMPATIBLE
+- STALE_CONFIRMATION
+- TARGET_CONFLICT
+- DUPLICATE_EXECUTION_REUSED
+- SECRET_RESOLUTION_FAILED
+- ADAPTER_PRECHECK_FAILED
+- DISPATCH_FAILED
+- WORKER_START_FAILED
+- RUNTIME_TIMEOUT
+- RETRY_SCHEDULED
+- RETRIES_EXHAUSTED
+- CANCELLATION_NOT_ALLOWED
+- CANCELLATION_SUCCEEDED
+- EXECUTION_ALREADY_TERMINAL
+- SYSTEM_DEGRADED
+
+14.2. Result-class rules
+- all operator-visible messages are secret-safe
+- stale/conflict errors are distinct from terminal execution failures
+- duplicate confirm returns existing execution status instead of a second side effect
+
+15. Hybrid sync/async execution model
+
+15.1. Frozen runtime topology
+The runtime must use a hybrid execution model:
+- sync adapters for synchronous capabilities
+- dedicated logical async queue for asynchronous capabilities using existing worker fabric
+
+15.2. Async ownership rules
+- async execution records are admitted in runtime store first
+- dedicated logical queue item is created for runtime execution
+- worker claims queue item by lease
+- worker updates execution attempt state and heartbeats lease as needed
+- on success/failure worker writes terminal outcome and releases lease
+- on crash/timeout a reclaim path may resume same attempt or terminalize it safely
+
+15.3. Fire-and-forget prohibition
+No async execution may use direct fire-and-forget behavior.
+Every async execution must have a persisted execution record before queue admission.
+
+16. API contract
+
+16.1. Required operator/admin endpoints
+- GET execution review/detail
+- POST execution preflight
+- POST execution confirm
+- GET execution status
+- GET execution timeline
+- GET execution attempts list
+- POST execution retry
+- POST execution cancel
+- GET execution readiness/recheck summary
+- GET execution audit-safe detail
+
+16.2. API rules
+- Basic Auth required for all operator/admin execution endpoints
+- no GET endpoint may trigger execution
+- only explicit POST confirm may admit execution
+- retry and cancel require permission and state validation
+- duplicate confirm must return existing execution reference/status
+- stale/conflict results must be explicit API outcomes
+
+17. UI / operator surface contract
+
+17.1. Review/detail posture
+Review/detail page remains read-focused.
+
+17.2. Execution entry rule
+Explicit confirm execution control is the only operator entry into execution.
+
+17.3. Confirm UI payload
+Confirm control must show before submission:
+- exact capability
+- target
+- prompt version
+- context
+
+17.4. Post-confirm UI rule
+After confirm, UI must show:
+- execution status page
+or
+- inline status panel
+
+17.5. Stale/conflict UI rules
+- stale/conflict outcomes must disable old confirm state
+- old confirm token becomes invalid immediately when reviewed target snapshot is outdated
+- UI must show one of:
+  - stale review; recheck required
+  - target conflict; current target no longer compatible
+- UI must present one canonical next step:
+  - Recheck
+
+17.6. Retry/cancel visibility rules
+- retry control visible only when runtime marks attempt retryable_by_operator = true
+- cancel control visible only when runtime marks attempt cancellable = true
+
+17.7. Detail/timeline UI rule
+Detail/timeline UI must show:
+- lifecycle events
+- last result
+- audit-safe error summary
+
+17.8. Non-executing page rule
+Review/detail/recheck pages must never auto-run execution from:
+- page open
+- page refresh
+- preview action
+
+Handoff preview/export/download pages must never trigger execution.
+
+18. Security / secret-safety requirements
+
+18.1. Security requirements
+- Basic Auth remains required
+- runtime only executes whitelisted capabilities
+- server-side secret resolution only
+- no secret values in UI, audit, exports, usage summaries, or operator-readable logs
+- confirmation token or equivalent anti-replay mechanism is mandatory
+- all mutating endpoints require CSRF-safe and replay-safe handling appropriate to current stack
+- runtime fails closed on:
+  - missing permission
+  - missing secret
+  - stale state
+  - ambiguous binding
+  - queue/adapter uncertainty
+- download/export artifacts remain permission-bound and secret-safe
+
+19. Observability requirements
+
+19.1. Structured logs are mandatory for:
+- preflight start/result
+- confirmation result
+- admission result
+- dispatch result
+- worker claim/reclaim/release
+- running heartbeat milestones where applicable
+- terminal outcome
+- retry schedule
+- cancellation request/result
+- stale/conflict block
+- dedup reuse
+- lock contention
+
+19.2. Metrics are mandatory for:
+- execution_count_by_capability
+- execution_count_by_state
+- execution_count_by_outcome
+- preflight_reject_count
+- stale_block_count
+- conflict_block_count
+- dedup_reuse_count
+- queue_latency_ms
+- run_duration_ms
+- retry_count
+- cancellation_count
+- lease_reclaim_count
+- audit_write_failure_count
+- lifecycle_event_write_failure_count
+- usage_write_failure_count
+
+19.3. Secret-safe observability rule
+All logs and metrics must be secret-safe.
+
+20. Persistence / migration requirements
+
+20.1. Additive-migration rule
+Only additive migrations are allowed.
+
+20.2. Required persistence additions
+The runtime must add:
+- execution_groups table or equivalent persisted grouping model
+- execution_attempts table or equivalent persisted attempt model
+- execution_lifecycle_events table or equivalent append-only runtime event store
+- execution_usage table or equivalent usage summary store
+- lock/lease support fields or tables
+- indexes for:
+  - dedup key lookup
+  - active execution group lookup by target/capability
+  - retryable async work lookup
+  - running lease reclaim lookup
+  - timeline lookup by execution group and timestamp
+
+20.3. Migration invariants
+- existing read-only foundation data remains valid
+- existing review/detail/recheck/readiness/handoff pages do not break
+- SQLite-compatible schema and indexes only
+
+21. Data model contract
+
+21.1. execution_groups
+Required fields:
+- execution_group_id
+- capability_code
+- target_type
+- target_id
+- dedup_lineage_key
+- current_state
+- created_at
+- updated_at
+- closed_at nullable
+
+21.2. execution_attempts
+Required fields:
+- execution_attempt_id
+- execution_group_id
+- attempt_number
+- state
+- correlation_id
+- operator_id_or_system_actor
+- prompt_record_id
+- prompt_version_id
+- binding_resolution_fingerprint
+- rendered_payload_hash
+- action_payload_hash
+- reviewed_target_state_hash
+- dedup_key_hash
+- retryable_by_operator
+- cancellable
+- admitted_at nullable
+- running_at nullable
+- terminal_at nullable
+- result_code nullable
+- secret_safe_message nullable
+- lease_expires_at nullable
+
+21.3. execution_lifecycle_events
+Required fields:
+- lifecycle_event_id
+- execution_group_id
+- execution_attempt_id
+- state_before
+- state_after
+- result_code nullable
+- actor
+- timestamp
+
+21.4. execution_usage
+Required fields:
+- execution_group_id
+- first_admitted_attempt_id
+- latest_attempt_id
+- prompt_record_id
+- prompt_version_id
+- rendered_payload_hash
+- binding_resolution_fingerprint
+- capability_code
+- target_type
+- target_id
+- operator_id
+- first_admitted_at
+- terminal_outcome nullable
+- terminal_at nullable
+- artifact_ref nullable
+
+22. Testing requirements
+
+22.1. Required tests
+- allowed vs forbidden capability execution
+- explicit confirmation requirement
+- duplicate confirm idempotency
+- stale confirmation rejection
+- conflict rejection
+- sync success path
+- sync failure path
+- async dispatch path
+- async worker success path
+- async retry path
+- retry exhaustion path
+- cancellation before commit
+- cancellation after irreversible boundary rejection
+- crash/reclaim safety for async path
+- lock contention behavior
+- audit writes
+- lifecycle event writes
+- usage writes
+- Basic Auth protection
+- secret-safe error/output behavior
+- regression tests proving read-only foundation remains non-executing where execution is not confirmed
+
+22.2. Test constraints
+- SQLite compatibility required
+- no network dependencies in tests
+- no real YouTube upload tests
+- all adapters use fakes/stubs in tests
+
+23. Validation rules
+
+23.1. Capability validation
+- only exact frozen whitelist may execute
+- execution outside capability matrix allow rules is forbidden
+- sync/async mapping must match frozen mapping exactly
+
+23.2. State-machine validation
+- only frozen states may be used
+- only frozen transitions may occur
+- terminal states may not transition except via new execution attempt lineage
+
+23.3. Safety-gate validation
+- gate order must remain exact
+- missing explicit confirmation must block admission
+- stale snapshot mismatch must block execution
+- ambiguous binding must block execution
+- secret precheck failure must block execution
+
+23.4. Data-write validation
+- audit writes must be immutable
+- lifecycle writes must be append-only
+- usage writes must begin only at ADMITTED
+- audit/lifecycle/usage must remain distinct streams
+
+23.5. Security validation
+- no secrets in UI, logs, exports, usage summaries, or audit-safe surfaces
+- all operator/admin runtime endpoints remain Basic-Auth-protected
+- no GET endpoint may admit execution
+
+24. Acceptance criteria
+
+24.1. P0 acceptance
+- runtime executes only the exact whitelisted v1 capabilities
+- every execution requires explicit operator confirmation
+- execution is idempotent and duplicate-safe
+- execution writes immutable audit trail
+- execution writes lifecycle events
+- execution writes usage summary on admitted execution lineage
+- status is clearly exposed in API and UI
+- runtime is safe if worker crashes mid-run
+- no secrets leak to UI, audit, logs, or exports
+- Basic Auth remains required
+- SQLite compatibility is preserved
+- no silent execution occurs from review/detail/preview/handoff pages
+
+24.2. P1 acceptance
+- async execution supports bounded retries with reclaim-safe behavior
+- cancellation behaves according to exact capability-family boundaries
+- stale/conflict blocked outcomes are distinct and operator-visible
+- queue/job/worker integration is controlled and persisted
+
+24.3. P2 acceptance
+- operator can understand what happened, why, and what next step is allowed without guessing runtime state
+
+All included acceptance items are mandatory.
+
+25. Definition of done
+
+This feature is done only when:
+- real execution runtime exists beyond read-only foundation
+- all P0/P1/P2 acceptance items are satisfied
+- exact capability whitelist remains frozen and enforced
+- operator-confirmed admission remains mandatory
+- idempotency, locking, audit, lifecycle events, usage writes, retries/cancel where allowed, and hybrid sync/async dispatch all exist
+- no mandatory safety or secret boundary has been weakened
+- the feature is ready to progress into implementation work
+
+26. Suggested microfeature breakdown
+
+MF1 — Execution Runtime Data Model, State Machine, and Migrations
+- persisted execution groups and attempts
+- exact state model and indexes
+- lifecycle event persistence foundation
+
+MF2 — Confirmation, Safety Gates, Idempotency, and Locking
+- preflight
+- confirmation token flow
+- dedup key contract
+- target/capability locks
+- stale/conflict gate
+
+MF3 — Runtime Adapters and Hybrid Sync/Async Dispatch
+- exact adapter interfaces
+- sync adapter path for request-commit actions
+- async queue integration for queued actions and exports
+
+MF4 — Audit, Usage, Timeline, and Observability
+- immutable audit writes
+- usage summary writes
+- timeline/event stream
+- logs/metrics surface
+
+MF5 — Retry, Cancellation, and Crash Recovery
+- retry scheduling
+- terminalization rules
+- reclaim/lease recovery
+- cancellation boundaries
+
+MF6 — Operator API and UI Runtime Control Surface
+- preflight/confirm/status/timeline/retry/cancel APIs
+- UI status panels
+- stale/conflict recheck UX
+- handoff/read-only surface compatibility
+
+27. Open questions / ambiguities
+
+27.1. Exact internal adapter implementation details remain implementation-level choices as long as frozen capability semantics and safety contracts remain preserved.
+
+27.2. Exact endpoint naming and UI layout composition remain implementation-level details as long as the required API/UI contract remains preserved.
+
+Ready for Dev? Yes
+
+Причины
+- The REQ fully fixes baseline boundary, whitelist, lifecycle, state model, gate order, idempotency contract, locks, retries, cancellation boundaries, audit/lifecycle/usage writes, API/UI surfaces, security requirements, observability requirements, testing requirements, migration requirements, and acceptance criteria.
+- No critical REQ-level gaps remain.
+- Remaining uncertainty is implementation decomposition/detail, not a blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- adapter contract drift across target workflows
+- accidental expansion of capability whitelist beyond the frozen v1 list
+- stale/conflict behavior drifting between UI and API
+- secret-safe rendering/logging not being enforced uniformly
+- async reclaim behavior requiring especially careful SQLite-compatible testing
