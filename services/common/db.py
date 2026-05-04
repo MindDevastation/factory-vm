@@ -2840,92 +2840,95 @@ def _ensure_prompt_linked_action_dispatch_attempts_schema(conn: sqlite3.Connecti
 
 
 def _ensure_prompt_execution_runtime_schema(conn: sqlite3.Connection) -> None:
+    state_check = "('PREPARED','PREFLIGHT_REJECTED','CONFIRMATION_REQUIRED','ADMITTED','DISPATCHED','RUNNING','RETRY_PENDING','SUCCEEDED','FAILED_TERMINAL','CANCELLED','STALE_BLOCKED','CONFLICT_BLOCKED')"
+
     conn.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS prompt_execution_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            dedup_key TEXT NOT NULL,
-            capability_key TEXT NOT NULL,
+            capability_code TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NULL,
+            dedup_lineage_key TEXT NOT NULL,
+            current_state TEXT NOT NULL,
             execution_mode TEXT NOT NULL,
-            prompt_id INTEGER NOT NULL,
-            action_id INTEGER NOT NULL,
-            binding_scope TEXT NULL,
-            binding_ref TEXT NULL,
-            target_kind TEXT NOT NULL,
-            target_ref TEXT NULL,
-            context_fingerprint TEXT NOT NULL,
-            latest_state TEXT NOT NULL,
-            active_attempt_id INTEGER NULL,
-            lease_owner TEXT NULL,
+            closed_at TEXT NULL,
             lease_expires_at TEXT NULL,
-            created_by TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            FOREIGN KEY(prompt_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
-            FOREIGN KEY(action_id) REFERENCES prompt_linked_actions(id) ON DELETE CASCADE,
-            CHECK(execution_mode IN ('SYNC','ASYNC')),
-            CHECK(latest_state IN ('PREPARED','PREFLIGHT_REJECTED','CONFIRMATION_REQUIRED','ADMITTED','DISPATCHED','RUNNING','RETRY_PENDING','SUCCEEDED','FAILED_TERMINAL','CANCELLED','STALE_BLOCKED','CONFLICT_BLOCKED'))
+            CHECK(current_state IN {state_check}),
+            CHECK(execution_mode IN ('SYNC','ASYNC'))
         )
         """
     )
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_groups_dedup ON prompt_execution_groups(dedup_key)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_groups_active ON prompt_execution_groups(latest_state, capability_key, created_at DESC, id DESC)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_groups_lease_reclaim ON prompt_execution_groups(execution_mode, latest_state, lease_expires_at, id)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_groups_dedup ON prompt_execution_groups(dedup_lineage_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_groups_active ON prompt_execution_groups(target_type, capability_code, current_state, updated_at DESC, id DESC)")
 
     conn.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS prompt_execution_attempts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             execution_group_id INTEGER NOT NULL,
-            attempt_no INTEGER NOT NULL,
-            execution_state TEXT NOT NULL,
-            dispatch_status TEXT NOT NULL,
-            retry_eligible INTEGER NOT NULL DEFAULT 0,
-            retry_count INTEGER NOT NULL DEFAULT 0,
-            retry_after TEXT NULL,
-            worker_token TEXT NULL,
-            lease_owner TEXT NULL,
-            lease_expires_at TEXT NULL,
+            attempt_number INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            correlation_id TEXT NOT NULL,
+            operator_id_or_system_actor TEXT NOT NULL,
+            prompt_record_id INTEGER NOT NULL,
+            prompt_version_id INTEGER NULL,
+            binding_resolution_fingerprint TEXT NOT NULL,
+            rendered_payload_hash TEXT NOT NULL,
+            action_payload_hash TEXT NOT NULL,
+            reviewed_target_state_hash TEXT NOT NULL,
+            dedup_key_hash TEXT NOT NULL,
+            retryable_by_operator INTEGER NOT NULL DEFAULT 0,
+            cancellable INTEGER NOT NULL DEFAULT 0,
+            admitted_at TEXT NULL,
+            running_at TEXT NULL,
+            terminal_at TEXT NULL,
             result_code TEXT NULL,
-            result_message TEXT NULL,
-            error_class TEXT NULL,
-            error_payload_json TEXT NOT NULL DEFAULT '{}',
+            secret_safe_message TEXT NULL,
+            lease_expires_at TEXT NULL,
+            execution_mode TEXT NOT NULL,
+            dispatch_payload_json TEXT NOT NULL DEFAULT '{{}}',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY(execution_group_id) REFERENCES prompt_execution_groups(id) ON DELETE CASCADE,
-            CHECK(execution_state IN ('PREPARED','PREFLIGHT_REJECTED','CONFIRMATION_REQUIRED','ADMITTED','DISPATCHED','RUNNING','RETRY_PENDING','SUCCEEDED','FAILED_TERMINAL','CANCELLED','STALE_BLOCKED','CONFLICT_BLOCKED')),
-            CHECK(dispatch_status IN ('PENDING','DISPATCHED','RUNNING','TERMINAL')),
-            CHECK(retry_eligible IN (0,1)),
-            CHECK(json_valid(error_payload_json)),
-            CHECK(attempt_no > 0),
-            CHECK(retry_count >= 0)
+            FOREIGN KEY(prompt_record_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            FOREIGN KEY(prompt_version_id) REFERENCES prompt_versions(id) ON DELETE SET NULL,
+            CHECK(state IN {state_check}),
+            CHECK(retryable_by_operator IN (0,1)),
+            CHECK(cancellable IN (0,1)),
+            CHECK(execution_mode IN ('SYNC','ASYNC')),
+            CHECK(attempt_number > 0),
+            CHECK(json_valid(dispatch_payload_json))
         )
         """
     )
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_attempts_group_no ON prompt_execution_attempts(execution_group_id, attempt_no)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_attempts_retryable_async ON prompt_execution_attempts(execution_state, retry_eligible, retry_after, id)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_attempts_group_no ON prompt_execution_attempts(execution_group_id, attempt_number)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_attempts_retryable_async ON prompt_execution_attempts(execution_mode, state, retryable_by_operator, lease_expires_at, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_attempts_lease_reclaim ON prompt_execution_attempts(state, lease_expires_at, id)")
 
     conn.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS prompt_execution_lifecycle_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             execution_group_id INTEGER NOT NULL,
-            attempt_id INTEGER NULL,
-            from_state TEXT NULL,
-            to_state TEXT NOT NULL,
-            transition_reason_code TEXT NULL,
-            event_payload_json TEXT NOT NULL DEFAULT '{}',
-            created_by TEXT NOT NULL,
-            created_at TEXT NOT NULL,
+            execution_attempt_id INTEGER NULL,
+            state_before TEXT NULL,
+            state_after TEXT NOT NULL,
+            result_code TEXT NULL,
+            actor TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            event_payload_json TEXT NOT NULL DEFAULT '{{}}',
             FOREIGN KEY(execution_group_id) REFERENCES prompt_execution_groups(id) ON DELETE CASCADE,
-            FOREIGN KEY(attempt_id) REFERENCES prompt_execution_attempts(id) ON DELETE SET NULL,
-            CHECK(from_state IS NULL OR from_state IN ('PREPARED','PREFLIGHT_REJECTED','CONFIRMATION_REQUIRED','ADMITTED','DISPATCHED','RUNNING','RETRY_PENDING','SUCCEEDED','FAILED_TERMINAL','CANCELLED','STALE_BLOCKED','CONFLICT_BLOCKED')),
-            CHECK(to_state IN ('PREPARED','PREFLIGHT_REJECTED','CONFIRMATION_REQUIRED','ADMITTED','DISPATCHED','RUNNING','RETRY_PENDING','SUCCEEDED','FAILED_TERMINAL','CANCELLED','STALE_BLOCKED','CONFLICT_BLOCKED')),
+            FOREIGN KEY(execution_attempt_id) REFERENCES prompt_execution_attempts(id) ON DELETE SET NULL,
+            CHECK(state_before IS NULL OR state_before IN {state_check}),
+            CHECK(state_after IN {state_check}),
             CHECK(json_valid(event_payload_json))
         )
         """
     )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_lifecycle_events_timeline ON prompt_execution_lifecycle_events(execution_group_id, created_at ASC, id ASC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_lifecycle_events_timeline ON prompt_execution_lifecycle_events(execution_group_id, timestamp ASC, id ASC)")
 
     conn.execute(
         """
@@ -2933,19 +2936,27 @@ def _ensure_prompt_execution_runtime_schema(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             execution_group_id INTEGER NOT NULL,
             first_admitted_attempt_id INTEGER NOT NULL,
-            capability_key TEXT NOT NULL,
-            execution_mode TEXT NOT NULL,
-            admitted_at TEXT NOT NULL,
-            terminal_state TEXT NULL,
-            terminal_result_code TEXT NULL,
+            latest_attempt_id INTEGER NULL,
+            prompt_record_id INTEGER NOT NULL,
+            prompt_version_id INTEGER NULL,
+            rendered_payload_hash TEXT NOT NULL,
+            binding_resolution_fingerprint TEXT NOT NULL,
+            capability_code TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NULL,
+            operator_id TEXT NULL,
+            first_admitted_at TEXT NOT NULL,
+            terminal_outcome TEXT NULL,
             terminal_at TEXT NULL,
-            usage_summary_json TEXT NOT NULL DEFAULT '{}',
+            artifact_ref TEXT NULL,
+            usage_payload_json TEXT NOT NULL DEFAULT '{}',
             updated_at TEXT NOT NULL,
             FOREIGN KEY(execution_group_id) REFERENCES prompt_execution_groups(id) ON DELETE CASCADE,
             FOREIGN KEY(first_admitted_attempt_id) REFERENCES prompt_execution_attempts(id) ON DELETE CASCADE,
-            CHECK(execution_mode IN ('SYNC','ASYNC')),
-            CHECK(terminal_state IS NULL OR terminal_state IN ('SUCCEEDED','FAILED_TERMINAL','CANCELLED','STALE_BLOCKED','CONFLICT_BLOCKED')),
-            CHECK(json_valid(usage_summary_json))
+            FOREIGN KEY(latest_attempt_id) REFERENCES prompt_execution_attempts(id) ON DELETE SET NULL,
+            FOREIGN KEY(prompt_record_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            FOREIGN KEY(prompt_version_id) REFERENCES prompt_versions(id) ON DELETE SET NULL,
+            CHECK(json_valid(usage_payload_json))
         )
         """
     )
