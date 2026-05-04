@@ -33,6 +33,7 @@ class TestPromptRegistryRuntimeMf1(unittest.TestCase):
             for name in (
                 "idx_prompt_execution_groups_dedup",
                 "idx_prompt_execution_groups_active",
+                "idx_prompt_execution_groups_active_target_lock",
                 "idx_prompt_execution_attempts_retryable_async",
                 "idx_prompt_execution_attempts_lease_reclaim",
                 "idx_prompt_execution_lifecycle_events_timeline",

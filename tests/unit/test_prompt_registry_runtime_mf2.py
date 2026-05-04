@@ -93,5 +93,31 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
         finally:
             td.__exit__(None, None, None)
 
+    def test_db_active_lock_rejects_second_active_group(self):
+        td, conn = self._conn()
+        try:
+            conn.execute("INSERT INTO prompt_execution_groups(capability_code,target_type,target_id,dedup_lineage_key,current_state,execution_mode,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", ("CREATE_BULK_JSON_DRAFT", "workflow", "wf-1", "k1", "CONFIRMATION_REQUIRED", "SYNC", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("INSERT INTO prompt_execution_groups(capability_code,target_type,target_id,dedup_lineage_key,current_state,execution_mode,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", ("CREATE_BULK_JSON_DRAFT", "workflow", "wf-1", "k2", "PREPARED", "SYNC", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_db_active_lock_allows_terminal_then_new_active(self):
+        td, conn = self._conn()
+        try:
+            conn.execute("INSERT INTO prompt_execution_groups(capability_code,target_type,target_id,dedup_lineage_key,current_state,execution_mode,created_at,updated_at,closed_at) VALUES(?,?,?,?,?,?,?,?,?)", ("CREATE_BULK_JSON_DRAFT", "workflow", "wf-1", "k1", "SUCCEEDED", "SYNC", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "2026-01-01T00:00:10Z"))
+            conn.execute("INSERT INTO prompt_execution_groups(capability_code,target_type,target_id,dedup_lineage_key,current_state,execution_mode,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", ("CREATE_BULK_JSON_DRAFT", "workflow", "wf-1", "k2", "PREPARED", "SYNC", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"))
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_no_duplicate_active_groups_for_same_capability_target(self):
+        td, conn = self._conn()
+        try:
+            prepare_prompt_execution_preflight(conn, **self.base)
+            cnt = conn.execute("SELECT COUNT(*) FROM prompt_execution_groups WHERE capability_code=? AND target_type=? AND target_id=? AND current_state IN ('PREPARED','CONFIRMATION_REQUIRED','ADMITTED','DISPATCHED','RUNNING','RETRY_PENDING')", ("CREATE_BULK_JSON_DRAFT", "workflow", "wf-1")).fetchone()[0]
+            self.assertEqual(1, cnt)
+        finally:
+            td.__exit__(None, None, None)
+
 if __name__ == "__main__":
     unittest.main()

@@ -2863,6 +2863,7 @@ def _ensure_prompt_execution_runtime_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_groups_dedup ON prompt_execution_groups(dedup_lineage_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_groups_active ON prompt_execution_groups(target_type, capability_code, current_state, updated_at DESC, id DESC)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_groups_active_target_lock ON prompt_execution_groups(capability_code, target_type, COALESCE(target_id,'')) WHERE current_state IN ('PREPARED','CONFIRMATION_REQUIRED','ADMITTED','DISPATCHED','RUNNING','RETRY_PENDING')")
 
     conn.execute(
         f"""
