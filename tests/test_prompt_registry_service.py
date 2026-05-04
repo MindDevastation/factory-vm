@@ -2022,3 +2022,51 @@ class TestPromptRegistryService(unittest.TestCase):
             finally:
                 conn.close()
 
+
+    def test_dispatch_execution_service_contract_snapshot(self) -> None:
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            conn = dbm.connect(env)
+            try:
+                svc = PromptRegistryService(conn)
+                rec = svc.create_record({"slug": "mf31-service", "code": "PR-MF31-SVC", "title": "MF31 Service", "record_type": "prompt_template", "status": "draft"}, actor="tester")
+                action = svc.create_linked_action(int(rec["id"]), {"action_key": "mf31-service-action", "action_type": "ui_action", "action_status": "active", "target_kind": "route", "target_ref": "/ui/prompt-registry", "config_json": {}}, actor="tester")
+                req = svc.create_linked_action_execution_request(int(action["id"]), {"confirm_execution": True}, actor="tester")
+                attempt = svc.create_linked_action_dispatch_attempt(int(req["id"]), {"dry_run_only": True}, actor="tester")
+                attempt_id = int(attempt["id"])
+
+                before_audit = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"])
+                before_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                before_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
+
+                recheck = svc.recheck_linked_action_dispatch_attempt(attempt_id)
+                readiness = svc.evaluate_linked_action_dispatch_readiness(attempt_id)
+                guard = svc.guard_linked_action_dispatch_execution(attempt_id, payload={}, actor="tester")
+                capability = svc.evaluate_linked_action_dispatch_execution_capability(attempt_id)
+                audit_preview = svc.preview_linked_action_dispatch_execution_audit(attempt_id)
+                preflight = svc.preview_linked_action_dispatch_execution_preflight(attempt_id)
+                checklist = svc.preview_linked_action_dispatch_execution_operator_checklist(attempt_id)
+                handoff = svc.preview_linked_action_dispatch_execution_operator_handoff(attempt_id)
+
+                self.assertTrue({"attempt_id", "recheck_status", "changed_fields", "diagnostics"}.issubset(set(recheck.keys())))
+                self.assertTrue({"attempt_id", "readiness_status", "readiness_level", "blockers", "warnings", "recheck_status"}.issubset(set(readiness.keys())))
+                self.assertTrue({"attempt_id", "execution_status", "execution_available", "reason_code", "readiness_status"}.issubset(set(guard.keys())))
+                self.assertTrue({"attempt_id", "capability_status", "support_level", "runtime_available", "blockers"}.issubset(set(capability.keys())))
+                self.assertTrue({"attempt_id", "preview_status", "would_write", "would_write_event_type", "reason_code", "audit_payload_preview"}.issubset(set(audit_preview.keys())))
+                self.assertTrue({"attempt_id", "preflight_status", "execution_enabled", "would_write_audit", "reason_code"}.issubset(set(preflight.keys())))
+                self.assertTrue({"attempt_id", "checklist_status", "execution_enabled", "recommended_operator_action", "checklist_items"}.issubset(set(checklist.keys())))
+                self.assertTrue({"attempt_id", "handoff_status", "execution_enabled", "runtime_available", "summary", "checklist_items", "audit_payload_preview"}.issubset(set(handoff.keys())))
+
+                self.assertFalse(guard["execution_available"])
+                self.assertFalse(capability["runtime_available"])
+                self.assertFalse(audit_preview["would_write"])
+                self.assertEqual(guard["execution_status"], "DISABLED")
+
+                after_audit = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_audit_events").fetchone()["c"])
+                after_usage = int(conn.execute("SELECT COUNT(*) AS c FROM prompt_usage_events").fetchone()["c"])
+                after_req_status = str(conn.execute("SELECT request_status FROM prompt_linked_action_execution_requests WHERE id = ?", (int(req["id"]),)).fetchone()["request_status"])
+                self.assertEqual(before_audit, after_audit)
+                self.assertEqual(before_usage, after_usage)
+                self.assertEqual(before_req_status, after_req_status)
+            finally:
+                conn.close()
