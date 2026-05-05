@@ -20,6 +20,7 @@ class TestPromptRegistryRuntimeMf1(unittest.TestCase):
                 "prompt_execution_attempts",
                 "prompt_execution_lifecycle_events",
                 "prompt_execution_usage",
+                "prompt_execution_async_queue",
             ):
                 self.assertIn(name, tables)
 
@@ -37,6 +38,8 @@ class TestPromptRegistryRuntimeMf1(unittest.TestCase):
                 "idx_prompt_execution_attempts_retryable_async",
                 "idx_prompt_execution_attempts_lease_reclaim",
                 "idx_prompt_execution_lifecycle_events_timeline",
+                "idx_prompt_execution_async_queue_lookup",
+                "idx_prompt_execution_async_queue_lease_reclaim",
             ):
                 self.assertIn(name, indexes)
 

@@ -2963,6 +2963,31 @@ def _ensure_prompt_execution_runtime_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_usage_group ON prompt_execution_usage(execution_group_id)")
 
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prompt_execution_async_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            execution_group_id INTEGER NOT NULL,
+            execution_attempt_id INTEGER NOT NULL,
+            capability_code TEXT NOT NULL,
+            queue_state TEXT NOT NULL,
+            available_at TEXT NOT NULL,
+            lease_owner TEXT NULL,
+            lease_expires_at TEXT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(execution_group_id) REFERENCES prompt_execution_groups(id) ON DELETE CASCADE,
+            FOREIGN KEY(execution_attempt_id) REFERENCES prompt_execution_attempts(id) ON DELETE CASCADE,
+            CHECK(queue_state IN ('QUEUED','CLAIMED','DONE','FAILED')),
+            CHECK(json_valid(payload_json)),
+            UNIQUE(execution_attempt_id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_async_queue_lookup ON prompt_execution_async_queue(queue_state, available_at, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_async_queue_lease_reclaim ON prompt_execution_async_queue(queue_state, lease_expires_at, id)")
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",

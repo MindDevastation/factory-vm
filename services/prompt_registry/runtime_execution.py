@@ -4,6 +4,8 @@ import hashlib
 import sqlite3
 from datetime import datetime, timezone
 
+from .runtime_adapters import RuntimeAdapterRegistry
+
 SYNC_CAPABILITIES = frozenset({
     "CREATE_BULK_JSON_DRAFT",
     "CREATE_METADATA_REQUEST",
@@ -118,3 +120,66 @@ def confirm_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: 
     conn.execute("UPDATE prompt_execution_groups SET current_state='ADMITTED',updated_at=? WHERE id=?", (now, row[1]))
     conn.commit()
     return {"state": "ADMITTED", "execution_group_id": row[1], "execution_attempt_id": row[0], "dedup_key_hash": row[3]}
+
+
+def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: int, adapter_registry: RuntimeAdapterRegistry, payload: dict | None = None) -> dict:
+    row = conn.execute(
+        """
+        SELECT a.id,a.execution_group_id,a.state,a.execution_mode,a.secret_safe_message,a.dispatch_payload_json,
+               g.capability_code,g.current_state
+        FROM prompt_execution_attempts a
+        JOIN prompt_execution_groups g ON g.id=a.execution_group_id
+        WHERE a.id=?
+        """,
+        (execution_attempt_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("DISPATCH_REJECTED: attempt not found")
+    if row[2] != "ADMITTED":
+        raise ValueError("DISPATCH_REJECTED: non-admitted attempt")
+    capability_code = row[6]
+    expected_mode = CAPABILITY_EXECUTION_MODE.get(capability_code)
+    if expected_mode is None:
+        raise ValueError("DISPATCH_REJECTED: forbidden capability")
+    if expected_mode != row[3]:
+        raise ValueError("DISPATCH_REJECTED: execution mode mismatch")
+
+    now = _utc_now()
+    if expected_mode == "SYNC":
+        adapter = adapter_registry.get(capability_code)
+        if adapter is None:
+            raise ValueError("DISPATCH_REJECTED: missing adapter")
+        conn.execute("UPDATE prompt_execution_attempts SET state='RUNNING',running_at=?,updated_at=? WHERE id=?", (now, now, execution_attempt_id))
+        conn.execute("UPDATE prompt_execution_groups SET current_state='RUNNING',updated_at=? WHERE id=?", (now, row[1]))
+        try:
+            out = adapter(dict(payload or {}))
+            result_code = str((out or {}).get("result_code", "OK"))
+            message = str((out or {}).get("secret_safe_message", "Sync dispatch completed."))
+            terminal_state = "SUCCEEDED"
+        except Exception:
+            result_code = "ADAPTER_ERROR"
+            message = "Adapter execution failed."
+            terminal_state = "FAILED_TERMINAL"
+        terminal_at = _utc_now()
+        conn.execute("UPDATE prompt_execution_attempts SET state=?,result_code=?,secret_safe_message=?,terminal_at=?,updated_at=? WHERE id=?", (terminal_state, result_code, message, terminal_at, terminal_at, execution_attempt_id))
+        conn.execute("UPDATE prompt_execution_groups SET current_state=?,updated_at=?,closed_at=? WHERE id=?", (terminal_state, terminal_at, terminal_at, row[1]))
+        conn.commit()
+        return {"state": terminal_state, "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "result_code": result_code, "secret_safe_message": message}
+
+    queue_payload = "{}"
+    try:
+        conn.execute("INSERT INTO prompt_execution_async_queue(execution_group_id,execution_attempt_id,capability_code,queue_state,available_at,payload_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", (row[1], execution_attempt_id, capability_code, "QUEUED", now, queue_payload, now, now))
+    except sqlite3.IntegrityError:
+        existing = conn.execute("SELECT id FROM prompt_execution_async_queue WHERE execution_attempt_id=?", (execution_attempt_id,)).fetchone()
+        if existing:
+            return {"state": "DISPATCHED", "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "queue_id": int(existing[0])}
+        conn.execute("UPDATE prompt_execution_attempts SET state='FAILED_TERMINAL',result_code=?,secret_safe_message=?,terminal_at=?,updated_at=? WHERE id=?", ("QUEUE_ADMISSION_FAILED", "Async queue admission failed.", now, now, execution_attempt_id))
+        conn.execute("UPDATE prompt_execution_groups SET current_state='FAILED_TERMINAL',updated_at=?,closed_at=? WHERE id=?", (now, now, row[1]))
+        conn.commit()
+        return {"state": "FAILED_TERMINAL", "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "result_code": "QUEUE_ADMISSION_FAILED"}
+
+    conn.execute("UPDATE prompt_execution_attempts SET state='DISPATCHED',updated_at=? WHERE id=?", (now, execution_attempt_id))
+    conn.execute("UPDATE prompt_execution_groups SET current_state='DISPATCHED',updated_at=? WHERE id=?", (now, row[1]))
+    qid = int(conn.execute("SELECT id FROM prompt_execution_async_queue WHERE execution_attempt_id=?", (execution_attempt_id,)).fetchone()[0])
+    conn.commit()
+    return {"state": "DISPATCHED", "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "queue_id": qid}
