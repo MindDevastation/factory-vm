@@ -61,6 +61,8 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
             q = conn.execute('SELECT execution_attempt_id,queue_state FROM prompt_execution_async_queue WHERE execution_attempt_id=?', (aid,)).fetchone()
             self.assertEqual(aid, q[0])
             self.assertEqual('QUEUED', q[1])
+            payload_json = conn.execute('SELECT payload_json FROM prompt_execution_async_queue WHERE execution_attempt_id=?', (aid,)).fetchone()[0]
+            self.assertEqual('{}', payload_json)
         finally:
             td.__exit__(None, None, None)
 
@@ -80,6 +82,53 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
             aid2 = self._admitted_attempt(conn, 'CREATE_ANALYTICS_REQUEST')
             with self.assertRaises(ValueError):
                 dispatch_prompt_execution(conn, execution_attempt_id=aid2, adapter_registry=RuntimeAdapterRegistry())
+        finally:
+            td.__exit__(None, None, None)
+
+
+    def test_sync_unsafe_payload_rejected_before_adapter_call(self):
+        td, conn = self._conn()
+        called = {"v": False}
+        try:
+            aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT')
+            reg = RuntimeAdapterRegistry()
+            def adapter(_):
+                called["v"] = True
+                return {"result_code": "OK", "secret_safe_message": "done"}
+            reg.register('CREATE_BULK_JSON_DRAFT', adapter)
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg, payload={"token": "abc"})
+            self.assertEqual('FAILED_TERMINAL', out['state'])
+            self.assertFalse(called["v"])
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_sync_unsafe_nested_payload_rejected(self):
+        td, conn = self._conn()
+        called = {"v": False}
+        try:
+            aid = self._admitted_attempt(conn, 'CREATE_METADATA_REQUEST')
+            reg = RuntimeAdapterRegistry()
+            def adapter(_):
+                called["v"] = True
+                return {"result_code": "OK", "secret_safe_message": "done"}
+            reg.register('CREATE_METADATA_REQUEST', adapter)
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg, payload={"meta": {"authorization": "Bearer X"}})
+            self.assertEqual('FAILED_TERMINAL', out['state'])
+            self.assertFalse(called["v"])
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_adapter_result_secret_like_message_rejected(self):
+        td, conn = self._conn()
+        try:
+            aid = self._admitted_attempt(conn, 'CREATE_ANALYTICS_REQUEST')
+            reg = RuntimeAdapterRegistry()
+            reg.register('CREATE_ANALYTICS_REQUEST', lambda _ : {'result_code': 'OK', 'secret_safe_message': 'bearer token=123'})
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg, payload={"safe": "ok"})
+            self.assertEqual('FAILED_TERMINAL', out['state'])
+            row = conn.execute('SELECT secret_safe_message FROM prompt_execution_attempts WHERE id=?', (aid,)).fetchone()
+            self.assertEqual('Adapter result failed secret-safety precheck.', row[0])
+            self.assertNotIn('token=123', row[0])
         finally:
             td.__exit__(None, None, None)
 

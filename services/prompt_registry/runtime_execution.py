@@ -21,6 +21,29 @@ CAPABILITY_EXECUTION_MODE = {**{c: "SYNC" for c in SYNC_CAPABILITIES}, **{c: "AS
 ACTIVE_STATES = ("PREPARED", "CONFIRMATION_REQUIRED", "ADMITTED", "DISPATCHED", "RUNNING", "RETRY_PENDING")
 
 
+_SECRET_PATTERNS = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
+
+
+def _contains_secret_like_text(value: str) -> bool:
+    text = str(value or "").lower()
+    return any(pattern in text for pattern in _SECRET_PATTERNS)
+
+
+def _is_secret_safe_data(value) -> bool:
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if _contains_secret_like_text(str(k)):
+                return False
+            if not _is_secret_safe_data(v):
+                return False
+        return True
+    if isinstance(value, (list, tuple)):
+        return all(_is_secret_safe_data(v) for v in value)
+    if isinstance(value, (str, bytes)):
+        return not _contains_secret_like_text(value.decode("utf-8", "ignore") if isinstance(value, bytes) else value)
+    return True
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -149,13 +172,25 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
         adapter = adapter_registry.get(capability_code)
         if adapter is None:
             raise ValueError("DISPATCH_REJECTED: missing adapter")
+        safe_payload = payload if isinstance(payload, dict) or payload is None else None
+        if safe_payload is None or not _is_secret_safe_data(dict(safe_payload or {})):
+            terminal_at = _utc_now()
+            conn.execute("UPDATE prompt_execution_attempts SET state='FAILED_TERMINAL',result_code=?,secret_safe_message=?,terminal_at=?,updated_at=? WHERE id=?", ("SECRET_UNSAFE_PAYLOAD", "Adapter payload failed secret-safety precheck.", terminal_at, terminal_at, execution_attempt_id))
+            conn.execute("UPDATE prompt_execution_groups SET current_state='FAILED_TERMINAL',updated_at=?,closed_at=? WHERE id=?", (terminal_at, terminal_at, row[1]))
+            conn.commit()
+            return {"state": "FAILED_TERMINAL", "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "result_code": "SECRET_UNSAFE_PAYLOAD", "secret_safe_message": "Adapter payload failed secret-safety precheck."}
         conn.execute("UPDATE prompt_execution_attempts SET state='RUNNING',running_at=?,updated_at=? WHERE id=?", (now, now, execution_attempt_id))
         conn.execute("UPDATE prompt_execution_groups SET current_state='RUNNING',updated_at=? WHERE id=?", (now, row[1]))
         try:
-            out = adapter(dict(payload or {}))
+            out = adapter(dict(safe_payload or {}))
             result_code = str((out or {}).get("result_code", "OK"))
             message = str((out or {}).get("secret_safe_message", "Sync dispatch completed."))
-            terminal_state = "SUCCEEDED"
+            if _contains_secret_like_text(result_code) or _contains_secret_like_text(message):
+                result_code = "SECRET_UNSAFE_ADAPTER_RESULT"
+                message = "Adapter result failed secret-safety precheck."
+                terminal_state = "FAILED_TERMINAL"
+            else:
+                terminal_state = "SUCCEEDED"
         except Exception:
             result_code = "ADAPTER_ERROR"
             message = "Adapter execution failed."
