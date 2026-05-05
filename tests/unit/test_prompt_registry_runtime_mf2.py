@@ -83,13 +83,13 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
         self.assertEqual(d1, d2)
         self.assertNotEqual(d1, d3)
 
-    def test_no_usage_terminal_before_execution(self):
+    def test_usage_created_at_admission_before_execution(self):
         td, conn = self._conn()
         try:
             pre = prepare_prompt_execution_preflight(conn, **self.base)
             confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash="state-1")
             usage = conn.execute("SELECT COUNT(*) FROM prompt_execution_usage").fetchone()[0]
-            self.assertEqual(0, usage)
+            self.assertEqual(1, usage)
         finally:
             td.__exit__(None, None, None)
 
