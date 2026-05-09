@@ -100,6 +100,7 @@ def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> di
     existing = conn.execute("SELECT id,execution_group_id,state,operator_id_or_system_actor,reviewed_target_state_hash,dedup_key_hash FROM prompt_execution_attempts WHERE dedup_key_hash=? ORDER BY id DESC LIMIT 1", (dedup_key_hash,)).fetchone()
     if existing:
         token = _make_confirmation_token(execution_attempt_id=existing[0], dedup_key_hash=existing[5], reviewed_target_state_hash=existing[4], operator_id=existing[3], state=existing[2])
+        conn.commit()
         return {"execution_group_id": existing[1], "execution_attempt_id": existing[0], "confirmation_token": token, "dedup_key_hash": existing[5], "state": existing[2], "execution_mode": CAPABILITY_EXECUTION_MODE[capability_code], "capability_code": capability_code, "target_type": kwargs["target_type"], "target_id": kwargs.get("target_id"), "secret_safe_message": "Ready for explicit confirmation."}
 
     conflict = conn.execute(f"SELECT id FROM prompt_execution_groups WHERE capability_code=? AND target_type=? AND COALESCE(target_id,'')=COALESCE(?, '') AND current_state IN ({','.join('?'*len(ACTIVE_STATES))}) ORDER BY id DESC LIMIT 1", (capability_code, kwargs["target_type"], kwargs.get("target_id"), *ACTIVE_STATES)).fetchone()
@@ -116,6 +117,9 @@ def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> di
     except sqlite3.IntegrityError:
         conflict = conn.execute(f"SELECT id FROM prompt_execution_groups WHERE capability_code=? AND target_type=? AND COALESCE(target_id,'')=COALESCE(?, '') AND current_state IN ({','.join('?'*len(ACTIVE_STATES))}) ORDER BY id DESC LIMIT 1", (capability_code, kwargs["target_type"], kwargs.get("target_id"), *ACTIVE_STATES)).fetchone()
         if conflict:
+            _write_lifecycle_event(conn, execution_group_id=int(conflict[0]), execution_attempt_id=None, state_before=None, state_after="CONFLICT_BLOCKED", result_code="CONFLICT", actor=operator_id, payload={})
+            _write_runtime_audit(conn, prompt_record_id=int(kwargs["prompt_record_id"]), prompt_version_id=kwargs.get("prompt_version_id"), event_type="runtime_conflict_blocked", actor=operator_id, payload={"blocked_by_execution_group_id": int(conflict[0]), "dedup_key_hash": dedup_key_hash})
+            conn.commit()
             return {"state": "CONFLICT_BLOCKED", "blocked_by_execution_group_id": int(conflict[0]), "dedup_key_hash": dedup_key_hash}
         raise ValueError("CONFLICT_BLOCKED: active target lock collision")
     gid = int(cur.lastrowid)
@@ -124,6 +128,7 @@ def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> di
     conn.commit()
     _write_lifecycle_event(conn, execution_group_id=gid, execution_attempt_id=aid, state_before="PREPARED", state_after="CONFIRMATION_REQUIRED", result_code=None, actor=operator_id, payload={})
     _write_runtime_audit(conn, prompt_record_id=int(kwargs["prompt_record_id"]), prompt_version_id=kwargs.get("prompt_version_id"), event_type="runtime_confirmation_required", actor=operator_id, payload={"execution_group_id": gid, "execution_attempt_id": aid, "dedup_key_hash": dedup_key_hash})
+    conn.commit()
     token = _make_confirmation_token(execution_attempt_id=aid, dedup_key_hash=dedup_key_hash, reviewed_target_state_hash=kwargs["reviewed_target_state_hash"], operator_id=operator_id, state="CONFIRMATION_REQUIRED")
     return {"execution_group_id": gid, "execution_attempt_id": aid, "confirmation_token": token, "dedup_key_hash": dedup_key_hash, "state": "CONFIRMATION_REQUIRED", "execution_mode": mode, "capability_code": capability_code, "target_type": kwargs["target_type"], "target_id": kwargs.get("target_id"), "secret_safe_message": "Ready for explicit confirmation."}
 
@@ -135,8 +140,15 @@ def confirm_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: 
     if row is None:
         raise ValueError("PREFLIGHT_REJECTED: attempt not found")
     if row[4] != reviewed_target_state_hash:
-        _write_lifecycle_event(conn, execution_group_id=row[1], execution_attempt_id=row[0], state_before=row[2], state_after="STALE_BLOCKED", result_code="STALE", actor=operator_id_or_system_actor, payload={})
-        _write_runtime_audit(conn, prompt_record_id=conn.execute("SELECT prompt_record_id FROM prompt_execution_attempts WHERE id=?", (row[0],)).fetchone()[0], prompt_version_id=conn.execute("SELECT prompt_version_id FROM prompt_execution_attempts WHERE id=?", (row[0],)).fetchone()[0], event_type="runtime_stale_blocked", actor=operator_id_or_system_actor, payload={"execution_group_id": row[1], "execution_attempt_id": row[0]})
+        _finalize_execution_terminal(
+            conn,
+            execution_group_id=row[1],
+            execution_attempt_id=row[0],
+            terminal_state="STALE_BLOCKED",
+            result_code="STALE",
+            secret_safe_message="Reviewed target state is stale.",
+            actor=operator_id_or_system_actor,
+        )
         conn.commit()
         return {"state": "STALE_BLOCKED", "execution_group_id": row[1], "execution_attempt_id": row[0]}
     expected_current = _make_confirmation_token(execution_attempt_id=row[0], dedup_key_hash=row[3], reviewed_target_state_hash=row[4], operator_id=operator_id_or_system_actor, state=row[2])
@@ -189,9 +201,15 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
             raise ValueError("DISPATCH_REJECTED: missing adapter")
         safe_payload = payload if isinstance(payload, dict) or payload is None else None
         if safe_payload is None or not _is_secret_safe_data(dict(safe_payload or {})):
-            terminal_at = _utc_now()
-            conn.execute("UPDATE prompt_execution_attempts SET state='FAILED_TERMINAL',result_code=?,secret_safe_message=?,terminal_at=?,updated_at=? WHERE id=?", ("SECRET_UNSAFE_PAYLOAD", "Adapter payload failed secret-safety precheck.", terminal_at, terminal_at, execution_attempt_id))
-            conn.execute("UPDATE prompt_execution_groups SET current_state='FAILED_TERMINAL',updated_at=?,closed_at=? WHERE id=?", (terminal_at, terminal_at, row[1]))
+            _finalize_execution_terminal(
+                conn,
+                execution_group_id=row[1],
+                execution_attempt_id=execution_attempt_id,
+                terminal_state="FAILED_TERMINAL",
+                result_code="SECRET_UNSAFE_PAYLOAD",
+                secret_safe_message="Adapter payload failed secret-safety precheck.",
+                actor="system",
+            )
             conn.commit()
             return {"state": "FAILED_TERMINAL", "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "result_code": "SECRET_UNSAFE_PAYLOAD", "secret_safe_message": "Adapter payload failed secret-safety precheck."}
         conn.execute("UPDATE prompt_execution_attempts SET state='RUNNING',running_at=?,updated_at=? WHERE id=?", (now, now, execution_attempt_id))
@@ -213,15 +231,15 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
             result_code = "ADAPTER_ERROR"
             message = "Adapter execution failed."
             terminal_state = "FAILED_TERMINAL"
-        terminal_at = _utc_now()
-        conn.execute("UPDATE prompt_execution_attempts SET state=?,result_code=?,secret_safe_message=?,terminal_at=?,updated_at=? WHERE id=?", (terminal_state, result_code, message, terminal_at, terminal_at, execution_attempt_id))
-        conn.execute("UPDATE prompt_execution_groups SET current_state=?,updated_at=?,closed_at=? WHERE id=?", (terminal_state, terminal_at, terminal_at, row[1]))
-        _write_lifecycle_event(conn, execution_group_id=row[1], execution_attempt_id=execution_attempt_id, state_before="RUNNING", state_after=terminal_state, result_code=result_code, actor="system", payload={})
-        pr = conn.execute("SELECT prompt_record_id,prompt_version_id FROM prompt_execution_attempts WHERE id=?", (execution_attempt_id,)).fetchone()
-        evt = "runtime_succeeded" if terminal_state == "SUCCEEDED" else "runtime_failed_terminal"
-        _write_runtime_audit(conn, prompt_record_id=pr[0], prompt_version_id=pr[1], event_type=evt, actor="system", payload={"execution_group_id": row[1], "execution_attempt_id": execution_attempt_id, "result_code": result_code, "secret_safe_message": message, "state_after": terminal_state})
-        if terminal_state in {"SUCCEEDED", "FAILED_TERMINAL", "CANCELLED", "STALE_BLOCKED", "CONFLICT_BLOCKED"}:
-            _update_usage_terminal(conn, execution_group_id=row[1], latest_attempt_id=execution_attempt_id, terminal_outcome=terminal_state)
+        _finalize_execution_terminal(
+            conn,
+            execution_group_id=row[1],
+            execution_attempt_id=execution_attempt_id,
+            terminal_state=terminal_state,
+            result_code=result_code,
+            secret_safe_message=message,
+            actor="system",
+        )
         conn.commit()
         return {"state": terminal_state, "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "result_code": result_code, "secret_safe_message": message}
 
@@ -232,8 +250,15 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
         existing = conn.execute("SELECT id FROM prompt_execution_async_queue WHERE execution_attempt_id=?", (execution_attempt_id,)).fetchone()
         if existing:
             return {"state": "DISPATCHED", "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "queue_id": int(existing[0])}
-        conn.execute("UPDATE prompt_execution_attempts SET state='FAILED_TERMINAL',result_code=?,secret_safe_message=?,terminal_at=?,updated_at=? WHERE id=?", ("QUEUE_ADMISSION_FAILED", "Async queue admission failed.", now, now, execution_attempt_id))
-        conn.execute("UPDATE prompt_execution_groups SET current_state='FAILED_TERMINAL',updated_at=?,closed_at=? WHERE id=?", (now, now, row[1]))
+        _finalize_execution_terminal(
+            conn,
+            execution_group_id=row[1],
+            execution_attempt_id=execution_attempt_id,
+            terminal_state="FAILED_TERMINAL",
+            result_code="QUEUE_ADMISSION_FAILED",
+            secret_safe_message="Async queue admission failed.",
+            actor="system",
+        )
         conn.commit()
         return {"state": "FAILED_TERMINAL", "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "result_code": "QUEUE_ADMISSION_FAILED"}
 
@@ -286,6 +311,89 @@ def _ensure_usage_on_admitted(conn: sqlite3.Connection, *, execution_group_id: i
 def _update_usage_terminal(conn: sqlite3.Connection, *, execution_group_id: int, latest_attempt_id: int, terminal_outcome: str) -> None:
     now = _utc_now()
     conn.execute("UPDATE prompt_execution_usage SET latest_attempt_id=?,terminal_outcome=?,terminal_at=?,updated_at=? WHERE execution_group_id=?", (latest_attempt_id, terminal_outcome, now, now, execution_group_id))
+
+
+def _runtime_audit_event_for_terminal_state(terminal_state: str) -> str:
+    return {
+        "SUCCEEDED": "runtime_succeeded",
+        "FAILED_TERMINAL": "runtime_failed_terminal",
+        "CANCELLED": "runtime_cancelled",
+        "STALE_BLOCKED": "runtime_stale_blocked",
+        "CONFLICT_BLOCKED": "runtime_conflict_blocked",
+    }.get(terminal_state, "runtime_failed_terminal")
+
+
+def _secret_safe_text(value: str, fallback: str) -> str:
+    text = str(value or "")
+    allowed_generic_messages = {
+        "Adapter payload failed secret-safety precheck.",
+        "Adapter result failed secret-safety precheck.",
+    }
+    if text in allowed_generic_messages:
+        return text
+    return fallback if _contains_secret_like_text(text) else text
+
+
+def _finalize_execution_terminal(
+    conn: sqlite3.Connection,
+    *,
+    execution_group_id: int,
+    execution_attempt_id: int,
+    terminal_state: str,
+    result_code: str,
+    secret_safe_message: str,
+    actor: str,
+) -> None:
+    current = conn.execute(
+        "SELECT state,prompt_record_id,prompt_version_id,correlation_id,dedup_key_hash FROM prompt_execution_attempts WHERE id=?",
+        (execution_attempt_id,),
+    ).fetchone()
+    if current is None:
+        raise ValueError("execution attempt not found")
+    state_before = current[0]
+    safe_message = _secret_safe_text(secret_safe_message, "Execution terminal message redacted.")
+    now = _utc_now()
+    conn.execute(
+        "UPDATE prompt_execution_attempts SET state=?,result_code=?,secret_safe_message=?,terminal_at=?,updated_at=? WHERE id=?",
+        (terminal_state, result_code, safe_message, now, now, execution_attempt_id),
+    )
+    conn.execute(
+        "UPDATE prompt_execution_groups SET current_state=?,updated_at=?,closed_at=? WHERE id=?",
+        (terminal_state, now, now, execution_group_id),
+    )
+    _write_lifecycle_event(
+        conn,
+        execution_group_id=execution_group_id,
+        execution_attempt_id=execution_attempt_id,
+        state_before=state_before,
+        state_after=terminal_state,
+        result_code=result_code,
+        actor=actor,
+        payload={},
+    )
+    _write_runtime_audit(
+        conn,
+        prompt_record_id=current[1],
+        prompt_version_id=current[2],
+        event_type=_runtime_audit_event_for_terminal_state(terminal_state),
+        actor=actor,
+        payload={
+            "execution_group_id": execution_group_id,
+            "execution_attempt_id": execution_attempt_id,
+            "correlation_id": current[3],
+            "dedup_key_hash": current[4],
+            "state_before": state_before,
+            "state_after": terminal_state,
+            "result_code": result_code,
+            "secret_safe_message": safe_message,
+        },
+    )
+    _update_usage_terminal(
+        conn,
+        execution_group_id=execution_group_id,
+        latest_attempt_id=execution_attempt_id,
+        terminal_outcome=terminal_state,
+    )
 
 
 def list_prompt_execution_timeline(conn: sqlite3.Connection, *, execution_group_id: int) -> list[dict]:
