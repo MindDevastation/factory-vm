@@ -39,14 +39,14 @@ class TestPromptRegistryRuntimeMf5(unittest.TestCase):
         confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash="sh")
         return pre
 
-    def test_retry_allowed_for_retryable_failed_terminal_creates_next_attempt_and_preserves_lineage(self):
+    def test_async_retry_allowed_for_retryable_failed_terminal_creates_next_attempt_and_preserves_lineage(self):
         td, conn = self._conn()
         try:
-            pre = self._admit(conn)
-            conn.execute("UPDATE prompt_execution_attempts SET retryable_by_operator=1 WHERE id=?", (pre["execution_attempt_id"],))
-            reg = RuntimeAdapterRegistry(); reg.register("CREATE_BULK_JSON_DRAFT", lambda _: (_ for _ in ()).throw(RuntimeError("boom")))
-            dispatch_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], adapter_registry=reg)
-            retry = schedule_prompt_execution_retry(conn, execution_attempt_id=pre["execution_attempt_id"], actor="operator-1", retry_after="2026-01-01T00:10:00Z")
+            pre = self._admit(conn, capability="ENQUEUE_INTERNAL_PROMPT_JOB")
+            conn.execute("UPDATE prompt_execution_attempts SET state='FAILED_TERMINAL',retryable_by_operator=1 WHERE id=?", (pre["execution_attempt_id"],))
+            conn.execute("UPDATE prompt_execution_groups SET current_state='FAILED_TERMINAL' WHERE id=?", (pre["execution_group_id"],))
+            conn.commit()
+            retry = schedule_prompt_execution_retry(conn, execution_attempt_id=pre["execution_attempt_id"], actor="operator-1", retry_after="2000-01-01T00:10:00Z")
             self.assertEqual("ADMITTED", retry["state"])
             self.assertEqual(2, retry["attempt_number"])
             old = conn.execute("SELECT binding_resolution_fingerprint,rendered_payload_hash,action_payload_hash,reviewed_target_state_hash,dedup_key_hash FROM prompt_execution_attempts WHERE id=?", (pre["execution_attempt_id"],)).fetchone()
@@ -69,6 +69,20 @@ class TestPromptRegistryRuntimeMf5(unittest.TestCase):
                     schedule_prompt_execution_retry(conn, execution_attempt_id=pre["execution_attempt_id"], actor="operator-1")
             finally:
                 td.__exit__(None, None, None)
+
+
+    def test_sync_retry_rejected_even_when_retryable_flag_set(self):
+        td, conn = self._conn()
+        try:
+            pre = self._admit(conn, capability="CREATE_BULK_JSON_DRAFT")
+            conn.execute("UPDATE prompt_execution_attempts SET state='FAILED_TERMINAL',retryable_by_operator=1 WHERE id=?", (pre["execution_attempt_id"],))
+            conn.execute("UPDATE prompt_execution_groups SET current_state='FAILED_TERMINAL' WHERE id=?", (pre["execution_group_id"],))
+            conn.commit()
+            with self.assertRaises(ValueError):
+                schedule_prompt_execution_retry(conn, execution_attempt_id=pre["execution_attempt_id"], actor="operator-1")
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM prompt_execution_attempts WHERE execution_group_id=? AND state='RETRY_PENDING'", (pre["execution_group_id"],)).fetchone()[0])
+        finally:
+            td.__exit__(None, None, None)
 
     def test_cancel_confirmation_required_and_admitted_and_dispatched(self):
         td, conn = self._conn()
@@ -134,7 +148,8 @@ class TestPromptRegistryRuntimeMf5(unittest.TestCase):
             claim_prompt_execution_async_work(conn, lease_owner="worker-1", lease_seconds=1, now="2027-01-01T00:00:00Z")
             out = reclaim_expired_prompt_execution_leases(conn, now="2027-01-01T00:00:02Z")
             self.assertEqual("RETRY_PENDING", out[0]["state"])
-            self.assertEqual("QUEUED", conn.execute("SELECT queue_state FROM prompt_execution_async_queue WHERE execution_attempt_id=?", (pre["execution_attempt_id"],)).fetchone()[0])
+            self.assertEqual("2027-01-01T00:00:32Z", out[0]["retry_after"])
+            self.assertEqual(("QUEUED", "2027-01-01T00:00:32Z"), tuple(conn.execute("SELECT queue_state,available_at FROM prompt_execution_async_queue WHERE execution_attempt_id=?", (pre["execution_attempt_id"],)).fetchone()))
         finally:
             td.__exit__(None, None, None)
 
@@ -165,10 +180,11 @@ class TestPromptRegistryRuntimeMf5(unittest.TestCase):
     def test_future_retry_after_creates_retry_pending_and_dispatch_rejects_until_due(self):
         td, conn = self._conn()
         try:
-            pre = self._admit(conn)
-            conn.execute("UPDATE prompt_execution_attempts SET retryable_by_operator=1 WHERE id=?", (pre["execution_attempt_id"],))
-            reg = RuntimeAdapterRegistry(); reg.register("CREATE_BULK_JSON_DRAFT", lambda _: (_ for _ in ()).throw(RuntimeError("boom")))
-            dispatch_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], adapter_registry=reg)
+            pre = self._admit(conn, capability="ENQUEUE_INTERNAL_PROMPT_JOB")
+            conn.execute("UPDATE prompt_execution_attempts SET state='FAILED_TERMINAL',retryable_by_operator=1 WHERE id=?", (pre["execution_attempt_id"],))
+            conn.execute("UPDATE prompt_execution_groups SET current_state='FAILED_TERMINAL' WHERE id=?", (pre["execution_group_id"],))
+            conn.commit()
+            reg = RuntimeAdapterRegistry()
             retry = schedule_prompt_execution_retry(conn, execution_attempt_id=pre["execution_attempt_id"], actor="operator-1", retry_after="2999-01-01T00:00:00Z")
             self.assertEqual("RETRY_PENDING", retry["state"])
             row = conn.execute("SELECT state,lease_expires_at FROM prompt_execution_attempts WHERE id=?", (retry["execution_attempt_id"],)).fetchone()
@@ -184,7 +200,7 @@ class TestPromptRegistryRuntimeMf5(unittest.TestCase):
     def test_due_retry_after_creates_admitted(self):
         td, conn = self._conn()
         try:
-            pre = self._admit(conn)
+            pre = self._admit(conn, capability="ENQUEUE_INTERNAL_PROMPT_JOB")
             conn.execute("UPDATE prompt_execution_attempts SET state='FAILED_TERMINAL',retryable_by_operator=1 WHERE id=?", (pre["execution_attempt_id"],))
             conn.execute("UPDATE prompt_execution_groups SET current_state='FAILED_TERMINAL' WHERE id=?", (pre["execution_group_id"],))
             conn.commit()
@@ -202,10 +218,35 @@ class TestPromptRegistryRuntimeMf5(unittest.TestCase):
             claim_prompt_execution_async_work(conn, lease_owner="worker-1", lease_seconds=1, now="2027-01-01T00:00:00Z")
             first = reclaim_expired_prompt_execution_leases(conn, now="2027-01-01T00:00:02Z", max_retries=1)
             self.assertEqual("RETRY_PENDING", first[0]["state"])
-            claim_prompt_execution_async_work(conn, lease_owner="worker-2", lease_seconds=1, now="2027-01-01T00:00:03Z")
-            second = reclaim_expired_prompt_execution_leases(conn, now="2027-01-01T00:00:05Z", max_retries=1)
+            self.assertEqual("2027-01-01T00:00:32Z", first[0]["retry_after"])
+            claim_prompt_execution_async_work(conn, lease_owner="worker-2", lease_seconds=1, now="2027-01-01T00:00:32Z")
+            second = reclaim_expired_prompt_execution_leases(conn, now="2027-01-01T00:00:34Z", max_retries=1)
             self.assertEqual("FAILED_TERMINAL", second[0]["state"])
-            self.assertEqual("RETRY_LIMIT_REACHED", second[0]["result_code"])
+            self.assertEqual("RETRIES_EXHAUSTED", second[0]["result_code"])
+            self.assertEqual("FAILED_TERMINAL", conn.execute("SELECT terminal_outcome FROM prompt_execution_usage WHERE execution_group_id=?", (pre["execution_group_id"],)).fetchone()[0])
+        finally:
+            td.__exit__(None, None, None)
+
+
+    def test_default_reclaim_backoff_sequence_and_exhaustion_code(self):
+        td, conn = self._conn()
+        try:
+            pre = self._admit(conn, capability="ENQUEUE_INTERNAL_PROMPT_JOB")
+            conn.execute("UPDATE prompt_execution_attempts SET retryable_by_operator=1 WHERE id=?", (pre["execution_attempt_id"],))
+            dispatch_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], adapter_registry=RuntimeAdapterRegistry())
+            claim_prompt_execution_async_work(conn, lease_owner="worker-1", lease_seconds=1, now="2027-01-01T00:00:00Z")
+            first = reclaim_expired_prompt_execution_leases(conn, now="2027-01-01T00:00:02Z")
+            self.assertEqual("2027-01-01T00:00:32Z", first[0]["retry_after"])
+            claim_prompt_execution_async_work(conn, lease_owner="worker-2", lease_seconds=1, now="2027-01-01T00:00:32Z")
+            second = reclaim_expired_prompt_execution_leases(conn, now="2027-01-01T00:00:34Z")
+            self.assertEqual("2027-01-01T00:02:34Z", second[0]["retry_after"])
+            claim_prompt_execution_async_work(conn, lease_owner="worker-3", lease_seconds=1, now="2027-01-01T00:02:34Z")
+            third = reclaim_expired_prompt_execution_leases(conn, now="2027-01-01T00:02:36Z")
+            self.assertEqual("2027-01-01T00:12:36Z", third[0]["retry_after"])
+            claim_prompt_execution_async_work(conn, lease_owner="worker-4", lease_seconds=1, now="2027-01-01T00:12:36Z")
+            exhausted = reclaim_expired_prompt_execution_leases(conn, now="2027-01-01T00:12:38Z")
+            self.assertEqual("FAILED_TERMINAL", exhausted[0]["state"])
+            self.assertEqual("RETRIES_EXHAUSTED", exhausted[0]["result_code"])
             self.assertEqual("FAILED_TERMINAL", conn.execute("SELECT terminal_outcome FROM prompt_execution_usage WHERE execution_group_id=?", (pre["execution_group_id"],)).fetchone()[0])
         finally:
             td.__exit__(None, None, None)

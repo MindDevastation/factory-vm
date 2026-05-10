@@ -19,6 +19,9 @@ ASYNC_CAPABILITIES = frozenset({
 CAPABILITY_EXECUTION_MODE = {**{c: "SYNC" for c in SYNC_CAPABILITIES}, **{c: "ASYNC" for c in ASYNC_CAPABILITIES}}
 
 ACTIVE_STATES = ("PREPARED", "CONFIRMATION_REQUIRED", "ADMITTED", "DISPATCHED", "RUNNING", "RETRY_PENDING")
+DEFAULT_MAX_AUTOMATIC_RETRIES = 3
+RETRY_BACKOFF_SECONDS = (30, 120, 600)
+RETRY_ELIGIBLE_CAPABILITIES = frozenset({"ENQUEUE_INTERNAL_PROMPT_JOB", "GENERATE_OPERATOR_HANDOFF_EXPORT"})
 
 
 _SECRET_PATTERNS = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
@@ -427,6 +430,21 @@ def _retry_reclaim_count(conn: sqlite3.Connection, execution_group_id: int) -> i
     return attempts_beyond_first + lease_reclaims
 
 
+def _is_async_retry_eligible(conn: sqlite3.Connection, execution_group_id: int, execution_attempt_id: int) -> bool:
+    row = conn.execute(
+        """
+        SELECT g.capability_code,a.execution_mode,a.retryable_by_operator
+        FROM prompt_execution_attempts a
+        JOIN prompt_execution_groups g ON g.id=a.execution_group_id
+        WHERE a.id=? AND a.execution_group_id=?
+        """,
+        (execution_attempt_id, execution_group_id),
+    ).fetchone()
+    if row is None:
+        return False
+    return row[0] in RETRY_ELIGIBLE_CAPABILITIES and row[1] == "ASYNC" and int(row[2]) == 1
+
+
 def admit_due_prompt_execution_retries(conn: sqlite3.Connection, *, now: str | None = None, actor: str = "system") -> list[dict]:
     admitted_at = now or _utc_now()
     rows = conn.execute("SELECT id,execution_group_id,lease_expires_at,prompt_record_id,prompt_version_id,dedup_key_hash FROM prompt_execution_attempts WHERE state='RETRY_PENDING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=? ORDER BY lease_expires_at ASC,id ASC", (admitted_at,)).fetchall()
@@ -455,7 +473,6 @@ def schedule_prompt_execution_retry(
         raise ValueError("RETRY_REJECTED: attempt not found")
     execution_group_id = int(source["execution_group_id"] if isinstance(source, sqlite3.Row) else source[1])
     state = source["state"] if isinstance(source, sqlite3.Row) else source[3]
-    retryable = int(source["retryable_by_operator"] if isinstance(source, sqlite3.Row) else source[12])
     latest = _latest_attempt_for_group(conn, execution_group_id)
     if latest is not None:
         latest_id = int(latest["id"] if isinstance(latest, sqlite3.Row) else latest[0])
@@ -472,8 +489,8 @@ def schedule_prompt_execution_retry(
             return {"state": latest_state, "execution_group_id": execution_group_id, "execution_attempt_id": latest_id, "idempotent": True}
     if state in {"SUCCEEDED", "CANCELLED", "STALE_BLOCKED", "CONFLICT_BLOCKED", "PREFLIGHT_REJECTED"}:
         raise ValueError("RETRY_REJECTED: state is not retryable")
-    if state not in {"FAILED_TERMINAL", "RETRY_PENDING"} or retryable != 1:
-        raise ValueError("RETRY_REJECTED: attempt is not retry eligible")
+    if state not in {"FAILED_TERMINAL", "RETRY_PENDING"} or not _is_async_retry_eligible(conn, execution_group_id, execution_attempt_id):
+        raise ValueError("RETRY_REJECTED: attempt is not async retry eligible")
     max_no = int(conn.execute("SELECT COALESCE(MAX(attempt_number),0) FROM prompt_execution_attempts WHERE execution_group_id=?", (execution_group_id,)).fetchone()[0])
     now = _utc_now()
     due_now = _retry_after_due(retry_after, now)
@@ -548,7 +565,7 @@ def claim_prompt_execution_async_work(conn: sqlite3.Connection, *, lease_owner: 
     return {"queue_id": qid, "execution_group_id": gid, "execution_attempt_id": aid, "queue_state": "CLAIMED", "lease_owner": lease_owner, "lease_expires_at": lease_expires}
 
 
-def reclaim_expired_prompt_execution_leases(conn: sqlite3.Connection, *, now: str | None = None, max_retries: int = 1) -> list[dict]:
+def reclaim_expired_prompt_execution_leases(conn: sqlite3.Connection, *, now: str | None = None, max_retries: int = DEFAULT_MAX_AUTOMATIC_RETRIES) -> list[dict]:
     reclaim_at = now or _utc_now()
     rows = conn.execute("SELECT id,execution_group_id,execution_attempt_id FROM prompt_execution_async_queue WHERE queue_state='CLAIMED' AND lease_expires_at IS NOT NULL AND lease_expires_at<=? ORDER BY id ASC", (reclaim_at,)).fetchall()
     out: list[dict] = []
@@ -558,16 +575,18 @@ def reclaim_expired_prompt_execution_leases(conn: sqlite3.Connection, *, now: st
         if attempt is None or attempt[0] in {"SUCCEEDED", "FAILED_TERMINAL", "CANCELLED", "STALE_BLOCKED", "CONFLICT_BLOCKED"}:
             continue
         used_retries = _retry_reclaim_count(conn, gid)
-        if int(attempt[1]) == 1 and used_retries < max_retries:
-            conn.execute("UPDATE prompt_execution_async_queue SET queue_state='QUEUED',lease_owner=NULL,lease_expires_at=NULL,available_at=?,updated_at=? WHERE id=?", (reclaim_at, reclaim_at, qid))
-            conn.execute("UPDATE prompt_execution_attempts SET state='RETRY_PENDING',lease_expires_at=NULL,updated_at=? WHERE id=?", (reclaim_at, aid))
-            conn.execute("UPDATE prompt_execution_groups SET current_state='RETRY_PENDING',lease_expires_at=NULL,updated_at=? WHERE id=?", (reclaim_at, gid))
-            _write_lifecycle_event(conn, execution_group_id=gid, execution_attempt_id=aid, state_before=attempt[0], state_after="RETRY_PENDING", result_code="LEASE_RECLAIMED", actor="system", payload={"queue_id": qid})
-            _write_runtime_audit(conn, prompt_record_id=attempt[2], prompt_version_id=attempt[3], event_type="runtime_retry_pending", actor="system", payload={"execution_group_id": gid, "execution_attempt_id": aid, "correlation_id": attempt[4], "dedup_key_hash": attempt[5], "queue_id": qid})
-            out.append({"queue_id": qid, "execution_attempt_id": aid, "state": "RETRY_PENDING"})
+        if _is_async_retry_eligible(conn, gid, aid) and used_retries < max_retries:
+            backoff_seconds = RETRY_BACKOFF_SECONDS[min(used_retries, len(RETRY_BACKOFF_SECONDS) - 1)]
+            available_at = _add_seconds(reclaim_at, backoff_seconds)
+            conn.execute("UPDATE prompt_execution_async_queue SET queue_state='QUEUED',lease_owner=NULL,lease_expires_at=NULL,available_at=?,updated_at=? WHERE id=?", (available_at, reclaim_at, qid))
+            conn.execute("UPDATE prompt_execution_attempts SET state='RETRY_PENDING',lease_expires_at=?,updated_at=? WHERE id=?", (available_at, reclaim_at, aid))
+            conn.execute("UPDATE prompt_execution_groups SET current_state='RETRY_PENDING',lease_expires_at=?,updated_at=? WHERE id=?", (available_at, reclaim_at, gid))
+            _write_lifecycle_event(conn, execution_group_id=gid, execution_attempt_id=aid, state_before=attempt[0], state_after="RETRY_PENDING", result_code="LEASE_RECLAIMED", actor="system", payload={"queue_id": qid, "retry_after": available_at, "retry_number": used_retries + 1})
+            _write_runtime_audit(conn, prompt_record_id=attempt[2], prompt_version_id=attempt[3], event_type="runtime_retry_pending", actor="system", payload={"execution_group_id": gid, "execution_attempt_id": aid, "correlation_id": attempt[4], "dedup_key_hash": attempt[5], "queue_id": qid, "retry_after": available_at, "retry_number": used_retries + 1})
+            out.append({"queue_id": qid, "execution_attempt_id": aid, "state": "RETRY_PENDING", "retry_after": available_at, "retry_number": used_retries + 1})
         else:
             conn.execute("UPDATE prompt_execution_async_queue SET queue_state='FAILED',lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE id=?", (reclaim_at, qid))
-            result_code = "RETRY_LIMIT_REACHED" if int(attempt[1]) == 1 else "LEASE_EXPIRED"
+            result_code = "RETRIES_EXHAUSTED" if _is_async_retry_eligible(conn, gid, aid) else "LEASE_EXPIRED"
             _finalize_execution_terminal(conn, execution_group_id=gid, execution_attempt_id=aid, terminal_state="FAILED_TERMINAL", result_code=result_code, secret_safe_message="Async execution lease expired.", actor="system")
             out.append({"queue_id": qid, "execution_attempt_id": aid, "state": "FAILED_TERMINAL", "result_code": result_code})
     conn.commit()
