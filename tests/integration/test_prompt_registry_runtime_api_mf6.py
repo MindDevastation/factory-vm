@@ -37,6 +37,14 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 "INSERT INTO prompt_versions(id,prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at) "
                 "VALUES(1,1,1,'body','fp','active','VALID',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')"
             )
+            conn.execute(
+                "INSERT INTO prompt_bindings(prompt_id,binding_scope,channel_slug,binding_status,created_at,updated_at) "
+                "VALUES(1,'channel','darkwood-reverie','active','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')"
+            )
+            conn.execute(
+                "INSERT INTO prompt_bindings(prompt_id,binding_scope,channel_slug,binding_status,created_at,updated_at) "
+                "VALUES(1,'channel','channel-b','active','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')"
+            )
             conn.commit()
         finally:
             conn.close()
@@ -44,8 +52,8 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
     def _base_payload(self, **overrides):
         payload = {
             "capability_code": "CREATE_BULK_JSON_DRAFT",
-            "target_type": "workflow",
-            "target_id": "wf-mf6",
+            "target_type": "channel",
+            "target_id": "darkwood-reverie",
             "operator_id_or_system_actor": "body-spoof",
             "prompt_record_id": 1,
             "prompt_version_id": 1,
@@ -57,13 +65,38 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
         payload.update(overrides)
         return payload
 
-    def _preflight_api(self, client, headers, **overrides):
+    def _target_hash(self, env, *, target_type="channel", target_id="darkwood-reverie"):
+        from services.factory_api.prompt_registry_runtime import _target_snapshot_hash
+
+        conn = sqlite3.connect(env.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            return _target_snapshot_hash(conn, target_type=target_type, target_id=target_id)
+        finally:
+            conn.close()
+
+    def _preflight_api(self, env, client, headers, **overrides):
+        target_type = overrides.get("target_type", "channel")
+        target_id = overrides.get("target_id", "darkwood-reverie")
+        overrides.setdefault("reviewed_target_state_hash", self._target_hash(env, target_type=target_type, target_id=target_id) or "missing-target")
         return client.post("/v1/prompt-registry/runtime/preflight", json=self._base_payload(**overrides), headers=headers)
+
+    def _bulk_payload(self):
+        return {
+            "channel_slug": "darkwood-reverie",
+            "title": "Runtime API Draft",
+            "description": "Runtime API draft",
+            "tags_csv": "runtime,test",
+            "background_name": "background",
+            "background_ext": ".png",
+            "audio_ids_text": "audio-1",
+        }
 
     def _preflight_service(self, env, **overrides):
         conn = sqlite3.connect(env.db_path)
         conn.row_factory = sqlite3.Row
         try:
+            overrides.setdefault("reviewed_target_state_hash", self._target_hash(env, target_type=overrides.get("target_type", "channel"), target_id=overrides.get("target_id", "darkwood-reverie")) or "state-mf6")
             return prepare_prompt_execution_preflight(conn, **self._base_payload(operator_id_or_system_actor="admin", **overrides))
         finally:
             conn.close()
@@ -78,7 +111,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 execution_attempt_id=pre["execution_attempt_id"],
                 confirmation_token=pre["confirmation_token"],
                 operator_id_or_system_actor="admin",
-                reviewed_target_state_hash=overrides.get("reviewed_target_state_hash", "state-mf6"),
+                reviewed_target_state_hash=overrides.get("reviewed_target_state_hash") or self._target_hash(env, target_type=overrides.get("target_type", "channel"), target_id=overrides.get("target_id", "darkwood-reverie")) or "state-mf6",
             )
         finally:
             conn.close()
@@ -97,7 +130,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             self._seed_prompt(env)
             _mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
-            res = self._preflight_api(client, headers)
+            res = self._preflight_api(env, client, headers)
             self.assertEqual(200, res.status_code, res.text)
             body = res.json()
             self.assertEqual("CONFIRMATION_REQUIRED", body["state"])
@@ -116,18 +149,51 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             _mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
             res = self._preflight_api(
+                env,
                 client,
                 headers,
-                target_id="request-flags-mf6",
                 action_payload_hash="action-request-flags",
                 capability_execution_enabled=False,
                 target_exists=False,
                 target_state_compatible=False,
                 current_target_state_hash="caller-stale",
                 rendered_payload_valid=False,
+                _server_gate_context={
+                    "binding_resolution_complete": False,
+                    "target_exists": False,
+                    "current_target_state_hash": "caller-stale",
+                },
             )
             self.assertEqual(200, res.status_code, res.text)
             self.assertEqual("CONFIRMATION_REQUIRED", res.json()["state"])
+
+
+    def test_api_preflight_fails_closed_without_server_binding_or_target_truth(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            self._seed_prompt(env)
+            _mod, client = self._app_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            missing_binding = self._preflight_api(env, client, headers, target_id="channel-c", action_payload_hash="action-missing-binding")
+            self.assertEqual(422, missing_binding.status_code, missing_binding.text)
+            self.assertIn("binding resolution incomplete", missing_binding.json()["error"]["message"])
+
+            caller_context_cannot_override = self._preflight_api(
+                env,
+                client,
+                headers,
+                target_id="missing-channel",
+                action_payload_hash="action-missing-target",
+                _server_gate_context={
+                    "binding_resolution_complete": True,
+                    "target_exists": True,
+                    "target_state_compatible": True,
+                    "current_target_state_hash": "missing-target",
+                },
+                reviewed_target_state_hash="missing-target",
+            )
+            self.assertEqual(422, caller_context_cannot_override.status_code, caller_context_cannot_override.text)
+            self.assertIn("binding resolution incomplete", caller_context_cannot_override.json()["error"]["message"])
 
     def test_confirm_requires_token_and_admits_execution(self):
         with temp_env() as (_td, env):
@@ -135,12 +201,12 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             self._seed_prompt(env)
             _mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
-            pre = self._preflight_api(client, headers).json()
-            missing = client.post("/v1/prompt-registry/runtime/confirm", json={"execution_attempt_id": pre["execution_attempt_id"], "reviewed_target_state_hash": "state-mf6"}, headers=headers)
+            pre = self._preflight_api(env, client, headers).json()
+            missing = client.post("/v1/prompt-registry/runtime/confirm", json={"execution_attempt_id": pre["execution_attempt_id"], "reviewed_target_state_hash": self._target_hash(env)}, headers=headers)
             self.assertEqual(422, missing.status_code)
             admitted = client.post(
                 "/v1/prompt-registry/runtime/confirm",
-                json={"execution_attempt_id": pre["execution_attempt_id"], "confirmation_token": pre["confirmation_token"], "reviewed_target_state_hash": "state-mf6"},
+                json={"execution_attempt_id": pre["execution_attempt_id"], "confirmation_token": pre["confirmation_token"], "reviewed_target_state_hash": self._target_hash(env)},
                 headers=headers,
             )
             self.assertEqual(200, admitted.status_code, admitted.text)
@@ -177,23 +243,23 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             self._seed_prompt(env)
             _mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
-            pre = self._preflight_api(client, headers).json()
+            pre = self._preflight_api(env, client, headers).json()
             non_admitted = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "evil"}, headers=headers)
             self.assertEqual(422, non_admitted.status_code)
             client.post(
                 "/v1/prompt-registry/runtime/confirm",
-                json={"execution_attempt_id": pre["execution_attempt_id"], "confirmation_token": pre["confirmation_token"], "reviewed_target_state_hash": "state-mf6"},
+                json={"execution_attempt_id": pre["execution_attempt_id"], "confirmation_token": pre["confirmation_token"], "reviewed_target_state_hash": self._target_hash(env)},
                 headers=headers,
             )
 
-            dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "ignored", "payload": {"safe": "ok"}}, headers=headers)
+            dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "ignored", "payload": self._bulk_payload()}, headers=headers)
             self.assertEqual(200, dispatched.status_code, dispatched.text)
             self.assertEqual("SUCCEEDED", dispatched.json()["state"])
             self.assertEqual("BULK_JSON_DRAFT_TARGET_UPDATED", dispatched.json()["result_code"])
             conn = sqlite3.connect(env.db_path)
             try:
                 usage = conn.execute("SELECT artifact_ref,usage_payload_json FROM prompt_execution_usage WHERE latest_attempt_id=?", (pre["execution_attempt_id"],)).fetchone()
-                self.assertIn("prompt-runtime:bulk_json_draft:", usage[0])
+                self.assertIn("ui_job_drafts:", usage[0])
                 self.assertIn("internal_product_target", usage[1])
             finally:
                 conn.close()
@@ -203,15 +269,15 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             self._seed_prompt(env)
             mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
-            pre = self._preflight_api(client, headers, target_id="wf-fail-closed", action_payload_hash="action-fail-closed").json()
+            pre = self._preflight_api(env, client, headers, target_id="channel-b", action_payload_hash="action-fail-closed").json()
             client.post(
                 "/v1/prompt-registry/runtime/confirm",
-                json={"execution_attempt_id": pre["execution_attempt_id"], "confirmation_token": pre["confirmation_token"], "reviewed_target_state_hash": "state-mf6"},
+                json={"execution_attempt_id": pre["execution_attempt_id"], "confirmation_token": pre["confirmation_token"], "reviewed_target_state_hash": self._target_hash(env, target_id="channel-b")},
                 headers=headers,
             )
             runtime_api = importlib.import_module("services.factory_api.prompt_registry_runtime")
             with mock.patch.object(runtime_api, "RUNTIME_ADAPTER_REGISTRY", RuntimeAdapterRegistry()):
-                missing = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "evil", "payload": {"safe": "ok"}}, headers=headers)
+                missing = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "evil", "payload": self._bulk_payload()}, headers=headers)
             self.assertEqual(422, missing.status_code)
             self.assertEqual("PROMPT_RUNTIME_DISPATCH_REJECTED", missing.json()["error"]["code"])
             conn = sqlite3.connect(env.db_path)

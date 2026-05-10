@@ -26,13 +26,33 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
         confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash='sh')
         return pre['execution_attempt_id']
 
+
+    def _bulk_payload(self):
+        return {
+            "channel_slug": "darkwood-reverie",
+            "title": "Runtime Draft",
+            "description": "Runtime-created draft",
+            "tags_csv": "runtime,test",
+            "background_name": "background",
+            "background_ext": ".png",
+            "audio_ids_text": "audio-1",
+        }
+
+    def _release_id(self, conn: sqlite3.Connection) -> int:
+        channel_id = conn.execute("SELECT id FROM channels WHERE slug='darkwood-reverie'").fetchone()[0]
+        cur = conn.execute(
+            "INSERT INTO releases(channel_id,title,description,tags_json,created_at) VALUES(?,?,?,?,?)",
+            (channel_id, "Runtime Release", "desc", "[]", 1.0),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
     def test_sync_dispatch_success_and_no_async_enqueue(self):
         td, conn = self._conn()
         try:
             aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT')
-            reg = RuntimeAdapterRegistry()
-            reg.register('CREATE_BULK_JSON_DRAFT', lambda payload: {'result_code': 'OK', 'secret_safe_message': 'done'})
-            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg, payload={'safe': 'x'})
+            reg = build_default_runtime_adapter_registry()
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg, payload=self._bulk_payload())
             self.assertEqual('SUCCEEDED', out['state'])
             cnt = conn.execute('SELECT COUNT(*) FROM prompt_execution_async_queue').fetchone()[0]
             self.assertEqual(0, cnt)
@@ -43,11 +63,13 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
         td, conn = self._conn()
         try:
             aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT')
-            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'safe': 'x'})
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry(), payload=self._bulk_payload())
             self.assertEqual('SUCCEEDED', out['state'])
             self.assertEqual('BULK_JSON_DRAFT_TARGET_UPDATED', out['result_code'])
             usage = conn.execute('SELECT artifact_ref,usage_payload_json FROM prompt_execution_usage WHERE latest_attempt_id=?', (aid,)).fetchone()
-            self.assertIn('prompt-runtime:bulk_json_draft:', usage[0])
+            self.assertIn('ui_job_drafts:', usage[0])
+            job_id = int(str(usage[0]).split(':', 1)[1])
+            self.assertIsNotNone(conn.execute('SELECT 1 FROM ui_job_drafts WHERE job_id=?', (job_id,)).fetchone())
             self.assertIn('internal_product_target', usage[1])
         finally:
             td.__exit__(None, None, None)
@@ -58,9 +80,48 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
             aid = self._admitted_attempt(conn, 'CREATE_METADATA_REQUEST')
             conn.execute('DELETE FROM prompt_execution_usage WHERE latest_attempt_id=?', (aid,))
             conn.commit()
-            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'safe': 'x'})
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'selected_item_ids': ['release-1']})
             self.assertEqual('FAILED_TERMINAL', out['state'])
             self.assertEqual('ADAPTER_ERROR', out['result_code'])
+        finally:
+            td.__exit__(None, None, None)
+
+
+    def test_default_metadata_visual_and_analytics_adapters_create_real_targets(self):
+        td, conn = self._conn()
+        try:
+            metadata_aid = self._admitted_attempt(conn, 'CREATE_METADATA_REQUEST')
+            metadata = dispatch_prompt_execution(conn, execution_attempt_id=metadata_aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'selected_item_ids': ['item-1'], 'requested_fields': ['title']})
+            self.assertEqual('SUCCEEDED', metadata['state'])
+            metadata_ref = conn.execute('SELECT artifact_ref FROM prompt_execution_usage WHERE latest_attempt_id=?', (metadata_aid,)).fetchone()[0]
+            self.assertTrue(str(metadata_ref).startswith('metadata_bulk_preview_sessions:'))
+            self.assertIsNotNone(conn.execute('SELECT 1 FROM metadata_bulk_preview_sessions WHERE id=?', (str(metadata_ref).split(':', 1)[1],)).fetchone())
+
+            release_id = self._release_id(conn)
+            visual_aid = self._admitted_attempt(conn, 'CREATE_VISUAL_REQUEST')
+            visual = dispatch_prompt_execution(conn, execution_attempt_id=visual_aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'selected_release_ids': [release_id], 'action_type': 'BULK_GENERATE_PREVIEWS'})
+            self.assertEqual('SUCCEEDED', visual['state'])
+            visual_ref = conn.execute('SELECT artifact_ref FROM prompt_execution_usage WHERE latest_attempt_id=?', (visual_aid,)).fetchone()[0]
+            self.assertTrue(str(visual_ref).startswith('release_visual_batch_preview_sessions:'))
+            self.assertIsNotNone(conn.execute('SELECT 1 FROM release_visual_batch_preview_sessions WHERE id=?', (str(visual_ref).split(':', 1)[1],)).fetchone())
+
+            analytics_aid = self._admitted_attempt(conn, 'CREATE_ANALYTICS_REQUEST')
+            analytics = dispatch_prompt_execution(conn, execution_attempt_id=analytics_aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'report_scope_type': 'OVERVIEW', 'artifact_type': 'API_REPORT'})
+            self.assertEqual('SUCCEEDED', analytics['state'])
+            analytics_ref = conn.execute('SELECT artifact_ref FROM prompt_execution_usage WHERE latest_attempt_id=?', (analytics_aid,)).fetchone()[0]
+            self.assertTrue(str(analytics_ref).startswith('analytics_report_records:'))
+            self.assertIsNotNone(conn.execute('SELECT 1 FROM analytics_report_records WHERE id=? AND generation_status=\'PENDING\'', (int(str(analytics_ref).split(':', 1)[1]),)).fetchone())
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_default_sync_adapter_fails_closed_when_real_target_payload_missing(self):
+        td, conn = self._conn()
+        try:
+            aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT')
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'channel_slug': 'darkwood-reverie'})
+            self.assertEqual('FAILED_TERMINAL', out['state'])
+            self.assertEqual('ADAPTER_ERROR', out['result_code'])
+            self.assertEqual(0, conn.execute('SELECT COUNT(*) FROM ui_job_drafts').fetchone()[0])
         finally:
             td.__exit__(None, None, None)
 

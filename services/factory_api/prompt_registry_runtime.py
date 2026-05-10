@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import sqlite3
 from typing import Any
 from urllib.parse import parse_qs
@@ -101,6 +103,77 @@ async def _form_payload(request: Request) -> dict[str, Any]:
     return {key: values[-1] if values else "" for key, values in parsed.items()}
 
 
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _target_snapshot_hash(conn: sqlite3.Connection, *, target_type: str, target_id: str | None) -> str | None:
+    normalized_type = str(target_type or "").strip().lower()
+    normalized_id = str(target_id or "").strip()
+    if normalized_type == "channel" and normalized_id:
+        row = conn.execute("SELECT slug,display_name,kind,render_profile,autopublish_enabled FROM channels WHERE slug=?", (normalized_id,)).fetchone()
+    elif normalized_type == "release" and normalized_id:
+        row = conn.execute("SELECT id,channel_id,title,description,tags_json,planned_at FROM releases WHERE id=?", (normalized_id,)).fetchone()
+    elif normalized_type == "job" and normalized_id:
+        row = conn.execute("SELECT id,release_id,job_type,state,stage,updated_at FROM jobs WHERE id=?", (normalized_id,)).fetchone()
+    else:
+        return None
+    if row is None:
+        return None
+    payload = dict(row)
+    canonical = _json_dumps({"target_type": normalized_type, "target_id": normalized_id, "snapshot": payload})
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _matching_prompt_bindings(conn: sqlite3.Connection, *, prompt_record_id: int, target_type: str, target_id: str | None) -> list[sqlite3.Row]:
+    normalized_type = str(target_type or "").strip().lower()
+    normalized_id = str(target_id or "").strip()
+    rows = conn.execute(
+        """
+        SELECT * FROM prompt_bindings
+        WHERE prompt_id=? AND binding_status='active'
+        ORDER BY CASE binding_scope WHEN 'item' THEN 1 WHEN 'channel' THEN 2 WHEN 'workflow' THEN 3 WHEN 'global' THEN 4 ELSE 9 END, updated_at DESC, id DESC
+        """,
+        (prompt_record_id,),
+    ).fetchall()
+    matches: list[sqlite3.Row] = []
+    for row in rows:
+        scope = str(row["binding_scope"])
+        if scope == "global":
+            matches.append(row)
+        elif scope == "channel" and normalized_type == "channel" and str(row["channel_slug"] or "") == normalized_id:
+            matches.append(row)
+        elif scope == "workflow" and normalized_type == "workflow" and str(row["workflow_slug"] or "") == normalized_id:
+            matches.append(row)
+        elif scope == "item" and str(row["item_type"] or "").lower() == normalized_type and str(row["item_ref"] or "") == normalized_id:
+            matches.append(row)
+    if not matches:
+        return []
+    best_scope = str(matches[0]["binding_scope"])
+    return [row for row in matches if str(row["binding_scope"]) == best_scope]
+
+
+def _build_live_api_gate_context(conn: sqlite3.Connection, body: dict[str, Any], *, actor: str) -> dict[str, Any]:
+    capability_code = str(body.get("capability_code") or "")
+    target_type = str(body.get("target_type") or "")
+    target_id = None if body.get("target_id") is None else str(body.get("target_id"))
+    prompt_record_id = int(body.get("prompt_record_id") or 0)
+    bindings = _matching_prompt_bindings(conn, prompt_record_id=prompt_record_id, target_type=target_type, target_id=target_id)
+    snapshot_hash = _target_snapshot_hash(conn, target_type=target_type, target_id=target_id)
+    return {
+        "capability_execution_enabled": True,
+        "operator_allowed_capabilities": [capability_code] if actor else [],
+        "operator_allowed_permission_classes": ["PROMPT_RUNTIME_SYNC", "PROMPT_RUNTIME_ASYNC"] if actor else [],
+        "binding_resolution_complete": len(bindings) == 1,
+        "binding_resolution_ambiguous": len(bindings) > 1,
+        "rendered_payload_valid": bool(str(body.get("rendered_payload_hash") or "").strip()),
+        "target_exists": snapshot_hash is not None,
+        "target_state_compatible": snapshot_hash is not None,
+        "current_target_state_hash": snapshot_hash or "",
+    }
+
 def create_prompt_registry_runtime_router(env: Env, templates: Jinja2Templates) -> APIRouter:
     router = APIRouter(tags=["prompt-registry-runtime"])
 
@@ -109,7 +182,10 @@ def create_prompt_registry_runtime_router(env: Env, templates: Jinja2Templates) 
         conn = _connect_runtime_db(env)
         try:
             body = dict(payload or {})
-            body["operator_id_or_system_actor"] = _actor_from_request(request)
+            body.pop("_server_gate_context", None)
+            actor = _actor_from_request(request)
+            body["operator_id_or_system_actor"] = actor
+            body["_server_gate_context"] = _build_live_api_gate_context(conn, body, actor=actor)
             out = prepare_prompt_execution_preflight(conn, **body)
             return _sanitize_response(out, allow_confirmation_token=out.get("state") == "CONFIRMATION_REQUIRED")
         except ValueError as exc:
