@@ -413,6 +413,36 @@ def _latest_attempt_for_group(conn: sqlite3.Connection, execution_group_id: int)
     ).fetchone()
 
 
+def _retry_after_due(retry_after: str | None, now: str | None = None) -> bool:
+    parsed = _parse_utc(retry_after)
+    if parsed is None:
+        return True
+    current = _parse_utc(now or _utc_now())
+    return parsed <= current
+
+
+def _retry_reclaim_count(conn: sqlite3.Connection, execution_group_id: int) -> int:
+    attempts_beyond_first = int(conn.execute("SELECT COUNT(*) FROM prompt_execution_attempts WHERE execution_group_id=? AND attempt_number>1", (execution_group_id,)).fetchone()[0])
+    lease_reclaims = int(conn.execute("SELECT COUNT(*) FROM prompt_execution_lifecycle_events WHERE execution_group_id=? AND result_code='LEASE_RECLAIMED'", (execution_group_id,)).fetchone()[0])
+    return attempts_beyond_first + lease_reclaims
+
+
+def admit_due_prompt_execution_retries(conn: sqlite3.Connection, *, now: str | None = None, actor: str = "system") -> list[dict]:
+    admitted_at = now or _utc_now()
+    rows = conn.execute("SELECT id,execution_group_id,lease_expires_at,prompt_record_id,prompt_version_id,dedup_key_hash FROM prompt_execution_attempts WHERE state='RETRY_PENDING' AND lease_expires_at IS NOT NULL AND lease_expires_at<=? ORDER BY lease_expires_at ASC,id ASC", (admitted_at,)).fetchall()
+    admitted: list[dict] = []
+    for row in rows:
+        aid, gid = int(row[0]), int(row[1])
+        conn.execute("UPDATE prompt_execution_attempts SET state='ADMITTED',admitted_at=?,lease_expires_at=NULL,updated_at=? WHERE id=?", (admitted_at, admitted_at, aid))
+        conn.execute("UPDATE prompt_execution_groups SET current_state='ADMITTED',closed_at=NULL,lease_expires_at=NULL,updated_at=? WHERE id=?", (admitted_at, gid))
+        _write_lifecycle_event(conn, execution_group_id=gid, execution_attempt_id=aid, state_before="RETRY_PENDING", state_after="ADMITTED", result_code="RETRY_DUE_ADMITTED", actor=actor, payload={})
+        _write_runtime_audit(conn, prompt_record_id=row[3], prompt_version_id=row[4], event_type="runtime_retry_admitted", actor=actor, payload={"execution_group_id": gid, "execution_attempt_id": aid, "dedup_key_hash": row[5], "state_before": "RETRY_PENDING", "state_after": "ADMITTED"})
+        conn.execute("UPDATE prompt_execution_usage SET latest_attempt_id=?,terminal_outcome=NULL,terminal_at=NULL,updated_at=? WHERE execution_group_id=?", (aid, admitted_at, gid))
+        admitted.append({"state": "ADMITTED", "execution_group_id": gid, "execution_attempt_id": aid})
+    conn.commit()
+    return admitted
+
+
 def schedule_prompt_execution_retry(
     conn: sqlite3.Connection,
     *,
@@ -431,6 +461,14 @@ def schedule_prompt_execution_retry(
         latest_id = int(latest["id"] if isinstance(latest, sqlite3.Row) else latest[0])
         latest_state = latest["state"] if isinstance(latest, sqlite3.Row) else latest[3]
         if latest_id != execution_attempt_id and latest_state in {"ADMITTED", "RETRY_PENDING"}:
+            if latest_state == "RETRY_PENDING":
+                latest_retry_after = latest["lease_expires_at"] if isinstance(latest, sqlite3.Row) else latest[20]
+                if _retry_after_due(latest_retry_after):
+                    admitted = admit_due_prompt_execution_retries(conn, actor=actor)
+                    for item in admitted:
+                        if item["execution_attempt_id"] == latest_id:
+                            item["idempotent"] = True
+                            return item
             return {"state": latest_state, "execution_group_id": execution_group_id, "execution_attempt_id": latest_id, "idempotent": True}
     if state in {"SUCCEEDED", "CANCELLED", "STALE_BLOCKED", "CONFLICT_BLOCKED", "PREFLIGHT_REJECTED"}:
         raise ValueError("RETRY_REJECTED: state is not retryable")
@@ -438,7 +476,10 @@ def schedule_prompt_execution_retry(
         raise ValueError("RETRY_REJECTED: attempt is not retry eligible")
     max_no = int(conn.execute("SELECT COALESCE(MAX(attempt_number),0) FROM prompt_execution_attempts WHERE execution_group_id=?", (execution_group_id,)).fetchone()[0])
     now = _utc_now()
-    admitted_at = retry_after or now
+    due_now = _retry_after_due(retry_after, now)
+    retry_state = "ADMITTED" if due_now else "RETRY_PENDING"
+    admitted_at = now if due_now else None
+    retry_lease = None if due_now else retry_after
     cur = conn.cursor()
     cur.execute(
         """
@@ -446,25 +487,28 @@ def schedule_prompt_execution_retry(
             execution_group_id,attempt_number,state,correlation_id,operator_id_or_system_actor,
             prompt_record_id,prompt_version_id,binding_resolution_fingerprint,rendered_payload_hash,
             action_payload_hash,reviewed_target_state_hash,dedup_key_hash,retryable_by_operator,
-            cancellable,admitted_at,execution_mode,dispatch_payload_json,created_at,updated_at
+            cancellable,admitted_at,lease_expires_at,execution_mode,dispatch_payload_json,created_at,updated_at
         )
-        SELECT execution_group_id,?, 'ADMITTED', ?, ?, prompt_record_id,prompt_version_id,
+        SELECT execution_group_id,?, ?, ?, ?, prompt_record_id,prompt_version_id,
                binding_resolution_fingerprint,rendered_payload_hash,action_payload_hash,
-               reviewed_target_state_hash,dedup_key_hash,retryable_by_operator,cancellable,?,
+               reviewed_target_state_hash,dedup_key_hash,retryable_by_operator,cancellable,?,?,
                execution_mode,dispatch_payload_json,?,?
         FROM prompt_execution_attempts WHERE id=?
         """,
-        (max_no + 1, f"retry:{execution_group_id}:{max_no + 1}", actor, admitted_at, now, now, execution_attempt_id),
+        (max_no + 1, retry_state, f"retry:{execution_group_id}:{max_no + 1}", actor, admitted_at, retry_lease, now, now, execution_attempt_id),
     )
     new_attempt_id = int(cur.lastrowid)
-    conn.execute("UPDATE prompt_execution_groups SET current_state='ADMITTED',closed_at=NULL,updated_at=? WHERE id=?", (now, execution_group_id))
-    _write_lifecycle_event(conn, execution_group_id=execution_group_id, execution_attempt_id=new_attempt_id, state_before=state, state_after="ADMITTED", result_code="RETRY_ADMITTED", actor=actor, payload={"source_execution_attempt_id": execution_attempt_id, "retry_after": retry_after})
+    conn.execute("UPDATE prompt_execution_groups SET current_state=?,closed_at=NULL,lease_expires_at=?,updated_at=? WHERE id=?", (retry_state, retry_lease, now, execution_group_id))
+    event_code = "RETRY_ADMITTED" if retry_state == "ADMITTED" else "RETRY_SCHEDULED"
+    _write_lifecycle_event(conn, execution_group_id=execution_group_id, execution_attempt_id=new_attempt_id, state_before=state, state_after=retry_state, result_code=event_code, actor=actor, payload={"source_execution_attempt_id": execution_attempt_id, "retry_after": retry_after})
     pr = conn.execute("SELECT prompt_record_id,prompt_version_id,dedup_key_hash FROM prompt_execution_attempts WHERE id=?", (new_attempt_id,)).fetchone()
-    _write_runtime_audit(conn, prompt_record_id=pr[0], prompt_version_id=pr[1], event_type="runtime_retry_admitted", actor=actor, payload={"execution_group_id": execution_group_id, "execution_attempt_id": new_attempt_id, "source_execution_attempt_id": execution_attempt_id, "dedup_key_hash": pr[2], "retry_after": retry_after})
-    _ensure_usage_on_admitted(conn, execution_group_id=execution_group_id, execution_attempt_id=new_attempt_id)
-    conn.execute("UPDATE prompt_execution_usage SET latest_attempt_id=?,terminal_outcome=NULL,terminal_at=NULL,updated_at=? WHERE execution_group_id=?", (new_attempt_id, now, execution_group_id))
+    _write_runtime_audit(conn, prompt_record_id=pr[0], prompt_version_id=pr[1], event_type="runtime_retry_admitted" if retry_state == "ADMITTED" else "runtime_retry_scheduled", actor=actor, payload={"execution_group_id": execution_group_id, "execution_attempt_id": new_attempt_id, "source_execution_attempt_id": execution_attempt_id, "dedup_key_hash": pr[2], "retry_after": retry_after})
+    
+    if retry_state == "ADMITTED":
+        _ensure_usage_on_admitted(conn, execution_group_id=execution_group_id, execution_attempt_id=new_attempt_id)
+        conn.execute("UPDATE prompt_execution_usage SET latest_attempt_id=?,terminal_outcome=NULL,terminal_at=NULL,updated_at=? WHERE execution_group_id=?", (new_attempt_id, now, execution_group_id))
     conn.commit()
-    return {"state": "ADMITTED", "execution_group_id": execution_group_id, "execution_attempt_id": new_attempt_id, "attempt_number": max_no + 1, "retry_eligible": True}
+    return {"state": retry_state, "execution_group_id": execution_group_id, "execution_attempt_id": new_attempt_id, "attempt_number": max_no + 1, "retry_eligible": True, "retry_after": retry_after}
 
 
 def cancel_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: int, actor: str) -> dict:
@@ -513,7 +557,8 @@ def reclaim_expired_prompt_execution_leases(conn: sqlite3.Connection, *, now: st
         attempt = conn.execute("SELECT state,retryable_by_operator,prompt_record_id,prompt_version_id,correlation_id,dedup_key_hash FROM prompt_execution_attempts WHERE id=?", (aid,)).fetchone()
         if attempt is None or attempt[0] in {"SUCCEEDED", "FAILED_TERMINAL", "CANCELLED", "STALE_BLOCKED", "CONFLICT_BLOCKED"}:
             continue
-        if int(attempt[1]) == 1 and max_retries > 0:
+        used_retries = _retry_reclaim_count(conn, gid)
+        if int(attempt[1]) == 1 and used_retries < max_retries:
             conn.execute("UPDATE prompt_execution_async_queue SET queue_state='QUEUED',lease_owner=NULL,lease_expires_at=NULL,available_at=?,updated_at=? WHERE id=?", (reclaim_at, reclaim_at, qid))
             conn.execute("UPDATE prompt_execution_attempts SET state='RETRY_PENDING',lease_expires_at=NULL,updated_at=? WHERE id=?", (reclaim_at, aid))
             conn.execute("UPDATE prompt_execution_groups SET current_state='RETRY_PENDING',lease_expires_at=NULL,updated_at=? WHERE id=?", (reclaim_at, gid))
@@ -522,8 +567,9 @@ def reclaim_expired_prompt_execution_leases(conn: sqlite3.Connection, *, now: st
             out.append({"queue_id": qid, "execution_attempt_id": aid, "state": "RETRY_PENDING"})
         else:
             conn.execute("UPDATE prompt_execution_async_queue SET queue_state='FAILED',lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE id=?", (reclaim_at, qid))
-            _finalize_execution_terminal(conn, execution_group_id=gid, execution_attempt_id=aid, terminal_state="FAILED_TERMINAL", result_code="LEASE_EXPIRED", secret_safe_message="Async execution lease expired.", actor="system")
-            out.append({"queue_id": qid, "execution_attempt_id": aid, "state": "FAILED_TERMINAL"})
+            result_code = "RETRY_LIMIT_REACHED" if int(attempt[1]) == 1 else "LEASE_EXPIRED"
+            _finalize_execution_terminal(conn, execution_group_id=gid, execution_attempt_id=aid, terminal_state="FAILED_TERMINAL", result_code=result_code, secret_safe_message="Async execution lease expired.", actor="system")
+            out.append({"queue_id": qid, "execution_attempt_id": aid, "state": "FAILED_TERMINAL", "result_code": result_code})
     conn.commit()
     return out
 
@@ -544,6 +590,8 @@ def recover_stale_runtime_executions(conn: sqlite3.Connection, *, now: str | Non
         aid, gid = int(row[0]), int(row[1])
         conn.execute("INSERT OR IGNORE INTO prompt_execution_async_queue(execution_group_id,execution_attempt_id,capability_code,queue_state,available_at,payload_json,created_at,updated_at) SELECT ?,?,g.capability_code,'QUEUED',?,'{}',?,? FROM prompt_execution_groups g WHERE g.id=?", (gid, aid, recovery_at, recovery_at, recovery_at, gid))
         _write_lifecycle_event(conn, execution_group_id=gid, execution_attempt_id=aid, state_before="DISPATCHED", state_after="DISPATCHED", result_code="RECOVERY_REQUEUED", actor="system", payload={})
+        pr = conn.execute("SELECT prompt_record_id,prompt_version_id,correlation_id,dedup_key_hash FROM prompt_execution_attempts WHERE id=?", (aid,)).fetchone()
+        _write_runtime_audit(conn, prompt_record_id=pr[0], prompt_version_id=pr[1], event_type="runtime_recovery_requeued", actor="system", payload={"execution_group_id": gid, "execution_attempt_id": aid, "correlation_id": pr[2], "dedup_key_hash": pr[3], "reason": "missing_async_queue_coverage"})
         recovered.append({"execution_group_id": gid, "execution_attempt_id": aid, "state": "DISPATCHED"})
     conn.commit()
     return recovered

@@ -5,6 +5,7 @@ import unittest
 
 from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry
 from services.prompt_registry.runtime_execution import (
+    admit_due_prompt_execution_retries,
     cancel_prompt_execution,
     claim_prompt_execution_async_work,
     confirm_prompt_execution,
@@ -157,6 +158,72 @@ class TestPromptRegistryRuntimeMf5(unittest.TestCase):
             recovered = recover_stale_runtime_executions(conn, now="2027-01-01T00:00:00Z")
             self.assertEqual([], recovered)
             self.assertEqual("SUCCEEDED", get_prompt_execution_status(conn, execution_attempt_id=pre["execution_attempt_id"])["current_state"])
+        finally:
+            td.__exit__(None, None, None)
+
+
+    def test_future_retry_after_creates_retry_pending_and_dispatch_rejects_until_due(self):
+        td, conn = self._conn()
+        try:
+            pre = self._admit(conn)
+            conn.execute("UPDATE prompt_execution_attempts SET retryable_by_operator=1 WHERE id=?", (pre["execution_attempt_id"],))
+            reg = RuntimeAdapterRegistry(); reg.register("CREATE_BULK_JSON_DRAFT", lambda _: (_ for _ in ()).throw(RuntimeError("boom")))
+            dispatch_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], adapter_registry=reg)
+            retry = schedule_prompt_execution_retry(conn, execution_attempt_id=pre["execution_attempt_id"], actor="operator-1", retry_after="2999-01-01T00:00:00Z")
+            self.assertEqual("RETRY_PENDING", retry["state"])
+            row = conn.execute("SELECT state,lease_expires_at FROM prompt_execution_attempts WHERE id=?", (retry["execution_attempt_id"],)).fetchone()
+            self.assertEqual(("RETRY_PENDING", "2999-01-01T00:00:00Z"), tuple(row))
+            with self.assertRaises(ValueError):
+                dispatch_prompt_execution(conn, execution_attempt_id=retry["execution_attempt_id"], adapter_registry=reg)
+            admitted = admit_due_prompt_execution_retries(conn, now="2999-01-01T00:00:00Z", actor="system")
+            self.assertEqual(retry["execution_attempt_id"], admitted[0]["execution_attempt_id"])
+            self.assertEqual("ADMITTED", conn.execute("SELECT state FROM prompt_execution_attempts WHERE id=?", (retry["execution_attempt_id"],)).fetchone()[0])
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_due_retry_after_creates_admitted(self):
+        td, conn = self._conn()
+        try:
+            pre = self._admit(conn)
+            conn.execute("UPDATE prompt_execution_attempts SET state='FAILED_TERMINAL',retryable_by_operator=1 WHERE id=?", (pre["execution_attempt_id"],))
+            conn.execute("UPDATE prompt_execution_groups SET current_state='FAILED_TERMINAL' WHERE id=?", (pre["execution_group_id"],))
+            conn.commit()
+            retry = schedule_prompt_execution_retry(conn, execution_attempt_id=pre["execution_attempt_id"], actor="operator-1", retry_after="2000-01-01T00:00:00Z")
+            self.assertEqual("ADMITTED", retry["state"])
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_reclaim_retry_limit_prevents_infinite_retry_loop(self):
+        td, conn = self._conn()
+        try:
+            pre = self._admit(conn, capability="ENQUEUE_INTERNAL_PROMPT_JOB")
+            conn.execute("UPDATE prompt_execution_attempts SET retryable_by_operator=1 WHERE id=?", (pre["execution_attempt_id"],))
+            dispatch_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], adapter_registry=RuntimeAdapterRegistry())
+            claim_prompt_execution_async_work(conn, lease_owner="worker-1", lease_seconds=1, now="2027-01-01T00:00:00Z")
+            first = reclaim_expired_prompt_execution_leases(conn, now="2027-01-01T00:00:02Z", max_retries=1)
+            self.assertEqual("RETRY_PENDING", first[0]["state"])
+            claim_prompt_execution_async_work(conn, lease_owner="worker-2", lease_seconds=1, now="2027-01-01T00:00:03Z")
+            second = reclaim_expired_prompt_execution_leases(conn, now="2027-01-01T00:00:05Z", max_retries=1)
+            self.assertEqual("FAILED_TERMINAL", second[0]["state"])
+            self.assertEqual("RETRY_LIMIT_REACHED", second[0]["result_code"])
+            self.assertEqual("FAILED_TERMINAL", conn.execute("SELECT terminal_outcome FROM prompt_execution_usage WHERE execution_group_id=?", (pre["execution_group_id"],)).fetchone()[0])
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_recovery_requeues_missing_queue_coverage_and_audits(self):
+        td, conn = self._conn()
+        try:
+            pre = self._admit(conn, capability="ENQUEUE_INTERNAL_PROMPT_JOB")
+            dispatch_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], adapter_registry=RuntimeAdapterRegistry())
+            conn.execute("DELETE FROM prompt_execution_async_queue WHERE execution_attempt_id=?", (pre["execution_attempt_id"],))
+            conn.commit()
+            recovered = recover_stale_runtime_executions(conn, now="2027-01-01T00:00:00Z")
+            self.assertEqual(pre["execution_attempt_id"], recovered[0]["execution_attempt_id"])
+            self.assertEqual("QUEUED", conn.execute("SELECT queue_state FROM prompt_execution_async_queue WHERE execution_attempt_id=?", (pre["execution_attempt_id"],)).fetchone()[0])
+            lifecycle = conn.execute("SELECT COUNT(*) FROM prompt_execution_lifecycle_events WHERE execution_group_id=? AND result_code='RECOVERY_REQUEUED'", (pre["execution_group_id"],)).fetchone()[0]
+            audit = conn.execute("SELECT COUNT(*) FROM prompt_audit_events WHERE event_type='runtime_recovery_requeued'").fetchone()[0]
+            self.assertEqual(1, lifecycle)
+            self.assertEqual(1, audit)
         finally:
             td.__exit__(None, None, None)
 
