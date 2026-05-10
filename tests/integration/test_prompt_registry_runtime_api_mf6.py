@@ -147,7 +147,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 conn.close()
             self.assertEqual(before, after)
 
-    def test_dispatch_sync_success_uses_server_side_adapter_and_rejects_non_admitted(self):
+    def test_dispatch_sync_fails_closed_until_server_side_adapter_registered(self):
         with temp_env() as (_td, env):
             seed_minimal_db(env)
             self._seed_prompt(env)
@@ -161,12 +161,27 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 json={"execution_attempt_id": pre["execution_attempt_id"], "confirmation_token": pre["confirmation_token"], "reviewed_target_state_hash": "state-mf6"},
                 headers=headers,
             )
+
+            missing = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "evil", "payload": {"safe": "ok"}}, headers=headers)
+            self.assertEqual(422, missing.status_code)
+            self.assertEqual("PROMPT_RUNTIME_DISPATCH_REJECTED", missing.json()["error"]["code"])
+            conn = sqlite3.connect(env.db_path)
+            try:
+                self.assertEqual("ADMITTED", conn.execute("SELECT state FROM prompt_execution_attempts WHERE id=?", (pre["execution_attempt_id"],)).fetchone()[0])
+            finally:
+                conn.close()
+
             called = []
+
             def fake_adapter(payload):
                 called.append(payload)
                 return {"result_code": "FAKE_OK", "secret_safe_message": "fake completed"}
-            _mod.create_prompt_registry_runtime_router.__globals__["RUNTIME_ADAPTER_REGISTRY"].register("CREATE_BULK_JSON_DRAFT", fake_adapter)
-            dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "ignored", "payload": {"safe": "ok"}}, headers=headers)
+
+            runtime_api = importlib.import_module("services.factory_api.prompt_registry_runtime")
+            registry = RuntimeAdapterRegistry()
+            registry.register("CREATE_BULK_JSON_DRAFT", fake_adapter)
+            with mock.patch.object(runtime_api, "RUNTIME_ADAPTER_REGISTRY", registry):
+                dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "ignored", "payload": {"safe": "ok"}}, headers=headers)
             self.assertEqual(200, dispatched.status_code, dispatched.text)
             self.assertEqual("SUCCEEDED", dispatched.json()["state"])
             self.assertEqual("FAKE_OK", dispatched.json()["result_code"])
@@ -227,9 +242,14 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             _mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
             dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": admitted["execution_attempt_id"], "payload": {"api_token": "super-secret-token"}}, headers=headers)
-            self.assertEqual(200, dispatched.status_code, dispatched.text)
+            self.assertEqual(422, dispatched.status_code, dispatched.text)
             self.assertNotIn("super-secret-token", dispatched.text)
             self.assertNotIn("api_token", dispatched.text)
+            conn = sqlite3.connect(env.db_path)
+            try:
+                self.assertEqual("ADMITTED", conn.execute("SELECT state FROM prompt_execution_attempts WHERE id=?", (admitted["execution_attempt_id"],)).fetchone()[0])
+            finally:
+                conn.close()
 
     def test_ui_runtime_page_renders_status_timeline_controls_and_blocks_raw_secrets(self):
         with temp_env() as (_td, env):
@@ -279,6 +299,47 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             self.assertEqual(200, res.status_code, res.text)
             self.assertIn("data-runtime-retry-control", res.text)
             self.assertIn("data-runtime-cancel-hidden", res.text)
+
+    def test_ui_cancel_form_post_requires_auth_accepts_form_and_cancels(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            self._seed_prompt(env)
+            admitted = self._admit_service(env, target_id="cancel-ui-mf6", action_payload_hash="action-cancel-ui")
+            _mod, client = self._app_client()
+            self.assertEqual(401, client.post("/ui/prompt-registry/runtime/cancel", data={"execution_attempt_id": admitted["execution_attempt_id"]}).status_code)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            res = client.post("/ui/prompt-registry/runtime/cancel", data={"execution_attempt_id": admitted["execution_attempt_id"]}, headers=headers, follow_redirects=False)
+            self.assertEqual(303, res.status_code, res.text)
+            self.assertEqual(f"/ui/prompt-registry/runtime/{admitted['execution_group_id']}", res.headers["location"])
+            conn = sqlite3.connect(env.db_path)
+            try:
+                self.assertEqual("CANCELLED", conn.execute("SELECT state FROM prompt_execution_attempts WHERE id=?", (admitted["execution_attempt_id"],)).fetchone()[0])
+            finally:
+                conn.close()
+
+    def test_ui_retry_form_post_requires_auth_accepts_form_and_redirects(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            self._seed_prompt(env)
+            admitted = self._admit_service(env, capability_code="ENQUEUE_INTERNAL_PROMPT_JOB", target_id="retry-post-ui-mf6", action_payload_hash="action-retry-post-ui")
+            conn = sqlite3.connect(env.db_path)
+            try:
+                conn.execute("UPDATE prompt_execution_attempts SET retryable_by_operator=1,state='FAILED_TERMINAL',result_code='FAILED',secret_safe_message='safe only' WHERE id=?", (admitted["execution_attempt_id"],))
+                conn.execute("UPDATE prompt_execution_groups SET current_state='FAILED_TERMINAL' WHERE id=?", (admitted["execution_group_id"],))
+                conn.commit()
+            finally:
+                conn.close()
+            _mod, client = self._app_client()
+            self.assertEqual(401, client.post("/ui/prompt-registry/runtime/retry", data={"execution_attempt_id": admitted["execution_attempt_id"]}).status_code)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            res = client.post("/ui/prompt-registry/runtime/retry", data={"execution_attempt_id": admitted["execution_attempt_id"]}, headers=headers, follow_redirects=False)
+            self.assertEqual(303, res.status_code, res.text)
+            self.assertEqual(f"/ui/prompt-registry/runtime/{admitted['execution_group_id']}", res.headers["location"])
+            conn = sqlite3.connect(env.db_path)
+            try:
+                self.assertEqual("ADMITTED", conn.execute("SELECT state FROM prompt_execution_attempts WHERE execution_group_id=? ORDER BY id DESC LIMIT 1", (admitted["execution_group_id"],)).fetchone()[0])
+            finally:
+                conn.close()
 
 
 if __name__ == "__main__":

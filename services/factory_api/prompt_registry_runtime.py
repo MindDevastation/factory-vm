@@ -3,9 +3,10 @@ from __future__ import annotations
 import base64
 import sqlite3
 from typing import Any
+from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from services.common.env import Env
@@ -24,19 +25,6 @@ from services.prompt_registry.runtime_execution import (
 )
 
 RUNTIME_ADAPTER_REGISTRY = RuntimeAdapterRegistry()
-
-
-def _safe_noop_adapter(payload: dict) -> dict:
-    return {"result_code": "OK", "secret_safe_message": "Runtime adapter completed safely."}
-
-
-for _capability in (
-    "CREATE_BULK_JSON_DRAFT",
-    "CREATE_METADATA_REQUEST",
-    "CREATE_VISUAL_REQUEST",
-    "CREATE_ANALYTICS_REQUEST",
-):
-    RUNTIME_ADAPTER_REGISTRY.register(_capability, _safe_noop_adapter)
 
 
 _SECRET_KEYS = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
@@ -99,6 +87,15 @@ def _connect_runtime_db(env: Env) -> sqlite3.Connection:
     conn = sqlite3.connect(env.db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _redirect_to_runtime_detail(execution_group_id: int) -> RedirectResponse:
+    return RedirectResponse(f"/ui/prompt-registry/runtime/{execution_group_id}", status_code=303)
+
+
+async def _form_payload(request: Request) -> dict[str, Any]:
+    parsed = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+    return {key: values[-1] if values else "" for key, values in parsed.items()}
 
 
 def create_prompt_registry_runtime_router(env: Env, templates: Jinja2Templates) -> APIRouter:
@@ -214,6 +211,43 @@ def create_prompt_registry_runtime_router(env: Env, templates: Jinja2Templates) 
         try:
             out = recover_stale_runtime_executions(conn, now=(payload or {}).get("now"))
             return {"items": _sanitize_response(out)}
+        finally:
+            conn.close()
+
+    @router.post("/ui/prompt-registry/runtime/retry")
+    async def ui_retry(request: Request, _: bool = Depends(require_basic_auth(env))):
+        payload = await _form_payload(request)
+        conn = _connect_runtime_db(env)
+        try:
+            out = schedule_prompt_execution_retry(
+                conn,
+                execution_attempt_id=_as_int(payload, "execution_attempt_id"),
+                actor=_actor_from_request(request),
+                retry_after=payload.get("retry_after") or None,
+            )
+            return _redirect_to_runtime_detail(int(out["execution_group_id"]))
+        except ValueError as exc:
+            return templates.TemplateResponse(
+                "prompt_registry_runtime.html",
+                {"request": request, "status": None, "timeline": [], "error": str(exc), "execution_group_id": None},
+                status_code=_status_code_for_value_error(exc),
+            )
+        finally:
+            conn.close()
+
+    @router.post("/ui/prompt-registry/runtime/cancel")
+    async def ui_cancel(request: Request, _: bool = Depends(require_basic_auth(env))):
+        payload = await _form_payload(request)
+        conn = _connect_runtime_db(env)
+        try:
+            out = cancel_prompt_execution(conn, execution_attempt_id=_as_int(payload, "execution_attempt_id"), actor=_actor_from_request(request))
+            return _redirect_to_runtime_detail(int(out["execution_group_id"]))
+        except ValueError as exc:
+            return templates.TemplateResponse(
+                "prompt_registry_runtime.html",
+                {"request": request, "status": None, "timeline": [], "error": str(exc), "execution_group_id": None},
+                status_code=_status_code_for_value_error(exc),
+            )
         finally:
             conn.close()
 

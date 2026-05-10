@@ -33,7 +33,7 @@
 <section data-runtime-controls>
   <h2>Allowed controls</h2>
   {% if status.retry_control_visible %}
-  <form method="post" action="/v1/prompt-registry/runtime/retry" data-runtime-retry-control>
+  <form method="post" action="/ui/prompt-registry/runtime/retry" data-runtime-retry-control>
     <input type="hidden" name="execution_attempt_id" value="{{ status.execution_attempt_id }}">
     <button type="submit">Schedule retry</button>
   </form>
@@ -41,7 +41,7 @@
   <p class="muted" data-runtime-retry-hidden>Retry is not available for this attempt.</p>
   {% endif %}
   {% if status.cancel_control_visible %}
-  <form method="post" action="/v1/prompt-registry/runtime/cancel" data-runtime-cancel-control>
+  <form method="post" action="/ui/prompt-registry/runtime/cancel" data-runtime-cancel-control>
     <input type="hidden" name="execution_attempt_id" value="{{ status.execution_attempt_id }}">
     <button type="submit">Cancel execution</button>
   </form>
