@@ -44,6 +44,7 @@ from services.factory_api.publish_queue_read import create_publish_queue_read_ro
 from services.factory_api.publish_reconcile import create_publish_reconcile_router
 from services.factory_api.growth_intelligence import create_growth_intelligence_router
 from services.factory_api.prompt_registry import create_prompt_registry_router
+from services.factory_api.prompt_registry_runtime import create_prompt_registry_runtime_router
 from services.prompt_registry.errors import PromptRegistryConflictError, PromptRegistryNotFoundError, PromptRegistryValidationError
 from services.prompt_registry.registry_service import PromptRegistryService
 from services.factory_api.approval_actions import approve_job, reject_job, mark_job_published
@@ -214,6 +215,7 @@ app.include_router(create_publish_queue_read_router(env))
 app.include_router(create_publish_reconcile_router(env))
 app.include_router(create_growth_intelligence_router(env))
 app.include_router(create_prompt_registry_router(env))
+app.include_router(create_prompt_registry_runtime_router(env, templates))
 
 
 def _create_drive_client(_env: Env) -> DriveClient:

@@ -622,21 +622,50 @@ def list_prompt_execution_timeline(conn: sqlite3.Connection, *, execution_group_
 
 
 def get_prompt_execution_status(conn: sqlite3.Connection, *, execution_group_id: int | None = None, execution_attempt_id: int | None = None) -> dict:
+    select_sql = """
+        SELECT a.id AS execution_attempt_id,a.execution_group_id,a.state,a.result_code,a.secret_safe_message,
+               a.retryable_by_operator,a.cancellable,a.execution_mode,a.attempt_number,a.operator_id_or_system_actor,
+               g.current_state,g.capability_code,g.target_type,g.target_id,g.closed_at,g.lease_expires_at
+        FROM prompt_execution_attempts a
+        JOIN prompt_execution_groups g ON g.id=a.execution_group_id
+    """
     if execution_attempt_id is not None:
-        row = conn.execute("SELECT a.id AS execution_attempt_id,a.execution_group_id,a.state,a.result_code,a.secret_safe_message,g.current_state FROM prompt_execution_attempts a JOIN prompt_execution_groups g ON g.id=a.execution_group_id WHERE a.id=?", (execution_attempt_id,)).fetchone()
+        row = conn.execute(select_sql + " WHERE a.id=?", (execution_attempt_id,)).fetchone()
     elif execution_group_id is not None:
-        row = conn.execute("SELECT a.id AS execution_attempt_id,a.execution_group_id,a.state,a.result_code,a.secret_safe_message,g.current_state FROM prompt_execution_attempts a JOIN prompt_execution_groups g ON g.id=a.execution_group_id WHERE a.execution_group_id=? ORDER BY a.id DESC LIMIT 1", (execution_group_id,)).fetchone()
+        row = conn.execute(select_sql + " WHERE a.execution_group_id=? ORDER BY a.id DESC LIMIT 1", (execution_group_id,)).fetchone()
     else:
         raise ValueError("execution_group_id or execution_attempt_id required")
     if row is None:
         raise ValueError("execution status not found")
-    usage = conn.execute("SELECT * FROM prompt_execution_usage WHERE execution_group_id=?", (row[1],)).fetchone()
+    execution_group_id_value = row["execution_group_id"]
+    execution_attempt_id_value = row["execution_attempt_id"]
+    state = row["state"]
+    execution_mode = row["execution_mode"]
+    group_state = row["current_state"]
+    usage = conn.execute("SELECT * FROM prompt_execution_usage WHERE execution_group_id=?", (execution_group_id_value,)).fetchone()
+    retryable = bool(row["retryable_by_operator"]) and state in {"FAILED_TERMINAL", "RETRY_PENDING"} and execution_mode == "ASYNC"
+    cancellable = bool(row["cancellable"]) and state in {"CONFIRMATION_REQUIRED", "ADMITTED", "DISPATCHED", "RUNNING", "RETRY_PENDING"}
     return {
-        "execution_group_id": row[1],
-        "execution_attempt_id": row[0],
-        "current_state": row[2],
-        "result_code": row[3],
-        "secret_safe_message": row[4],
-        "lifecycle_events": list_prompt_execution_timeline(conn, execution_group_id=row[1]),
+        "execution_group_id": execution_group_id_value,
+        "execution_attempt_id": execution_attempt_id_value,
+        "attempt_number": row["attempt_number"],
+        "current_state": state,
+        "group_state": group_state,
+        "capability_code": row["capability_code"],
+        "target_type": row["target_type"],
+        "target_id": row["target_id"],
+        "execution_mode": execution_mode,
+        "operator_id_or_system_actor": row["operator_id_or_system_actor"],
+        "result_code": row["result_code"],
+        "secret_safe_message": row["secret_safe_message"],
+        "retryable_by_operator": bool(row["retryable_by_operator"]),
+        "cancellable": bool(row["cancellable"]),
+        "confirmation_required": state == "CONFIRMATION_REQUIRED",
+        "stale_or_conflict_blocked": state in {"STALE_BLOCKED", "CONFLICT_BLOCKED"} or group_state in {"STALE_BLOCKED", "CONFLICT_BLOCKED"},
+        "retry_control_visible": retryable,
+        "cancel_control_visible": cancellable,
+        "closed_at": row["closed_at"],
+        "lease_expires_at": row["lease_expires_at"],
+        "lifecycle_events": list_prompt_execution_timeline(conn, execution_group_id=execution_group_id_value),
         "usage_summary": dict(usage) if usage else None,
     }
