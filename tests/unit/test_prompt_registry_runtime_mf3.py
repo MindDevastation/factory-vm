@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import unittest
 
-from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry
+from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry, build_default_runtime_adapter_registry
 from services.prompt_registry.runtime_execution import confirm_prompt_execution, dispatch_prompt_execution, prepare_prompt_execution_preflight
 from tests._helpers import seed_minimal_db, temp_env
 
@@ -36,6 +36,31 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
             self.assertEqual('SUCCEEDED', out['state'])
             cnt = conn.execute('SELECT COUNT(*) FROM prompt_execution_async_queue').fetchone()[0]
             self.assertEqual(0, cnt)
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_default_sync_adapter_records_internal_product_target(self):
+        td, conn = self._conn()
+        try:
+            aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT')
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'safe': 'x'})
+            self.assertEqual('SUCCEEDED', out['state'])
+            self.assertEqual('BULK_JSON_DRAFT_TARGET_UPDATED', out['result_code'])
+            usage = conn.execute('SELECT artifact_ref,usage_payload_json FROM prompt_execution_usage WHERE latest_attempt_id=?', (aid,)).fetchone()
+            self.assertIn('prompt-runtime:bulk_json_draft:', usage[0])
+            self.assertIn('internal_product_target', usage[1])
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_default_sync_adapter_fails_closed_without_internal_target_write(self):
+        td, conn = self._conn()
+        try:
+            aid = self._admitted_attempt(conn, 'CREATE_METADATA_REQUEST')
+            conn.execute('DELETE FROM prompt_execution_usage WHERE latest_attempt_id=?', (aid,))
+            conn.commit()
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'safe': 'x'})
+            self.assertEqual('FAILED_TERMINAL', out['state'])
+            self.assertEqual('ADAPTER_ERROR', out['result_code'])
         finally:
             td.__exit__(None, None, None)
 

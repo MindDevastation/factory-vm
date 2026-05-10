@@ -109,6 +109,26 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_api_preflight_does_not_trust_request_gate_flags(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            self._seed_prompt(env)
+            _mod, client = self._app_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            res = self._preflight_api(
+                client,
+                headers,
+                target_id="request-flags-mf6",
+                action_payload_hash="action-request-flags",
+                capability_execution_enabled=False,
+                target_exists=False,
+                target_state_compatible=False,
+                current_target_state_hash="caller-stale",
+                rendered_payload_valid=False,
+            )
+            self.assertEqual(200, res.status_code, res.text)
+            self.assertEqual("CONFIRMATION_REQUIRED", res.json()["state"])
+
     def test_confirm_requires_token_and_admits_execution(self):
         with temp_env() as (_td, env):
             seed_minimal_db(env)
@@ -169,7 +189,14 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "ignored", "payload": {"safe": "ok"}}, headers=headers)
             self.assertEqual(200, dispatched.status_code, dispatched.text)
             self.assertEqual("SUCCEEDED", dispatched.json()["state"])
-            self.assertEqual("BULK_JSON_DRAFT_REQUEST_RECORDED", dispatched.json()["result_code"])
+            self.assertEqual("BULK_JSON_DRAFT_TARGET_UPDATED", dispatched.json()["result_code"])
+            conn = sqlite3.connect(env.db_path)
+            try:
+                usage = conn.execute("SELECT artifact_ref,usage_payload_json FROM prompt_execution_usage WHERE latest_attempt_id=?", (pre["execution_attempt_id"],)).fetchone()
+                self.assertIn("prompt-runtime:bulk_json_draft:", usage[0])
+                self.assertIn("internal_product_target", usage[1])
+            finally:
+                conn.close()
 
         with temp_env() as (_td, env):
             seed_minimal_db(env)

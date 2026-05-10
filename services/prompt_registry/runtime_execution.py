@@ -96,14 +96,20 @@ def reset_runtime_observability_for_tests() -> None:
     RUNTIME_METRICS.clear()
 
 
-def _bool_gate(kwargs: dict, key: str, default: bool = True) -> bool:
-    value = kwargs.get(key, default)
+def _server_gate_context(kwargs: dict) -> dict:
+    context = kwargs.get("_server_gate_context") or {}
+    return context if isinstance(context, dict) else {}
+
+
+def _context_bool(context: dict, key: str, default: bool) -> bool:
+    value = context.get(key, default)
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "y", "on", "complete", "valid", "compatible"}
     return bool(value)
 
 
-def _list_gate(value) -> set[str] | None:
+def _context_list(context: dict, key: str) -> set[str] | None:
+    value = context.get(key)
     if value is None:
         return None
     if isinstance(value, str):
@@ -115,36 +121,41 @@ def _list_gate(value) -> set[str] | None:
 
 
 def _validate_preflight_safety_gates(conn: sqlite3.Connection, kwargs: dict, capability_code: str, operator_id: str) -> dict | None:
+    context = _server_gate_context(kwargs)
     if capability_code not in CAPABILITY_EXECUTION_MODE:
         _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="CAPABILITY_UNKNOWN")
         raise ValueError("PREFLIGHT_REJECTED: capability is not in execution matrix")
-    if not CAPABILITY_EXECUTION_ENABLED.get(capability_code, False) or not _bool_gate(kwargs, "capability_execution_enabled", True):
+    if not CAPABILITY_EXECUTION_ENABLED.get(capability_code, False) or not _context_bool(context, "capability_execution_enabled", True):
         _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="CAPABILITY_EXECUTION_DISABLED")
         raise ValueError("PREFLIGHT_REJECTED: capability execution disabled")
-    allowed_capabilities = _list_gate(kwargs.get("operator_allowed_capabilities"))
-    allowed_classes = _list_gate(kwargs.get("operator_allowed_permission_classes"))
+    allowed_capabilities = _context_list(context, "operator_allowed_capabilities")
+    allowed_classes = _context_list(context, "operator_allowed_permission_classes")
     permission_class = CAPABILITY_PERMISSION_CLASS[capability_code]
     if operator_id.startswith("forbidden:") or (allowed_capabilities is not None and capability_code not in allowed_capabilities) or (allowed_classes is not None and permission_class not in allowed_classes):
         _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="OPERATOR_PERMISSION_DENIED")
         raise ValueError("PREFLIGHT_REJECTED: operator role incompatible")
-    binding_status = str(kwargs.get("binding_resolution_status") or "COMPLETE").strip().upper()
-    if binding_status != "COMPLETE" or _bool_gate(kwargs, "binding_resolution_ambiguous", False):
+    required_hashes_present = all(str(kwargs.get(key) or "").strip() for key in ("binding_resolution_fingerprint", "rendered_payload_hash", "action_payload_hash"))
+    binding_complete = _context_bool(context, "binding_resolution_complete", required_hashes_present)
+    binding_ambiguous = _context_bool(context, "binding_resolution_ambiguous", False)
+    if not binding_complete or binding_ambiguous:
         _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="BINDING_RESOLUTION_INCOMPLETE")
         raise ValueError("PREFLIGHT_REJECTED: binding resolution incomplete or ambiguous")
-    if not _bool_gate(kwargs, "rendered_payload_valid", True):
+    rendered_payload_valid = _context_bool(context, "rendered_payload_valid", bool(str(kwargs.get("rendered_payload_hash") or "").strip()))
+    if not rendered_payload_valid:
         _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="RENDERED_PAYLOAD_INVALID")
         raise ValueError("PREFLIGHT_REJECTED: rendered payload invalid")
     for payload_key in ("rendered_payload", "adapter_precheck_payload", "dispatch_payload"):
         if payload_key in kwargs and not _is_secret_safe_data(kwargs.get(payload_key)):
             _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="SECRET_UNSAFE_PAYLOAD")
             raise ValueError("PREFLIGHT_REJECTED: secret-unsafe runtime payload")
-    if not _bool_gate(kwargs, "target_exists", True):
+    target_exists = _context_bool(context, "target_exists", bool(str(kwargs.get("target_type") or "").strip() and str(kwargs.get("target_id") or "").strip()))
+    if not target_exists:
         _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="TARGET_NOT_FOUND")
         raise ValueError("PREFLIGHT_REJECTED: target entity not found")
-    if not _bool_gate(kwargs, "target_state_compatible", True):
+    if not _context_bool(context, "target_state_compatible", True):
         _observe_runtime_event("conflict_blocked", capability_code=capability_code, result_code="TARGET_STATE_INCOMPATIBLE")
         return {"state": "CONFLICT_BLOCKED", "result_code": "TARGET_STATE_INCOMPATIBLE", "secret_safe_message": "Target state is not compatible with execution."}
-    current_hash = str(kwargs.get("current_target_state_hash") or kwargs.get("reviewed_target_state_hash") or "")
+    current_hash = str(context.get("current_target_state_hash") or kwargs.get("reviewed_target_state_hash") or "")
     reviewed_hash = str(kwargs.get("reviewed_target_state_hash") or "")
     if current_hash and reviewed_hash and current_hash != reviewed_hash:
         _observe_runtime_event("stale_blocked", capability_code=capability_code, result_code="STALE_TARGET_SNAPSHOT")
@@ -330,7 +341,9 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
         pr = conn.execute("SELECT prompt_record_id,prompt_version_id,correlation_id,dedup_key_hash FROM prompt_execution_attempts WHERE id=?", (execution_attempt_id,)).fetchone()
         _write_runtime_audit(conn, prompt_record_id=pr[0], prompt_version_id=pr[1], event_type="runtime_running", actor="system", payload={"execution_group_id": row[1], "execution_attempt_id": execution_attempt_id, "correlation_id": pr[2], "dedup_key_hash": pr[3]})
         try:
-            out = adapter(dict(safe_payload or {}))
+            adapter_payload = dict(safe_payload or {})
+            adapter_payload.update({"_runtime_conn": conn, "_execution_group_id": row[1], "_execution_attempt_id": execution_attempt_id, "_capability_code": capability_code})
+            out = adapter(adapter_payload)
             result_code = str((out or {}).get("result_code", "OK"))
             message = str((out or {}).get("secret_safe_message", "Sync dispatch completed."))
             if _contains_secret_like_text(result_code) or _contains_secret_like_text(message):
