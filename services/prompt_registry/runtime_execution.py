@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -17,6 +18,8 @@ ASYNC_CAPABILITIES = frozenset({
     "GENERATE_OPERATOR_HANDOFF_EXPORT",
 })
 CAPABILITY_EXECUTION_MODE = {**{c: "SYNC" for c in SYNC_CAPABILITIES}, **{c: "ASYNC" for c in ASYNC_CAPABILITIES}}
+CAPABILITY_EXECUTION_ENABLED = {capability: True for capability in CAPABILITY_EXECUTION_MODE}
+CAPABILITY_PERMISSION_CLASS = {**{c: "PROMPT_RUNTIME_SYNC" for c in SYNC_CAPABILITIES}, **{c: "PROMPT_RUNTIME_ASYNC" for c in ASYNC_CAPABILITIES}}
 
 ACTIVE_STATES = ("PREPARED", "CONFIRMATION_REQUIRED", "ADMITTED", "DISPATCHED", "RUNNING", "RETRY_PENDING")
 DEFAULT_MAX_AUTOMATIC_RETRIES = 3
@@ -25,6 +28,8 @@ RETRY_ELIGIBLE_CAPABILITIES = frozenset({"ENQUEUE_INTERNAL_PROMPT_JOB", "GENERAT
 
 
 _SECRET_PATTERNS = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
+logger = logging.getLogger(__name__)
+RUNTIME_METRICS: dict[str, int] = {}
 
 
 def _contains_secret_like_text(value: str) -> bool:
@@ -49,6 +54,102 @@ def _is_secret_safe_data(value) -> bool:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _row_get(row, key: str, index: int | None = None):
+    if row is None:
+        return None
+    if isinstance(row, sqlite3.Row):
+        return row[key]
+    if index is None:
+        raise KeyError(key)
+    return row[index]
+
+
+def _metric_incr(name: str) -> None:
+    RUNTIME_METRICS[name] = RUNTIME_METRICS.get(name, 0) + 1
+
+
+def _observe_runtime_event(event_type: str, *, execution_group_id: int | None = None, execution_attempt_id: int | None = None, capability_code: str | None = None, state: str | None = None, result_code: str | None = None) -> None:
+    safe_event = str(event_type)
+    _metric_incr(f"runtime.{safe_event}")
+    if result_code:
+        _metric_incr(f"runtime.result.{result_code}")
+    logger.info(
+        "prompt_runtime_event",
+        extra={
+            "runtime_event_type": safe_event,
+            "execution_group_id": execution_group_id,
+            "execution_attempt_id": execution_attempt_id,
+            "capability_code": capability_code,
+            "state": state,
+            "result_code": result_code,
+        },
+    )
+
+
+def get_runtime_observability_snapshot() -> dict:
+    return {"metrics": dict(sorted(RUNTIME_METRICS.items()))}
+
+
+def reset_runtime_observability_for_tests() -> None:
+    RUNTIME_METRICS.clear()
+
+
+def _bool_gate(kwargs: dict, key: str, default: bool = True) -> bool:
+    value = kwargs.get(key, default)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on", "complete", "valid", "compatible"}
+    return bool(value)
+
+
+def _list_gate(value) -> set[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return {item.strip() for item in value.split(",") if item.strip()}
+    try:
+        return {str(item).strip() for item in value if str(item).strip()}
+    except TypeError:
+        return {str(value).strip()}
+
+
+def _validate_preflight_safety_gates(conn: sqlite3.Connection, kwargs: dict, capability_code: str, operator_id: str) -> dict | None:
+    if capability_code not in CAPABILITY_EXECUTION_MODE:
+        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="CAPABILITY_UNKNOWN")
+        raise ValueError("PREFLIGHT_REJECTED: capability is not in execution matrix")
+    if not CAPABILITY_EXECUTION_ENABLED.get(capability_code, False) or not _bool_gate(kwargs, "capability_execution_enabled", True):
+        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="CAPABILITY_EXECUTION_DISABLED")
+        raise ValueError("PREFLIGHT_REJECTED: capability execution disabled")
+    allowed_capabilities = _list_gate(kwargs.get("operator_allowed_capabilities"))
+    allowed_classes = _list_gate(kwargs.get("operator_allowed_permission_classes"))
+    permission_class = CAPABILITY_PERMISSION_CLASS[capability_code]
+    if operator_id.startswith("forbidden:") or (allowed_capabilities is not None and capability_code not in allowed_capabilities) or (allowed_classes is not None and permission_class not in allowed_classes):
+        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="OPERATOR_PERMISSION_DENIED")
+        raise ValueError("PREFLIGHT_REJECTED: operator role incompatible")
+    binding_status = str(kwargs.get("binding_resolution_status") or "COMPLETE").strip().upper()
+    if binding_status != "COMPLETE" or _bool_gate(kwargs, "binding_resolution_ambiguous", False):
+        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="BINDING_RESOLUTION_INCOMPLETE")
+        raise ValueError("PREFLIGHT_REJECTED: binding resolution incomplete or ambiguous")
+    if not _bool_gate(kwargs, "rendered_payload_valid", True):
+        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="RENDERED_PAYLOAD_INVALID")
+        raise ValueError("PREFLIGHT_REJECTED: rendered payload invalid")
+    for payload_key in ("rendered_payload", "adapter_precheck_payload", "dispatch_payload"):
+        if payload_key in kwargs and not _is_secret_safe_data(kwargs.get(payload_key)):
+            _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="SECRET_UNSAFE_PAYLOAD")
+            raise ValueError("PREFLIGHT_REJECTED: secret-unsafe runtime payload")
+    if not _bool_gate(kwargs, "target_exists", True):
+        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="TARGET_NOT_FOUND")
+        raise ValueError("PREFLIGHT_REJECTED: target entity not found")
+    if not _bool_gate(kwargs, "target_state_compatible", True):
+        _observe_runtime_event("conflict_blocked", capability_code=capability_code, result_code="TARGET_STATE_INCOMPATIBLE")
+        return {"state": "CONFLICT_BLOCKED", "result_code": "TARGET_STATE_INCOMPATIBLE", "secret_safe_message": "Target state is not compatible with execution."}
+    current_hash = str(kwargs.get("current_target_state_hash") or kwargs.get("reviewed_target_state_hash") or "")
+    reviewed_hash = str(kwargs.get("reviewed_target_state_hash") or "")
+    if current_hash and reviewed_hash and current_hash != reviewed_hash:
+        _observe_runtime_event("stale_blocked", capability_code=capability_code, result_code="STALE_TARGET_SNAPSHOT")
+        return {"state": "STALE_BLOCKED", "result_code": "STALE_TARGET_SNAPSHOT", "secret_safe_message": "Reviewed target snapshot is stale."}
+    return None
 
 
 def compute_dedup_key_hash(*, capability_code: str, target_type: str, target_id: str | None, prompt_record_id: int, prompt_version_id: int | None, binding_resolution_fingerprint: str, rendered_payload_hash: str, action_payload_hash: str, reviewed_target_state_hash: str) -> str:
@@ -84,18 +185,19 @@ def _validate_prompt(conn: sqlite3.Connection, prompt_record_id: int, prompt_ver
 
 def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> dict:
     capability_code = kwargs["capability_code"]
-    if capability_code not in CAPABILITY_EXECUTION_MODE:
-        raise ValueError("PREFLIGHT_REJECTED: forbidden capability")
     operator_id = str(kwargs.get("operator_id_or_system_actor") or "").strip()
     if not operator_id:
+        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="OPERATOR_REQUIRED")
         raise ValueError("PREFLIGHT_REJECTED: operator identity required")
-    if operator_id.startswith("forbidden:"):
-        raise ValueError("PREFLIGHT_REJECTED: operator role incompatible")
+    gate_outcome = _validate_preflight_safety_gates(conn, kwargs, capability_code, operator_id)
+    if gate_outcome is not None:
+        return gate_outcome
     required = ["target_type", "binding_resolution_fingerprint", "rendered_payload_hash", "action_payload_hash", "reviewed_target_state_hash"]
     for key in required:
         if not str(kwargs.get(key) or "").strip():
             raise ValueError(f"PREFLIGHT_REJECTED: missing {key}")
     _validate_prompt(conn, int(kwargs["prompt_record_id"]), kwargs.get("prompt_version_id"))
+    _observe_runtime_event("preflight_started", capability_code=capability_code)
     _write_runtime_audit(conn, prompt_record_id=int(kwargs["prompt_record_id"]), prompt_version_id=kwargs.get("prompt_version_id"), event_type="runtime_preflight_started", actor=operator_id, payload={"capability_code": capability_code, "target_type": kwargs["target_type"], "target_id": kwargs.get("target_id")})
 
     dedup_key_hash = compute_dedup_key_hash(**{k: kwargs.get(k) for k in ["capability_code", "target_type", "target_id", "prompt_record_id", "prompt_version_id", "binding_resolution_fingerprint", "rendered_payload_hash", "action_payload_hash", "reviewed_target_state_hash"]})
@@ -103,6 +205,7 @@ def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> di
     existing = conn.execute("SELECT id,execution_group_id,state,operator_id_or_system_actor,reviewed_target_state_hash,dedup_key_hash FROM prompt_execution_attempts WHERE dedup_key_hash=? ORDER BY id DESC LIMIT 1", (dedup_key_hash,)).fetchone()
     if existing:
         token = _make_confirmation_token(execution_attempt_id=existing[0], dedup_key_hash=existing[5], reviewed_target_state_hash=existing[4], operator_id=existing[3], state=existing[2])
+        _observe_runtime_event("dedup_hit", execution_group_id=existing[1], execution_attempt_id=existing[0], capability_code=capability_code, state=existing[2])
         conn.commit()
         return {"execution_group_id": existing[1], "execution_attempt_id": existing[0], "confirmation_token": token, "dedup_key_hash": existing[5], "state": existing[2], "execution_mode": CAPABILITY_EXECUTION_MODE[capability_code], "capability_code": capability_code, "target_type": kwargs["target_type"], "target_id": kwargs.get("target_id"), "secret_safe_message": "Ready for explicit confirmation."}
 
@@ -110,6 +213,7 @@ def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> di
     if conflict:
         _write_lifecycle_event(conn, execution_group_id=int(conflict[0]), execution_attempt_id=None, state_before=None, state_after="CONFLICT_BLOCKED", result_code="CONFLICT", actor=operator_id, payload={})
         _write_runtime_audit(conn, prompt_record_id=int(kwargs["prompt_record_id"]), prompt_version_id=kwargs.get("prompt_version_id"), event_type="runtime_conflict_blocked", actor=operator_id, payload={"blocked_by_execution_group_id": int(conflict[0]), "dedup_key_hash": dedup_key_hash})
+        _observe_runtime_event("lock_contention", execution_group_id=int(conflict[0]), capability_code=capability_code, state="CONFLICT_BLOCKED", result_code="CONFLICT")
         conn.commit()
         return {"state": "CONFLICT_BLOCKED", "blocked_by_execution_group_id": int(conflict[0]), "dedup_key_hash": dedup_key_hash}
 
@@ -131,6 +235,7 @@ def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> di
     conn.commit()
     _write_lifecycle_event(conn, execution_group_id=gid, execution_attempt_id=aid, state_before="PREPARED", state_after="CONFIRMATION_REQUIRED", result_code=None, actor=operator_id, payload={})
     _write_runtime_audit(conn, prompt_record_id=int(kwargs["prompt_record_id"]), prompt_version_id=kwargs.get("prompt_version_id"), event_type="runtime_confirmation_required", actor=operator_id, payload={"execution_group_id": gid, "execution_attempt_id": aid, "dedup_key_hash": dedup_key_hash})
+    _observe_runtime_event("confirmation_required", execution_group_id=gid, execution_attempt_id=aid, capability_code=capability_code, state="CONFIRMATION_REQUIRED")
     conn.commit()
     token = _make_confirmation_token(execution_attempt_id=aid, dedup_key_hash=dedup_key_hash, reviewed_target_state_hash=kwargs["reviewed_target_state_hash"], operator_id=operator_id, state="CONFIRMATION_REQUIRED")
     return {"execution_group_id": gid, "execution_attempt_id": aid, "confirmation_token": token, "dedup_key_hash": dedup_key_hash, "state": "CONFIRMATION_REQUIRED", "execution_mode": mode, "capability_code": capability_code, "target_type": kwargs["target_type"], "target_id": kwargs.get("target_id"), "secret_safe_message": "Ready for explicit confirmation."}
@@ -152,6 +257,7 @@ def confirm_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: 
             secret_safe_message="Reviewed target state is stale.",
             actor=operator_id_or_system_actor,
         )
+        _observe_runtime_event("stale_blocked", execution_group_id=row[1], execution_attempt_id=row[0], state="STALE_BLOCKED", result_code="STALE")
         conn.commit()
         return {"state": "STALE_BLOCKED", "execution_group_id": row[1], "execution_attempt_id": row[0]}
     expected_current = _make_confirmation_token(execution_attempt_id=row[0], dedup_key_hash=row[3], reviewed_target_state_hash=row[4], operator_id=operator_id_or_system_actor, state=row[2])
@@ -171,6 +277,7 @@ def confirm_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: 
     _write_runtime_audit(conn, prompt_record_id=pr[0], prompt_version_id=pr[1], event_type="runtime_confirmed", actor=operator_id_or_system_actor, payload={"execution_group_id": row[1], "execution_attempt_id": row[0], "capability_code": g[0], "target_type": g[1], "target_id": g[2], "dedup_key_hash": pr[2], "correlation_id": pr[3], "state_before": "CONFIRMATION_REQUIRED", "state_after": "ADMITTED"})
     _write_runtime_audit(conn, prompt_record_id=pr[0], prompt_version_id=pr[1], event_type="runtime_admitted", actor=operator_id_or_system_actor, payload={"execution_group_id": row[1], "execution_attempt_id": row[0]})
     _ensure_usage_on_admitted(conn, execution_group_id=row[1], execution_attempt_id=row[0])
+    _observe_runtime_event("admitted", execution_group_id=row[1], execution_attempt_id=row[0], state="ADMITTED")
     conn.commit()
     return {"state": "ADMITTED", "execution_group_id": row[1], "execution_attempt_id": row[0], "dedup_key_hash": row[3]}
 
@@ -201,6 +308,7 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
     if expected_mode == "SYNC":
         adapter = adapter_registry.get(capability_code)
         if adapter is None:
+            _observe_runtime_event("dispatch_rejected", execution_group_id=row[1], execution_attempt_id=execution_attempt_id, capability_code=capability_code, state=row[2], result_code="MISSING_ADAPTER")
             raise ValueError("DISPATCH_REJECTED: missing adapter")
         safe_payload = {} if payload is None else payload if isinstance(payload, dict) else None
         if safe_payload is None or not _is_secret_safe_data(dict(safe_payload or {})):
@@ -217,6 +325,7 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
             return {"state": "FAILED_TERMINAL", "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "result_code": "SECRET_UNSAFE_PAYLOAD", "secret_safe_message": "Adapter payload failed secret-safety precheck."}
         conn.execute("UPDATE prompt_execution_attempts SET state='RUNNING',running_at=?,updated_at=? WHERE id=?", (now, now, execution_attempt_id))
         conn.execute("UPDATE prompt_execution_groups SET current_state='RUNNING',updated_at=? WHERE id=?", (now, row[1]))
+        _observe_runtime_event("running", execution_group_id=row[1], execution_attempt_id=execution_attempt_id, capability_code=capability_code, state="RUNNING")
         _write_lifecycle_event(conn, execution_group_id=row[1], execution_attempt_id=execution_attempt_id, state_before="ADMITTED", state_after="RUNNING", result_code=None, actor="system", payload={})
         pr = conn.execute("SELECT prompt_record_id,prompt_version_id,correlation_id,dedup_key_hash FROM prompt_execution_attempts WHERE id=?", (execution_attempt_id,)).fetchone()
         _write_runtime_audit(conn, prompt_record_id=pr[0], prompt_version_id=pr[1], event_type="runtime_running", actor="system", payload={"execution_group_id": row[1], "execution_attempt_id": execution_attempt_id, "correlation_id": pr[2], "dedup_key_hash": pr[3]})
@@ -243,6 +352,7 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
             secret_safe_message=message,
             actor="system",
         )
+        _observe_runtime_event("terminal", execution_group_id=row[1], execution_attempt_id=execution_attempt_id, capability_code=capability_code, state=terminal_state, result_code=result_code)
         conn.commit()
         return {"state": terminal_state, "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "result_code": result_code, "secret_safe_message": message}
 
@@ -271,6 +381,7 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
     pr = conn.execute("SELECT prompt_record_id,prompt_version_id,correlation_id,dedup_key_hash FROM prompt_execution_attempts WHERE id=?", (execution_attempt_id,)).fetchone()
     _write_runtime_audit(conn, prompt_record_id=pr[0], prompt_version_id=pr[1], event_type="runtime_dispatched", actor="system", payload={"execution_group_id": row[1], "execution_attempt_id": execution_attempt_id, "correlation_id": pr[2], "dedup_key_hash": pr[3]})
     qid = int(conn.execute("SELECT id FROM prompt_execution_async_queue WHERE execution_attempt_id=?", (execution_attempt_id,)).fetchone()[0])
+    _observe_runtime_event("dispatched", execution_group_id=row[1], execution_attempt_id=execution_attempt_id, capability_code=capability_code, state="DISPATCHED")
     conn.commit()
     return {"state": "DISPATCHED", "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "queue_id": qid}
 
@@ -281,6 +392,7 @@ def _json_dumps(obj: dict) -> str:
 
 
 def _write_lifecycle_event(conn: sqlite3.Connection, *, execution_group_id: int, execution_attempt_id: int | None, state_before: str | None, state_after: str, result_code: str | None, actor: str, payload: dict | None = None) -> None:
+    _observe_runtime_event("lifecycle_write", execution_group_id=execution_group_id, execution_attempt_id=execution_attempt_id, state=state_after, result_code=result_code)
     event_payload = payload or {}
     if not _is_secret_safe_data(event_payload):
         event_payload = {"note": "redacted"}
@@ -291,6 +403,7 @@ def _write_lifecycle_event(conn: sqlite3.Connection, *, execution_group_id: int,
 
 
 def _write_runtime_audit(conn: sqlite3.Connection, *, prompt_record_id: int, prompt_version_id: int | None, event_type: str, actor: str, payload: dict) -> None:
+    _observe_runtime_event(event_type, execution_group_id=payload.get("execution_group_id"), execution_attempt_id=payload.get("execution_attempt_id"), capability_code=payload.get("capability_code"), state=payload.get("state_after"), result_code=payload.get("result_code"))
     safe_payload = payload if _is_secret_safe_data(payload) else {"note": "redacted"}
     conn.execute(
         "INSERT INTO prompt_audit_events(prompt_id,version_id,event_type,actor,payload_json,created_at) VALUES(?,?,?,?,?,?)",
@@ -540,6 +653,7 @@ def cancel_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: i
         raise ValueError("CANCEL_REJECTED: state is not cancellable")
     _finalize_execution_terminal(conn, execution_group_id=execution_group_id, execution_attempt_id=execution_attempt_id, terminal_state="CANCELLED", result_code="CANCELLED_BY_OPERATOR", secret_safe_message="Execution cancelled.", actor=actor)
     conn.execute("UPDATE prompt_execution_async_queue SET queue_state='FAILED',lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE execution_attempt_id=? AND queue_state IN ('QUEUED','CLAIMED')", (_utc_now(), execution_attempt_id))
+    _observe_runtime_event("cancelled", execution_group_id=execution_group_id, execution_attempt_id=execution_attempt_id, state="CANCELLED", result_code="CANCELLED_BY_OPERATOR")
     conn.commit()
     return {"state": "CANCELLED", "execution_group_id": execution_group_id, "execution_attempt_id": execution_attempt_id}
 
@@ -563,6 +677,29 @@ def claim_prompt_execution_async_work(conn: sqlite3.Connection, *, lease_owner: 
     _write_runtime_audit(conn, prompt_record_id=current[1], prompt_version_id=current[2], event_type="runtime_running", actor=lease_owner, payload={"execution_group_id": gid, "execution_attempt_id": aid, "correlation_id": current[3], "dedup_key_hash": current[4], "queue_id": qid, "capability_code": capability})
     conn.commit()
     return {"queue_id": qid, "execution_group_id": gid, "execution_attempt_id": aid, "queue_state": "CLAIMED", "lease_owner": lease_owner, "lease_expires_at": lease_expires}
+
+
+def complete_prompt_execution_async_work(conn: sqlite3.Connection, *, execution_attempt_id: int, result_code: str = "OK", secret_safe_message: str = "Async execution completed.", actor: str = "system") -> dict:
+    row = conn.execute("SELECT id,execution_group_id,state FROM prompt_execution_attempts WHERE id=?", (execution_attempt_id,)).fetchone()
+    if row is None:
+        raise ValueError("ASYNC_COMPLETE_REJECTED: attempt not found")
+    state = _row_get(row, "state", 2)
+    execution_group_id = int(_row_get(row, "execution_group_id", 1))
+    if state not in {"RUNNING", "DISPATCHED"}:
+        raise ValueError("ASYNC_COMPLETE_REJECTED: attempt is not running")
+    _finalize_execution_terminal(
+        conn,
+        execution_group_id=execution_group_id,
+        execution_attempt_id=execution_attempt_id,
+        terminal_state="SUCCEEDED",
+        result_code=result_code,
+        secret_safe_message=secret_safe_message,
+        actor=actor,
+    )
+    conn.execute("UPDATE prompt_execution_async_queue SET queue_state='DONE',lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE execution_attempt_id=?", (_utc_now(), execution_attempt_id))
+    _observe_runtime_event("terminal", execution_group_id=execution_group_id, execution_attempt_id=execution_attempt_id, state="SUCCEEDED", result_code=result_code)
+    conn.commit()
+    return {"state": "SUCCEEDED", "execution_group_id": execution_group_id, "execution_attempt_id": execution_attempt_id, "result_code": result_code, "secret_safe_message": secret_safe_message}
 
 
 def reclaim_expired_prompt_execution_leases(conn: sqlite3.Connection, *, now: str | None = None, max_retries: int = DEFAULT_MAX_AUTOMATIC_RETRIES) -> list[dict]:
@@ -619,6 +756,57 @@ def recover_stale_runtime_executions(conn: sqlite3.Connection, *, now: str | Non
 def list_prompt_execution_timeline(conn: sqlite3.Connection, *, execution_group_id: int) -> list[dict]:
     rows = conn.execute("SELECT execution_group_id,execution_attempt_id,state_before,state_after,result_code,actor,timestamp,event_payload_json FROM prompt_execution_lifecycle_events WHERE execution_group_id=? ORDER BY timestamp ASC, id ASC", (execution_group_id,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def list_prompt_execution_attempts(conn: sqlite3.Connection, *, execution_group_id: int) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT id AS execution_attempt_id,execution_group_id,attempt_number,state,correlation_id,
+               operator_id_or_system_actor,prompt_record_id,prompt_version_id,retryable_by_operator,
+               cancellable,admitted_at,running_at,terminal_at,result_code,secret_safe_message,
+               lease_expires_at,execution_mode,created_at,updated_at
+        FROM prompt_execution_attempts
+        WHERE execution_group_id=?
+        ORDER BY attempt_number ASC,id ASC
+        """,
+        (execution_group_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_prompt_execution_readiness_summary(conn: sqlite3.Connection, *, execution_group_id: int) -> dict:
+    status = get_prompt_execution_status(conn, execution_group_id=execution_group_id)
+    checks = [
+        {"name": "execution_exists", "ok": True},
+        {"name": "state_allows_dispatch", "ok": status["current_state"] == "ADMITTED"},
+        {"name": "confirmation_required", "ok": bool(status["confirmation_required"])},
+        {"name": "stale_or_conflict_blocked", "ok": not bool(status["stale_or_conflict_blocked"])},
+        {"name": "retry_available", "ok": bool(status["retry_control_visible"])},
+        {"name": "cancel_available", "ok": bool(status["cancel_control_visible"])},
+    ]
+    next_step = "dispatch" if status["current_state"] == "ADMITTED" else "recheck" if status["stale_or_conflict_blocked"] else "inspect"
+    return {"execution_group_id": execution_group_id, "current_state": status["current_state"], "ready_for_dispatch": status["current_state"] == "ADMITTED", "next_step": next_step, "checks": checks}
+
+
+def get_prompt_execution_audit_safe_detail(conn: sqlite3.Connection, *, execution_group_id: int) -> dict:
+    status = get_prompt_execution_status(conn, execution_group_id=execution_group_id)
+    attempts = list_prompt_execution_attempts(conn, execution_group_id=execution_group_id)
+    audits = conn.execute(
+        """
+        SELECT event_type,actor,created_at,payload_json
+        FROM prompt_audit_events
+        WHERE json_extract(payload_json,'$.execution_group_id')=?
+        ORDER BY created_at ASC,id ASC
+        """,
+        (execution_group_id,),
+    ).fetchall()
+    return {
+        "status": status,
+        "attempts": attempts,
+        "timeline": list_prompt_execution_timeline(conn, execution_group_id=execution_group_id),
+        "audit_events": [dict(row) for row in audits],
+        "observability": get_runtime_observability_snapshot(),
+    }
 
 
 def get_prompt_execution_status(conn: sqlite3.Connection, *, execution_group_id: int | None = None, execution_attempt_id: int | None = None) -> dict:

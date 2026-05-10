@@ -11,20 +11,23 @@ from fastapi.templating import Jinja2Templates
 
 from services.common.env import Env
 from services.factory_api.security import require_basic_auth
-from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry
+from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry, build_default_runtime_adapter_registry
 from services.prompt_registry.runtime_execution import (
     admit_due_prompt_execution_retries,
     cancel_prompt_execution,
     confirm_prompt_execution,
     dispatch_prompt_execution,
+    get_prompt_execution_audit_safe_detail,
+    get_prompt_execution_readiness_summary,
     get_prompt_execution_status,
+    list_prompt_execution_attempts,
     list_prompt_execution_timeline,
     prepare_prompt_execution_preflight,
     recover_stale_runtime_executions,
     schedule_prompt_execution_retry,
 )
 
-RUNTIME_ADAPTER_REGISTRY = RuntimeAdapterRegistry()
+RUNTIME_ADAPTER_REGISTRY = build_default_runtime_adapter_registry()
 
 
 _SECRET_KEYS = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
@@ -165,6 +168,34 @@ def create_prompt_registry_runtime_router(env: Env, templates: Jinja2Templates) 
         conn = _connect_runtime_db(env)
         try:
             return {"items": _sanitize_response(list_prompt_execution_timeline(conn, execution_group_id=execution_group_id))}
+        finally:
+            conn.close()
+
+    @router.get("/v1/prompt-registry/runtime/attempts/{execution_group_id}")
+    def api_attempts(execution_group_id: int, _: bool = Depends(require_basic_auth(env))):
+        conn = _connect_runtime_db(env)
+        try:
+            return {"items": _sanitize_response(list_prompt_execution_attempts(conn, execution_group_id=execution_group_id))}
+        finally:
+            conn.close()
+
+    @router.get("/v1/prompt-registry/runtime/readiness/{execution_group_id}")
+    def api_readiness(execution_group_id: int, _: bool = Depends(require_basic_auth(env))):
+        conn = _connect_runtime_db(env)
+        try:
+            return _sanitize_response(get_prompt_execution_readiness_summary(conn, execution_group_id=execution_group_id))
+        except ValueError as exc:
+            return _error("PROMPT_RUNTIME_READINESS_NOT_FOUND", str(exc), status_code=_status_code_for_value_error(exc))
+        finally:
+            conn.close()
+
+    @router.get("/v1/prompt-registry/runtime/audit-safe-detail/{execution_group_id}")
+    def api_audit_safe_detail(execution_group_id: int, _: bool = Depends(require_basic_auth(env))):
+        conn = _connect_runtime_db(env)
+        try:
+            return _sanitize_response(get_prompt_execution_audit_safe_detail(conn, execution_group_id=execution_group_id))
+        except ValueError as exc:
+            return _error("PROMPT_RUNTIME_AUDIT_DETAIL_NOT_FOUND", str(exc), status_code=_status_code_for_value_error(exc))
         finally:
             conn.close()
 

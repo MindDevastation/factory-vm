@@ -9,9 +9,13 @@ from fastapi.testclient import TestClient
 
 from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry
 from services.prompt_registry.runtime_execution import (
+    claim_prompt_execution_async_work,
+    complete_prompt_execution_async_work,
     confirm_prompt_execution,
     dispatch_prompt_execution,
+    get_runtime_observability_snapshot,
     prepare_prompt_execution_preflight,
+    reset_runtime_observability_for_tests,
 )
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
@@ -147,7 +151,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 conn.close()
             self.assertEqual(before, after)
 
-    def test_dispatch_sync_fails_closed_until_server_side_adapter_registered(self):
+    def test_dispatch_sync_uses_production_adapter_and_fails_closed_when_unavailable(self):
         with temp_env() as (_td, env):
             seed_minimal_db(env)
             self._seed_prompt(env)
@@ -162,7 +166,25 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 headers=headers,
             )
 
-            missing = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "evil", "payload": {"safe": "ok"}}, headers=headers)
+            dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "ignored", "payload": {"safe": "ok"}}, headers=headers)
+            self.assertEqual(200, dispatched.status_code, dispatched.text)
+            self.assertEqual("SUCCEEDED", dispatched.json()["state"])
+            self.assertEqual("BULK_JSON_DRAFT_REQUEST_RECORDED", dispatched.json()["result_code"])
+
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            self._seed_prompt(env)
+            mod, client = self._app_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            pre = self._preflight_api(client, headers, target_id="wf-fail-closed", action_payload_hash="action-fail-closed").json()
+            client.post(
+                "/v1/prompt-registry/runtime/confirm",
+                json={"execution_attempt_id": pre["execution_attempt_id"], "confirmation_token": pre["confirmation_token"], "reviewed_target_state_hash": "state-mf6"},
+                headers=headers,
+            )
+            runtime_api = importlib.import_module("services.factory_api.prompt_registry_runtime")
+            with mock.patch.object(runtime_api, "RUNTIME_ADAPTER_REGISTRY", RuntimeAdapterRegistry()):
+                missing = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "evil", "payload": {"safe": "ok"}}, headers=headers)
             self.assertEqual(422, missing.status_code)
             self.assertEqual("PROMPT_RUNTIME_DISPATCH_REJECTED", missing.json()["error"]["code"])
             conn = sqlite3.connect(env.db_path)
@@ -170,22 +192,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 self.assertEqual("ADMITTED", conn.execute("SELECT state FROM prompt_execution_attempts WHERE id=?", (pre["execution_attempt_id"],)).fetchone()[0])
             finally:
                 conn.close()
-
-            called = []
-
-            def fake_adapter(payload):
-                called.append(payload)
-                return {"result_code": "FAKE_OK", "secret_safe_message": "fake completed"}
-
-            runtime_api = importlib.import_module("services.factory_api.prompt_registry_runtime")
-            registry = RuntimeAdapterRegistry()
-            registry.register("CREATE_BULK_JSON_DRAFT", fake_adapter)
-            with mock.patch.object(runtime_api, "RUNTIME_ADAPTER_REGISTRY", registry):
-                dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "ignored", "payload": {"safe": "ok"}}, headers=headers)
-            self.assertEqual(200, dispatched.status_code, dispatched.text)
-            self.assertEqual("SUCCEEDED", dispatched.json()["state"])
-            self.assertEqual("FAKE_OK", dispatched.json()["result_code"])
-            self.assertEqual([{"safe": "ok"}], called)
+            self.assertIs(mod, importlib.import_module("services.factory_api.app"))
 
     def test_retry_rejects_sync_and_accepts_async_failed_execution(self):
         with temp_env() as (_td, env):
@@ -241,7 +248,9 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             admitted = self._admit_service(env)
             _mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
-            dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": admitted["execution_attempt_id"], "payload": {"api_token": "super-secret-token"}}, headers=headers)
+            runtime_api = importlib.import_module("services.factory_api.prompt_registry_runtime")
+            with mock.patch.object(runtime_api, "RUNTIME_ADAPTER_REGISTRY", RuntimeAdapterRegistry()):
+                dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": admitted["execution_attempt_id"], "payload": {"api_token": "super-secret-token"}}, headers=headers)
             self.assertEqual(422, dispatched.status_code, dispatched.text)
             self.assertNotIn("super-secret-token", dispatched.text)
             self.assertNotIn("api_token", dispatched.text)
@@ -250,6 +259,72 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 self.assertEqual("ADMITTED", conn.execute("SELECT state FROM prompt_execution_attempts WHERE id=?", (admitted["execution_attempt_id"],)).fetchone()[0])
             finally:
                 conn.close()
+
+    def test_required_read_only_runtime_detail_endpoints_are_auth_safe_and_non_mutating(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            self._seed_prompt(env)
+            admitted = self._admit_service(env, target_id="detail-mf6", action_payload_hash="action-detail")
+            _mod, client = self._app_client()
+            for path in (
+                f"/v1/prompt-registry/runtime/attempts/{admitted['execution_group_id']}",
+                f"/v1/prompt-registry/runtime/readiness/{admitted['execution_group_id']}",
+                f"/v1/prompt-registry/runtime/audit-safe-detail/{admitted['execution_group_id']}",
+            ):
+                self.assertEqual(401, client.get(path).status_code)
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            conn = sqlite3.connect(env.db_path)
+            try:
+                before = conn.execute("SELECT COUNT(*) FROM prompt_execution_lifecycle_events").fetchone()[0]
+            finally:
+                conn.close()
+            attempts = client.get(f"/v1/prompt-registry/runtime/attempts/{admitted['execution_group_id']}", headers=headers)
+            readiness = client.get(f"/v1/prompt-registry/runtime/readiness/{admitted['execution_group_id']}", headers=headers)
+            audit = client.get(f"/v1/prompt-registry/runtime/audit-safe-detail/{admitted['execution_group_id']}", headers=headers)
+            self.assertEqual(200, attempts.status_code, attempts.text)
+            self.assertEqual(1, len(attempts.json()["items"]))
+            self.assertEqual(200, readiness.status_code, readiness.text)
+            self.assertTrue(readiness.json()["ready_for_dispatch"])
+            self.assertEqual(200, audit.status_code, audit.text)
+            self.assertIn("status", audit.json())
+            self.assertNotIn("raw-secret", audit.text)
+            conn = sqlite3.connect(env.db_path)
+            try:
+                after = conn.execute("SELECT COUNT(*) FROM prompt_execution_lifecycle_events").fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(before, after)
+
+    def test_async_worker_success_path_claims_and_completes_attempt(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            self._seed_prompt(env)
+            admitted = self._admit_service(env, capability_code="ENQUEUE_INTERNAL_PROMPT_JOB", target_id="async-success-mf6", action_payload_hash="action-async-success")
+            conn = sqlite3.connect(env.db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                dispatch_prompt_execution(conn, execution_attempt_id=admitted["execution_attempt_id"], adapter_registry=RuntimeAdapterRegistry())
+                claim = claim_prompt_execution_async_work(conn, lease_owner="worker-mf6", lease_seconds=60, now="2027-01-01T00:00:00Z")
+                self.assertEqual("CLAIMED", claim["queue_state"])
+                done = complete_prompt_execution_async_work(conn, execution_attempt_id=admitted["execution_attempt_id"], result_code="ASYNC_OK", secret_safe_message="async done", actor="worker-mf6")
+                self.assertEqual("SUCCEEDED", done["state"])
+                self.assertEqual("DONE", conn.execute("SELECT queue_state FROM prompt_execution_async_queue WHERE execution_attempt_id=?", (admitted["execution_attempt_id"],)).fetchone()[0])
+            finally:
+                conn.close()
+
+    def test_runtime_observability_metrics_are_incremented_for_lifecycle(self):
+        reset_runtime_observability_for_tests()
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            self._seed_prompt(env)
+            admitted = self._admit_service(env, target_id="obs-mf6", action_payload_hash="action-obs")
+            _mod, client = self._app_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            client.post("/v1/prompt-registry/runtime/cancel", json={"execution_attempt_id": admitted["execution_attempt_id"]}, headers=headers)
+            metrics = get_runtime_observability_snapshot()["metrics"]
+            self.assertGreater(metrics.get("runtime.runtime_preflight_started", 0), 0)
+            self.assertGreater(metrics.get("runtime.runtime_admitted", 0), 0)
+            self.assertGreater(metrics.get("runtime.cancelled", 0), 0)
 
     def test_ui_runtime_page_renders_status_timeline_controls_and_blocks_raw_secrets(self):
         with temp_env() as (_td, env):

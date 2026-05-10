@@ -118,6 +118,44 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
             self.assertEqual(1, cnt)
         finally:
             td.__exit__(None, None, None)
+    def test_preflight_rejects_explicit_safety_gate_failures(self):
+        cases = [
+            ({"capability_code": "NOPE"}, "execution matrix"),
+            ({"capability_execution_enabled": False}, "execution disabled"),
+            ({"operator_allowed_capabilities": ["CREATE_METADATA_REQUEST"]}, "operator role incompatible"),
+            ({"operator_allowed_permission_classes": ["PROMPT_RUNTIME_ASYNC"]}, "operator role incompatible"),
+            ({"binding_resolution_status": "INCOMPLETE"}, "binding resolution incomplete"),
+            ({"binding_resolution_ambiguous": True}, "binding resolution incomplete"),
+            ({"rendered_payload_valid": False}, "rendered payload invalid"),
+            ({"target_exists": False}, "target entity not found"),
+            ({"adapter_precheck_payload": {"api_token": "secret-token"}}, "secret-unsafe"),
+        ]
+        for overrides, expected in cases:
+            td, conn = self._conn()
+            try:
+                with self.subTest(overrides=overrides):
+                    with self.assertRaisesRegex(ValueError, expected):
+                        prepare_prompt_execution_preflight(conn, **{**self.base, **overrides})
+            finally:
+                td.__exit__(None, None, None)
+
+    def test_preflight_returns_distinct_stale_and_incompatible_gate_outcomes(self):
+        td, conn = self._conn()
+        try:
+            stale = prepare_prompt_execution_preflight(conn, **{**self.base, "current_target_state_hash": "state-new"})
+            self.assertEqual("STALE_BLOCKED", stale["state"])
+            self.assertEqual("STALE_TARGET_SNAPSHOT", stale["result_code"])
+        finally:
+            td.__exit__(None, None, None)
+
+        td, conn = self._conn()
+        try:
+            incompatible = prepare_prompt_execution_preflight(conn, **{**self.base, "target_state_compatible": False})
+            self.assertEqual("CONFLICT_BLOCKED", incompatible["state"])
+            self.assertEqual("TARGET_STATE_INCOMPATIBLE", incompatible["result_code"])
+        finally:
+            td.__exit__(None, None, None)
+
 
 if __name__ == "__main__":
     unittest.main()
