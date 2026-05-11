@@ -2653,6 +2653,29 @@ def _ensure_prompt_runtime_authoritative_gate_foundation_schema(conn: sqlite3.Co
 
         CREATE INDEX IF NOT EXISTS idx_prompt_runtime_operator_permissions_enabled
             ON prompt_runtime_operator_permissions(is_enabled, permission_class, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS prompt_runtime_render_validation_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_record_id INTEGER NOT NULL,
+            prompt_version_id INTEGER NOT NULL,
+            binding_fingerprint TEXT NOT NULL,
+            render_result_hash TEXT NOT NULL,
+            validation_status TEXT NOT NULL,
+            validation_schema_version TEXT NOT NULL,
+            validator_code TEXT NOT NULL,
+            validated_at TEXT NOT NULL,
+            invalid_reason_code TEXT NULL,
+            invalid_reason_detail TEXT NULL,
+            superseded_by_validation_id INTEGER NULL,
+            created_at TEXT NOT NULL,
+            CHECK(validation_status IN ('passed','failed','error','superseded'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_render_validation_latest
+            ON prompt_runtime_render_validation_ledger(prompt_version_id, binding_fingerprint, render_result_hash, validated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_render_validation_status
+            ON prompt_runtime_render_validation_ledger(validation_status, validated_at DESC, id DESC);
         """
     )
 

@@ -226,3 +226,205 @@ class OperatorPermissionService:
         row = self.get_row(subject)
         assert row is not None
         return row
+
+VALIDATION_STATUSES: tuple[str, ...] = ("passed", "failed", "error", "superseded")
+
+
+def validate_render_validation_status(value: str) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in VALIDATION_STATUSES:
+        raise ValueError(f"invalid validation_status: {normalized}")
+    return normalized
+
+
+def _secret_safe_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    lowered = text.lower()
+    secret_markers = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
+    if any(marker in lowered for marker in secret_markers):
+        return "[redacted]"
+    return text
+
+
+@dataclass(frozen=True)
+class RenderValidationEvaluation:
+    prompt_version_id: int
+    binding_fingerprint: str
+    render_result_hash: str
+    verdict: str
+    trusted: bool
+    latest_validation_record: dict[str, Any] | None
+    failure_reason_code: str | None
+    authoritative_source_metadata: dict[str, Any]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "prompt_version_id": self.prompt_version_id,
+            "binding_fingerprint": self.binding_fingerprint,
+            "render_result_hash": self.render_result_hash,
+            "verdict": self.verdict,
+            "trusted": self.trusted,
+            "latest_validation_record": self.latest_validation_record,
+            "failure_reason_code": self.failure_reason_code,
+            "authoritative_source_metadata": self.authoritative_source_metadata,
+        }
+
+
+class RenderValidationService:
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def record_validation(
+        self,
+        *,
+        prompt_record_id: int,
+        prompt_version_id: int,
+        binding_fingerprint: str,
+        render_result_hash: str,
+        validation_status: str,
+        validation_schema_version: str,
+        validator_code: str,
+        validated_at: str | None = None,
+        invalid_reason_code: str | None = None,
+        invalid_reason_detail: str | None = None,
+        superseded_by_validation_id: int | None = None,
+    ) -> dict[str, Any]:
+        status = validate_render_validation_status(validation_status)
+        binding = str(binding_fingerprint or "").strip()
+        render_hash = str(render_result_hash or "").strip()
+        schema_version = str(validation_schema_version or "").strip()
+        validator = str(validator_code or "").strip()
+        if int(prompt_record_id) <= 0:
+            raise ValueError("prompt_record_id is required")
+        if int(prompt_version_id) <= 0:
+            raise ValueError("prompt_version_id is required")
+        if not binding:
+            raise ValueError("binding_fingerprint is required")
+        if not render_hash:
+            raise ValueError("render_result_hash is required")
+        if not schema_version:
+            raise ValueError("validation_schema_version is required")
+        if not validator:
+            raise ValueError("validator_code is required")
+        now = utc_now_iso()
+        effective_validated_at = str(validated_at or now).strip()
+        cur = self._conn.execute(
+            """
+            INSERT INTO prompt_runtime_render_validation_ledger(
+                prompt_record_id,prompt_version_id,binding_fingerprint,render_result_hash,
+                validation_status,validation_schema_version,validator_code,validated_at,
+                invalid_reason_code,invalid_reason_detail,superseded_by_validation_id,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                int(prompt_record_id),
+                int(prompt_version_id),
+                binding,
+                render_hash,
+                status,
+                schema_version,
+                validator,
+                effective_validated_at,
+                None if invalid_reason_code is None else str(invalid_reason_code),
+                _secret_safe_text(invalid_reason_detail),
+                None if superseded_by_validation_id is None else int(superseded_by_validation_id),
+                now,
+            ),
+        )
+        row = _row_to_dict(self._conn.execute("SELECT * FROM prompt_runtime_render_validation_ledger WHERE id=?", (int(cur.lastrowid),)).fetchone())
+        assert row is not None
+        return row
+
+    def get_latest_validation(self, *, prompt_version_id: int, binding_fingerprint: str, render_result_hash: str) -> dict[str, Any] | None:
+        binding = str(binding_fingerprint or "").strip()
+        render_hash = str(render_result_hash or "").strip()
+        if int(prompt_version_id) <= 0 or not binding or not render_hash:
+            return None
+        return _row_to_dict(
+            self._conn.execute(
+                """
+                SELECT * FROM prompt_runtime_render_validation_ledger
+                WHERE prompt_version_id=? AND binding_fingerprint=? AND render_result_hash=?
+                ORDER BY validated_at DESC, id DESC
+                LIMIT 1
+                """,
+                (int(prompt_version_id), binding, render_hash),
+            ).fetchone()
+        )
+
+    def evaluate(self, *, prompt_version_id: int, binding_fingerprint: str, render_result_hash: str) -> RenderValidationEvaluation:
+        latest = self.get_latest_validation(prompt_version_id=prompt_version_id, binding_fingerprint=binding_fingerprint, render_result_hash=render_result_hash)
+        binding = str(binding_fingerprint or "").strip()
+        render_hash = str(render_result_hash or "").strip()
+        if latest is None:
+            return RenderValidationEvaluation(
+                int(prompt_version_id or 0),
+                binding,
+                render_hash,
+                "missing",
+                False,
+                None,
+                "missing_render_validation_authority",
+                {"source_table": "prompt_runtime_render_validation_ledger"},
+            )
+        status = str(latest.get("validation_status") or "")
+        superseded_by = latest.get("superseded_by_validation_id")
+        if status == "passed" and superseded_by is None:
+            verdict = "trusted"
+            trusted = True
+            reason = None
+        elif superseded_by is not None:
+            verdict = "untrusted"
+            trusted = False
+            reason = "render_validation_superseded"
+        else:
+            verdict = "untrusted"
+            trusted = False
+            reason = f"render_validation_{status or 'invalid'}"
+        return RenderValidationEvaluation(
+            int(prompt_version_id),
+            binding,
+            render_hash,
+            verdict,
+            trusted,
+            latest,
+            reason,
+            {
+                "source_table": "prompt_runtime_render_validation_ledger",
+                "source_id": latest.get("id"),
+                "validated_at": latest.get("validated_at"),
+            },
+        )
+
+    def list_validations(
+        self,
+        *,
+        prompt_version_id: int | None = None,
+        binding_fingerprint: str | None = None,
+        render_result_hash: str | None = None,
+        validation_status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if prompt_version_id is not None:
+            clauses.append("prompt_version_id=?")
+            params.append(int(prompt_version_id))
+        if binding_fingerprint:
+            clauses.append("binding_fingerprint=?")
+            params.append(str(binding_fingerprint))
+        if render_result_hash:
+            clauses.append("render_result_hash=?")
+            params.append(str(render_result_hash))
+        if validation_status:
+            clauses.append("validation_status=?")
+            params.append(validate_render_validation_status(str(validation_status)))
+        safe_limit = min(max(int(limit or 100), 1), 500)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = self._conn.execute(
+            f"SELECT * FROM prompt_runtime_render_validation_ledger{where} ORDER BY validated_at DESC, id DESC LIMIT ?",
+            tuple(params + [safe_limit]),
+        ).fetchall()
+        return [row for row in map(_row_to_dict, rows) if row is not None]

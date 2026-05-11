@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from services.common.env import Env
 from services.factory_api.security import require_basic_auth_subject
-from services.prompt_registry.authoritative_gate import CapabilityGateService, OperatorPermissionService
+from services.prompt_registry.authoritative_gate import CapabilityGateService, OperatorPermissionService, RenderValidationService
 
 _SECRET_KEYS = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
 
@@ -39,6 +39,48 @@ def _not_found(code: str, subject: str) -> JSONResponse:
 
 def create_prompt_runtime_authority_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/prompt-runtime", tags=["prompt-runtime-authority"])
+
+    @router.get("/render-validations")
+    def list_render_validations(
+        prompt_version_id: int | None = None,
+        binding_fingerprint: str | None = None,
+        render_result_hash: str | None = None,
+        validation_status: str | None = None,
+        limit: int = 100,
+        _: str = Depends(require_basic_auth_subject(env)),
+    ):
+        conn = _connect(env)
+        try:
+            rows = RenderValidationService(conn).list_validations(
+                prompt_version_id=prompt_version_id,
+                binding_fingerprint=binding_fingerprint,
+                render_result_hash=render_result_hash,
+                validation_status=validation_status,
+                limit=limit,
+            )
+            return {"items": _sanitize(rows)}
+        except ValueError as exc:
+            return _error("PROMPT_RUNTIME_AUTHORITY_INVALID", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.get("/render-validations/latest")
+    def get_latest_render_validation(
+        prompt_version_id: int,
+        binding_fingerprint: str,
+        render_result_hash: str,
+        _: str = Depends(require_basic_auth_subject(env)),
+    ):
+        conn = _connect(env)
+        try:
+            result = RenderValidationService(conn).evaluate(
+                prompt_version_id=prompt_version_id,
+                binding_fingerprint=binding_fingerprint,
+                render_result_hash=render_result_hash,
+            )
+            return _sanitize(result.as_dict())
+        finally:
+            conn.close()
 
     @router.get("/capabilities")
     def list_capabilities(_: str = Depends(require_basic_auth_subject(env))):
