@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -709,3 +711,205 @@ class TargetCompatibilityService:
             tuple(params + [safe_limit]),
         ).fetchall()
         return [row for row in map(_row_to_dict, rows) if row is not None]
+
+
+_REQUIRED_SNAPSHOT_FIELDS: tuple[str, ...] = (
+    "target_type",
+    "target_ref",
+    "target_display_label",
+    "target_state_code",
+    "target_exists",
+    "target_updated_at",
+    "compatibility_inputs",
+    "resolver_metadata",
+)
+
+
+@dataclass(frozen=True)
+class TargetSnapshotResult:
+    admission_status: str
+    capability_code: str
+    target_type: str
+    target_ref: str
+    resolver_code: str | None = None
+    snapshot_schema_version: str | None = None
+    snapshot_hash: str | None = None
+    snapshot_payload: dict[str, Any] | None = None
+    compatibility_status_at_capture: str | None = None
+    resolved_at: str | None = None
+    ledger_id: int | None = None
+    failure_reason_code: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "admission_status": self.admission_status,
+            "capability_code": self.capability_code,
+            "target_type": self.target_type,
+            "target_ref": self.target_ref,
+            "resolver_code": self.resolver_code,
+            "snapshot_schema_version": self.snapshot_schema_version,
+            "snapshot_hash": self.snapshot_hash,
+            "snapshot_payload": self.snapshot_payload,
+            "compatibility_status_at_capture": self.compatibility_status_at_capture,
+            "resolved_at": self.resolved_at,
+            "ledger_id": self.ledger_id,
+            "failure_reason_code": self.failure_reason_code,
+        }
+
+
+class TargetSnapshotResolverRegistry:
+    def __init__(self) -> None:
+        self._resolvers: dict[str, Any] = {}
+
+    def register(self, resolver_code: str, resolver: Any) -> None:
+        code = _normalized_authority_key(resolver_code, "resolver_code")
+        if not callable(resolver):
+            raise ValueError("resolver must be callable")
+        self._resolvers[code] = resolver
+
+    def unregister(self, resolver_code: str) -> None:
+        self._resolvers.pop(str(resolver_code or "").strip(), None)
+
+    def clear(self) -> None:
+        self._resolvers.clear()
+
+    def get(self, resolver_code: str) -> Any | None:
+        return self._resolvers.get(str(resolver_code or "").strip())
+
+
+TARGET_SNAPSHOT_RESOLVER_REGISTRY = TargetSnapshotResolverRegistry()
+
+
+def validate_snapshot_envelope(snapshot_payload: dict[str, Any]) -> None:
+    if not isinstance(snapshot_payload, dict):
+        raise ValueError("target_snapshot_invalid")
+    for field in _REQUIRED_SNAPSHOT_FIELDS:
+        if field not in snapshot_payload:
+            raise ValueError("target_snapshot_invalid")
+    if not isinstance(snapshot_payload.get("target_exists"), bool):
+        raise ValueError("target_snapshot_invalid")
+    if not isinstance(snapshot_payload.get("compatibility_inputs"), dict):
+        raise ValueError("target_snapshot_invalid")
+    if not isinstance(snapshot_payload.get("resolver_metadata"), dict):
+        raise ValueError("target_snapshot_invalid")
+    for field in ("target_type", "target_ref", "target_display_label", "target_state_code", "target_updated_at"):
+        value = snapshot_payload.get(field)
+        if value is None or str(value).strip() == "":
+            raise ValueError("target_snapshot_invalid")
+
+
+def canonical_snapshot_json(snapshot_payload: dict[str, Any]) -> str:
+    validate_snapshot_envelope(snapshot_payload)
+    try:
+        return json.dumps(snapshot_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("target_snapshot_unserializable") from exc
+
+
+def compute_snapshot_hash(snapshot_payload: dict[str, Any]) -> str:
+    canonical = canonical_snapshot_json(snapshot_payload)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+class TargetSnapshotService:
+    def __init__(self, conn: sqlite3.Connection, resolver_registry: TargetSnapshotResolverRegistry | None = None):
+        self._conn = conn
+        self._resolver_registry = resolver_registry or TARGET_SNAPSHOT_RESOLVER_REGISTRY
+
+    def resolve_preview(self, *, capability_code: str, target_type: str, target_ref: str) -> TargetSnapshotResult:
+        capability = str(capability_code or "").strip()
+        target = str(target_type or "").strip()
+        ref = str(target_ref or "").strip()
+        if not capability:
+            return self._blocked(capability, target, ref, "missing_capability_code")
+        if not target:
+            return self._blocked(capability, target, ref, "missing_target_type")
+        if not ref:
+            return self._blocked(capability, target, ref, "missing_target_ref")
+
+        resolver_result = TargetResolverRegistryService(self._conn).evaluate(capability, target)
+        if not resolver_result.admissible:
+            return self._blocked(capability, target, ref, resolver_result.failure_reason_code or "missing_target_resolver_authority")
+        resolver_code = str(resolver_result.resolver_code or "")
+        snapshot_schema_version = str(resolver_result.snapshot_schema_version or "")
+
+        compatibility_result = TargetCompatibilityService(self._conn).evaluate(capability, target)
+        if not compatibility_result.admissible:
+            return self._blocked(
+                capability,
+                target,
+                ref,
+                compatibility_result.failure_reason_code or "missing_target_compatibility_authority",
+                resolver_code=resolver_code,
+                snapshot_schema_version=snapshot_schema_version,
+            )
+        compatibility_status = str(compatibility_result.compatibility_status or "allowed")
+
+        resolver = self._resolver_registry.get(resolver_code)
+        if resolver is None:
+            return self._blocked(capability, target, ref, "target_resolver_implementation_missing", resolver_code=resolver_code, snapshot_schema_version=snapshot_schema_version)
+
+        try:
+            payload = resolver(
+                capability_code=capability,
+                target_type=target,
+                target_ref=ref,
+                resolver_code=resolver_code,
+                snapshot_schema_version=snapshot_schema_version,
+            )
+            if not isinstance(payload, dict):
+                raise ValueError("target_snapshot_invalid")
+            if payload.get("target_type") != target or payload.get("target_ref") != ref:
+                raise ValueError("target_snapshot_invalid")
+            snapshot_hash = compute_snapshot_hash(payload)
+            snapshot_payload_json = canonical_snapshot_json(payload)
+        except ValueError as exc:
+            reason = str(exc) if str(exc) in {"target_snapshot_invalid", "target_snapshot_unserializable"} else "target_snapshot_invalid"
+            return self._blocked(capability, target, ref, reason, resolver_code=resolver_code, snapshot_schema_version=snapshot_schema_version)
+        except (TypeError, OverflowError):
+            return self._blocked(capability, target, ref, "target_snapshot_unserializable", resolver_code=resolver_code, snapshot_schema_version=snapshot_schema_version)
+
+        resolved_at = utc_now_iso()
+        cur = self._conn.execute(
+            """
+            INSERT INTO prompt_runtime_target_snapshot_ledger(
+                capability_code,target_type,target_ref,resolver_code,snapshot_schema_version,
+                snapshot_payload_json,snapshot_hash,compatibility_status_at_capture,resolved_at,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (capability, target, ref, resolver_code, snapshot_schema_version, snapshot_payload_json, snapshot_hash, compatibility_status, resolved_at, resolved_at),
+        )
+        return TargetSnapshotResult(
+            "admissible",
+            capability,
+            target,
+            ref,
+            resolver_code=resolver_code,
+            snapshot_schema_version=snapshot_schema_version,
+            snapshot_hash=snapshot_hash,
+            snapshot_payload=payload,
+            compatibility_status_at_capture=compatibility_status,
+            resolved_at=resolved_at,
+            ledger_id=int(cur.lastrowid),
+            failure_reason_code=None,
+        )
+
+    def _blocked(
+        self,
+        capability_code: str,
+        target_type: str,
+        target_ref: str,
+        failure_reason_code: str,
+        *,
+        resolver_code: str | None = None,
+        snapshot_schema_version: str | None = None,
+    ) -> TargetSnapshotResult:
+        return TargetSnapshotResult(
+            "blocked",
+            capability_code,
+            target_type,
+            target_ref,
+            resolver_code=resolver_code,
+            snapshot_schema_version=snapshot_schema_version,
+            failure_reason_code=failure_reason_code,
+        )

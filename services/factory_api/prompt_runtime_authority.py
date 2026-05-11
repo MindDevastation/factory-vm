@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from services.common.env import Env
 from services.factory_api.security import require_basic_auth_subject
-from services.prompt_registry.authoritative_gate import CapabilityGateService, OperatorPermissionService, RenderValidationService, TargetCompatibilityService, TargetResolverRegistryService
+from services.prompt_registry.authoritative_gate import CapabilityGateService, OperatorPermissionService, RenderValidationService, TargetCompatibilityService, TargetResolverRegistryService, TargetSnapshotService
 
 _SECRET_KEYS = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
 
@@ -39,6 +39,24 @@ def _not_found(code: str, subject: str) -> JSONResponse:
 
 def create_prompt_runtime_authority_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/prompt-runtime", tags=["prompt-runtime-authority"])
+
+    @router.post("/targets/resolve-preview")
+    def resolve_target_preview(payload: dict[str, Any], _: str = Depends(require_basic_auth_subject(env))):
+        conn = _connect(env)
+        try:
+            body = dict(payload or {})
+            result = TargetSnapshotService(conn).resolve_preview(
+                capability_code=str(body.get("capability_code") or ""),
+                target_type=str(body.get("target_type") or ""),
+                target_ref=str(body.get("target_ref") or ""),
+            )
+            if result.admission_status == "admissible":
+                conn.commit()
+            else:
+                conn.rollback()
+            return _sanitize(result.as_dict())
+        finally:
+            conn.close()
 
     @router.get("/resolvers")
     def list_resolvers(

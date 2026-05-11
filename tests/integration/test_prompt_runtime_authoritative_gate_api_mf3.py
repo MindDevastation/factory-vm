@@ -129,7 +129,8 @@ class TestPromptRuntimeAuthoritativeGateApiMf3(unittest.TestCase):
             self.assertEqual(client.get("/v1/prompt-runtime/resolvers/CAP/channel", headers=headers).status_code, 200)
             self.assertEqual(client.get("/v1/prompt-runtime/compatibility", headers=headers).status_code, 200)
             self.assertEqual(client.get("/v1/prompt-runtime/compatibility/CAP/channel", headers=headers).status_code, 200)
-            self.assertEqual(client.post("/v1/prompt-runtime/targets/resolve-preview", json={}, headers=headers).status_code, 404)
+            # MF4 introduces POST resolve-preview; MF3 GET surfaces must still remain read-only.
+            self.assertIn(client.get("/v1/prompt-runtime/targets/resolve-preview", headers=headers).status_code, (404, 405))
             after = self._counts(env)
             self.assertEqual(after, before)
 
