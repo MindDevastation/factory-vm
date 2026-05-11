@@ -1,0 +1,749 @@
+SPEC_PROMPT_RUNTIME_AUTHORITATIVE_GATE_FOUNDATION_v1.0
+
+Conflict / Fullness Check
+
+Hard conflicts inside the REQ were not found.
+
+The REQ is internally aligned on the key product/runtime boundaries:
+- this feature is a prerequisite authority layer, not the execution runtime itself
+- authoritative sources must be persisted, auditable, and fail-closed
+- execution runtime must not infer gate truth from local code paths, stale preview data, UI state, or synthetic defaults
+- Basic Auth username remains the canonical operator subject until future auth redesign
+- SQLite compatibility is mandatory
+- this foundation does not execute actions
+- no arbitrary shell/provider/network execution is introduced
+- no non-authoritative gate truth is allowed
+
+No REQ-level critical gaps remain. The remaining unspecified details are implementation decomposition and internal packaging choices, not blockers.
+
+SPEC_PROMPT_RUNTIME_AUTHORITATIVE_GATE_FOUNDATION_v1.0
+
+1. Overview / цель
+
+Prompt Runtime Authoritative Gate Foundation defines the prerequisite authority layer that must exist before Prompt Registry real execution runtime can be honestly finalized.
+
+Its purpose is to provide persisted, auditable, fail-closed authoritative sources for:
+- capability enablement
+- operator permission class
+- rendered payload validity
+- canonical target resolver identity
+- canonical target compatibility policy
+- canonical target snapshot and snapshot hash
+- composite runtime gate evaluation
+
+This feature is not the execution runtime itself.
+It is the authority layer that execution runtime must read before:
+- admitting execution
+- confirming execution eligibility
+- resolving runtime targets
+- trusting rendered payloads
+
+2. Scope / Non-goals
+
+2.1. In scope
+- persisted capability enablement registry keyed by capability_code
+- persisted operator-to-runtime-permission-class mapping keyed by authenticated Basic Auth subject
+- persisted render validation ledger keyed by:
+  - prompt version
+  - binding fingerprint
+  - render result hash
+- persisted canonical target resolver registry keyed by:
+  - capability_code
+  - target_type
+- persisted target compatibility policy keyed by:
+  - capability_code
+  - target_type
+- persisted target snapshot ledger with canonical payload and deterministic snapshot hash
+- service contracts that execution runtime can call for gate evaluation
+- admin/operator read APIs
+- admin/operator maintenance APIs where the REQ allows them
+- audit-safe inspection surfaces
+- fail-closed behavior whenever authoritative source is absent, stale, invalid, disabled, deprecated, or unresolved
+
+2.2. Out of scope
+- production execution runtime implementation
+- queue/worker redesign
+- UI redesign
+- arbitrary target-type expansion beyond explicitly registered supported target types
+- hidden permission system outside the explicit model
+- shell/provider/network execution adapters
+- YouTube-specific behavior
+- execution attempt writes beyond what is required for authoritative gates themselves
+- preview/detail/review page execution
+- synthetic defaults when authoritative data is absent
+- migration away from Basic Auth
+- non-SQLite requirements
+
+2.3. Boundary rules
+- this foundation itself does not execute actions
+- this foundation must not synthesize gate truth from UI state
+- this foundation must not synthesize permission truth from ad hoc code assumptions
+- this foundation must not synthesize compatibility truth locally in runtime code
+- all authoritative sources must be persisted and auditable
+- any missing source must cause fail-closed blocked evaluation
+
+3. Problem statement
+
+3.1. Baseline problem
+Current Prompt Registry dispatch foundation is intentionally read-only and does not provide authoritative persisted gate sources for real runtime admission.
+
+3.2. Confirmed missing authoritative sources
+- capability execution-enabled source
+- operator permission / capability-class source
+- rendered payload validity source
+- canonical runtime target resolver / snapshot / compatibility contract
+
+3.3. Consequence rule
+Without these sources, any “real execution runtime” would have to rely on:
+- inferred local code paths
+- hardcoded assumptions
+- stale preview/review data
+- ad hoc target resolution
+- synthetic permission truth
+
+That is forbidden for spec-honest runtime admission.
+
+4. Canonical architecture role
+
+4.1. Feature role
+This feature is the authoritative gate foundation for later execution runtime.
+
+4.2. Downstream dependency rule
+Execution runtime must consume this feature as the only trusted gate source for:
+- capability enablement
+- operator permission
+- render validity
+- target resolver identity
+- target compatibility
+- target snapshot truth
+
+4.3. Fail-closed rule
+If any authoritative gate source is missing, invalid, disabled, deprecated, unresolved, or stale beyond contract, downstream runtime must return blocked outcome rather than continue.
+
+5. Canonical data model
+
+5.1. prompt_runtime_capability_registry
+Purpose:
+authoritative source of whether a capability is execution-enabled and what runtime permission class is required.
+
+Required columns:
+- id
+- capability_code
+- execution_enabled
+- required_permission_class
+- status
+- notes nullable
+- updated_by_operator
+- created_at
+- updated_at
+
+Required uniqueness:
+- unique(capability_code)
+
+Frozen enum: required_permission_class
+- runtime_view
+- runtime_execute
+- runtime_operate
+- runtime_admin
+
+Frozen enum: status
+- active
+- disabled
+- deprecated
+
+Runtime admissibility rule:
+A capability is execution-admissible only when:
+- row exists
+- execution_enabled = true
+- status = active
+
+5.2. prompt_runtime_operator_permissions
+Purpose:
+authoritative mapping from authenticated operator identity to runtime permission class.
+
+Canonical operator subject source:
+- Basic Auth username
+
+Required columns:
+- id
+- operator_subject
+- permission_class
+- is_enabled
+- notes nullable
+- updated_by_operator
+- created_at
+- updated_at
+
+Required uniqueness:
+- unique(operator_subject)
+
+Frozen enum: permission_class
+- runtime_view
+- runtime_execute
+- runtime_operate
+- runtime_admin
+
+Permission order:
+- runtime_admin > runtime_operate > runtime_execute > runtime_view
+
+Runtime rule:
+If operator row is absent or disabled, gate evaluation must fail closed.
+
+5.3. prompt_runtime_render_validation_ledger
+Purpose:
+authoritative proof that a rendered payload was validated for runtime use.
+
+Required columns:
+- id
+- prompt_record_id
+- prompt_version_id
+- binding_fingerprint
+- render_result_hash
+- validation_status
+- validation_schema_version
+- validator_code
+- validated_at
+- invalid_reason_code nullable
+- invalid_reason_detail nullable
+- superseded_by_validation_id nullable
+- created_at
+
+Frozen enum: validation_status
+- passed
+- failed
+- error
+- superseded
+
+Canonical latest-validation uniqueness boundary:
+- prompt_version_id
+- binding_fingerprint
+- render_result_hash
+
+Runtime rule:
+Execution runtime may trust rendered payload only if latest authoritative row for the exact tuple is:
+- present
+- validation_status = passed
+- not superseded
+
+5.4. prompt_runtime_target_resolver_registry
+Purpose:
+authoritative registry of which resolver is canonical for a given capability and target type.
+
+Required columns:
+- id
+- capability_code
+- target_type
+- resolver_code
+- snapshot_schema_version
+- is_enabled
+- notes nullable
+- updated_by_operator
+- created_at
+- updated_at
+
+Required uniqueness:
+- unique(capability_code, target_type)
+
+Runtime rule:
+If no enabled resolver exists for exact capability_code + target_type, runtime must fail closed.
+
+5.5. prompt_runtime_target_compatibility_policy
+Purpose:
+authoritative policy for whether a capability may run against a target type.
+
+Required columns:
+- id
+- capability_code
+- target_type
+- compatibility_status
+- policy_code
+- notes nullable
+- updated_by_operator
+- created_at
+- updated_at
+
+Required uniqueness:
+- unique(capability_code, target_type)
+
+Frozen enum: compatibility_status
+- allowed
+- blocked
+- deprecated
+
+Runtime rule:
+Execution runtime may proceed only when exact row exists and compatibility_status = allowed.
+
+5.6. prompt_runtime_target_snapshot_ledger
+Purpose:
+authoritative persisted target snapshot used by execution runtime for stale/conflict-safe admission.
+
+Required columns:
+- id
+- capability_code
+- target_type
+- target_ref
+- resolver_code
+- snapshot_schema_version
+- snapshot_payload_json
+- snapshot_hash
+- compatibility_status_at_capture
+- resolved_at
+- created_at
+
+Canonical snapshot envelope fields
+The outer snapshot envelope is frozen and must always include:
+- target_type
+- target_ref
+- target_display_label
+- target_state_code
+- target_exists
+- target_updated_at or equivalent state freshness marker
+- compatibility_inputs
+- resolver_metadata
+
+Resolver-owned inner payload rule:
+Per-target inner payload is resolver-owned but must remain compatible with the outer envelope contract.
+
+Snapshot hash contract:
+- snapshot_hash must be computed over canonical serialized snapshot payload
+- field ordering and serialization rules must be deterministic
+- same target state must produce same hash under same schema version
+
+Runtime rule:
+If target snapshot cannot be resolved, cannot be hashed deterministically, or is incompatible, runtime must fail closed.
+
+6. Required indexes
+
+6.1. P0 required indexes
+- unique index on prompt_runtime_capability_registry.capability_code
+- unique index on prompt_runtime_operator_permissions.operator_subject
+- composite index on prompt_runtime_render_validation_ledger(prompt_version_id, binding_fingerprint, render_result_hash, validated_at)
+- unique index on prompt_runtime_target_resolver_registry(capability_code, target_type)
+- unique index on prompt_runtime_target_compatibility_policy(capability_code, target_type)
+- composite index on prompt_runtime_target_snapshot_ledger(capability_code, target_type, target_ref, resolved_at)
+
+7. Internal service contracts
+
+7.1. CapabilityGateService
+Purpose:
+resolve authoritative capability gate by capability_code
+
+Input:
+- capability_code
+
+Output:
+- capability_code
+- execution_enabled
+- required_permission_class
+- status
+- authoritative_source_metadata
+
+Fail-closed behavior:
+- no row => reject
+- disabled/deprecated => reject
+
+7.2. OperatorPermissionService
+Purpose:
+resolve authoritative permission class for authenticated operator
+
+Input:
+- operator_subject
+
+Output:
+- operator_subject
+- permission_class
+- is_enabled
+
+Fail-closed behavior:
+- no row => reject
+- disabled => reject
+
+7.3. RenderValidationService
+Purpose:
+resolve latest authoritative validation state for rendered payload tuple
+
+Input:
+- prompt_version_id
+- binding_fingerprint
+- render_result_hash
+
+Output:
+- latest_validation_record
+- authoritative_verdict:
+  - trusted
+  - untrusted
+  - missing
+
+Fail-closed behavior:
+- missing row => reject
+- latest row failed/error/superseded => reject
+
+7.4. TargetResolverService
+Purpose:
+resolve canonical target snapshot for exact capability_code + target_type + target_ref
+
+Input:
+- capability_code
+- target_type
+- target_ref
+
+Output:
+- canonical_target_snapshot_payload
+- snapshot_hash
+- resolver_metadata
+- compatibility_inputs
+
+Fail-closed behavior:
+- no enabled resolver => reject
+- target missing/unresolvable => reject
+- non-deterministic or incomplete snapshot => reject
+
+7.5. TargetCompatibilityService
+Purpose:
+check authoritative compatibility between capability and target type
+
+Input:
+- capability_code
+- target_type
+
+Output:
+- compatibility_status
+- policy_code
+- policy_metadata
+
+Fail-closed behavior:
+- no compatibility row => reject
+- blocked/deprecated => reject
+
+7.6. PromptRuntimeGateEvaluationService
+Purpose:
+compose all authoritative sources into one runtime admission evaluation
+
+Input:
+- operator_subject
+- capability_code
+- prompt_version_id
+- binding_fingerprint
+- render_result_hash
+- target_type
+- target_ref
+
+Output:
+- admission_status
+- required_permission_class
+- resolved_permission_class
+- render_validation_status
+- target_compatibility_status
+- target_snapshot_hash
+- failure_reason_code
+- authoritative_source_summary
+
+Allowed admission_status:
+- admissible
+- blocked_missing_authority
+- blocked_disabled_capability
+- blocked_permission
+- blocked_invalid_render
+- blocked_target_resolution
+- blocked_target_compatibility
+
+Composite fail-closed rule:
+Any missing/disabled/invalid/unresolved authoritative source must return a blocked outcome.
+
+8. Admin/operator API contracts
+
+8.1. Capability registry API
+Required endpoints:
+- GET /v1/prompt-runtime/capabilities
+- GET /v1/prompt-runtime/capabilities/{capability_code}
+- PUT /v1/prompt-runtime/capabilities/{capability_code}
+
+Basic Auth required:
+- yes
+
+8.2. Operator permission API
+Required endpoints:
+- GET /v1/prompt-runtime/operators/{operator_subject}/permissions
+- PUT /v1/prompt-runtime/operators/{operator_subject}/permissions
+
+Basic Auth required:
+- yes
+
+8.3. Render validation inspection API
+Required endpoints:
+- GET /v1/prompt-runtime/render-validations
+- GET /v1/prompt-runtime/render-validations/latest
+
+Write path rule:
+- internal service write only
+- no operator-side manual mutation endpoint in this foundation
+
+8.4. Target resolver / compatibility inspection API
+Required endpoints:
+- GET /v1/prompt-runtime/resolvers
+- PUT /v1/prompt-runtime/resolvers/{capability_code}/{target_type}
+- GET /v1/prompt-runtime/compatibility
+- PUT /v1/prompt-runtime/compatibility/{capability_code}/{target_type}
+
+8.5. Target resolve preview API
+Required endpoint:
+- POST /v1/prompt-runtime/targets/resolve-preview
+
+Purpose:
+return canonical resolved snapshot and hash without executing anything
+
+Basic Auth required:
+- yes
+
+8.6. Composite gate evaluation API
+Required endpoint:
+- POST /v1/prompt-runtime/gates/evaluate
+
+Purpose:
+evaluate all authoritative runtime gates and return fail-closed result
+
+Explicit constraint:
+- this endpoint never executes linked action
+- this endpoint is evaluation-only
+
+9. Runtime invariants
+
+9.1. P0 invariants
+1. No execution runtime may trust a capability unless capability registry row exists and is active/enabled.
+2. No execution runtime may trust operator authorization unless operator permission row exists and is enabled.
+3. No execution runtime may trust rendered payload unless latest exact validation ledger row is passed.
+4. No execution runtime may trust target eligibility unless:
+   - enabled resolver exists for exact capability_code + target_type
+   - compatibility policy exists for exact capability_code + target_type
+   - target snapshot resolves successfully
+   - snapshot hash is deterministic
+5. Any missing authoritative source causes fail-closed block.
+6. No preview/detail/recheck page may silently substitute inferred truth when authoritative source is absent.
+7. No gate source may be synthesized from UI state only.
+8. Basic Auth username is canonical operator subject until later auth redesign explicitly replaces it.
+9. Target compatibility is determined only by authoritative compatibility policy row, not by ad hoc runtime guesswork.
+10. Snapshot freshness is determined by resolved canonical snapshot and hash, not by stale preview payload.
+11. Compatibility and resolver truth must be inspectable and auditable.
+12. This foundation itself does not execute actions.
+
+9.2. P1 invariants
+13. Latest authoritative render validation for an exact tuple supersedes older rows.
+14. Operator permission hierarchy must be monotonic and comparable.
+15. Deprecated capability or compatibility rows do not silently coerce to allowed.
+16. Snapshot schema version must be explicit and persisted.
+
+10. Status / versioning support
+
+10.1. P1 status requirements
+Versioning/status support must exist where needed for registries and policies.
+
+10.2. Explicit state/status rule
+Enabled/disabled/deprecated/invalid states must be persisted explicitly where REQ requires them.
+No local boolean inference may substitute for explicit persisted state.
+
+11. Validation / reason-code model
+
+11.1. Structured validation requirement
+The foundation must support structured validation and compatibility reason codes.
+
+11.2. Reason-code rule
+Gate failure reasons must be:
+- typed
+- stable enough for operator/admin diagnostics
+- audit-safe
+- secret-safe
+
+11.3. Explainability boundary
+P2 explainability is lightweight only.
+It must explain why a gate passed/failed without leaking secrets or fabricating extra gate truth.
+
+12. Audit-safe inspection surfaces
+
+12.1. Inspection requirement
+Audit-safe inspection surfaces are mandatory.
+
+12.2. Inspection coverage
+Operator/admin surfaces must allow inspection of:
+- capability registry rows
+- operator permission rows
+- render validation records
+- resolver registry rows
+- compatibility policy rows
+- target resolve preview output
+- composite gate evaluation output
+
+12.3. Inspection rule
+Inspection surfaces must remain read/evaluation-only in this foundation unless REQ explicitly permits a maintenance PUT endpoint.
+
+13. Security requirements
+
+13.1. Security posture
+- Basic Auth remains
+- SQLite remains
+- no arbitrary shell execution
+- no arbitrary provider/network execution
+- no YouTube behavior
+- no hidden synthetic gate truth
+
+13.2. Secret-safety rule
+No operator/admin surface may expose secret material or secret-derived unsafe payload.
+
+13.3. Fail-closed security rule
+Absence of authoritative truth must always block, never silently allow.
+
+14. Persistence / migration requirements
+
+14.1. Additive migration rule
+Only additive schema changes are allowed.
+
+14.2. SQLite compatibility rule
+All schema and indexes must remain SQLite-compatible.
+
+14.3. Existing system preservation rule
+This foundation must not break:
+- current read-only Prompt Registry foundation
+- existing review/detail/recheck/readiness semantics
+- current Basic Auth model
+
+15. UI / operator surface contract
+
+15.1. UI scope in this foundation
+This foundation may provide operator/admin diagnostics and maintenance surfaces, but must not introduce execution controls.
+
+15.2. Forbidden UI behavior
+- no execute button
+- no confirm execution
+- no runtime dispatch
+- no preview-triggered action
+- no detail-page-triggered action
+
+15.3. Required UI behavior
+- inspect authoritative rows
+- inspect latest authoritative validation
+- inspect canonical target resolution preview
+- inspect composite gate evaluation result
+- inspect blocked/admissible explanation in audit-safe form
+
+16. Validation rules
+
+16.1. Authority-source validation
+- all required registries/ledgers must be persisted
+- no authoritative source may be replaced by inferred local truth
+- all required uniqueness constraints must hold
+
+16.2. Service validation
+- each service must fail closed on missing/disabled/invalid/unresolved source
+- composite evaluation must read authoritative sources only
+
+16.3. API validation
+- all required admin/operator APIs must remain Basic-Auth-protected
+- gate evaluation API must never execute anything
+- target resolve preview must never execute anything
+- render validation inspection remains read-only on operator side
+
+16.4. Snapshot validation
+- snapshot hash must be deterministic
+- canonical envelope fields must always be present
+- non-deterministic or incomplete snapshots are invalid
+
+17. Acceptance criteria
+
+17.1. P0 acceptance
+1. There is a persisted capability enablement registry keyed by capability_code.
+2. There is a persisted operator permission mapping keyed by authenticated Basic Auth subject.
+3. There is a persisted render validation ledger keyed by:
+   - prompt version
+   - binding fingerprint
+   - render result hash
+4. There is a persisted resolver registry keyed by capability_code + target_type.
+5. There is a persisted compatibility policy keyed by capability_code + target_type.
+6. There is a persisted target snapshot ledger with canonical payload and deterministic hash.
+7. There is a composite gate evaluation service that reads only authoritative sources.
+8. All gate evaluation fails closed when any authoritative source is absent or invalid.
+9. No endpoint in this foundation performs execution.
+10. All schema and contracts remain SQLite-compatible.
+11. Basic Auth remains required for admin/operator surfaces.
+
+17.2. P1 acceptance
+12. Admin/operator APIs exist to inspect and maintain capability registry, permission mapping, resolver registry, and compatibility policy.
+13. Render validation ledger can be inspected through audit-safe read surfaces.
+14. Target resolve preview returns canonical snapshot and deterministic hash.
+15. Composite gate evaluation returns operator-readable blocked/admissible outcomes.
+
+17.3. P2 acceptance
+16. Gate failure reasons are explainable enough for operator diagnostics without leaking secrets.
+17. Registry and evaluation surfaces are sufficient to support later execution runtime planning.
+
+All included items are mandatory.
+
+18. Dependency note / readiness
+
+18.1. Dependency rule
+Prompt Registry real execution runtime cannot be honestly finalized without this foundation.
+
+18.2. Reason
+Without this foundation, runtime execution would necessarily rely on:
+- non-authoritative local booleans
+- inferred permissions
+- untrusted rendered payloads
+- ad hoc target resolution
+- synthetic compatibility logic
+
+That is forbidden.
+
+18.3. Required dependency order
+1. Prompt Runtime Authoritative Gate Foundation
+2. Execution runtime finalization
+3. Later runtime/UI polishing
+
+19. Definition of done
+
+This feature is done only when:
+- all authoritative source tables/ledgers/registries exist
+- all required services exist and fail closed
+- all required admin/operator APIs exist
+- target resolve preview and composite gate evaluation exist as non-executing endpoints
+- no execution behavior is introduced in this foundation
+- dependency order for later runtime work is unblocked
+- the feature is ready to progress into implementation work
+
+20. Suggested microfeature breakdown
+
+MF1 — Capability Registry and Operator Permission Authority
+- capability registry
+- operator permission mapping
+- required indexes
+- admin/operator APIs
+
+MF2 — Render Validation Ledger Authority
+- validation ledger
+- latest authoritative resolution logic
+- read-only inspection surface
+
+MF3 — Resolver Registry and Compatibility Policy Authority
+- resolver registry
+- compatibility policy
+- admin/operator APIs
+
+MF4 — Canonical Target Snapshot Ledger and Resolve Preview
+- canonical snapshot envelope
+- deterministic hash contract
+- resolve-preview endpoint
+
+MF5 — Composite Gate Evaluation Service
+- compose authoritative source reads
+- fail-closed evaluation result
+- operator-readable blocked/admissible reasons
+
+MF6 — Audit-safe Operator/Admin Inspection Surfaces
+- list/detail/report-style diagnostics
+- authority-row inspection
+- evaluation explainability
+
+21. Open questions / ambiguities
+
+21.1. Exact packaging of maintenance/inspection surfaces across pages or endpoints is implementation detail so long as required API contracts remain preserved.
+
+21.2. Exact internal decomposition into slices/workstreams is not fixed at REQ level and remains an implementation/spec structuring choice.
+
+READY FOR IMPLEMENTATION: YES
