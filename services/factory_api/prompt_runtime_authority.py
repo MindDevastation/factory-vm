@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from services.common.env import Env
 from services.factory_api.security import require_basic_auth_subject
-from services.prompt_registry.authoritative_gate import CapabilityGateService, OperatorPermissionService, PromptRuntimeGateEvaluationService, RenderValidationService, TargetCompatibilityService, TargetResolverRegistryService, TargetSnapshotService
+from services.prompt_registry.authoritative_gate import CapabilityGateService, OperatorPermissionService, PromptRuntimeAuthorityInspectionService, PromptRuntimeGateEvaluationService, RenderValidationService, TargetCompatibilityService, TargetResolverRegistryService, TargetSnapshotService
 
 _SECRET_KEYS = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
 
@@ -39,6 +39,35 @@ def _not_found(code: str, subject: str) -> JSONResponse:
 
 def create_prompt_runtime_authority_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/prompt-runtime", tags=["prompt-runtime-authority"])
+
+    @router.get("/authority/summary")
+    def authority_summary(_: str = Depends(require_basic_auth_subject(env))):
+        conn = _connect(env)
+        try:
+            return _sanitize(PromptRuntimeAuthorityInspectionService(conn).summary())
+        finally:
+            conn.close()
+
+    @router.get("/authority/report")
+    def authority_report(
+        capability_code: str | None = None,
+        target_type: str | None = None,
+        operator_subject: str | None = None,
+        limit: int = 100,
+        _: str = Depends(require_basic_auth_subject(env)),
+    ):
+        conn = _connect(env)
+        try:
+            return _sanitize(
+                PromptRuntimeAuthorityInspectionService(conn).report(
+                    capability_code=capability_code,
+                    target_type=target_type,
+                    operator_subject=operator_subject,
+                    limit=limit,
+                )
+            )
+        finally:
+            conn.close()
 
     @router.post("/gates/evaluate")
     def evaluate_gate(payload: dict[str, Any], operator_subject: str = Depends(require_basic_auth_subject(env))):

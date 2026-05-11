@@ -1055,3 +1055,103 @@ class PromptRuntimeGateEvaluationService:
             failure_reason_code,
             authoritative_source_summary,
         )
+
+_INSPECTION_SECRET_MARKERS: tuple[str, ...] = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
+
+
+def _inspection_redact(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): ("[redacted]" if any(marker in str(k).lower() for marker in _INSPECTION_SECRET_MARKERS) else _inspection_redact(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_inspection_redact(item) for item in value]
+    if isinstance(value, str) and any(marker in value.lower() for marker in _INSPECTION_SECRET_MARKERS):
+        return "[redacted]"
+    return value
+
+
+def _bounded_limit(limit: int | None) -> int:
+    return min(max(int(limit or 100), 1), 500)
+
+
+class PromptRuntimeAuthorityInspectionService:
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "capabilities": self._counts("prompt_runtime_capability_registry", ("status", "execution_enabled")),
+            "operator_permissions": self._counts("prompt_runtime_operator_permissions", ("permission_class", "is_enabled")),
+            "render_validations": self._counts("prompt_runtime_render_validation_ledger", ("validation_status",)),
+            "resolvers": self._counts("prompt_runtime_target_resolver_registry", ("is_enabled",)),
+            "compatibility": self._counts("prompt_runtime_target_compatibility_policy", ("compatibility_status",)),
+            "snapshots": self._snapshot_summary(),
+        }
+
+    def report(
+        self,
+        *,
+        capability_code: str | None = None,
+        target_type: str | None = None,
+        operator_subject: str | None = None,
+        limit: int | None = 100,
+    ) -> dict[str, Any]:
+        safe_limit = _bounded_limit(limit)
+        capability = str(capability_code or "").strip() or None
+        target = str(target_type or "").strip() or None
+        operator = str(operator_subject or "").strip() or None
+        return {
+            "limit": safe_limit,
+            "filters": {"capability_code": capability, "target_type": target, "operator_subject": operator},
+            "capabilities": self._select_rows("prompt_runtime_capability_registry", [self._eq("capability_code", capability)], "updated_at DESC, id DESC", safe_limit),
+            "operator_permissions": self._select_rows("prompt_runtime_operator_permissions", [self._eq("operator_subject", operator)], "updated_at DESC, id DESC", safe_limit),
+            "render_validations": self._select_rows("prompt_runtime_render_validation_ledger", [], "validated_at DESC, id DESC", safe_limit),
+            "resolvers": self._select_rows("prompt_runtime_target_resolver_registry", [self._eq("capability_code", capability), self._eq("target_type", target)], "updated_at DESC, id DESC", safe_limit),
+            "compatibility": self._select_rows("prompt_runtime_target_compatibility_policy", [self._eq("capability_code", capability), self._eq("target_type", target)], "updated_at DESC, id DESC", safe_limit),
+            "snapshots": self._snapshot_rows(capability_code=capability, target_type=target, limit=safe_limit),
+        }
+
+    def _counts(self, table: str, fields: tuple[str, ...]) -> dict[str, Any]:
+        total = int(self._conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"])
+        by: dict[str, dict[str, int]] = {}
+        for field in fields:
+            rows = self._conn.execute(f"SELECT {field} AS k, COUNT(*) AS c FROM {table} GROUP BY {field} ORDER BY {field}").fetchall()
+            by[field] = {str(row["k"]): int(row["c"]) for row in rows}
+        return {"total": total, "by": by}
+
+    def _snapshot_summary(self) -> dict[str, Any]:
+        row = self._conn.execute("SELECT COUNT(*) AS c, MAX(resolved_at) AS latest_resolved_at FROM prompt_runtime_target_snapshot_ledger").fetchone()
+        return {"total": int(row["c"]), "latest_resolved_at": row["latest_resolved_at"]}
+
+    def _eq(self, field: str, value: str | None) -> tuple[str, Any] | None:
+        if value is None:
+            return None
+        return (f"{field}=?", value)
+
+    def _select_rows(self, table: str, clauses: list[tuple[str, Any] | None], order_by: str, limit: int) -> list[dict[str, Any]]:
+        active = [clause for clause in clauses if clause is not None]
+        where = " WHERE " + " AND ".join(clause[0] for clause in active) if active else ""
+        params = [clause[1] for clause in active]
+        rows = self._conn.execute(f"SELECT * FROM {table}{where} ORDER BY {order_by} LIMIT ?", tuple(params + [limit])).fetchall()
+        return [_inspection_redact(_row_to_dict(row) or {}) for row in rows]
+
+    def _snapshot_rows(self, *, capability_code: str | None, target_type: str | None, limit: int) -> list[dict[str, Any]]:
+        clauses = [self._eq("capability_code", capability_code), self._eq("target_type", target_type)]
+        active = [clause for clause in clauses if clause is not None]
+        where = " WHERE " + " AND ".join(clause[0] for clause in active) if active else ""
+        params = [clause[1] for clause in active]
+        raw_rows = self._conn.execute(
+            f"SELECT * FROM prompt_runtime_target_snapshot_ledger{where} ORDER BY resolved_at DESC, id DESC LIMIT ?",
+            tuple(params + [limit]),
+        ).fetchall()
+        rows: list[dict[str, Any]] = []
+        for raw_row in raw_rows:
+            row = _row_to_dict(raw_row) or {}
+            raw_payload = row.pop("snapshot_payload_json", None)
+            row = _inspection_redact(row)
+            if isinstance(raw_payload, str):
+                try:
+                    row["snapshot_payload"] = _inspection_redact(json.loads(raw_payload))
+                except json.JSONDecodeError:
+                    row["snapshot_payload"] = "[invalid-json]"
+            rows.append(row)
+        return rows
