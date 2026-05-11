@@ -913,3 +913,145 @@ class TargetSnapshotService:
             snapshot_schema_version=snapshot_schema_version,
             failure_reason_code=failure_reason_code,
         )
+
+_GATE_ADMISSION_STATUSES: tuple[str, ...] = (
+    "admissible",
+    "blocked_missing_authority",
+    "blocked_disabled_capability",
+    "blocked_permission",
+    "blocked_invalid_render",
+    "blocked_target_resolution",
+    "blocked_target_compatibility",
+)
+
+
+@dataclass(frozen=True)
+class PromptRuntimeGateEvaluationResult:
+    admission_status: str
+    required_permission_class: str | None
+    resolved_permission_class: str | None
+    render_validation_status: str | None
+    target_compatibility_status: str | None
+    target_snapshot_hash: str | None
+    failure_reason_code: str | None
+    authoritative_source_summary: dict[str, Any]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "admission_status": self.admission_status,
+            "required_permission_class": self.required_permission_class,
+            "resolved_permission_class": self.resolved_permission_class,
+            "render_validation_status": self.render_validation_status,
+            "target_compatibility_status": self.target_compatibility_status,
+            "target_snapshot_hash": self.target_snapshot_hash,
+            "failure_reason_code": self.failure_reason_code,
+            "authoritative_source_summary": self.authoritative_source_summary,
+        }
+
+
+class PromptRuntimeGateEvaluationService:
+    def __init__(self, conn: sqlite3.Connection, resolver_registry: TargetSnapshotResolverRegistry | None = None):
+        self._conn = conn
+        self._resolver_registry = resolver_registry or TARGET_SNAPSHOT_RESOLVER_REGISTRY
+
+    def evaluate(
+        self,
+        *,
+        operator_subject: str,
+        capability_code: str,
+        prompt_version_id: int,
+        binding_fingerprint: str,
+        render_result_hash: str,
+        target_type: str,
+        target_ref: str,
+    ) -> PromptRuntimeGateEvaluationResult:
+        summary: dict[str, Any] = {}
+
+        capability = CapabilityGateService(self._conn).evaluate(capability_code)
+        summary["capability"] = capability.as_dict()
+        required_permission = capability.required_permission_class
+        if not capability.exists:
+            return self._result("blocked_missing_authority", required_permission, None, None, None, None, "missing_capability_authority", summary)
+        if not capability.admissible:
+            return self._result("blocked_disabled_capability", required_permission, None, None, None, None, capability.failure_reason_code, summary)
+
+        operator = OperatorPermissionService(self._conn).evaluate(operator_subject)
+        summary["operator_permission"] = operator.as_dict()
+        resolved_permission = operator.permission_class
+        if not operator.exists:
+            return self._result("blocked_missing_authority", required_permission, resolved_permission, None, None, None, "missing_operator_permission_authority", summary)
+        if not operator.admissible:
+            return self._result("blocked_permission", required_permission, resolved_permission, None, None, None, operator.failure_reason_code, summary)
+        if not permission_class_satisfies(resolved_permission, required_permission):
+            return self._result("blocked_permission", required_permission, resolved_permission, None, None, None, "operator_permission_insufficient", summary)
+
+        render = RenderValidationService(self._conn).evaluate(
+            prompt_version_id=int(prompt_version_id),
+            binding_fingerprint=binding_fingerprint,
+            render_result_hash=render_result_hash,
+        )
+        summary["render_validation"] = render.as_dict()
+        if not render.trusted:
+            return self._result("blocked_invalid_render", required_permission, resolved_permission, render.verdict, None, None, render.failure_reason_code, summary)
+
+        resolver = TargetResolverRegistryService(self._conn).evaluate(capability_code, target_type)
+        summary["target_resolver"] = resolver.as_dict()
+        if not resolver.admissible:
+            return self._result("blocked_target_resolution", required_permission, resolved_permission, render.verdict, None, None, resolver.failure_reason_code, summary)
+
+        compatibility = TargetCompatibilityService(self._conn).evaluate(capability_code, target_type)
+        summary["target_compatibility"] = compatibility.as_dict()
+        compatibility_status = compatibility.compatibility_status
+        if not compatibility.admissible:
+            status = "blocked_target_compatibility"
+            reason = compatibility.failure_reason_code or "missing_target_compatibility_authority"
+            return self._result(status, required_permission, resolved_permission, render.verdict, compatibility_status, None, reason, summary)
+
+        snapshot = TargetSnapshotService(self._conn, self._resolver_registry).resolve_preview(
+            capability_code=capability_code,
+            target_type=target_type,
+            target_ref=target_ref,
+        )
+        summary["target_snapshot"] = snapshot.as_dict()
+        if snapshot.admission_status != "admissible":
+            reason = snapshot.failure_reason_code or "target_snapshot_invalid"
+            if reason.startswith("target_compatibility_") or reason == "missing_target_compatibility_authority":
+                status = "blocked_target_compatibility"
+            else:
+                status = "blocked_target_resolution"
+            return self._result(status, required_permission, resolved_permission, render.verdict, compatibility_status, snapshot.snapshot_hash, reason, summary)
+
+        return self._result(
+            "admissible",
+            required_permission,
+            resolved_permission,
+            "trusted",
+            compatibility_status,
+            snapshot.snapshot_hash,
+            None,
+            summary,
+        )
+
+    def _result(
+        self,
+        admission_status: str,
+        required_permission_class: str | None,
+        resolved_permission_class: str | None,
+        render_validation_status: str | None,
+        target_compatibility_status: str | None,
+        target_snapshot_hash: str | None,
+        failure_reason_code: str | None,
+        authoritative_source_summary: dict[str, Any],
+    ) -> PromptRuntimeGateEvaluationResult:
+        if admission_status not in _GATE_ADMISSION_STATUSES:
+            raise ValueError(f"invalid admission_status: {admission_status}")
+        return PromptRuntimeGateEvaluationResult(
+            admission_status,
+            required_permission_class,
+            resolved_permission_class,
+            render_validation_status,
+            target_compatibility_status,
+            target_snapshot_hash,
+            failure_reason_code,
+            authoritative_source_summary,
+        )
