@@ -2606,8 +2606,55 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_prompt_linked_action_execution_requests_schema(conn)
     _ensure_prompt_linked_action_dispatch_attempts_schema(conn)
     _ensure_prompt_execution_runtime_schema(conn)
+    _ensure_prompt_runtime_authoritative_gate_foundation_schema(conn)
     _ensure_prompt_usage_events_schema(conn)
     _backfill_video_language_values(conn)
+
+
+def _ensure_prompt_runtime_authoritative_gate_foundation_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS prompt_runtime_capability_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            capability_code TEXT NOT NULL UNIQUE,
+            execution_enabled INTEGER NOT NULL,
+            required_permission_class TEXT NOT NULL,
+            status TEXT NOT NULL,
+            notes TEXT NULL,
+            updated_by_operator TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(execution_enabled IN (0,1)),
+            CHECK(required_permission_class IN ('runtime_view','runtime_execute','runtime_operate','runtime_admin')),
+            CHECK(status IN ('active','disabled','deprecated'))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_runtime_capability_registry_code
+            ON prompt_runtime_capability_registry(capability_code);
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_capability_registry_status
+            ON prompt_runtime_capability_registry(status, execution_enabled, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS prompt_runtime_operator_permissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            operator_subject TEXT NOT NULL UNIQUE,
+            permission_class TEXT NOT NULL,
+            is_enabled INTEGER NOT NULL,
+            notes TEXT NULL,
+            updated_by_operator TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(permission_class IN ('runtime_view','runtime_execute','runtime_operate','runtime_admin')),
+            CHECK(is_enabled IN (0,1))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_runtime_operator_permissions_subject
+            ON prompt_runtime_operator_permissions(operator_subject);
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_operator_permissions_enabled
+            ON prompt_runtime_operator_permissions(is_enabled, permission_class, updated_at DESC);
+        """
+    )
 
 
 def _backfill_video_language_values(conn: sqlite3.Connection) -> None:
