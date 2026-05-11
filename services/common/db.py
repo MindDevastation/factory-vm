@@ -2676,6 +2676,47 @@ def _ensure_prompt_runtime_authoritative_gate_foundation_schema(conn: sqlite3.Co
 
         CREATE INDEX IF NOT EXISTS idx_prompt_runtime_render_validation_status
             ON prompt_runtime_render_validation_ledger(validation_status, validated_at DESC, id DESC);
+
+        CREATE TABLE IF NOT EXISTS prompt_runtime_target_resolver_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            capability_code TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            resolver_code TEXT NOT NULL,
+            snapshot_schema_version TEXT NOT NULL,
+            is_enabled INTEGER NOT NULL,
+            notes TEXT NULL,
+            updated_by_operator TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(is_enabled IN (0,1)),
+            UNIQUE(capability_code, target_type)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_runtime_target_resolver_registry_key
+            ON prompt_runtime_target_resolver_registry(capability_code, target_type);
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_target_resolver_registry_enabled
+            ON prompt_runtime_target_resolver_registry(is_enabled, capability_code, target_type);
+
+        CREATE TABLE IF NOT EXISTS prompt_runtime_target_compatibility_policy (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            capability_code TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            compatibility_status TEXT NOT NULL,
+            policy_code TEXT NOT NULL,
+            notes TEXT NULL,
+            updated_by_operator TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(compatibility_status IN ('allowed','blocked','deprecated')),
+            UNIQUE(capability_code, target_type)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_runtime_target_compatibility_policy_key
+            ON prompt_runtime_target_compatibility_policy(capability_code, target_type);
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_target_compatibility_policy_status
+            ON prompt_runtime_target_compatibility_policy(compatibility_status, capability_code, target_type);
         """
     )
 

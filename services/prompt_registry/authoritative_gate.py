@@ -428,3 +428,284 @@ class RenderValidationService:
             tuple(params + [safe_limit]),
         ).fetchall()
         return [row for row in map(_row_to_dict, rows) if row is not None]
+
+COMPATIBILITY_STATUSES: tuple[str, ...] = ("allowed", "blocked", "deprecated")
+
+
+def validate_compatibility_status(value: str) -> str:
+    normalized = str(value or "").strip()
+    if normalized not in COMPATIBILITY_STATUSES:
+        raise ValueError(f"invalid compatibility_status: {normalized}")
+    return normalized
+
+
+def _normalized_authority_key(value: str, field_name: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field_name} is required")
+    return normalized
+
+
+@dataclass(frozen=True)
+class TargetResolverEvaluation:
+    capability_code: str
+    target_type: str
+    exists: bool
+    resolver_code: str | None
+    snapshot_schema_version: str | None
+    is_enabled: bool
+    admissible: bool
+    failure_reason_code: str | None
+    authoritative_source_metadata: dict[str, Any]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "capability_code": self.capability_code,
+            "target_type": self.target_type,
+            "exists": self.exists,
+            "resolver_code": self.resolver_code,
+            "snapshot_schema_version": self.snapshot_schema_version,
+            "is_enabled": self.is_enabled,
+            "admissible": self.admissible,
+            "failure_reason_code": self.failure_reason_code,
+            "authoritative_source_metadata": self.authoritative_source_metadata,
+        }
+
+
+@dataclass(frozen=True)
+class TargetCompatibilityEvaluation:
+    capability_code: str
+    target_type: str
+    exists: bool
+    compatibility_status: str | None
+    policy_code: str | None
+    admissible: bool
+    failure_reason_code: str | None
+    authoritative_source_metadata: dict[str, Any]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "capability_code": self.capability_code,
+            "target_type": self.target_type,
+            "exists": self.exists,
+            "compatibility_status": self.compatibility_status,
+            "policy_code": self.policy_code,
+            "admissible": self.admissible,
+            "failure_reason_code": self.failure_reason_code,
+            "authoritative_source_metadata": self.authoritative_source_metadata,
+        }
+
+
+class TargetResolverRegistryService:
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def get_row(self, capability_code: str, target_type: str) -> dict[str, Any] | None:
+        capability = str(capability_code or "").strip()
+        target = str(target_type or "").strip()
+        if not capability or not target:
+            return None
+        return _row_to_dict(
+            self._conn.execute(
+                "SELECT * FROM prompt_runtime_target_resolver_registry WHERE capability_code=? AND target_type=?",
+                (capability, target),
+            ).fetchone()
+        )
+
+    def evaluate(self, capability_code: str, target_type: str) -> TargetResolverEvaluation:
+        capability = str(capability_code or "").strip()
+        target = str(target_type or "").strip()
+        row = self.get_row(capability, target)
+        if row is None:
+            return TargetResolverEvaluation(
+                capability,
+                target,
+                False,
+                None,
+                None,
+                False,
+                False,
+                "missing_target_resolver_authority",
+                {"source_table": "prompt_runtime_target_resolver_registry"},
+            )
+        resolver_code = str(row.get("resolver_code") or "").strip()
+        snapshot_schema_version = str(row.get("snapshot_schema_version") or "").strip()
+        is_enabled = bool(int(row.get("is_enabled") or 0))
+        if not is_enabled:
+            reason = "target_resolver_disabled"
+        elif not resolver_code:
+            reason = "target_resolver_code_missing"
+        elif not snapshot_schema_version:
+            reason = "target_resolver_snapshot_schema_missing"
+        else:
+            reason = None
+        return TargetResolverEvaluation(
+            capability,
+            target,
+            True,
+            resolver_code or None,
+            snapshot_schema_version or None,
+            is_enabled,
+            reason is None,
+            reason,
+            {
+                "source_table": "prompt_runtime_target_resolver_registry",
+                "source_id": row.get("id"),
+                "updated_at": row.get("updated_at"),
+                "updated_by_operator": row.get("updated_by_operator"),
+            },
+        )
+
+    def upsert(self, capability_code: str, target_type: str, payload: dict[str, Any], *, updated_by_operator: str) -> dict[str, Any]:
+        capability = _normalized_authority_key(capability_code, "capability_code")
+        target = _normalized_authority_key(target_type, "target_type")
+        resolver_code = _normalized_authority_key(str(payload.get("resolver_code") or ""), "resolver_code")
+        snapshot_schema_version = _normalized_authority_key(str(payload.get("snapshot_schema_version") or ""), "snapshot_schema_version")
+        notes = payload.get("notes")
+        now = utc_now_iso()
+        self._conn.execute(
+            """
+            INSERT INTO prompt_runtime_target_resolver_registry(
+                capability_code,target_type,resolver_code,snapshot_schema_version,is_enabled,notes,updated_by_operator,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(capability_code,target_type) DO UPDATE SET
+                resolver_code=excluded.resolver_code,
+                snapshot_schema_version=excluded.snapshot_schema_version,
+                is_enabled=excluded.is_enabled,
+                notes=excluded.notes,
+                updated_by_operator=excluded.updated_by_operator,
+                updated_at=excluded.updated_at
+            """,
+            (capability, target, resolver_code, snapshot_schema_version, _bool_int(payload.get("is_enabled")), None if notes is None else str(notes), str(updated_by_operator), now, now),
+        )
+        row = self.get_row(capability, target)
+        assert row is not None
+        return row
+
+    def list_rows(self, *, capability_code: str | None = None, target_type: str | None = None, is_enabled: bool | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if capability_code:
+            clauses.append("capability_code=?")
+            params.append(str(capability_code).strip())
+        if target_type:
+            clauses.append("target_type=?")
+            params.append(str(target_type).strip())
+        if is_enabled is not None:
+            clauses.append("is_enabled=?")
+            params.append(_bool_int(is_enabled))
+        safe_limit = min(max(int(limit or 100), 1), 500)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = self._conn.execute(
+            f"SELECT * FROM prompt_runtime_target_resolver_registry{where} ORDER BY capability_code ASC, target_type ASC LIMIT ?",
+            tuple(params + [safe_limit]),
+        ).fetchall()
+        return [row for row in map(_row_to_dict, rows) if row is not None]
+
+
+class TargetCompatibilityService:
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def get_row(self, capability_code: str, target_type: str) -> dict[str, Any] | None:
+        capability = str(capability_code or "").strip()
+        target = str(target_type or "").strip()
+        if not capability or not target:
+            return None
+        return _row_to_dict(
+            self._conn.execute(
+                "SELECT * FROM prompt_runtime_target_compatibility_policy WHERE capability_code=? AND target_type=?",
+                (capability, target),
+            ).fetchone()
+        )
+
+    def evaluate(self, capability_code: str, target_type: str) -> TargetCompatibilityEvaluation:
+        capability = str(capability_code or "").strip()
+        target = str(target_type or "").strip()
+        row = self.get_row(capability, target)
+        if row is None:
+            return TargetCompatibilityEvaluation(
+                capability,
+                target,
+                False,
+                None,
+                None,
+                False,
+                "missing_target_compatibility_authority",
+                {"source_table": "prompt_runtime_target_compatibility_policy"},
+            )
+        compatibility_status = str(row.get("compatibility_status") or "").strip()
+        policy_code = str(row.get("policy_code") or "").strip()
+        if compatibility_status != "allowed":
+            reason = f"target_compatibility_{compatibility_status or 'invalid'}"
+        elif not policy_code:
+            reason = "target_compatibility_policy_code_missing"
+        else:
+            reason = None
+        return TargetCompatibilityEvaluation(
+            capability,
+            target,
+            True,
+            compatibility_status or None,
+            policy_code or None,
+            reason is None,
+            reason,
+            {
+                "source_table": "prompt_runtime_target_compatibility_policy",
+                "source_id": row.get("id"),
+                "updated_at": row.get("updated_at"),
+                "updated_by_operator": row.get("updated_by_operator"),
+            },
+        )
+
+    def upsert(self, capability_code: str, target_type: str, payload: dict[str, Any], *, updated_by_operator: str) -> dict[str, Any]:
+        capability = _normalized_authority_key(capability_code, "capability_code")
+        target = _normalized_authority_key(target_type, "target_type")
+        compatibility_status = validate_compatibility_status(str(payload.get("compatibility_status") or ""))
+        policy_code = _normalized_authority_key(str(payload.get("policy_code") or ""), "policy_code")
+        notes = payload.get("notes")
+        now = utc_now_iso()
+        self._conn.execute(
+            """
+            INSERT INTO prompt_runtime_target_compatibility_policy(
+                capability_code,target_type,compatibility_status,policy_code,notes,updated_by_operator,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(capability_code,target_type) DO UPDATE SET
+                compatibility_status=excluded.compatibility_status,
+                policy_code=excluded.policy_code,
+                notes=excluded.notes,
+                updated_by_operator=excluded.updated_by_operator,
+                updated_at=excluded.updated_at
+            """,
+            (capability, target, compatibility_status, policy_code, None if notes is None else str(notes), str(updated_by_operator), now, now),
+        )
+        row = self.get_row(capability, target)
+        assert row is not None
+        return row
+
+    def list_rows(
+        self,
+        *,
+        capability_code: str | None = None,
+        target_type: str | None = None,
+        compatibility_status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if capability_code:
+            clauses.append("capability_code=?")
+            params.append(str(capability_code).strip())
+        if target_type:
+            clauses.append("target_type=?")
+            params.append(str(target_type).strip())
+        if compatibility_status:
+            clauses.append("compatibility_status=?")
+            params.append(validate_compatibility_status(str(compatibility_status)))
+        safe_limit = min(max(int(limit or 100), 1), 500)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = self._conn.execute(
+            f"SELECT * FROM prompt_runtime_target_compatibility_policy{where} ORDER BY capability_code ASC, target_type ASC LIMIT ?",
+            tuple(params + [safe_limit]),
+        ).fetchall()
+        return [row for row in map(_row_to_dict, rows) if row is not None]

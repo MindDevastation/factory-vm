@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from services.common.env import Env
 from services.factory_api.security import require_basic_auth_subject
-from services.prompt_registry.authoritative_gate import CapabilityGateService, OperatorPermissionService, RenderValidationService
+from services.prompt_registry.authoritative_gate import CapabilityGateService, OperatorPermissionService, RenderValidationService, TargetCompatibilityService, TargetResolverRegistryService
 
 _SECRET_KEYS = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
 
@@ -39,6 +39,96 @@ def _not_found(code: str, subject: str) -> JSONResponse:
 
 def create_prompt_runtime_authority_router(env: Env) -> APIRouter:
     router = APIRouter(prefix="/v1/prompt-runtime", tags=["prompt-runtime-authority"])
+
+    @router.get("/resolvers")
+    def list_resolvers(
+        capability_code: str | None = None,
+        target_type: str | None = None,
+        is_enabled: bool | None = None,
+        limit: int = 100,
+        _: str = Depends(require_basic_auth_subject(env)),
+    ):
+        conn = _connect(env)
+        try:
+            rows = TargetResolverRegistryService(conn).list_rows(
+                capability_code=capability_code,
+                target_type=target_type,
+                is_enabled=is_enabled,
+                limit=limit,
+            )
+            return {"items": _sanitize(rows)}
+        finally:
+            conn.close()
+
+    @router.get("/resolvers/{capability_code}/{target_type}")
+    def get_resolver(capability_code: str, target_type: str, _: str = Depends(require_basic_auth_subject(env))):
+        conn = _connect(env)
+        try:
+            result = TargetResolverRegistryService(conn).evaluate(capability_code, target_type).as_dict()
+            if not result["exists"]:
+                return _not_found("target_resolver", f"{capability_code}/{target_type}")
+            return _sanitize(result)
+        finally:
+            conn.close()
+
+    @router.put("/resolvers/{capability_code}/{target_type}")
+    def put_resolver(capability_code: str, target_type: str, payload: dict[str, Any], operator_subject: str = Depends(require_basic_auth_subject(env))):
+        conn = _connect(env)
+        try:
+            row = TargetResolverRegistryService(conn).upsert(capability_code, target_type, dict(payload or {}), updated_by_operator=operator_subject)
+            conn.commit()
+            return _sanitize(row)
+        except ValueError as exc:
+            conn.rollback()
+            return _error("PROMPT_RUNTIME_AUTHORITY_INVALID", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.get("/compatibility")
+    def list_compatibility(
+        capability_code: str | None = None,
+        target_type: str | None = None,
+        compatibility_status: str | None = None,
+        limit: int = 100,
+        _: str = Depends(require_basic_auth_subject(env)),
+    ):
+        conn = _connect(env)
+        try:
+            rows = TargetCompatibilityService(conn).list_rows(
+                capability_code=capability_code,
+                target_type=target_type,
+                compatibility_status=compatibility_status,
+                limit=limit,
+            )
+            return {"items": _sanitize(rows)}
+        except ValueError as exc:
+            return _error("PROMPT_RUNTIME_AUTHORITY_INVALID", str(exc), status_code=422)
+        finally:
+            conn.close()
+
+    @router.get("/compatibility/{capability_code}/{target_type}")
+    def get_compatibility(capability_code: str, target_type: str, _: str = Depends(require_basic_auth_subject(env))):
+        conn = _connect(env)
+        try:
+            result = TargetCompatibilityService(conn).evaluate(capability_code, target_type).as_dict()
+            if not result["exists"]:
+                return _not_found("target_compatibility", f"{capability_code}/{target_type}")
+            return _sanitize(result)
+        finally:
+            conn.close()
+
+    @router.put("/compatibility/{capability_code}/{target_type}")
+    def put_compatibility(capability_code: str, target_type: str, payload: dict[str, Any], operator_subject: str = Depends(require_basic_auth_subject(env))):
+        conn = _connect(env)
+        try:
+            row = TargetCompatibilityService(conn).upsert(capability_code, target_type, dict(payload or {}), updated_by_operator=operator_subject)
+            conn.commit()
+            return _sanitize(row)
+        except ValueError as exc:
+            conn.rollback()
+            return _error("PROMPT_RUNTIME_AUTHORITY_INVALID", str(exc), status_code=422)
+        finally:
+            conn.close()
 
     @router.get("/render-validations")
     def list_render_validations(
