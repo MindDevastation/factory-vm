@@ -3,9 +3,10 @@ from __future__ import annotations
 import sqlite3
 import unittest
 
+from services.prompt_registry.authoritative_gate import RenderValidationService
 from services.prompt_registry.runtime_execution import compute_dedup_key_hash, confirm_prompt_execution, prepare_prompt_execution_preflight
 from tests._helpers import seed_minimal_db, temp_env
-from tests._runtime_authority import seed_runtime_authorities
+from tests._runtime_authority import register_runtime_resolver, seed_runtime_authorities
 
 
 class TestPromptRegistryRuntimeMf2(unittest.TestCase):
@@ -74,6 +75,33 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
             self.assertEqual(pre["execution_attempt_id"], dup["execution_attempt_id"])
             conflict = prepare_prompt_execution_preflight(conn, **{**self.base, "action_payload_hash": "action-2"})
             self.assertEqual("CONFLICT_BLOCKED", conflict["state"])
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_confirm_blocks_when_authoritative_snapshot_changes_after_preflight(self):
+        td, conn = self._conn()
+        try:
+            pre = prepare_prompt_execution_preflight(conn, **self.base)
+            register_runtime_resolver(state="changed-after-preflight")
+            RenderValidationService(conn).record_validation(
+                prompt_record_id=1,
+                prompt_version_id=1,
+                binding_fingerprint="bind-1",
+                render_result_hash="render-1",
+                validation_status="passed",
+                validation_schema_version="v1",
+                validator_code="mf2-stale",
+            )
+            stale = confirm_prompt_execution(
+                conn,
+                execution_attempt_id=pre["execution_attempt_id"],
+                confirmation_token=pre["confirmation_token"],
+                operator_id_or_system_actor="operator-1",
+                reviewed_target_state_hash=pre["reviewed_target_state_hash"],
+            )
+            self.assertEqual("STALE_BLOCKED", stale["state"])
+            self.assertEqual("STALE_TARGET_SNAPSHOT", stale["result_code"])
+            self.assertEqual("stale_authoritative_target_snapshot", stale["failure_reason_code"])
         finally:
             td.__exit__(None, None, None)
 
