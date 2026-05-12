@@ -120,6 +120,74 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
             self.assertEqual(1, cnt)
         finally:
             td.__exit__(None, None, None)
+
+    def test_preflight_ignores_caller_server_gate_context_and_uses_authoritative_snapshot(self):
+        td, conn = self._conn()
+        try:
+            out = prepare_prompt_execution_preflight(
+                conn,
+                **{
+                    **self.base,
+                    "reviewed_target_state_hash": "caller-preview-hash",
+                    "_server_gate_context": {
+                        "capability_execution_enabled": False,
+                        "operator_allowed_capabilities": [],
+                        "operator_allowed_permission_classes": [],
+                        "binding_resolution_complete": False,
+                        "binding_resolution_ambiguous": True,
+                        "rendered_payload_valid": False,
+                        "target_exists": False,
+                        "target_state_compatible": False,
+                        "current_target_state_hash": "caller-stale-hash",
+                    },
+                },
+            )
+            self.assertEqual("CONFIRMATION_REQUIRED", out["state"])
+            self.assertNotEqual("caller-preview-hash", out["reviewed_target_state_hash"])
+            stored = conn.execute("SELECT reviewed_target_state_hash FROM prompt_execution_attempts WHERE id=?", (out["execution_attempt_id"],)).fetchone()[0]
+            self.assertEqual(out["reviewed_target_state_hash"], stored)
+        finally:
+            td.__exit__(None, None, None)
+
+    def test_preflight_blocks_from_persisted_authority_sources_not_caller_context(self):
+        cases = [
+            ("missing capability authority", "DELETE FROM prompt_runtime_capability_registry", "PREFLIGHT_REJECTED", "missing_capability_authority"),
+            ("disabled capability", "UPDATE prompt_runtime_capability_registry SET execution_enabled=0", "PREFLIGHT_REJECTED", "capability_execution_disabled"),
+            ("deprecated capability", "UPDATE prompt_runtime_capability_registry SET status='deprecated'", "PREFLIGHT_REJECTED", "capability_status_deprecated"),
+            ("insufficient operator permission", "UPDATE prompt_runtime_operator_permissions SET permission_class='runtime_view'", "PREFLIGHT_REJECTED", "operator_permission_insufficient"),
+            ("invalid render validation", "UPDATE prompt_runtime_render_validation_ledger SET validation_status='failed'", "PREFLIGHT_REJECTED", "render_validation_failed"),
+            ("missing resolver authority", "DELETE FROM prompt_runtime_target_resolver_registry", "PREFLIGHT_REJECTED", "missing_target_resolver_authority"),
+            ("missing compatibility authority", "DELETE FROM prompt_runtime_target_compatibility_policy", "CONFLICT_BLOCKED", "missing_target_compatibility_authority"),
+            ("blocked compatibility", "UPDATE prompt_runtime_target_compatibility_policy SET compatibility_status='blocked'", "CONFLICT_BLOCKED", "target_compatibility_blocked"),
+        ]
+        for label, mutation, expected_state, expected_reason in cases:
+            td, conn = self._conn()
+            try:
+                with self.subTest(label=label):
+                    conn.execute(mutation)
+                    conn.commit()
+                    out = prepare_prompt_execution_preflight(
+                        conn,
+                        **{
+                            **self.base,
+                            "_server_gate_context": {
+                                "capability_execution_enabled": True,
+                                "operator_allowed_capabilities": ["CREATE_BULK_JSON_DRAFT"],
+                                "operator_allowed_permission_classes": ["runtime_execute"],
+                                "binding_resolution_complete": True,
+                                "rendered_payload_valid": True,
+                                "target_exists": True,
+                                "target_state_compatible": True,
+                            },
+                        },
+                    )
+                    self.assertEqual(expected_state, out["state"])
+                    self.assertEqual(expected_reason, out["failure_reason_code"])
+                    self.assertNotIn("confirmation_token", out)
+                    self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM prompt_execution_attempts").fetchone()[0])
+            finally:
+                td.__exit__(None, None, None)
+
     def test_preflight_rejects_secret_unsafe_payload_before_authority(self):
         td, conn = self._conn()
         try:
