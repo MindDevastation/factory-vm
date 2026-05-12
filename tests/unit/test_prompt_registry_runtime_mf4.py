@@ -12,6 +12,7 @@ from services.prompt_registry.runtime_execution import (
     prepare_prompt_execution_preflight,
 )
 from tests._helpers import seed_minimal_db, temp_env
+from tests._runtime_authority import seed_runtime_authorities
 
 
 class TestPromptRegistryRuntimeMf4(unittest.TestCase):
@@ -23,6 +24,8 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
         conn.row_factory = sqlite3.Row
         conn.execute("INSERT INTO prompt_records(id,slug,code,title,record_type,status,validation_status,bridge_policy_hook,active_version_id,created_at,updated_at) VALUES(1,'p','p','p','prompt_template','active','VALID',NULL,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
         conn.execute("INSERT INTO prompt_versions(id,prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at) VALUES(1,1,1,'body','fp','active','VALID',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+        for cap in ("CREATE_BULK_JSON_DRAFT", "CREATE_METADATA_REQUEST", "CREATE_VISUAL_REQUEST", "CREATE_ANALYTICS_REQUEST", "ENQUEUE_INTERNAL_PROMPT_JOB", "GENERATE_OPERATOR_HANDOFF_EXPORT"):
+            seed_runtime_authorities(conn, operator="operator-1", capability=cap, target_type="workflow", binding_fingerprint="bf", render_hash="rh")
         conn.commit()
         return td, conn
 
@@ -33,7 +36,7 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
         td, conn = self._conn()
         try:
             pre = self._pre(conn)
-            confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash='sh')
+            confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash=pre['reviewed_target_state_hash'])
             usage = conn.execute("SELECT first_admitted_attempt_id,terminal_outcome FROM prompt_execution_usage WHERE execution_group_id=?", (pre['execution_group_id'],)).fetchone()
             self.assertEqual(pre['execution_attempt_id'], usage[0])
             reg = RuntimeAdapterRegistry(); reg.register('CREATE_BULK_JSON_DRAFT', lambda _: {'result_code': 'OK', 'secret_safe_message': 'done'})
@@ -54,7 +57,7 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
         td, conn = self._conn()
         try:
             pre = self._pre(conn)
-            confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash='sh')
+            confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash=pre['reviewed_target_state_hash'])
             reg = RuntimeAdapterRegistry(); reg.register('CREATE_BULK_JSON_DRAFT', lambda _: {'result_code': 'token-leak', 'secret_safe_message': 'secret=bad'})
             out = dispatch_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], adapter_registry=reg, payload={'safe': 'ok'})
             self.assertEqual('FAILED_TERMINAL', out['state'])
@@ -72,7 +75,7 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
             self.assertEqual('CONFLICT_BLOCKED', blocked['state'])
             self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM prompt_execution_usage").fetchone()[0])
             pre2 = self._pre(conn, capability='ENQUEUE_INTERNAL_PROMPT_JOB')
-            confirm_prompt_execution(conn, execution_attempt_id=pre2['execution_attempt_id'], confirmation_token=pre2['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash='sh')
+            confirm_prompt_execution(conn, execution_attempt_id=pre2['execution_attempt_id'], confirmation_token=pre2['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash=pre2['reviewed_target_state_hash'])
             dispatch_prompt_execution(conn, execution_attempt_id=pre2['execution_attempt_id'], adapter_registry=RuntimeAdapterRegistry())
             status = get_prompt_execution_status(conn, execution_attempt_id=pre2['execution_attempt_id'])
             self.assertEqual('DISPATCHED', status['current_state'])
@@ -90,6 +93,7 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
             conn.row_factory = sqlite3.Row
             conn.execute("INSERT INTO prompt_records(id,slug,code,title,record_type,status,validation_status,bridge_policy_hook,active_version_id,created_at,updated_at) VALUES(1,'p','p','p','prompt_template','active','VALID',NULL,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
             conn.execute("INSERT INTO prompt_versions(id,prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at) VALUES(1,1,1,'body','fp','active','VALID',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+            seed_runtime_authorities(conn, operator="operator-1", capability="CREATE_BULK_JSON_DRAFT", target_type="workflow", binding_fingerprint="bf", render_hash="rh")
             conn.commit()
             pre = prepare_prompt_execution_preflight(conn, capability_code='CREATE_BULK_JSON_DRAFT', target_type='workflow', target_id='wf-1', operator_id_or_system_actor='operator-1', prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint='bf', rendered_payload_hash='rh', action_payload_hash='ah', reviewed_target_state_hash='sh')
             conn.close()
@@ -107,7 +111,7 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
         called = {"v": False}
         try:
             pre = self._pre(conn)
-            confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash='sh')
+            confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash=pre['reviewed_target_state_hash'])
             reg = RuntimeAdapterRegistry()
             def adapter(_):
                 called["v"] = True
@@ -129,7 +133,7 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
         td, conn = self._conn()
         try:
             pre = self._pre(conn, capability='ENQUEUE_INTERNAL_PROMPT_JOB')
-            confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash='sh')
+            confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash=pre['reviewed_target_state_hash'])
             conn.execute("CREATE TRIGGER prompt_execution_async_queue_fail BEFORE INSERT ON prompt_execution_async_queue BEGIN SELECT RAISE(ABORT, 'queue admission failed'); END")
             out = dispatch_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], adapter_registry=RuntimeAdapterRegistry())
             self.assertEqual('FAILED_TERMINAL', out['state'])

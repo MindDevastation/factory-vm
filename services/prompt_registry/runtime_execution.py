@@ -5,6 +5,7 @@ import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from .authoritative_gate import PromptRuntimeGateEvaluationService
 from .runtime_adapters import RuntimeAdapterRegistry
 
 SYNC_CAPABILITIES = frozenset({
@@ -120,48 +121,88 @@ def _context_list(context: dict, key: str) -> set[str] | None:
         return {str(value).strip()}
 
 
+def _redact_gate_summary(value):
+    if isinstance(value, dict):
+        clean = {}
+        for key, item in value.items():
+            normalized = str(key).lower()
+            if normalized == "snapshot_payload" or _contains_secret_like_text(normalized):
+                clean[key] = "[redacted]"
+            else:
+                clean[key] = _redact_gate_summary(item)
+        return clean
+    if isinstance(value, list):
+        return [_redact_gate_summary(item) for item in value]
+    if isinstance(value, str) and _contains_secret_like_text(value):
+        return "[redacted]"
+    return value
+
+
+def _safe_gate_dict(gate_result) -> dict:
+    data = gate_result.as_dict()
+    data["authoritative_source_summary"] = _redact_gate_summary(data.get("authoritative_source_summary") or {})
+    return data
+
+
+def _resolve_prompt_version_id(conn: sqlite3.Connection, prompt_record_id: int, prompt_version_id: int | None) -> int:
+    if prompt_version_id is not None:
+        return int(prompt_version_id)
+    row = conn.execute("SELECT active_version_id FROM prompt_records WHERE id=?", (int(prompt_record_id),)).fetchone()
+    if row is None or row[0] is None:
+        raise ValueError("PREFLIGHT_REJECTED: prompt version is not executable")
+    return int(row[0])
+
+
+def _evaluate_authoritative_runtime_gate(conn: sqlite3.Connection, kwargs: dict, capability_code: str, operator_subject: str):
+    prompt_version_id = _resolve_prompt_version_id(conn, int(kwargs["prompt_record_id"]), kwargs.get("prompt_version_id"))
+    return PromptRuntimeGateEvaluationService(conn).evaluate(
+        operator_subject=operator_subject,
+        capability_code=capability_code,
+        prompt_version_id=prompt_version_id,
+        binding_fingerprint=str(kwargs.get("binding_resolution_fingerprint") or ""),
+        render_result_hash=str(kwargs.get("rendered_payload_hash") or ""),
+        target_type=str(kwargs.get("target_type") or ""),
+        target_ref=str(kwargs.get("target_id") or ""),
+    )
+
+
+def _authoritative_gate_blocked_response(gate_result, *, confirm: bool = False) -> dict:
+    reason = gate_result.failure_reason_code or gate_result.admission_status or "authoritative_gate_blocked"
+    state = "CONFLICT_BLOCKED" if confirm or gate_result.admission_status == "blocked_target_compatibility" else "PREFLIGHT_REJECTED"
+    result_code = "TARGET_STATE_INCOMPATIBLE" if gate_result.admission_status == "blocked_target_compatibility" else reason.upper()
+    return {
+        "state": state,
+        "result_code": result_code,
+        "failure_reason_code": reason,
+        "admission_status": gate_result.admission_status,
+        "gate_summary": _safe_gate_dict(gate_result),
+        "secret_safe_message": f"Authoritative runtime gate blocked execution: {reason}.",
+    }
+
+
 def _validate_preflight_safety_gates(conn: sqlite3.Connection, kwargs: dict, capability_code: str, operator_id: str) -> dict | None:
-    context = _server_gate_context(kwargs)
     if capability_code not in CAPABILITY_EXECUTION_MODE:
         _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="CAPABILITY_UNKNOWN")
         raise ValueError("PREFLIGHT_REJECTED: capability is not in execution matrix")
-    if not CAPABILITY_EXECUTION_ENABLED.get(capability_code, False) or not _context_bool(context, "capability_execution_enabled", True):
-        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="CAPABILITY_EXECUTION_DISABLED")
-        raise ValueError("PREFLIGHT_REJECTED: capability execution disabled")
-    allowed_capabilities = _context_list(context, "operator_allowed_capabilities")
-    allowed_classes = _context_list(context, "operator_allowed_permission_classes")
-    permission_class = CAPABILITY_PERMISSION_CLASS[capability_code]
-    if operator_id.startswith("forbidden:") or (allowed_capabilities is not None and capability_code not in allowed_capabilities) or (allowed_classes is not None and permission_class not in allowed_classes):
-        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="OPERATOR_PERMISSION_DENIED")
-        raise ValueError("PREFLIGHT_REJECTED: operator role incompatible")
-    required_hashes_present = all(str(kwargs.get(key) or "").strip() for key in ("binding_resolution_fingerprint", "rendered_payload_hash", "action_payload_hash"))
-    binding_complete = _context_bool(context, "binding_resolution_complete", required_hashes_present)
-    binding_ambiguous = _context_bool(context, "binding_resolution_ambiguous", False)
-    if not binding_complete or binding_ambiguous:
-        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="BINDING_RESOLUTION_INCOMPLETE")
-        raise ValueError("PREFLIGHT_REJECTED: binding resolution incomplete or ambiguous")
-    rendered_payload_valid = _context_bool(context, "rendered_payload_valid", bool(str(kwargs.get("rendered_payload_hash") or "").strip()))
-    if not rendered_payload_valid:
-        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="RENDERED_PAYLOAD_INVALID")
-        raise ValueError("PREFLIGHT_REJECTED: rendered payload invalid")
     for payload_key in ("rendered_payload", "adapter_precheck_payload", "dispatch_payload"):
         if payload_key in kwargs and not _is_secret_safe_data(kwargs.get(payload_key)):
             _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="SECRET_UNSAFE_PAYLOAD")
             raise ValueError("PREFLIGHT_REJECTED: secret-unsafe runtime payload")
-    target_exists = _context_bool(context, "target_exists", bool(str(kwargs.get("target_type") or "").strip() and str(kwargs.get("target_id") or "").strip()))
-    if not target_exists:
-        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="TARGET_NOT_FOUND")
-        raise ValueError("PREFLIGHT_REJECTED: target entity not found")
-    if not _context_bool(context, "target_state_compatible", True):
-        _observe_runtime_event("conflict_blocked", capability_code=capability_code, result_code="TARGET_STATE_INCOMPATIBLE")
-        return {"state": "CONFLICT_BLOCKED", "result_code": "TARGET_STATE_INCOMPATIBLE", "secret_safe_message": "Target state is not compatible with execution."}
-    current_hash = str(context.get("current_target_state_hash") or kwargs.get("reviewed_target_state_hash") or "")
-    reviewed_hash = str(kwargs.get("reviewed_target_state_hash") or "")
-    if current_hash and reviewed_hash and current_hash != reviewed_hash:
-        _observe_runtime_event("stale_blocked", capability_code=capability_code, result_code="STALE_TARGET_SNAPSHOT")
-        return {"state": "STALE_BLOCKED", "result_code": "STALE_TARGET_SNAPSHOT", "secret_safe_message": "Reviewed target snapshot is stale."}
+    required_for_gate = ["target_type", "target_id", "prompt_record_id", "binding_resolution_fingerprint", "rendered_payload_hash"]
+    for key in required_for_gate:
+        if not str(kwargs.get(key) or "").strip():
+            raise ValueError(f"PREFLIGHT_REJECTED: missing {key}")
+    gate_result = _evaluate_authoritative_runtime_gate(conn, kwargs, capability_code, operator_id)
+    if gate_result.admission_status != "admissible":
+        response = _authoritative_gate_blocked_response(gate_result)
+        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code=response["result_code"])
+        return response
+    if not gate_result.target_snapshot_hash:
+        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="MISSING_TARGET_SNAPSHOT_HASH")
+        raise ValueError("PREFLIGHT_REJECTED: missing authoritative target snapshot hash")
+    kwargs["reviewed_target_state_hash"] = gate_result.target_snapshot_hash
+    kwargs["_authoritative_gate_summary"] = _safe_gate_dict(gate_result)
     return None
-
 
 def compute_dedup_key_hash(*, capability_code: str, target_type: str, target_id: str | None, prompt_record_id: int, prompt_version_id: int | None, binding_resolution_fingerprint: str, rendered_payload_hash: str, action_payload_hash: str, reviewed_target_state_hash: str) -> str:
     material = "|".join([
@@ -218,7 +259,7 @@ def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> di
         token = _make_confirmation_token(execution_attempt_id=existing[0], dedup_key_hash=existing[5], reviewed_target_state_hash=existing[4], operator_id=existing[3], state=existing[2])
         _observe_runtime_event("dedup_hit", execution_group_id=existing[1], execution_attempt_id=existing[0], capability_code=capability_code, state=existing[2])
         conn.commit()
-        return {"execution_group_id": existing[1], "execution_attempt_id": existing[0], "confirmation_token": token, "dedup_key_hash": existing[5], "state": existing[2], "execution_mode": CAPABILITY_EXECUTION_MODE[capability_code], "capability_code": capability_code, "target_type": kwargs["target_type"], "target_id": kwargs.get("target_id"), "secret_safe_message": "Ready for explicit confirmation."}
+        return {"execution_group_id": existing[1], "execution_attempt_id": existing[0], "confirmation_token": token, "dedup_key_hash": existing[5], "state": existing[2], "execution_mode": CAPABILITY_EXECUTION_MODE[capability_code], "capability_code": capability_code, "target_type": kwargs["target_type"], "target_id": kwargs.get("target_id"), "reviewed_target_state_hash": existing[4], "gate_summary": kwargs.get("_authoritative_gate_summary"), "secret_safe_message": "Ready for explicit confirmation."}
 
     conflict = conn.execute(f"SELECT id FROM prompt_execution_groups WHERE capability_code=? AND target_type=? AND COALESCE(target_id,'')=COALESCE(?, '') AND current_state IN ({','.join('?'*len(ACTIVE_STATES))}) ORDER BY id DESC LIMIT 1", (capability_code, kwargs["target_type"], kwargs.get("target_id"), *ACTIVE_STATES)).fetchone()
     if conflict:
@@ -249,7 +290,7 @@ def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> di
     _observe_runtime_event("confirmation_required", execution_group_id=gid, execution_attempt_id=aid, capability_code=capability_code, state="CONFIRMATION_REQUIRED")
     conn.commit()
     token = _make_confirmation_token(execution_attempt_id=aid, dedup_key_hash=dedup_key_hash, reviewed_target_state_hash=kwargs["reviewed_target_state_hash"], operator_id=operator_id, state="CONFIRMATION_REQUIRED")
-    return {"execution_group_id": gid, "execution_attempt_id": aid, "confirmation_token": token, "dedup_key_hash": dedup_key_hash, "state": "CONFIRMATION_REQUIRED", "execution_mode": mode, "capability_code": capability_code, "target_type": kwargs["target_type"], "target_id": kwargs.get("target_id"), "secret_safe_message": "Ready for explicit confirmation."}
+    return {"execution_group_id": gid, "execution_attempt_id": aid, "confirmation_token": token, "dedup_key_hash": dedup_key_hash, "state": "CONFIRMATION_REQUIRED", "execution_mode": mode, "capability_code": capability_code, "target_type": kwargs["target_type"], "target_id": kwargs.get("target_id"), "reviewed_target_state_hash": kwargs["reviewed_target_state_hash"], "gate_summary": kwargs.get("_authoritative_gate_summary"), "secret_safe_message": "Ready for explicit confirmation."}
 
 
 def confirm_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: int, confirmation_token: str | None, operator_id_or_system_actor: str, reviewed_target_state_hash: str) -> dict:
@@ -279,6 +320,55 @@ def confirm_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: 
         return {"state": "ADMITTED", "execution_group_id": row[1], "execution_attempt_id": row[0], "dedup_key_hash": row[3]}
     if row[2] != "CONFIRMATION_REQUIRED":
         raise ValueError("PREFLIGHT_REJECTED: confirmation state invalid")
+    gate_row = conn.execute(
+        """
+        SELECT a.prompt_record_id,a.prompt_version_id,a.binding_resolution_fingerprint,a.rendered_payload_hash,
+               a.action_payload_hash,a.reviewed_target_state_hash,g.capability_code,g.target_type,g.target_id
+        FROM prompt_execution_attempts a
+        JOIN prompt_execution_groups g ON g.id=a.execution_group_id
+        WHERE a.id=?
+        """,
+        (row[0],),
+    ).fetchone()
+    gate_kwargs = {
+        "prompt_record_id": gate_row[0],
+        "prompt_version_id": gate_row[1],
+        "binding_resolution_fingerprint": gate_row[2],
+        "rendered_payload_hash": gate_row[3],
+        "action_payload_hash": gate_row[4],
+        "reviewed_target_state_hash": gate_row[5],
+        "capability_code": gate_row[6],
+        "target_type": gate_row[7],
+        "target_id": gate_row[8],
+    }
+    gate_result = _evaluate_authoritative_runtime_gate(conn, gate_kwargs, str(gate_row[6]), operator_id_or_system_actor)
+    if gate_result.admission_status != "admissible":
+        blocked = _authoritative_gate_blocked_response(gate_result, confirm=True)
+        _finalize_execution_terminal(
+            conn,
+            execution_group_id=row[1],
+            execution_attempt_id=row[0],
+            terminal_state="CONFLICT_BLOCKED",
+            result_code=blocked["result_code"],
+            secret_safe_message=blocked["secret_safe_message"],
+            actor=operator_id_or_system_actor,
+        )
+        _observe_runtime_event("conflict_blocked", execution_group_id=row[1], execution_attempt_id=row[0], state="CONFLICT_BLOCKED", result_code=blocked["result_code"])
+        conn.commit()
+        return {"state": "CONFLICT_BLOCKED", "execution_group_id": row[1], "execution_attempt_id": row[0], **blocked}
+    if gate_result.target_snapshot_hash != row[4]:
+        _finalize_execution_terminal(
+            conn,
+            execution_group_id=row[1],
+            execution_attempt_id=row[0],
+            terminal_state="STALE_BLOCKED",
+            result_code="STALE_TARGET_SNAPSHOT",
+            secret_safe_message="Reviewed authoritative target snapshot is stale.",
+            actor=operator_id_or_system_actor,
+        )
+        _observe_runtime_event("stale_blocked", execution_group_id=row[1], execution_attempt_id=row[0], state="STALE_BLOCKED", result_code="STALE_TARGET_SNAPSHOT")
+        conn.commit()
+        return {"state": "STALE_BLOCKED", "execution_group_id": row[1], "execution_attempt_id": row[0], "result_code": "STALE_TARGET_SNAPSHOT", "failure_reason_code": "stale_authoritative_target_snapshot", "gate_summary": _safe_gate_dict(gate_result), "secret_safe_message": "Reviewed authoritative target snapshot is stale."}
     now = _utc_now()
     conn.execute("UPDATE prompt_execution_attempts SET state='ADMITTED',admitted_at=?,updated_at=? WHERE id=?", (now, now, row[0]))
     conn.execute("UPDATE prompt_execution_groups SET current_state='ADMITTED',updated_at=? WHERE id=?", (now, row[1]))

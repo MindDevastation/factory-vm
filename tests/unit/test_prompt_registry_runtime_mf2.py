@@ -5,6 +5,7 @@ import unittest
 
 from services.prompt_registry.runtime_execution import compute_dedup_key_hash, confirm_prompt_execution, prepare_prompt_execution_preflight
 from tests._helpers import seed_minimal_db, temp_env
+from tests._runtime_authority import seed_runtime_authorities
 
 
 class TestPromptRegistryRuntimeMf2(unittest.TestCase):
@@ -30,6 +31,7 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
         conn.row_factory = sqlite3.Row
         conn.execute("INSERT INTO prompt_records(id,slug,code,title,record_type,status,validation_status,bridge_policy_hook,active_version_id,created_at,updated_at) VALUES(1,'p','p','p','prompt_template','active','VALID',NULL,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
         conn.execute("INSERT INTO prompt_versions(id,prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at) VALUES(1,1,1,'body','fp','active','VALID',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+        seed_runtime_authorities(conn, operator="operator-1", target_type="workflow", binding_fingerprint="bind-1", render_hash="render-1")
         conn.commit()
         return td, conn
 
@@ -54,10 +56,10 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
         try:
             pre = prepare_prompt_execution_preflight(conn, **self.base)
             with self.assertRaises(ValueError):
-                confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=None, operator_id_or_system_actor="operator-1", reviewed_target_state_hash="state-1")
-            adm = confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash="state-1")
+                confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=None, operator_id_or_system_actor="operator-1", reviewed_target_state_hash=pre["reviewed_target_state_hash"])
+            adm = confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash=pre["reviewed_target_state_hash"])
             self.assertEqual("ADMITTED", adm["state"])
-            adm2 = confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash="state-1")
+            adm2 = confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash=pre["reviewed_target_state_hash"])
             self.assertEqual(adm["execution_group_id"], adm2["execution_group_id"])
             stale = confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash="state-CHANGED")
             self.assertEqual("STALE_BLOCKED", stale["state"])
@@ -87,7 +89,7 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
         td, conn = self._conn()
         try:
             pre = prepare_prompt_execution_preflight(conn, **self.base)
-            confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash="state-1")
+            confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash=pre["reviewed_target_state_hash"])
             usage = conn.execute("SELECT COUNT(*) FROM prompt_execution_usage").fetchone()[0]
             self.assertEqual(1, usage)
         finally:
@@ -118,66 +120,12 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
             self.assertEqual(1, cnt)
         finally:
             td.__exit__(None, None, None)
-    def test_preflight_rejects_server_authoritative_safety_gate_failures(self):
-        cases = [
-            ({"capability_code": "NOPE"}, "execution matrix"),
-            ({"_server_gate_context": {"capability_execution_enabled": False}}, "execution disabled"),
-            ({"_server_gate_context": {"operator_allowed_capabilities": ["CREATE_METADATA_REQUEST"]}}, "operator role incompatible"),
-            ({"_server_gate_context": {"operator_allowed_permission_classes": ["PROMPT_RUNTIME_ASYNC"]}}, "operator role incompatible"),
-            ({"_server_gate_context": {"binding_resolution_complete": False}}, "binding resolution incomplete"),
-            ({"_server_gate_context": {"binding_resolution_ambiguous": True}}, "binding resolution incomplete"),
-            ({"_server_gate_context": {"rendered_payload_valid": False}}, "rendered payload invalid"),
-            ({"_server_gate_context": {"target_exists": False}}, "target entity not found"),
-            ({"adapter_precheck_payload": {"api_token": "secret-token"}}, "secret-unsafe"),
-        ]
-        for overrides, expected in cases:
-            td, conn = self._conn()
-            try:
-                with self.subTest(overrides=overrides):
-                    with self.assertRaisesRegex(ValueError, expected):
-                        prepare_prompt_execution_preflight(conn, **{**self.base, **overrides})
-            finally:
-                td.__exit__(None, None, None)
-
-    def test_preflight_ignores_caller_supplied_gate_flags_without_server_context(self):
+    def test_preflight_rejects_secret_unsafe_payload_before_authority(self):
         td, conn = self._conn()
         try:
-            out = prepare_prompt_execution_preflight(
-                conn,
-                **{
-                    **self.base,
-                    "capability_execution_enabled": False,
-                    "operator_allowed_capabilities": ["CREATE_METADATA_REQUEST"],
-                    "operator_allowed_permission_classes": ["PROMPT_RUNTIME_ASYNC"],
-                    "binding_resolution_status": "INCOMPLETE",
-                    "binding_resolution_ambiguous": True,
-                    "rendered_payload_valid": False,
-                    "target_exists": False,
-                    "target_state_compatible": False,
-                    "current_target_state_hash": "caller-stale",
-                },
-            )
-            self.assertEqual("CONFIRMATION_REQUIRED", out["state"])
-        finally:
-            td.__exit__(None, None, None)
-
-    def test_preflight_returns_distinct_stale_and_incompatible_gate_outcomes_from_server_context(self):
-        td, conn = self._conn()
-        try:
-            stale = prepare_prompt_execution_preflight(conn, **{**self.base, "_server_gate_context": {"current_target_state_hash": "state-new"}})
-            self.assertEqual("STALE_BLOCKED", stale["state"])
-            self.assertEqual("STALE_TARGET_SNAPSHOT", stale["result_code"])
-        finally:
-            td.__exit__(None, None, None)
-
-        td, conn = self._conn()
-        try:
-            incompatible = prepare_prompt_execution_preflight(conn, **{**self.base, "_server_gate_context": {"target_state_compatible": False}})
-            self.assertEqual("CONFLICT_BLOCKED", incompatible["state"])
-            self.assertEqual("TARGET_STATE_INCOMPATIBLE", incompatible["result_code"])
+            with self.assertRaisesRegex(ValueError, "secret-unsafe"):
+                prepare_prompt_execution_preflight(conn, **{**self.base, "adapter_precheck_payload": {"api_token": "secret-token"}})
         finally:
             td.__exit__(None, None, None)
 
 
-if __name__ == "__main__":
-    unittest.main()

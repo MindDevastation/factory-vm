@@ -17,6 +17,7 @@ from services.prompt_registry.runtime_execution import (
     schedule_prompt_execution_retry,
 )
 from tests._helpers import seed_minimal_db, temp_env
+from tests._runtime_authority import seed_runtime_authorities
 
 
 class TestPromptRegistryRuntimeMf5(unittest.TestCase):
@@ -28,6 +29,8 @@ class TestPromptRegistryRuntimeMf5(unittest.TestCase):
         conn.row_factory = sqlite3.Row
         conn.execute("INSERT INTO prompt_records(id,slug,code,title,record_type,status,validation_status,bridge_policy_hook,active_version_id,created_at,updated_at) VALUES(1,'p','p','p','prompt_template','active','VALID',NULL,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
         conn.execute("INSERT INTO prompt_versions(id,prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at) VALUES(1,1,1,'body','fp','active','VALID',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+        for cap in ("CREATE_BULK_JSON_DRAFT", "CREATE_METADATA_REQUEST", "CREATE_VISUAL_REQUEST", "CREATE_ANALYTICS_REQUEST", "ENQUEUE_INTERNAL_PROMPT_JOB", "GENERATE_OPERATOR_HANDOFF_EXPORT"):
+            seed_runtime_authorities(conn, operator="operator-1", capability=cap, target_type="workflow", binding_fingerprint="bf", render_hash="rh")
         conn.commit()
         return td, conn
 
@@ -36,7 +39,7 @@ class TestPromptRegistryRuntimeMf5(unittest.TestCase):
 
     def _admit(self, conn, capability="CREATE_BULK_JSON_DRAFT", action_hash="ah"):
         pre = self._pre(conn, capability=capability, action_hash=action_hash)
-        confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash="sh")
+        confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash=pre["reviewed_target_state_hash"])
         return pre
 
     def test_async_retry_allowed_for_retryable_failed_terminal_creates_next_attempt_and_preserves_lineage(self):

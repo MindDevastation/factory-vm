@@ -6,6 +6,7 @@ import unittest
 from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry, build_default_runtime_adapter_registry
 from services.prompt_registry.runtime_execution import confirm_prompt_execution, dispatch_prompt_execution, prepare_prompt_execution_preflight
 from tests._helpers import seed_minimal_db, temp_env
+from tests._runtime_authority import seed_runtime_authorities
 
 
 class TestPromptRegistryRuntimeMf3(unittest.TestCase):
@@ -17,13 +18,15 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
         conn.row_factory = sqlite3.Row
         conn.execute("INSERT INTO prompt_records(id,slug,code,title,record_type,status,validation_status,bridge_policy_hook,active_version_id,created_at,updated_at) VALUES(1,'p','p','p','prompt_template','active','VALID',NULL,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
         conn.execute("INSERT INTO prompt_versions(id,prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at) VALUES(1,1,1,'body','fp','active','VALID',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+        for cap in ("CREATE_BULK_JSON_DRAFT", "CREATE_METADATA_REQUEST", "CREATE_VISUAL_REQUEST", "CREATE_ANALYTICS_REQUEST", "ENQUEUE_INTERNAL_PROMPT_JOB", "GENERATE_OPERATOR_HANDOFF_EXPORT"):
+            seed_runtime_authorities(conn, operator="operator-1", capability=cap, target_type="workflow", binding_fingerprint="bf", render_hash="rh")
         conn.commit()
         return td, conn
 
     def _admitted_attempt(self, conn: sqlite3.Connection, capability: str):
         base = dict(capability_code=capability,target_type='workflow',target_id='wf-1',operator_id_or_system_actor='operator-1',prompt_record_id=1,prompt_version_id=1,binding_resolution_fingerprint='bf',rendered_payload_hash='rh',action_payload_hash='ah',reviewed_target_state_hash='sh')
         pre = prepare_prompt_execution_preflight(conn, **base)
-        confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash='sh')
+        confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash=pre['reviewed_target_state_hash'])
         return pre['execution_attempt_id']
 
 

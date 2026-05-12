@@ -18,6 +18,7 @@ from services.prompt_registry.runtime_execution import (
     reset_runtime_observability_for_tests,
 )
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
+from tests._runtime_authority import seed_runtime_authorities
 
 
 class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
@@ -28,6 +29,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
 
     def _seed_prompt(self, env) -> None:
         conn = sqlite3.connect(env.db_path)
+        conn.row_factory = sqlite3.Row
         try:
             conn.execute(
                 "INSERT INTO prompt_records(id,slug,code,title,record_type,status,validation_status,bridge_policy_hook,active_version_id,created_at,updated_at) "
@@ -45,6 +47,8 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 "INSERT INTO prompt_bindings(prompt_id,binding_scope,channel_slug,binding_status,created_at,updated_at) "
                 "VALUES(1,'channel','channel-b','active','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')"
             )
+            for cap in ("CREATE_BULK_JSON_DRAFT", "CREATE_METADATA_REQUEST", "CREATE_VISUAL_REQUEST", "CREATE_ANALYTICS_REQUEST", "ENQUEUE_INTERNAL_PROMPT_JOB", "GENERATE_OPERATOR_HANDOFF_EXPORT"):
+                seed_runtime_authorities(conn, operator="admin", capability=cap, target_type="channel", binding_fingerprint="bind-mf6", render_hash="render-mf6", prompt_version_id=1)
             conn.commit()
         finally:
             conn.close()
@@ -66,12 +70,21 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
         return payload
 
     def _target_hash(self, env, *, target_type="channel", target_id="darkwood-reverie"):
-        from services.factory_api.prompt_registry_runtime import _target_snapshot_hash
+        from services.prompt_registry.authoritative_gate import PromptRuntimeGateEvaluationService
 
         conn = sqlite3.connect(env.db_path)
         conn.row_factory = sqlite3.Row
         try:
-            return _target_snapshot_hash(conn, target_type=target_type, target_id=target_id)
+            result = PromptRuntimeGateEvaluationService(conn).evaluate(
+                operator_subject="admin",
+                capability_code="CREATE_BULK_JSON_DRAFT",
+                prompt_version_id=1,
+                binding_fingerprint="bind-mf6",
+                render_result_hash="render-mf6",
+                target_type=target_type,
+                target_ref=target_id,
+            )
+            return result.target_snapshot_hash
         finally:
             conn.close()
 
@@ -174,9 +187,17 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             self._seed_prompt(env)
             _mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
-            missing_binding = self._preflight_api(env, client, headers, target_id="channel-c", action_payload_hash="action-missing-binding")
-            self.assertEqual(422, missing_binding.status_code, missing_binding.text)
-            self.assertIn("binding resolution incomplete", missing_binding.json()["error"]["message"])
+            conn = sqlite3.connect(env.db_path)
+            try:
+                conn.execute("DELETE FROM prompt_runtime_render_validation_ledger")
+                conn.commit()
+            finally:
+                conn.close()
+            missing_render_authority = self._preflight_api(env, client, headers, target_id="channel-c", action_payload_hash="action-missing-render")
+            self.assertEqual(200, missing_render_authority.status_code, missing_render_authority.text)
+            self.assertEqual("PREFLIGHT_REJECTED", missing_render_authority.json()["state"])
+            self.assertEqual("missing_render_validation_authority", missing_render_authority.json()["failure_reason_code"])
+            self.assertNotIn("confirmation_token", missing_render_authority.json())
 
             caller_context_cannot_override = self._preflight_api(
                 env,
@@ -192,8 +213,9 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 },
                 reviewed_target_state_hash="missing-target",
             )
-            self.assertEqual(422, caller_context_cannot_override.status_code, caller_context_cannot_override.text)
-            self.assertIn("binding resolution incomplete", caller_context_cannot_override.json()["error"]["message"])
+            self.assertEqual(200, caller_context_cannot_override.status_code, caller_context_cannot_override.text)
+            self.assertEqual("PREFLIGHT_REJECTED", caller_context_cannot_override.json()["state"])
+            self.assertNotIn("confirmation_token", caller_context_cannot_override.json())
 
     def test_confirm_requires_token_and_admits_execution(self):
         with temp_env() as (_td, env):
