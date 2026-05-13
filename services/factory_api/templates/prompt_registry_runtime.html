@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Prompt Runtime{% endblock %}
+{% block body %}
+<h1>Prompt Registry Runtime</h1>
+<p class="muted">Read-only operator runtime panel. GET page loads never mutate runtime state.</p>
+<form method="get" action="/ui/prompt-registry/runtime">
+  <label>Execution group ID <input name="execution_group_id" value="{{ execution_group_id or '' }}"></label>
+  <button type="submit">Load status</button>
+</form>
+
+{% if error %}
+  <p class="pill">Runtime status unavailable: {{ error }}</p>
+{% endif %}
+
+{% if status %}
+<section data-runtime-status-panel>
+  <h2>Execution state</h2>
+  <table>
+    <tbody>
+      <tr><th>State</th><td><span class="pill">{{ status.current_state }}</span></td></tr>
+      <tr><th>Capability</th><td>{{ status.capability_code }}</td></tr>
+      <tr><th>Target</th><td>{{ status.target_type }}{% if status.target_id %}: {{ status.target_id }}{% endif %}</td></tr>
+      <tr><th>Execution mode</th><td>{{ status.execution_mode }}</td></tr>
+      <tr><th>Attempt</th><td>{{ status.execution_attempt_id }}</td></tr>
+      <tr><th>Last result</th><td>{{ status.result_code or '—' }}</td></tr>
+      <tr><th>Message</th><td>{{ status.secret_safe_message or '—' }}</td></tr>
+      <tr><th>Confirmation required</th><td>{% if status.confirmation_required %}Yes{% else %}No{% endif %}</td></tr>
+      <tr><th>Stale/conflict blocked</th><td>{% if status.stale_or_conflict_blocked %}Yes — Recheck required{% else %}No{% endif %}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section data-runtime-controls>
+  <h2>Allowed controls</h2>
+  {% if status.retry_control_visible %}
+  <form method="post" action="/ui/prompt-registry/runtime/retry" data-runtime-retry-control>
+    <input type="hidden" name="execution_attempt_id" value="{{ status.execution_attempt_id }}">
+    <button type="submit">Schedule retry</button>
+  </form>
+  {% else %}
+  <p class="muted" data-runtime-retry-hidden>Retry is not available for this attempt.</p>
+  {% endif %}
+  {% if status.cancel_control_visible %}
+  <form method="post" action="/ui/prompt-registry/runtime/cancel" data-runtime-cancel-control>
+    <input type="hidden" name="execution_attempt_id" value="{{ status.execution_attempt_id }}">
+    <button type="submit">Cancel execution</button>
+  </form>
+  {% else %}
+  <p class="muted" data-runtime-cancel-hidden>Cancel is not available for this attempt.</p>
+  {% endif %}
+</section>
+
+<section data-runtime-dispatch-result>
+  <h2>Dispatch result</h2>
+  <p>{{ status.result_code or status.current_state }}</p>
+</section>
+
+<section data-runtime-usage-summary>
+  <h2>Usage summary</h2>
+  {% if status.usage_summary %}
+  <table>
+    <tbody>
+      <tr><th>First admitted attempt</th><td>{{ status.usage_summary.first_admitted_attempt_id }}</td></tr>
+      <tr><th>Latest attempt</th><td>{{ status.usage_summary.latest_attempt_id }}</td></tr>
+      <tr><th>Terminal outcome</th><td>{{ status.usage_summary.terminal_outcome or '—' }}</td></tr>
+      <tr><th>Terminal at</th><td>{{ status.usage_summary.terminal_at or '—' }}</td></tr>
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No usage admission has been recorded yet.</p>
+  {% endif %}
+</section>
+
+<section data-runtime-timeline>
+  <h2>Timeline events</h2>
+  <table>
+    <thead><tr><th>Time</th><th>Attempt</th><th>Before</th><th>After</th><th>Result</th><th>Actor</th></tr></thead>
+    <tbody>
+    {% for event in timeline %}
+      <tr>
+        <td>{{ event.timestamp }}</td>
+        <td>{{ event.execution_attempt_id or '—' }}</td>
+        <td>{{ event.state_before or '—' }}</td>
+        <td>{{ event.state_after }}</td>
+        <td>{{ event.result_code or '—' }}</td>
+        <td>{{ event.actor }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% else %}
+<p class="muted">Enter an execution group ID to inspect runtime status and timeline.</p>
+{% endif %}
+{% endblock %}

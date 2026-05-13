@@ -2605,8 +2605,139 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_prompt_linked_actions_schema(conn)
     _ensure_prompt_linked_action_execution_requests_schema(conn)
     _ensure_prompt_linked_action_dispatch_attempts_schema(conn)
+    _ensure_prompt_execution_runtime_schema(conn)
+    _ensure_prompt_runtime_authoritative_gate_foundation_schema(conn)
     _ensure_prompt_usage_events_schema(conn)
     _backfill_video_language_values(conn)
+
+
+def _ensure_prompt_runtime_authoritative_gate_foundation_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS prompt_runtime_capability_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            capability_code TEXT NOT NULL UNIQUE,
+            execution_enabled INTEGER NOT NULL,
+            required_permission_class TEXT NOT NULL,
+            status TEXT NOT NULL,
+            notes TEXT NULL,
+            updated_by_operator TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(execution_enabled IN (0,1)),
+            CHECK(required_permission_class IN ('runtime_view','runtime_execute','runtime_operate','runtime_admin')),
+            CHECK(status IN ('active','disabled','deprecated'))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_runtime_capability_registry_code
+            ON prompt_runtime_capability_registry(capability_code);
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_capability_registry_status
+            ON prompt_runtime_capability_registry(status, execution_enabled, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS prompt_runtime_operator_permissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            operator_subject TEXT NOT NULL UNIQUE,
+            permission_class TEXT NOT NULL,
+            is_enabled INTEGER NOT NULL,
+            notes TEXT NULL,
+            updated_by_operator TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(permission_class IN ('runtime_view','runtime_execute','runtime_operate','runtime_admin')),
+            CHECK(is_enabled IN (0,1))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_runtime_operator_permissions_subject
+            ON prompt_runtime_operator_permissions(operator_subject);
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_operator_permissions_enabled
+            ON prompt_runtime_operator_permissions(is_enabled, permission_class, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS prompt_runtime_render_validation_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_record_id INTEGER NOT NULL,
+            prompt_version_id INTEGER NOT NULL,
+            binding_fingerprint TEXT NOT NULL,
+            render_result_hash TEXT NOT NULL,
+            validation_status TEXT NOT NULL,
+            validation_schema_version TEXT NOT NULL,
+            validator_code TEXT NOT NULL,
+            validated_at TEXT NOT NULL,
+            invalid_reason_code TEXT NULL,
+            invalid_reason_detail TEXT NULL,
+            superseded_by_validation_id INTEGER NULL,
+            created_at TEXT NOT NULL,
+            CHECK(validation_status IN ('passed','failed','error','superseded'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_render_validation_latest
+            ON prompt_runtime_render_validation_ledger(prompt_version_id, binding_fingerprint, render_result_hash, validated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_render_validation_status
+            ON prompt_runtime_render_validation_ledger(validation_status, validated_at DESC, id DESC);
+
+        CREATE TABLE IF NOT EXISTS prompt_runtime_target_resolver_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            capability_code TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            resolver_code TEXT NOT NULL,
+            snapshot_schema_version TEXT NOT NULL,
+            is_enabled INTEGER NOT NULL,
+            notes TEXT NULL,
+            updated_by_operator TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(is_enabled IN (0,1)),
+            UNIQUE(capability_code, target_type)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_runtime_target_resolver_registry_key
+            ON prompt_runtime_target_resolver_registry(capability_code, target_type);
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_target_resolver_registry_enabled
+            ON prompt_runtime_target_resolver_registry(is_enabled, capability_code, target_type);
+
+        CREATE TABLE IF NOT EXISTS prompt_runtime_target_compatibility_policy (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            capability_code TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            compatibility_status TEXT NOT NULL,
+            policy_code TEXT NOT NULL,
+            notes TEXT NULL,
+            updated_by_operator TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(compatibility_status IN ('allowed','blocked','deprecated')),
+            UNIQUE(capability_code, target_type)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_runtime_target_compatibility_policy_key
+            ON prompt_runtime_target_compatibility_policy(capability_code, target_type);
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_target_compatibility_policy_status
+            ON prompt_runtime_target_compatibility_policy(compatibility_status, capability_code, target_type);
+
+        CREATE TABLE IF NOT EXISTS prompt_runtime_target_snapshot_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            capability_code TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_ref TEXT NOT NULL,
+            resolver_code TEXT NOT NULL,
+            snapshot_schema_version TEXT NOT NULL,
+            snapshot_payload_json TEXT NOT NULL,
+            snapshot_hash TEXT NOT NULL,
+            compatibility_status_at_capture TEXT NOT NULL,
+            resolved_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK(json_valid(snapshot_payload_json)),
+            CHECK(compatibility_status_at_capture IN ('allowed','blocked','deprecated'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prompt_runtime_target_snapshot_ledger_lookup
+            ON prompt_runtime_target_snapshot_ledger(capability_code, target_type, target_ref, resolved_at);
+        """
+    )
 
 
 def _backfill_video_language_values(conn: sqlite3.Connection) -> None:
@@ -2835,6 +2966,157 @@ def _ensure_prompt_linked_action_dispatch_attempts_schema(conn: sqlite3.Connecti
         """
     )
 
+
+
+
+def _ensure_prompt_execution_runtime_schema(conn: sqlite3.Connection) -> None:
+    state_check = "('PREPARED','PREFLIGHT_REJECTED','CONFIRMATION_REQUIRED','ADMITTED','DISPATCHED','RUNNING','RETRY_PENDING','SUCCEEDED','FAILED_TERMINAL','CANCELLED','STALE_BLOCKED','CONFLICT_BLOCKED')"
+
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS prompt_execution_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            capability_code TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NULL,
+            dedup_lineage_key TEXT NOT NULL,
+            current_state TEXT NOT NULL,
+            execution_mode TEXT NOT NULL,
+            closed_at TEXT NULL,
+            lease_expires_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(current_state IN {state_check}),
+            CHECK(execution_mode IN ('SYNC','ASYNC'))
+        )
+        """
+    )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_groups_dedup ON prompt_execution_groups(dedup_lineage_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_groups_active ON prompt_execution_groups(target_type, capability_code, current_state, updated_at DESC, id DESC)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_groups_active_target_lock ON prompt_execution_groups(capability_code, target_type, COALESCE(target_id,'')) WHERE current_state IN ('PREPARED','CONFIRMATION_REQUIRED','ADMITTED','DISPATCHED','RUNNING','RETRY_PENDING')")
+
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS prompt_execution_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            execution_group_id INTEGER NOT NULL,
+            attempt_number INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            correlation_id TEXT NOT NULL,
+            operator_id_or_system_actor TEXT NOT NULL,
+            prompt_record_id INTEGER NOT NULL,
+            prompt_version_id INTEGER NULL,
+            binding_resolution_fingerprint TEXT NOT NULL,
+            rendered_payload_hash TEXT NOT NULL,
+            action_payload_hash TEXT NOT NULL,
+            reviewed_target_state_hash TEXT NOT NULL,
+            dedup_key_hash TEXT NOT NULL,
+            retryable_by_operator INTEGER NOT NULL DEFAULT 0,
+            cancellable INTEGER NOT NULL DEFAULT 0,
+            admitted_at TEXT NULL,
+            running_at TEXT NULL,
+            terminal_at TEXT NULL,
+            result_code TEXT NULL,
+            secret_safe_message TEXT NULL,
+            lease_expires_at TEXT NULL,
+            execution_mode TEXT NOT NULL,
+            dispatch_payload_json TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(execution_group_id) REFERENCES prompt_execution_groups(id) ON DELETE CASCADE,
+            FOREIGN KEY(prompt_record_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            FOREIGN KEY(prompt_version_id) REFERENCES prompt_versions(id) ON DELETE SET NULL,
+            CHECK(state IN {state_check}),
+            CHECK(retryable_by_operator IN (0,1)),
+            CHECK(cancellable IN (0,1)),
+            CHECK(execution_mode IN ('SYNC','ASYNC')),
+            CHECK(attempt_number > 0),
+            CHECK(json_valid(dispatch_payload_json))
+        )
+        """
+    )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_attempts_group_no ON prompt_execution_attempts(execution_group_id, attempt_number)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_attempts_retryable_async ON prompt_execution_attempts(execution_mode, state, retryable_by_operator, lease_expires_at, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_attempts_lease_reclaim ON prompt_execution_attempts(state, lease_expires_at, id)")
+
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS prompt_execution_lifecycle_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            execution_group_id INTEGER NOT NULL,
+            execution_attempt_id INTEGER NULL,
+            state_before TEXT NULL,
+            state_after TEXT NOT NULL,
+            result_code TEXT NULL,
+            actor TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            event_payload_json TEXT NOT NULL DEFAULT '{{}}',
+            FOREIGN KEY(execution_group_id) REFERENCES prompt_execution_groups(id) ON DELETE CASCADE,
+            FOREIGN KEY(execution_attempt_id) REFERENCES prompt_execution_attempts(id) ON DELETE SET NULL,
+            CHECK(state_before IS NULL OR state_before IN {state_check}),
+            CHECK(state_after IN {state_check}),
+            CHECK(json_valid(event_payload_json))
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_lifecycle_events_timeline ON prompt_execution_lifecycle_events(execution_group_id, timestamp ASC, id ASC)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prompt_execution_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            execution_group_id INTEGER NOT NULL,
+            first_admitted_attempt_id INTEGER NOT NULL,
+            latest_attempt_id INTEGER NULL,
+            prompt_record_id INTEGER NOT NULL,
+            prompt_version_id INTEGER NULL,
+            rendered_payload_hash TEXT NOT NULL,
+            binding_resolution_fingerprint TEXT NOT NULL,
+            capability_code TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NULL,
+            operator_id TEXT NULL,
+            first_admitted_at TEXT NOT NULL,
+            terminal_outcome TEXT NULL,
+            terminal_at TEXT NULL,
+            artifact_ref TEXT NULL,
+            usage_payload_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(execution_group_id) REFERENCES prompt_execution_groups(id) ON DELETE CASCADE,
+            FOREIGN KEY(first_admitted_attempt_id) REFERENCES prompt_execution_attempts(id) ON DELETE CASCADE,
+            FOREIGN KEY(latest_attempt_id) REFERENCES prompt_execution_attempts(id) ON DELETE SET NULL,
+            FOREIGN KEY(prompt_record_id) REFERENCES prompt_records(id) ON DELETE CASCADE,
+            FOREIGN KEY(prompt_version_id) REFERENCES prompt_versions(id) ON DELETE SET NULL,
+            CHECK(json_valid(usage_payload_json))
+        )
+        """
+    )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_execution_usage_group ON prompt_execution_usage(execution_group_id)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS prompt_execution_async_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            execution_group_id INTEGER NOT NULL,
+            execution_attempt_id INTEGER NOT NULL,
+            capability_code TEXT NOT NULL,
+            queue_state TEXT NOT NULL,
+            available_at TEXT NOT NULL,
+            lease_owner TEXT NULL,
+            lease_expires_at TEXT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(execution_group_id) REFERENCES prompt_execution_groups(id) ON DELETE CASCADE,
+            FOREIGN KEY(execution_attempt_id) REFERENCES prompt_execution_attempts(id) ON DELETE CASCADE,
+            CHECK(queue_state IN ('QUEUED','CLAIMED','DONE','FAILED')),
+            CHECK(json_valid(payload_json)),
+            UNIQUE(execution_attempt_id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_async_queue_lookup ON prompt_execution_async_queue(queue_state, available_at, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_execution_async_queue_lease_reclaim ON prompt_execution_async_queue(queue_state, lease_expires_at, id)")
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     row = conn.execute(
