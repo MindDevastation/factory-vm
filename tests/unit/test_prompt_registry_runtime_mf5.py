@@ -5,6 +5,7 @@ import unittest
 
 from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry
 from services.prompt_registry.runtime_execution import (
+    compute_action_payload_hash,
     admit_due_prompt_execution_retries,
     cancel_prompt_execution,
     claim_prompt_execution_async_work,
@@ -34,11 +35,13 @@ class TestPromptRegistryRuntimeMf5(unittest.TestCase):
         conn.commit()
         return td, conn
 
-    def _pre(self, conn, capability="CREATE_BULK_JSON_DRAFT", action_hash="ah"):
-        return prepare_prompt_execution_preflight(conn, capability_code=capability, target_type="workflow", target_id="wf-1", operator_id_or_system_actor="operator-1", prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint="bf", rendered_payload_hash="rh", action_payload_hash=action_hash, reviewed_target_state_hash="sh")
+    def _pre(self, conn, capability="CREATE_BULK_JSON_DRAFT", action_hash=None, dispatch_payload=None):
+        dispatch_payload = dict(dispatch_payload or {})
+        action_hash = action_hash or compute_action_payload_hash(dispatch_payload)
+        return prepare_prompt_execution_preflight(conn, capability_code=capability, target_type="workflow", target_id="wf-1", operator_id_or_system_actor="operator-1", prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint="bf", rendered_payload_hash="rh", action_payload_hash=action_hash, dispatch_payload=dispatch_payload, reviewed_target_state_hash="sh")
 
-    def _admit(self, conn, capability="CREATE_BULK_JSON_DRAFT", action_hash="ah"):
-        pre = self._pre(conn, capability=capability, action_hash=action_hash)
+    def _admit(self, conn, capability="CREATE_BULK_JSON_DRAFT", action_hash=None, dispatch_payload=None):
+        pre = self._pre(conn, capability=capability, action_hash=action_hash, dispatch_payload=dispatch_payload)
         confirm_prompt_execution(conn, execution_attempt_id=pre["execution_attempt_id"], confirmation_token=pre["confirmation_token"], operator_id_or_system_actor="operator-1", reviewed_target_state_hash=pre["reviewed_target_state_hash"])
         return pre
 

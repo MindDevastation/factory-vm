@@ -146,11 +146,12 @@ def create_prompt_registry_runtime_router(env: Env, templates: Jinja2Templates) 
     def api_dispatch(payload: dict[str, Any], _: bool = Depends(require_basic_auth(env))):
         conn = _connect_runtime_db(env)
         try:
+            if isinstance(payload, dict) and "payload" in payload:
+                return _error("PROMPT_RUNTIME_DISPATCH_REJECTED", "dispatch payload overrides are not accepted; use the preflight dispatch_payload", status_code=422)
             out = dispatch_prompt_execution(
                 conn,
                 execution_attempt_id=_as_int(payload, "execution_attempt_id"),
                 adapter_registry=RUNTIME_ADAPTER_REGISTRY,
-                payload=(payload or {}).get("payload") if isinstance((payload or {}).get("payload"), dict) else None,
             )
             return _sanitize_response(out)
         except ValueError as exc:

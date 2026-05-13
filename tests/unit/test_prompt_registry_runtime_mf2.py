@@ -4,7 +4,7 @@ import sqlite3
 import unittest
 
 from services.prompt_registry.authoritative_gate import RenderValidationService
-from services.prompt_registry.runtime_execution import compute_dedup_key_hash, confirm_prompt_execution, prepare_prompt_execution_preflight
+from services.prompt_registry.runtime_execution import compute_action_payload_hash, compute_dedup_key_hash, confirm_prompt_execution, prepare_prompt_execution_preflight
 from tests._helpers import seed_minimal_db, temp_env
 from tests._runtime_authority import register_runtime_resolver, seed_runtime_authorities
 
@@ -20,7 +20,7 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
             prompt_version_id=1,
             binding_resolution_fingerprint="bind-1",
             rendered_payload_hash="render-1",
-            action_payload_hash="action-1",
+            action_payload_hash=compute_action_payload_hash({}),
             reviewed_target_state_hash="state-1",
         )
 
@@ -52,6 +52,18 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
         finally:
             td.__exit__(None, None, None)
 
+
+    def test_preflight_rejects_action_payload_hash_mismatch_without_confirmation(self):
+        td, conn = self._conn()
+        try:
+            payload_a = {"title": "payload A"}
+            payload_b = {"title": "payload B"}
+            with self.assertRaises(ValueError):
+                prepare_prompt_execution_preflight(conn, **{**self.base, "dispatch_payload": payload_a, "action_payload_hash": compute_action_payload_hash(payload_b)})
+            self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM prompt_execution_attempts").fetchone()[0])
+        finally:
+            td.__exit__(None, None, None)
+
     def test_confirm_flow_and_idempotency_and_stale(self):
         td, conn = self._conn()
         try:
@@ -73,7 +85,8 @@ class TestPromptRegistryRuntimeMf2(unittest.TestCase):
             pre = prepare_prompt_execution_preflight(conn, **self.base)
             dup = prepare_prompt_execution_preflight(conn, **self.base)
             self.assertEqual(pre["execution_attempt_id"], dup["execution_attempt_id"])
-            conflict = prepare_prompt_execution_preflight(conn, **{**self.base, "action_payload_hash": "action-2"})
+            conflict_payload = {"operation": "different"}
+            conflict = prepare_prompt_execution_preflight(conn, **{**self.base, "dispatch_payload": conflict_payload, "action_payload_hash": compute_action_payload_hash(conflict_payload)})
             self.assertEqual("CONFLICT_BLOCKED", conflict["state"])
         finally:
             td.__exit__(None, None, None)

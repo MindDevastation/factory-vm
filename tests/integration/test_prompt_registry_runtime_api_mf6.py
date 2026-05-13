@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry
 from services.prompt_registry.runtime_execution import (
+    compute_action_payload_hash,
     claim_prompt_execution_async_work,
     complete_prompt_execution_async_work,
     confirm_prompt_execution,
@@ -54,6 +55,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             conn.close()
 
     def _base_payload(self, **overrides):
+        action_payload_provided = "action_payload_hash" in overrides
         payload = {
             "capability_code": "CREATE_BULK_JSON_DRAFT",
             "target_type": "channel",
@@ -63,10 +65,11 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             "prompt_version_id": 1,
             "binding_resolution_fingerprint": "bind-mf6",
             "rendered_payload_hash": "render-mf6",
-            "action_payload_hash": "action-mf6",
             "reviewed_target_state_hash": "state-mf6",
         }
         payload.update(overrides)
+        if not action_payload_provided:
+            payload["action_payload_hash"] = compute_action_payload_hash(payload.get("dispatch_payload") or payload.get("action_payload") or {})
         return payload
 
     def _target_hash(self, env, *, target_type="channel", target_id="darkwood-reverie"):
@@ -165,7 +168,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 env,
                 client,
                 headers,
-                action_payload_hash="action-request-flags",
+                action_payload_hash=compute_action_payload_hash({}),
                 capability_execution_enabled=False,
                 target_exists=False,
                 target_state_compatible=False,
@@ -193,7 +196,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 conn.commit()
             finally:
                 conn.close()
-            missing_render_authority = self._preflight_api(env, client, headers, target_id="channel-c", action_payload_hash="action-missing-render")
+            missing_render_authority = self._preflight_api(env, client, headers, target_id="channel-c", action_payload_hash=compute_action_payload_hash({}))
             self.assertEqual(200, missing_render_authority.status_code, missing_render_authority.text)
             self.assertEqual("PREFLIGHT_REJECTED", missing_render_authority.json()["state"])
             self.assertEqual("missing_render_validation_authority", missing_render_authority.json()["failure_reason_code"])
@@ -204,7 +207,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 client,
                 headers,
                 target_id="missing-channel",
-                action_payload_hash="action-missing-target",
+                action_payload_hash=compute_action_payload_hash({}),
                 _server_gate_context={
                     "binding_resolution_complete": True,
                     "target_exists": True,
@@ -223,7 +226,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             self._seed_prompt(env)
             _mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
-            pre = self._preflight_api(env, client, headers).json()
+            pre = self._preflight_api(env, client, headers, dispatch_payload=self._bulk_payload()).json()
             missing = client.post("/v1/prompt-registry/runtime/confirm", json={"execution_attempt_id": pre["execution_attempt_id"], "reviewed_target_state_hash": self._target_hash(env)}, headers=headers)
             self.assertEqual(422, missing.status_code)
             admitted = client.post(
@@ -265,7 +268,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             self._seed_prompt(env)
             _mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
-            pre = self._preflight_api(env, client, headers).json()
+            pre = self._preflight_api(env, client, headers, dispatch_payload=self._bulk_payload()).json()
             non_admitted = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "evil"}, headers=headers)
             self.assertEqual(422, non_admitted.status_code)
             client.post(
@@ -274,7 +277,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
                 headers=headers,
             )
 
-            dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "ignored", "payload": self._bulk_payload()}, headers=headers)
+            dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "ignored"}, headers=headers)
             self.assertEqual(200, dispatched.status_code, dispatched.text)
             self.assertEqual("SUCCEEDED", dispatched.json()["state"])
             self.assertEqual("BULK_JSON_DRAFT_TARGET_UPDATED", dispatched.json()["result_code"])
@@ -291,7 +294,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             self._seed_prompt(env)
             mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
-            pre = self._preflight_api(env, client, headers, target_id="channel-b", action_payload_hash="action-fail-closed").json()
+            pre = self._preflight_api(env, client, headers, target_id="channel-b", action_payload_hash=compute_action_payload_hash({})).json()
             client.post(
                 "/v1/prompt-registry/runtime/confirm",
                 json={"execution_attempt_id": pre["execution_attempt_id"], "confirmation_token": pre["confirmation_token"], "reviewed_target_state_hash": self._target_hash(env, target_id="channel-b")},
@@ -299,7 +302,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             )
             runtime_api = importlib.import_module("services.factory_api.prompt_registry_runtime")
             with mock.patch.object(runtime_api, "RUNTIME_ADAPTER_REGISTRY", RuntimeAdapterRegistry()):
-                missing = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "evil", "payload": self._bulk_payload()}, headers=headers)
+                missing = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "adapter": "evil"}, headers=headers)
             self.assertEqual(422, missing.status_code)
             self.assertEqual("PROMPT_RUNTIME_DISPATCH_REJECTED", missing.json()["error"]["code"])
             conn = sqlite3.connect(env.db_path)
@@ -308,6 +311,42 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             finally:
                 conn.close()
             self.assertIs(mod, importlib.import_module("services.factory_api.app"))
+
+
+    def test_dispatch_rejects_payload_override_and_later_executes_persisted_payload(self):
+        with temp_env() as (_td, env):
+            seed_minimal_db(env)
+            self._seed_prompt(env)
+            _mod, client = self._app_client()
+            headers = basic_auth_header(env.basic_user, env.basic_pass)
+            payload_a = {**self._bulk_payload(), "title": "Confirmed Payload A"}
+            payload_b = {**self._bulk_payload(), "title": "Override Payload B"}
+            pre = self._preflight_api(env, client, headers, dispatch_payload=payload_a).json()
+            confirmed = client.post(
+                "/v1/prompt-registry/runtime/confirm",
+                json={"execution_attempt_id": pre["execution_attempt_id"], "confirmation_token": pre["confirmation_token"], "reviewed_target_state_hash": self._target_hash(env)},
+                headers=headers,
+            )
+            self.assertEqual(200, confirmed.status_code, confirmed.text)
+
+            rejected = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"], "payload": payload_b}, headers=headers)
+            self.assertEqual(422, rejected.status_code, rejected.text)
+            self.assertEqual("PROMPT_RUNTIME_DISPATCH_REJECTED", rejected.json()["error"]["code"])
+            conn = sqlite3.connect(env.db_path)
+            try:
+                self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM ui_job_drafts").fetchone()[0])
+            finally:
+                conn.close()
+
+            dispatched = client.post("/v1/prompt-registry/runtime/dispatch", json={"execution_attempt_id": pre["execution_attempt_id"]}, headers=headers)
+            self.assertEqual(200, dispatched.status_code, dispatched.text)
+            conn = sqlite3.connect(env.db_path)
+            try:
+                row = conn.execute("SELECT title FROM ui_job_drafts ORDER BY job_id DESC LIMIT 1").fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual("Confirmed Payload A", row[0])
+            finally:
+                conn.close()
 
     def test_retry_rejects_sync_and_accepts_async_failed_execution(self):
         with temp_env() as (_td, env):
@@ -319,7 +358,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
             sync_retry = client.post("/v1/prompt-registry/runtime/retry", json={"execution_attempt_id": sync_admitted["execution_attempt_id"]}, headers=headers)
             self.assertEqual(422, sync_retry.status_code)
 
-            async_admitted = self._admit_service(env, capability_code="ENQUEUE_INTERNAL_PROMPT_JOB", target_id="async-mf6", action_payload_hash="action-async")
+            async_admitted = self._admit_service(env, capability_code="ENQUEUE_INTERNAL_PROMPT_JOB", target_id="async-mf6", action_payload_hash=compute_action_payload_hash({}))
             conn = sqlite3.connect(env.db_path)
             try:
                 conn.execute("UPDATE prompt_execution_attempts SET state='FAILED_TERMINAL',retryable_by_operator=1 WHERE id=?", (async_admitted["execution_attempt_id"],))
@@ -379,7 +418,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
         with temp_env() as (_td, env):
             seed_minimal_db(env)
             self._seed_prompt(env)
-            admitted = self._admit_service(env, target_id="detail-mf6", action_payload_hash="action-detail")
+            admitted = self._admit_service(env, target_id="detail-mf6", action_payload_hash=compute_action_payload_hash({}))
             _mod, client = self._app_client()
             for path in (
                 f"/v1/prompt-registry/runtime/attempts/{admitted['execution_group_id']}",
@@ -414,7 +453,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
         with temp_env() as (_td, env):
             seed_minimal_db(env)
             self._seed_prompt(env)
-            admitted = self._admit_service(env, capability_code="ENQUEUE_INTERNAL_PROMPT_JOB", target_id="async-success-mf6", action_payload_hash="action-async-success")
+            admitted = self._admit_service(env, capability_code="ENQUEUE_INTERNAL_PROMPT_JOB", target_id="async-success-mf6", action_payload_hash=compute_action_payload_hash({}))
             conn = sqlite3.connect(env.db_path)
             conn.row_factory = sqlite3.Row
             try:
@@ -432,7 +471,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
         with temp_env() as (_td, env):
             seed_minimal_db(env)
             self._seed_prompt(env)
-            admitted = self._admit_service(env, target_id="obs-mf6", action_payload_hash="action-obs")
+            admitted = self._admit_service(env, target_id="obs-mf6", action_payload_hash=compute_action_payload_hash({}))
             _mod, client = self._app_client()
             headers = basic_auth_header(env.basic_user, env.basic_pass)
             client.post("/v1/prompt-registry/runtime/cancel", json={"execution_attempt_id": admitted["execution_attempt_id"]}, headers=headers)
@@ -475,7 +514,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
         with temp_env() as (_td, env):
             seed_minimal_db(env)
             self._seed_prompt(env)
-            admitted = self._admit_service(env, capability_code="ENQUEUE_INTERNAL_PROMPT_JOB", target_id="async-ui-mf6", action_payload_hash="action-async-ui")
+            admitted = self._admit_service(env, capability_code="ENQUEUE_INTERNAL_PROMPT_JOB", target_id="async-ui-mf6", action_payload_hash=compute_action_payload_hash({}))
             conn = sqlite3.connect(env.db_path)
             try:
                 conn.execute("UPDATE prompt_execution_attempts SET retryable_by_operator=1,state='FAILED_TERMINAL',result_code='FAILED',secret_safe_message='safe only' WHERE id=?", (admitted["execution_attempt_id"],))
@@ -494,7 +533,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
         with temp_env() as (_td, env):
             seed_minimal_db(env)
             self._seed_prompt(env)
-            admitted = self._admit_service(env, target_id="cancel-ui-mf6", action_payload_hash="action-cancel-ui")
+            admitted = self._admit_service(env, target_id="cancel-ui-mf6", action_payload_hash=compute_action_payload_hash({}))
             _mod, client = self._app_client()
             self.assertEqual(401, client.post("/ui/prompt-registry/runtime/cancel", data={"execution_attempt_id": admitted["execution_attempt_id"]}).status_code)
             headers = basic_auth_header(env.basic_user, env.basic_pass)
@@ -511,7 +550,7 @@ class TestPromptRegistryRuntimeApiMf6(unittest.TestCase):
         with temp_env() as (_td, env):
             seed_minimal_db(env)
             self._seed_prompt(env)
-            admitted = self._admit_service(env, capability_code="ENQUEUE_INTERNAL_PROMPT_JOB", target_id="retry-post-ui-mf6", action_payload_hash="action-retry-post-ui")
+            admitted = self._admit_service(env, capability_code="ENQUEUE_INTERNAL_PROMPT_JOB", target_id="retry-post-ui-mf6", action_payload_hash=compute_action_payload_hash({}))
             conn = sqlite3.connect(env.db_path)
             try:
                 conn.execute("UPDATE prompt_execution_attempts SET retryable_by_operator=1,state='FAILED_TERMINAL',result_code='FAILED',secret_safe_message='safe only' WHERE id=?", (admitted["execution_attempt_id"],))

@@ -4,7 +4,7 @@ import sqlite3
 import unittest
 
 from services.prompt_registry.authoritative_gate import RenderValidationService, TARGET_SNAPSHOT_RESOLVER_REGISTRY
-from services.prompt_registry.runtime_execution import confirm_prompt_execution, prepare_prompt_execution_preflight
+from services.prompt_registry.runtime_execution import compute_action_payload_hash, confirm_prompt_execution, prepare_prompt_execution_preflight
 from tests._helpers import seed_minimal_db, temp_env
 from tests._runtime_authority import register_runtime_resolver, seed_runtime_authorities
 
@@ -24,7 +24,7 @@ class TestPromptRegistryRuntimeAuthoritativeIntegration(unittest.TestCase):
         conn.commit(); return td, conn
 
     def _base(self):
-        return dict(capability_code="CREATE_BULK_JSON_DRAFT", target_type="workflow", target_id="wf-1", operator_id_or_system_actor="operator-1", prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint="bf", rendered_payload_hash="rh", action_payload_hash="ah", reviewed_target_state_hash="caller-preview")
+        return dict(capability_code="CREATE_BULK_JSON_DRAFT", target_type="workflow", target_id="wf-1", operator_id_or_system_actor="operator-1", prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint="bf", rendered_payload_hash="rh", action_payload_hash=compute_action_payload_hash({}), reviewed_target_state_hash="caller-preview")
 
     def _seed(self, conn, **kw):
         seed_runtime_authorities(conn, operator="operator-1", capability="CREATE_BULK_JSON_DRAFT", target_type="workflow", binding_fingerprint="bf", render_hash="rh", **kw)

@@ -4,7 +4,7 @@ import sqlite3
 import unittest
 
 from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry, build_default_runtime_adapter_registry
-from services.prompt_registry.runtime_execution import confirm_prompt_execution, dispatch_prompt_execution, prepare_prompt_execution_preflight
+from services.prompt_registry.runtime_execution import compute_action_payload_hash, confirm_prompt_execution, dispatch_prompt_execution, prepare_prompt_execution_preflight
 from tests._helpers import seed_minimal_db, temp_env
 from tests._runtime_authority import seed_runtime_authorities
 
@@ -23,8 +23,9 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
         conn.commit()
         return td, conn
 
-    def _admitted_attempt(self, conn: sqlite3.Connection, capability: str):
-        base = dict(capability_code=capability,target_type='workflow',target_id='wf-1',operator_id_or_system_actor='operator-1',prompt_record_id=1,prompt_version_id=1,binding_resolution_fingerprint='bf',rendered_payload_hash='rh',action_payload_hash='ah',reviewed_target_state_hash='sh')
+    def _admitted_attempt(self, conn: sqlite3.Connection, capability: str, dispatch_payload: dict | None = None):
+        dispatch_payload = dict(dispatch_payload or {})
+        base = dict(capability_code=capability,target_type='workflow',target_id='wf-1',operator_id_or_system_actor='operator-1',prompt_record_id=1,prompt_version_id=1,binding_resolution_fingerprint='bf',rendered_payload_hash='rh',action_payload_hash=compute_action_payload_hash(dispatch_payload),dispatch_payload=dispatch_payload,reviewed_target_state_hash='sh')
         pre = prepare_prompt_execution_preflight(conn, **base)
         confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash=pre['reviewed_target_state_hash'])
         return pre['execution_attempt_id']
@@ -53,9 +54,9 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
     def test_sync_dispatch_success_and_no_async_enqueue(self):
         td, conn = self._conn()
         try:
-            aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT')
+            aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT', self._bulk_payload())
             reg = build_default_runtime_adapter_registry()
-            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg, payload=self._bulk_payload())
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg)
             self.assertEqual('SUCCEEDED', out['state'])
             cnt = conn.execute('SELECT COUNT(*) FROM prompt_execution_async_queue').fetchone()[0]
             self.assertEqual(0, cnt)
@@ -65,8 +66,8 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
     def test_default_sync_adapter_records_internal_product_target(self):
         td, conn = self._conn()
         try:
-            aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT')
-            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry(), payload=self._bulk_payload())
+            aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT', self._bulk_payload())
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry())
             self.assertEqual('SUCCEEDED', out['state'])
             self.assertEqual('BULK_JSON_DRAFT_TARGET_UPDATED', out['result_code'])
             usage = conn.execute('SELECT artifact_ref,usage_payload_json FROM prompt_execution_usage WHERE latest_attempt_id=?', (aid,)).fetchone()
@@ -80,10 +81,10 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
     def test_default_sync_adapter_fails_closed_without_internal_target_write(self):
         td, conn = self._conn()
         try:
-            aid = self._admitted_attempt(conn, 'CREATE_METADATA_REQUEST')
+            aid = self._admitted_attempt(conn, 'CREATE_METADATA_REQUEST', {'selected_item_ids': ['release-1']})
             conn.execute('DELETE FROM prompt_execution_usage WHERE latest_attempt_id=?', (aid,))
             conn.commit()
-            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'selected_item_ids': ['release-1']})
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry())
             self.assertEqual('FAILED_TERMINAL', out['state'])
             self.assertEqual('ADAPTER_ERROR', out['result_code'])
         finally:
@@ -93,23 +94,23 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
     def test_default_metadata_visual_and_analytics_adapters_create_real_targets(self):
         td, conn = self._conn()
         try:
-            metadata_aid = self._admitted_attempt(conn, 'CREATE_METADATA_REQUEST')
-            metadata = dispatch_prompt_execution(conn, execution_attempt_id=metadata_aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'selected_item_ids': ['item-1'], 'requested_fields': ['title']})
+            metadata_aid = self._admitted_attempt(conn, 'CREATE_METADATA_REQUEST', {'selected_item_ids': ['item-1'], 'requested_fields': ['title']})
+            metadata = dispatch_prompt_execution(conn, execution_attempt_id=metadata_aid, adapter_registry=build_default_runtime_adapter_registry())
             self.assertEqual('SUCCEEDED', metadata['state'])
             metadata_ref = conn.execute('SELECT artifact_ref FROM prompt_execution_usage WHERE latest_attempt_id=?', (metadata_aid,)).fetchone()[0]
             self.assertTrue(str(metadata_ref).startswith('metadata_bulk_preview_sessions:'))
             self.assertIsNotNone(conn.execute('SELECT 1 FROM metadata_bulk_preview_sessions WHERE id=?', (str(metadata_ref).split(':', 1)[1],)).fetchone())
 
             release_id = self._release_id(conn)
-            visual_aid = self._admitted_attempt(conn, 'CREATE_VISUAL_REQUEST')
-            visual = dispatch_prompt_execution(conn, execution_attempt_id=visual_aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'selected_release_ids': [release_id], 'action_type': 'BULK_GENERATE_PREVIEWS'})
+            visual_aid = self._admitted_attempt(conn, 'CREATE_VISUAL_REQUEST', {'selected_release_ids': [release_id], 'action_type': 'BULK_GENERATE_PREVIEWS'})
+            visual = dispatch_prompt_execution(conn, execution_attempt_id=visual_aid, adapter_registry=build_default_runtime_adapter_registry())
             self.assertEqual('SUCCEEDED', visual['state'])
             visual_ref = conn.execute('SELECT artifact_ref FROM prompt_execution_usage WHERE latest_attempt_id=?', (visual_aid,)).fetchone()[0]
             self.assertTrue(str(visual_ref).startswith('release_visual_batch_preview_sessions:'))
             self.assertIsNotNone(conn.execute('SELECT 1 FROM release_visual_batch_preview_sessions WHERE id=?', (str(visual_ref).split(':', 1)[1],)).fetchone())
 
-            analytics_aid = self._admitted_attempt(conn, 'CREATE_ANALYTICS_REQUEST')
-            analytics = dispatch_prompt_execution(conn, execution_attempt_id=analytics_aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'report_scope_type': 'OVERVIEW', 'artifact_type': 'API_REPORT'})
+            analytics_aid = self._admitted_attempt(conn, 'CREATE_ANALYTICS_REQUEST', {'report_scope_type': 'OVERVIEW', 'artifact_type': 'API_REPORT'})
+            analytics = dispatch_prompt_execution(conn, execution_attempt_id=analytics_aid, adapter_registry=build_default_runtime_adapter_registry())
             self.assertEqual('SUCCEEDED', analytics['state'])
             analytics_ref = conn.execute('SELECT artifact_ref FROM prompt_execution_usage WHERE latest_attempt_id=?', (analytics_aid,)).fetchone()[0]
             self.assertTrue(str(analytics_ref).startswith('analytics_report_records:'))
@@ -120,8 +121,8 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
     def test_default_sync_adapter_fails_closed_when_real_target_payload_missing(self):
         td, conn = self._conn()
         try:
-            aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT')
-            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry(), payload={'channel_slug': 'darkwood-reverie'})
+            aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT', {'channel_slug': 'darkwood-reverie'})
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=build_default_runtime_adapter_registry())
             self.assertEqual('FAILED_TERMINAL', out['state'])
             self.assertEqual('ADAPTER_ERROR', out['result_code'])
             self.assertEqual(0, conn.execute('SELECT COUNT(*) FROM ui_job_drafts').fetchone()[0])
@@ -158,7 +159,7 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
     def test_dispatch_rejects_non_admitted_and_mode_mismatch_and_missing_adapter(self):
         td, conn = self._conn()
         try:
-            pre = prepare_prompt_execution_preflight(conn, capability_code='CREATE_VISUAL_REQUEST',target_type='workflow',target_id='wf-1',operator_id_or_system_actor='operator-1',prompt_record_id=1,prompt_version_id=1,binding_resolution_fingerprint='bf',rendered_payload_hash='rh',action_payload_hash='ah',reviewed_target_state_hash='sh')
+            pre = prepare_prompt_execution_preflight(conn, capability_code='CREATE_VISUAL_REQUEST',target_type='workflow',target_id='wf-1',operator_id_or_system_actor='operator-1',prompt_record_id=1,prompt_version_id=1,binding_resolution_fingerprint='bf',rendered_payload_hash='rh',action_payload_hash=compute_action_payload_hash({}),reviewed_target_state_hash='sh')
             with self.assertRaises(ValueError):
                 dispatch_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], adapter_registry=RuntimeAdapterRegistry())
 
@@ -179,15 +180,10 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
         td, conn = self._conn()
         called = {"v": False}
         try:
-            aid = self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT')
-            reg = RuntimeAdapterRegistry()
-            def adapter(_):
-                called["v"] = True
-                return {"result_code": "OK", "secret_safe_message": "done"}
-            reg.register('CREATE_BULK_JSON_DRAFT', adapter)
-            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg, payload={"token": "abc"})
-            self.assertEqual('FAILED_TERMINAL', out['state'])
+            with self.assertRaises(ValueError):
+                self._admitted_attempt(conn, 'CREATE_BULK_JSON_DRAFT', {"token": "abc"})
             self.assertFalse(called["v"])
+            self.assertEqual(0, conn.execute('SELECT COUNT(*) FROM prompt_execution_attempts').fetchone()[0])
         finally:
             td.__exit__(None, None, None)
 
@@ -195,25 +191,20 @@ class TestPromptRegistryRuntimeMf3(unittest.TestCase):
         td, conn = self._conn()
         called = {"v": False}
         try:
-            aid = self._admitted_attempt(conn, 'CREATE_METADATA_REQUEST')
-            reg = RuntimeAdapterRegistry()
-            def adapter(_):
-                called["v"] = True
-                return {"result_code": "OK", "secret_safe_message": "done"}
-            reg.register('CREATE_METADATA_REQUEST', adapter)
-            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg, payload={"meta": {"authorization": "Bearer X"}})
-            self.assertEqual('FAILED_TERMINAL', out['state'])
+            with self.assertRaises(ValueError):
+                self._admitted_attempt(conn, 'CREATE_METADATA_REQUEST', {"meta": {"authorization": "Bearer X"}})
             self.assertFalse(called["v"])
+            self.assertEqual(0, conn.execute('SELECT COUNT(*) FROM prompt_execution_attempts').fetchone()[0])
         finally:
             td.__exit__(None, None, None)
 
     def test_adapter_result_secret_like_message_rejected(self):
         td, conn = self._conn()
         try:
-            aid = self._admitted_attempt(conn, 'CREATE_ANALYTICS_REQUEST')
+            aid = self._admitted_attempt(conn, 'CREATE_ANALYTICS_REQUEST', {"safe": "ok"})
             reg = RuntimeAdapterRegistry()
             reg.register('CREATE_ANALYTICS_REQUEST', lambda _ : {'result_code': 'OK', 'secret_safe_message': 'bearer token=123'})
-            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg, payload={"safe": "ok"})
+            out = dispatch_prompt_execution(conn, execution_attempt_id=aid, adapter_registry=reg)
             self.assertEqual('FAILED_TERMINAL', out['state'])
             row = conn.execute('SELECT secret_safe_message FROM prompt_execution_attempts WHERE id=?', (aid,)).fetchone()
             self.assertEqual('Adapter result failed secret-safety precheck.', row[0])

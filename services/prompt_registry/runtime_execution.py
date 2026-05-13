@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -31,6 +32,52 @@ RETRY_ELIGIBLE_CAPABILITIES = frozenset({"ENQUEUE_INTERNAL_PROMPT_JOB", "GENERAT
 _SECRET_PATTERNS = ("token", "secret", "password", "api_key", "apikey", "authorization", "bearer", "credential", "private_key")
 logger = logging.getLogger(__name__)
 RUNTIME_METRICS: dict[str, int] = {}
+
+
+def canonical_runtime_action_payload_json(payload) -> str:
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise ValueError("PREFLIGHT_REJECTED: dispatch payload must be an object")
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def compute_action_payload_hash(payload) -> str:
+    return hashlib.sha256(canonical_runtime_action_payload_json(payload).encode("utf-8")).hexdigest()
+
+
+def _runtime_action_payload_from_kwargs(kwargs: dict) -> tuple[dict, str, str]:
+    has_dispatch = "dispatch_payload" in kwargs
+    has_action = "action_payload" in kwargs
+    if has_dispatch and has_action:
+        dispatch_json = canonical_runtime_action_payload_json(kwargs.get("dispatch_payload"))
+        action_json = canonical_runtime_action_payload_json(kwargs.get("action_payload"))
+        if dispatch_json != action_json:
+            raise ValueError("PREFLIGHT_REJECTED: action_payload and dispatch_payload differ")
+        payload = kwargs.get("dispatch_payload")
+        canonical_json = dispatch_json
+    elif has_dispatch:
+        payload = kwargs.get("dispatch_payload")
+        canonical_json = canonical_runtime_action_payload_json(payload)
+    elif has_action:
+        payload = kwargs.get("action_payload")
+        canonical_json = canonical_runtime_action_payload_json(payload)
+    else:
+        payload = {}
+        canonical_json = canonical_runtime_action_payload_json(payload)
+    if not _is_secret_safe_data(payload):
+        raise ValueError("PREFLIGHT_REJECTED: secret-unsafe runtime payload")
+    return dict(payload or {}), canonical_json, hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def _load_persisted_dispatch_payload(payload_json: str | None) -> dict:
+    try:
+        value = json.loads(payload_json or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError("DISPATCH_REJECTED: persisted dispatch payload is invalid") from exc
+    if not isinstance(value, dict):
+        raise ValueError("DISPATCH_REJECTED: persisted dispatch payload must be an object")
+    return value
 
 
 def _contains_secret_like_text(value: str) -> bool:
@@ -241,6 +288,13 @@ def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> di
     if not operator_id:
         _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="OPERATOR_REQUIRED")
         raise ValueError("PREFLIGHT_REJECTED: operator identity required")
+    dispatch_payload, dispatch_payload_json, computed_action_payload_hash = _runtime_action_payload_from_kwargs(kwargs)
+    provided_action_payload_hash = str(kwargs.get("action_payload_hash") or "").strip()
+    if provided_action_payload_hash and provided_action_payload_hash != computed_action_payload_hash:
+        _observe_runtime_event("preflight_rejected", capability_code=capability_code, result_code="ACTION_PAYLOAD_HASH_MISMATCH")
+        raise ValueError("PREFLIGHT_REJECTED: action_payload_hash does not match dispatch payload")
+    kwargs["action_payload_hash"] = computed_action_payload_hash
+    kwargs["dispatch_payload"] = dispatch_payload
     gate_outcome = _validate_preflight_safety_gates(conn, kwargs, capability_code, operator_id)
     if gate_outcome is not None:
         return gate_outcome
@@ -282,7 +336,7 @@ def prepare_prompt_execution_preflight(conn: sqlite3.Connection, **kwargs) -> di
             return {"state": "CONFLICT_BLOCKED", "blocked_by_execution_group_id": int(conflict[0]), "dedup_key_hash": dedup_key_hash}
         raise ValueError("CONFLICT_BLOCKED: active target lock collision")
     gid = int(cur.lastrowid)
-    cur.execute("INSERT INTO prompt_execution_attempts(execution_group_id,attempt_number,state,correlation_id,operator_id_or_system_actor,prompt_record_id,prompt_version_id,binding_resolution_fingerprint,rendered_payload_hash,action_payload_hash,reviewed_target_state_hash,dedup_key_hash,retryable_by_operator,cancellable,execution_mode,dispatch_payload_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (gid, 1, "CONFIRMATION_REQUIRED", f"mf2:{gid}:1", operator_id, kwargs["prompt_record_id"], kwargs.get("prompt_version_id"), kwargs["binding_resolution_fingerprint"], kwargs["rendered_payload_hash"], kwargs["action_payload_hash"], kwargs["reviewed_target_state_hash"], dedup_key_hash, 0, 1, mode, "{}", now, now))
+    cur.execute("INSERT INTO prompt_execution_attempts(execution_group_id,attempt_number,state,correlation_id,operator_id_or_system_actor,prompt_record_id,prompt_version_id,binding_resolution_fingerprint,rendered_payload_hash,action_payload_hash,reviewed_target_state_hash,dedup_key_hash,retryable_by_operator,cancellable,execution_mode,dispatch_payload_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (gid, 1, "CONFIRMATION_REQUIRED", f"mf2:{gid}:1", operator_id, kwargs["prompt_record_id"], kwargs.get("prompt_version_id"), kwargs["binding_resolution_fingerprint"], kwargs["rendered_payload_hash"], kwargs["action_payload_hash"], kwargs["reviewed_target_state_hash"], dedup_key_hash, 0, 1, mode, dispatch_payload_json, now, now))
     aid = int(cur.lastrowid)
     conn.commit()
     _write_lifecycle_event(conn, execution_group_id=gid, execution_attempt_id=aid, state_before="PREPARED", state_after="CONFIRMATION_REQUIRED", result_code=None, actor=operator_id, payload={})
@@ -383,7 +437,7 @@ def confirm_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: 
     return {"state": "ADMITTED", "execution_group_id": row[1], "execution_attempt_id": row[0], "dedup_key_hash": row[3]}
 
 
-def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: int, adapter_registry: RuntimeAdapterRegistry, payload: dict | None = None) -> dict:
+def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id: int, adapter_registry: RuntimeAdapterRegistry) -> dict:
     row = conn.execute(
         """
         SELECT a.id,a.execution_group_id,a.state,a.execution_mode,a.secret_safe_message,a.dispatch_payload_json,
@@ -411,8 +465,8 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
         if adapter is None:
             _observe_runtime_event("dispatch_rejected", execution_group_id=row[1], execution_attempt_id=execution_attempt_id, capability_code=capability_code, state=row[2], result_code="MISSING_ADAPTER")
             raise ValueError("DISPATCH_REJECTED: missing adapter")
-        safe_payload = {} if payload is None else payload if isinstance(payload, dict) else None
-        if safe_payload is None or not _is_secret_safe_data(dict(safe_payload or {})):
+        safe_payload = _load_persisted_dispatch_payload(row[5])
+        if not _is_secret_safe_data(safe_payload):
             _finalize_execution_terminal(
                 conn,
                 execution_group_id=row[1],
@@ -459,7 +513,7 @@ def dispatch_prompt_execution(conn: sqlite3.Connection, *, execution_attempt_id:
         conn.commit()
         return {"state": terminal_state, "execution_attempt_id": execution_attempt_id, "execution_group_id": row[1], "result_code": result_code, "secret_safe_message": message}
 
-    queue_payload = "{}"
+    queue_payload = canonical_runtime_action_payload_json(_load_persisted_dispatch_payload(row[5]))
     try:
         conn.execute("INSERT INTO prompt_execution_async_queue(execution_group_id,execution_attempt_id,capability_code,queue_state,available_at,payload_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", (row[1], execution_attempt_id, capability_code, "QUEUED", now, queue_payload, now, now))
     except sqlite3.IntegrityError:

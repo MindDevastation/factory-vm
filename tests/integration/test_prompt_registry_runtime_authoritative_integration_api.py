@@ -6,6 +6,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 
+from services.prompt_registry.runtime_execution import compute_action_payload_hash
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 from tests._runtime_authority import seed_runtime_authorities
 
@@ -28,7 +29,7 @@ class TestPromptRegistryRuntimeAuthoritativeIntegrationApi(unittest.TestCase):
             conn.close()
 
     def _payload(self, **overrides):
-        payload = dict(capability_code="CREATE_BULK_JSON_DRAFT", target_type="workflow", target_id="wf-1", operator_id_or_system_actor="spoofed", operator_subject="spoofed", prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint="bf", rendered_payload_hash="rh", action_payload_hash="ah", reviewed_target_state_hash="caller")
+        payload = dict(capability_code="CREATE_BULK_JSON_DRAFT", target_type="workflow", target_id="wf-1", operator_id_or_system_actor="spoofed", operator_subject="spoofed", prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint="bf", rendered_payload_hash="rh", action_payload_hash=compute_action_payload_hash({}), reviewed_target_state_hash="caller")
         payload.update(overrides)
         return payload
 

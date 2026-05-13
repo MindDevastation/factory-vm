@@ -5,6 +5,7 @@ import unittest
 
 from services.prompt_registry.runtime_adapters import RuntimeAdapterRegistry
 from services.prompt_registry.runtime_execution import (
+    compute_action_payload_hash,
     confirm_prompt_execution,
     dispatch_prompt_execution,
     get_prompt_execution_status,
@@ -29,8 +30,10 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
         conn.commit()
         return td, conn
 
-    def _pre(self, conn, capability='CREATE_BULK_JSON_DRAFT', action_hash='ah'):
-        return prepare_prompt_execution_preflight(conn, capability_code=capability, target_type='workflow', target_id='wf-1', operator_id_or_system_actor='operator-1', prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint='bf', rendered_payload_hash='rh', action_payload_hash=action_hash, reviewed_target_state_hash='sh')
+    def _pre(self, conn, capability='CREATE_BULK_JSON_DRAFT', action_hash=None, dispatch_payload=None):
+        dispatch_payload = dict(dispatch_payload or {})
+        action_hash = action_hash or compute_action_payload_hash(dispatch_payload)
+        return prepare_prompt_execution_preflight(conn, capability_code=capability, target_type='workflow', target_id='wf-1', operator_id_or_system_actor='operator-1', prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint='bf', rendered_payload_hash='rh', action_payload_hash=action_hash, dispatch_payload=dispatch_payload, reviewed_target_state_hash='sh')
 
     def test_lifecycle_and_usage_on_confirm_and_sync_success(self):
         td, conn = self._conn()
@@ -40,7 +43,7 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
             usage = conn.execute("SELECT first_admitted_attempt_id,terminal_outcome FROM prompt_execution_usage WHERE execution_group_id=?", (pre['execution_group_id'],)).fetchone()
             self.assertEqual(pre['execution_attempt_id'], usage[0])
             reg = RuntimeAdapterRegistry(); reg.register('CREATE_BULK_JSON_DRAFT', lambda _: {'result_code': 'OK', 'secret_safe_message': 'done'})
-            out = dispatch_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], adapter_registry=reg, payload={'safe': 'ok'})
+            out = dispatch_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], adapter_registry=reg)
             self.assertEqual('SUCCEEDED', out['state'])
             usage2 = conn.execute("SELECT terminal_outcome FROM prompt_execution_usage WHERE execution_group_id=?", (pre['execution_group_id'],)).fetchone()
             self.assertEqual('SUCCEEDED', usage2[0])
@@ -59,7 +62,7 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
             pre = self._pre(conn)
             confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash=pre['reviewed_target_state_hash'])
             reg = RuntimeAdapterRegistry(); reg.register('CREATE_BULK_JSON_DRAFT', lambda _: {'result_code': 'token-leak', 'secret_safe_message': 'secret=bad'})
-            out = dispatch_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], adapter_registry=reg, payload={'safe': 'ok'})
+            out = dispatch_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], adapter_registry=reg)
             self.assertEqual('FAILED_TERMINAL', out['state'])
             aud = conn.execute("SELECT event_type,payload_json FROM prompt_audit_events WHERE prompt_id=1 ORDER BY id ASC").fetchall()
             self.assertTrue(any(r[0] == 'runtime_failed_terminal' for r in aud))
@@ -71,7 +74,8 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
         td, conn = self._conn()
         try:
             self._pre(conn)
-            blocked = self._pre(conn, action_hash='ah-2')
+            blocked_payload = {'operation': 'blocked'}
+            blocked = self._pre(conn, action_hash=compute_action_payload_hash(blocked_payload), dispatch_payload=blocked_payload)
             self.assertEqual('CONFLICT_BLOCKED', blocked['state'])
             self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM prompt_execution_usage").fetchone()[0])
             pre2 = self._pre(conn, capability='ENQUEUE_INTERNAL_PROMPT_JOB')
@@ -95,7 +99,7 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
             conn.execute("INSERT INTO prompt_versions(id,prompt_id,version_no,body_text,render_fingerprint,status,validation_status,is_active,created_at,updated_at) VALUES(1,1,1,'body','fp','active','VALID',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
             seed_runtime_authorities(conn, operator="operator-1", capability="CREATE_BULK_JSON_DRAFT", target_type="workflow", binding_fingerprint="bf", render_hash="rh")
             conn.commit()
-            pre = prepare_prompt_execution_preflight(conn, capability_code='CREATE_BULK_JSON_DRAFT', target_type='workflow', target_id='wf-1', operator_id_or_system_actor='operator-1', prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint='bf', rendered_payload_hash='rh', action_payload_hash='ah', reviewed_target_state_hash='sh')
+            pre = prepare_prompt_execution_preflight(conn, capability_code='CREATE_BULK_JSON_DRAFT', target_type='workflow', target_id='wf-1', operator_id_or_system_actor='operator-1', prompt_record_id=1, prompt_version_id=1, binding_resolution_fingerprint='bf', rendered_payload_hash='rh', action_payload_hash=compute_action_payload_hash({}), reviewed_target_state_hash='sh')
             conn.close()
             reopened = sqlite3.connect(env.db_path)
             reopened.row_factory = sqlite3.Row
@@ -110,22 +114,11 @@ class TestPromptRegistryRuntimeMf4(unittest.TestCase):
         td, conn = self._conn()
         called = {"v": False}
         try:
-            pre = self._pre(conn)
-            confirm_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], confirmation_token=pre['confirmation_token'], operator_id_or_system_actor='operator-1', reviewed_target_state_hash=pre['reviewed_target_state_hash'])
-            reg = RuntimeAdapterRegistry()
-            def adapter(_):
-                called["v"] = True
-                return {'result_code': 'OK', 'secret_safe_message': 'done'}
-            reg.register('CREATE_BULK_JSON_DRAFT', adapter)
-            out = dispatch_prompt_execution(conn, execution_attempt_id=pre['execution_attempt_id'], adapter_registry=reg, payload={'token': 'raw-secret'})
-            self.assertEqual('FAILED_TERMINAL', out['state'])
+            with self.assertRaises(ValueError):
+                self._pre(conn, dispatch_payload={'token': 'raw-secret'})
             self.assertFalse(called["v"])
-            states = [e['state_after'] for e in list_prompt_execution_timeline(conn, execution_group_id=pre['execution_group_id'])]
-            self.assertIn('FAILED_TERMINAL', states)
-            audit_count = conn.execute("SELECT COUNT(*) FROM prompt_audit_events WHERE event_type='runtime_failed_terminal'").fetchone()[0]
-            self.assertEqual(1, audit_count)
-            usage = conn.execute("SELECT terminal_outcome FROM prompt_execution_usage WHERE execution_group_id=?", (pre['execution_group_id'],)).fetchone()[0]
-            self.assertEqual('FAILED_TERMINAL', usage)
+            self.assertEqual(0, conn.execute('SELECT COUNT(*) FROM prompt_execution_attempts').fetchone()[0])
+            self.assertEqual(0, conn.execute('SELECT COUNT(*) FROM prompt_execution_usage').fetchone()[0])
         finally:
             td.__exit__(None, None, None)
 
