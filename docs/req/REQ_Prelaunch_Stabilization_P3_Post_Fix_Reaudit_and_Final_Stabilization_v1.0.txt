@@ -1,0 +1,243 @@
+REQ_PRELAUNCH_STABILIZATION_P3_POST_FIX_REAUDIT_AND_FINAL_STABILIZATION_v1.0
+
+1. Название
+
+Pre-Launch Stabilization — Punkt 3
+Post-Fix Re-Audit and Final Stabilization Pass
+
+2. Цель
+
+После выполнения новых фиксов, добавления новых файлов и изменений по итогам Punkt 1 и Punkt 2 провести финальный контролируемый проход, чтобы:
+- перепроверить измененные и новые участки кода;
+- найти регрессии и проблемы на стыках модулей;
+- подтвердить, что предзапусковый fix pack не создал новых рисков;
+- довести проект до финального pre-launch ready состояния перед VPS запуском.
+
+3. Зачем делаем
+
+После audit/fix pass и локального ручного QA проект меняется. Даже если отдельные фиксы корректны локально, на стыках могут появиться:
+- новые regressions;
+- stale assertions/tests;
+- broken contracts между модулями;
+- неполные follow-up fixes;
+- inconsistency между runtime behavior, UI surfaces и operator flows.
+
+Punkt 3 нужен как финальный стабилизационный проход после уже внесенных изменений, а не как новый бесконечный цикл улучшений.
+
+4. Канонический подход
+
+4.1. Punkt 3 не повторяет весь Punkt 1 в полном объеме.
+
+4.2. Это не новый full repo rewrite.
+
+4.3. Punkt 3 работает в режиме:
+- delta-focused re-audit;
+- impacted-area verification;
+- targeted follow-up fixes;
+- final stabilization summary.
+
+4.4. Базовая логика:
+- берем новые и измененные файлы после предыдущих фиксов;
+- добавляем соседние модули и контрактные точки, которые могли быть затронуты;
+- проверяем regressions, runtime safety и cross-module consistency;
+- чиним только реально найденные follow-up problems.
+
+5. Scope
+
+В scope пункта 3 входит:
+
+5.1. Все новые файлы, добавленные после Punkt 1/Punkt 2.
+
+5.2. Все измененные файлы, затронутые:
+- code audit / optimization / bug-fix pass;
+- локальным QA-fix backlog;
+- новыми pre-launch изменениями.
+
+5.3. Все соседние и контрактно связанные модули, если есть риск regression на стыке:
+- service boundaries;
+- API/UI contracts;
+- queue/worker/runtime flows;
+- planner/publish/recovery/operator flows;
+- exports/reports, если они были затронуты.
+
+5.4. Тесты, фикстуры и assertions, если они затронуты новыми изменениями.
+
+6. Exclusions
+
+Из scope пункта 3 исключаются:
+
+6.1. Полный повторный full-repo cosmetic cleanup.
+
+6.2. Новый архитектурный рефакторинг.
+
+6.3. Доработки, не связанные с уже внесенными изменениями.
+
+6.4. Документационные переписывания.
+
+6.5. Wishlist-улучшения, не являющиеся regression/follow-up issue.
+
+7. Основные задачи пункта 3
+
+7.1. Re-audit changed/new files
+- проверить новые и измененные участки;
+- убедиться, что фиксы не внесли новую хрупкость;
+- найти follow-up bugs.
+
+7.2. Cross-module regression check
+- проверить связки между модулями;
+- проверить, не нарушены ли контракты соседних сервисов/роутов/UI surfaces.
+
+7.3. Test alignment recheck
+- проверить, что нет stale tests/assertions;
+- добавить/обновить targeted tests, если выявлены реальные gaps.
+
+7.4. Final runtime safety pass
+- проверить stale/idempotency/guard behavior в затронутых flows;
+- проверить, что критичные pre-launch fixes не деградировали runtime reliability.
+
+7.5. Final stabilization summary
+- собрать финальный список того, что исправлено;
+- зафиксировать остаточные defer-only issues, если они остаются;
+- подтвердить, что проект готов к VPS launch pass.
+
+8. Working model
+
+8.1. Phase A — Delta inventory
+Результат:
+- список новых файлов;
+- список измененных файлов;
+- список impacted adjacent modules;
+- список high-risk intersections.
+
+8.2. Phase B — Re-audit only
+Результат:
+- список regression candidates;
+- список follow-up bug candidates;
+- test impact summary;
+- список safe-to-ignore zones.
+
+8.3. Phase C — Targeted apply
+Только по реально подтвержденным проблемам:
+- /plan;
+- TEST-IMPACT CHECK;
+- узкий APPLY;
+- targeted tests;
+- handoff.
+
+8.4. Phase D — Final verification
+- повторная проверка исправленных мест;
+- final stabilization summary;
+- ready/not-ready verdict for next launch step.
+
+9. Что считается допустимым изменением
+
+Допустимы только:
+- regression fixes;
+- missing guard/idempotency/stale fixes в новых изменениях;
+- contract alignment fixes;
+- test updates, вызванные реальным исправлением поведения;
+- local cleanup, если он обязателен для устранения follow-up issue.
+
+10. Что запрещено
+
+10.1. Использовать Punkt 3 как повод для нового широкого refactor.
+
+10.2. Возвращаться к массовому repo-wide optimization pass.
+
+10.3. Подмешивать новые фичи, не связанные с уже внесенными изменениями.
+
+10.4. Переписывать тесты без реального regression/fix основания.
+
+11. TEST-IMPACT CHECK
+
+Для каждого follow-up apply в Punkt 3 обязателен TEST-IMPACT CHECK:
+
+11.1. Проверить все тесты и фикстуры, затронутые новыми и измененными файлами.
+
+11.2. Явно перечислить:
+- какие тесты обновляются;
+- какие новые tests добавляются;
+- какие assertions устарели;
+- какие contracts нужно перепроверить.
+
+11.3. Не оставлять stale tests после follow-up fixes.
+
+12. Definition of done
+
+Punkt 3 считается завершенным, если:
+
+12.1. Все новые и измененные файлы прошли re-audit.
+
+12.2. Все подтвержденные regressions и follow-up defects:
+- либо исправлены;
+- либо явно отложены с зафиксированной причиной.
+
+12.3. Нет известных critical regressions, внесенных pre-launch fix wave.
+
+12.4. Все impacted critical flows перепроверены на уровне contracts/runtime behavior.
+
+12.5. Все нужные targeted tests обновлены или добавлены.
+
+12.6. Есть финальный stabilization summary.
+
+12.7. Проект готов к следующему шагу — финальному запуску/развертыванию на VPS.
+
+13. Outputs
+
+На выходе пункта 3 должны быть:
+
+13.1. Delta inventory новых и измененных файлов.
+
+13.2. Re-audit summary по affected areas.
+
+13.3. Список найденных regressions/follow-up issues.
+
+13.4. Список выполненных targeted fixes.
+
+13.5. Final test impact summary.
+
+13.6. Final stabilization verdict.
+
+14. Severity model
+
+В рамках пункта 3 используется та же обязательная severity model:
+- P0
+- P1
+- P2
+- P3
+
+Все включенные в согласованный scope findings обязательны к обработке в рамках их согласованного статуса.
+
+15. Non-goals
+
+15.1. Не делать новый общий redesign.
+
+15.2. Не собирать новый большой backlog unrelated improvements.
+
+15.3. Не заменять им ручной QA.
+
+15.4. Не расширять scope beyond changed/new/impacted areas.
+
+16. Что готово
+
+16.1. Зафиксирован delta-focused подход.
+
+16.2. Зафиксирован post-fix re-audit как отдельный обязательный stabilizing pass.
+
+16.3. Зафиксировано, что Punkt 3 завершает pre-launch stabilization loop, а не начинает новый.
+
+17. Чего не хватает
+
+17.1. Для REQ уровня пункта 3 критических пробелов не осталось.
+
+17.2. Следующий шаг — выполнение пункта 1 и пункта 2, затем запуск Punkt 3 на фактическом diff.
+
+18. Риски двусмысленности
+
+18.1. Нельзя трактовать Punkt 3 как право на новый full-repo проход.
+
+18.2. Нельзя сводить его только к тестам без re-audit changed areas.
+
+18.3. Нельзя подмешивать unrelated feature work.
+
+READY FOR SPEC: YES
