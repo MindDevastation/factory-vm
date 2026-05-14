@@ -1,0 +1,353 @@
+SPEC_PRELAUNCH_STABILIZATION_P3_POST_FIX_REAUDIT_AND_FINAL_STABILIZATION_v1.0
+
+Conflict / Fullness Check
+
+Hard conflicts inside the REQ were not found.
+
+The REQ is internally aligned on the key program boundaries:
+- Punkt 3 is not a repeat of Punkt 1 in full volume
+- Punkt 3 is not a new full repo rewrite
+- Punkt 3 is delta-focused and post-fix only
+- changed/new files and impacted adjacent modules define the scope
+- unrelated feature work is explicitly forbidden
+- targeted apply is allowed only for confirmed regressions/follow-up defects
+- TEST-IMPACT CHECK remains mandatory before every follow-up apply
+- the pass ends with final stabilization summary and launch-readiness verdict
+
+No REQ-level critical gaps remain. The remaining unspecified details are implementation/execution-format choices, not blockers.
+
+SPEC_PRELAUNCH_STABILIZATION_P3_POST_FIX_REAUDIT_AND_FINAL_STABILIZATION_v1.0
+
+1. Overview / цель
+
+Pre-Launch Stabilization — Punkt 3 defines the final controlled stabilization pass after Punkt 1 and Punkt 2 fix waves.
+
+Its purpose is to:
+- re-audit changed and new code after recent fixes;
+- identify regressions and cross-module seam problems;
+- verify that pre-launch fix pack did not create new critical risks;
+- perform only narrow follow-up fixes where real problems are confirmed;
+- produce final stabilization summary and ready/not-ready verdict before VPS launch.
+
+This is not a new broad improvement cycle.
+This is the closing stabilization pass of the pre-launch loop.
+
+2. Canonical operating model
+
+2.1. Punkt 3 is delta-focused.
+
+2.2. Punkt 3 does not repeat Punkt 1 in full repo-wide form.
+
+2.3. Punkt 3 operates in four canonical modes:
+- delta inventory
+- re-audit only
+- targeted apply
+- final verification
+
+2.4. Apply is allowed only after re-audit has identified confirmed regression/follow-up problems.
+
+2.5. Punkt 3 ends the pre-launch stabilization loop and does not start a new one.
+
+3. Scope / Non-goals
+
+3.1. In scope
+- all new files added after Punkt 1 / Punkt 2
+- all changed files touched by:
+  - code audit / optimization / bug-fix pass
+  - local QA fix backlog
+  - new pre-launch changes
+- all adjacent/contract-linked modules where regression risk exists:
+  - service boundaries
+  - API/UI contracts
+  - queue/worker/runtime flows
+  - planner/publish/recovery/operator flows
+  - exports/reports if impacted
+- tests, fixtures, and assertions affected by new changes
+
+3.2. Out of scope
+- full repeated repo-wide cleanup
+- new architectural refactor
+- work unrelated to already introduced changes
+- documentation rewrites
+- wishlist improvements that are not regression/follow-up issues
+- using Punkt 3 as a substitute for manual QA
+- scope expansion beyond changed/new/impacted areas
+
+3.3. Boundary rules
+- Punkt 3 must not be used as a new full repo pass
+- Punkt 3 must not degrade into tests-only pass
+- Punkt 3 must not include unrelated feature work
+- Punkt 3 must remain tied to actual diff/impact from earlier fix waves
+
+4. Canonical logic
+
+4.1. Starting point
+Take the new and changed files produced after previous stabilization work.
+
+4.2. Expansion rule
+Add only neighboring modules and contract points that could realistically be impacted:
+- service boundaries
+- API/UI seams
+- worker/runtime seams
+- planner/publish/recovery/operator seams
+- export/report seams where affected
+
+4.3. Re-audit rule
+Check for:
+- regressions
+- stale assertions/tests
+- broken contracts
+- incomplete follow-up fixes
+- runtime-safety degradation
+- inconsistency across runtime behavior, UI surfaces, and operator flows
+
+4.4. Apply rule
+Fix only confirmed follow-up problems.
+
+5. Phase model
+
+5.1. Phase A — Delta inventory
+Required outputs:
+- list of new files
+- list of changed files
+- list of impacted adjacent modules
+- list of high-risk intersections
+
+5.2. Phase B — Re-audit only
+Required outputs:
+- regression candidates
+- follow-up bug candidates
+- test impact summary
+- safe-to-ignore zones
+
+5.3. Phase C — Targeted apply
+Allowed only for confirmed problems.
+
+Required per apply:
+- /plan
+- TEST-IMPACT CHECK
+- narrow APPLY
+- targeted tests
+- handoff
+
+5.4. Phase D — Final verification
+Required outputs:
+- recheck of fixed areas
+- final stabilization summary
+- ready/not-ready verdict for next launch step
+
+6. Allowed change classes
+
+Only the following are allowed inside Punkt 3:
+- regression fixes
+- missing guard/idempotency/stale fixes caused by recent changes
+- contract alignment fixes
+- test updates caused by real behavior fixes
+- local cleanup only when required to remove a confirmed follow-up issue
+
+7. Forbidden change classes
+
+The following are forbidden:
+- new broad refactor
+- new repo-wide optimization pass
+- new feature work unrelated to already introduced changes
+- rewriting tests without real regression/fix basis
+- expanding scope beyond changed/new/impacted areas
+
+8. Core task families
+
+8.1. Re-audit changed/new files
+Must verify:
+- new and changed code paths
+- local correctness of recent fixes
+- absence of new fragility
+- presence of any follow-up bugs
+
+8.2. Cross-module regression check
+Must verify:
+- adjacent service contracts
+- route/UI contract continuity
+- worker/runtime seam consistency
+- planner/publish/recovery/operator seam consistency
+- report/export contract continuity where impacted
+
+8.3. Test alignment recheck
+Must verify:
+- no stale tests/assertions remain
+- targeted tests are updated where needed
+- new targeted tests are added only for real gaps
+
+8.4. Final runtime safety pass
+Must verify in impacted flows:
+- stale handling
+- idempotency
+- guards
+- runtime reliability
+- no degradation caused by pre-launch fix pack
+
+8.5. Final stabilization summary
+Must include:
+- what was re-audited
+- what follow-up issues were found
+- what was fixed
+- what was deferred and why
+- whether project is ready for next launch step
+
+9. Delta inventory contract
+
+9.1. Delta inventory is mandatory.
+
+9.2. Delta inventory must include:
+- each new file
+- each changed file
+- impacted adjacent modules
+- high-risk intersections
+
+9.3. Inventory rule
+Inventory must be grounded in actual changes after Punkt 1/Punkt 2 rather than guessed full-repo scope.
+
+10. Re-audit finding model
+
+10.1. Required finding classes
+- regression candidate
+- follow-up defect candidate
+- stale test/assertion candidate
+- safe-to-ignore zone
+
+10.2. Required fields for confirmed findings
+Each confirmed finding must include:
+- ID
+- severity
+- area
+- affected files/modules
+- reproduction or verification basis
+- expected behavior/contract
+- actual behavior/contract issue
+- impact
+- proposed fix direction
+- must-fix-before-launch: yes/no
+
+10.3. Scope rule
+Only confirmed regression/follow-up findings may move into targeted apply.
+
+11. TEST-IMPACT CHECK contract
+
+11.1. TEST-IMPACT CHECK is mandatory before every Punkt 3 follow-up apply.
+
+11.2. TEST-IMPACT CHECK must inspect:
+- tests affected by new/changed files
+- fixtures affected by new/changed files
+- outdated assertions
+- contracts requiring recheck
+
+11.3. TEST-IMPACT CHECK must explicitly list:
+- which tests are updated
+- which new tests are added
+- which assertions became stale
+- which contracts are rechecked
+
+11.4. Stale-test rule
+No stale tests may be left behind after follow-up fixes.
+
+12. Severity model
+
+12.1. Punkt 3 uses the same mandatory severity model:
+- P0
+- P1
+- P2
+- P3
+
+12.2. Scope-processing rule
+All findings included in agreed Punkt 3 scope must be processed according to their agreed status.
+
+13. Verification model
+
+13.1. Final verification must recheck:
+- fixed changed/new files
+- fixed adjacent modules where impacted
+- fixed runtime seams
+- fixed API/UI seams
+- fixed operator-critical flows if impacted
+
+13.2. Final verification must confirm:
+- no known critical regressions introduced by pre-launch fix wave remain
+- impacted critical flows were rechecked at contract/runtime level
+- targeted tests were updated/added where needed
+
+14. Outputs
+
+Punkt 3 must produce:
+- delta inventory of new and changed files
+- re-audit summary by affected areas
+- list of found regressions/follow-up issues
+- list of completed targeted fixes
+- final test impact summary
+- final stabilization verdict
+
+15. Definition of done
+
+Punkt 3 is done only when all of the following are true:
+- all new and changed files passed re-audit
+- all confirmed regressions and follow-up defects are either:
+  - fixed
+  - or explicitly deferred with documented reason
+- there are no known critical regressions introduced by pre-launch fix wave
+- all impacted critical flows have been rechecked at contract/runtime behavior level
+- all needed targeted tests are updated or added
+- final stabilization summary exists
+- project is ready for next step:
+  - final launch/deployment to VPS
+
+16. Rollback / containment principles
+
+16.1. Scope containment
+Punkt 3 must stay limited to changed/new/impacted areas.
+
+16.2. Apply containment
+Every apply must be narrow and justified by a confirmed issue.
+
+16.3. Program containment
+Punkt 3 must not become a new endless stabilization cycle.
+
+16.4. QA containment
+Punkt 3 complements previous audit/fix and manual QA work; it does not replace them.
+
+17. Validation rules
+
+17.1. Program-boundary validation
+- Punkt 3 must not be treated as new full-repo pass
+- Punkt 3 must not be treated as tests-only pass
+- Punkt 3 must not absorb unrelated feature work
+
+17.2. Finding validation
+- only confirmed regressions/follow-up defects may enter apply scope
+- safe-to-ignore zones must remain out of apply scope
+- unrelated wishlist items must remain excluded
+
+17.3. Output validation
+- delta inventory must exist
+- re-audit summary must exist
+- final stabilization summary must exist
+- ready/not-ready verdict must exist
+
+18. Open questions / ambiguities
+
+18.1. Exact format of delta inventory and final summary is implementation detail as long as required outputs remain explicit and inspectable.
+
+18.2. Exact batching of targeted follow-up applies is implementation detail as long as each apply remains narrow and backed by confirmed findings.
+
+Ready for Dev? Yes
+
+Причины
+- REQ fully fixes Punkt 3 as delta-focused post-fix re-audit and final stabilization pass with explicit phase model, scope boundaries, allowed vs forbidden changes, TEST-IMPACT CHECK, outputs, and definition of done.
+- No critical REQ-level gaps remain.
+- Remaining uncertainty is execution-format detail, not a blocker.
+
+[BLOCKER]
+- none
+
+[RISK]
+- treating Punkt 3 as new full-repo pass
+- reducing Punkt 3 to tests-only validation
+- mixing unrelated feature work into final stabilization
+- allowing narrow follow-up apply to drift into broader refactor
