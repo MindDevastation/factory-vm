@@ -5,6 +5,7 @@ import json
 import unittest
 from unittest import mock
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -259,12 +260,12 @@ class TestApiMoreEndpoints(unittest.TestCase):
             unauthorized = client.post("/v1/oauth/gdrive/darkwood-reverie/start")
             self.assertIn(unauthorized.status_code, (401, 403))
 
-            with mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/auth"):
+            with mock.patch("services.factory_api.app.build_authorization_url", return_value=SimpleNamespace(auth_url="https://accounts.google.com/auth", code_verifier="test-verifier")):
                 authorized = client.post("/v1/oauth/gdrive/darkwood-reverie/start", headers=h)
             self.assertEqual(authorized.status_code, 200)
             self.assertEqual(authorized.json()["auth_url"], "https://accounts.google.com/auth")
 
-            with mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/global-auth"):
+            with mock.patch("services.factory_api.app.build_authorization_url", return_value=SimpleNamespace(auth_url="https://accounts.google.com/global-auth", code_verifier="test-verifier-global")):
                 authorized_global = client.post("/v1/oauth/gdrive_global/start", headers=h)
             self.assertEqual(authorized_global.status_code, 200)
             self.assertEqual(authorized_global.json()["auth_url"], "https://accounts.google.com/global-auth")
@@ -293,7 +294,9 @@ class TestApiMoreEndpoints(unittest.TestCase):
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
-            state_gdrive = mod.sign_state(secret="state-secret", kind="gdrive", channel_slug="darkwood-reverie")
+            nonce_gdrive = "e2egdrivenonce"
+            state_gdrive = mod.sign_state(secret="state-secret", kind="gdrive", channel_slug="darkwood-reverie", nonce=nonce_gdrive)
+            mod._write_oauth_code_verifier(nonce_gdrive, "gdrive-verifier")
             with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"gdrive-token"}'):
                 rg = client.get(f"/v1/oauth/gdrive/callback?code=fake-code&state={state_gdrive}", headers=h)
             self.assertEqual(rg.status_code, 200)
@@ -301,7 +304,9 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertTrue(gdrive_token.is_file())
             self.assertIn("gdrive-token", gdrive_token.read_text(encoding="utf-8"))
 
-            state_yt = mod.sign_state(secret="state-secret", kind="youtube", channel_slug="darkwood-reverie")
+            nonce_yt = "e2eytnonce"
+            state_yt = mod.sign_state(secret="state-secret", kind="youtube", channel_slug="darkwood-reverie", nonce=nonce_yt)
+            mod._write_oauth_code_verifier(nonce_yt, "yt-verifier")
             with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}'):
                 ry = client.get(f"/v1/oauth/youtube/callback?code=fake-code&state={state_yt}", headers=h)
             self.assertEqual(ry.status_code, 200)
@@ -328,7 +333,9 @@ class TestApiMoreEndpoints(unittest.TestCase):
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
-            state = mod.sign_state(secret="state-secret", kind="gdrive_global")
+            nonce = "e2eglobalnonce"
+            state = mod.sign_state(secret="state-secret", kind="gdrive_global", nonce=nonce)
+            mod._write_oauth_code_verifier(nonce, "global-verifier")
             with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"global-gdrive-token"}'):
                 response = client.get(f"/v1/oauth/gdrive_global/callback?code=fake-code&state={state}", headers=h)
             self.assertEqual(response.status_code, 200)
@@ -389,12 +396,14 @@ class TestApiMoreEndpoints(unittest.TestCase):
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
-            with mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/auth"):
+            with mock.patch("services.factory_api.app.build_authorization_url", return_value=SimpleNamespace(auth_url="https://accounts.google.com/auth", code_verifier="test-verifier")):
                 start = client.post("/v1/oauth/youtube/add_channel/start", headers=h)
             self.assertEqual(start.status_code, 200)
             self.assertIn("auth_url", start.json())
 
-            state = mod.sign_state(secret="state-secret", kind="youtube_add_channel")
+            nonce = "e2eaddnonce"
+            state = mod.sign_state(secret="state-secret", kind="youtube_add_channel", nonce=nonce)
+            mod._write_oauth_code_verifier(nonce, "add-verifier")
             channels = [
                 {"id": "UC111", "title": "Brand Channel One"},
                 {"id": "UC222", "title": "Brand Channel Two"},
@@ -459,7 +468,9 @@ class TestApiMoreEndpoints(unittest.TestCase):
             finally:
                 conn.close()
 
-            state = mod.sign_state(secret="state-secret", kind="youtube_add_channel")
+            nonce = "e2ededupnonce1"
+            state = mod.sign_state(secret="state-secret", kind="youtube_add_channel", nonce=nonce)
+            mod._write_oauth_code_verifier(nonce, "dedup-verifier")
             channels = [{"id": "UCX", "title": "Brand Channel"}]
             with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}'):
                 with mock.patch("services.factory_api.app._youtube_channels_from_token_json", return_value=channels):
@@ -467,7 +478,9 @@ class TestApiMoreEndpoints(unittest.TestCase):
             self.assertEqual(first.status_code, 200)
             self.assertIn("brand-channel-2", first.text)
 
-            state2 = mod.sign_state(secret="state-secret", kind="youtube_add_channel")
+            nonce2 = "e2ededupnonce2"
+            state2 = mod.sign_state(secret="state-secret", kind="youtube_add_channel", nonce=nonce2)
+            mod._write_oauth_code_verifier(nonce2, "dedup-verifier-2")
             with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token-2"}'):
                 with mock.patch("services.factory_api.app._youtube_channels_from_token_json", return_value=channels):
                     second = client.get(f"/v1/oauth/youtube/add_channel/callback?code=fake-code&state={state2}", headers=h)
