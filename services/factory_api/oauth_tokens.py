@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,12 @@ YOUTUBE_SCOPE = [
     "https://www.googleapis.com/auth/youtube",
 ]
 _STATE_TTL_SECONDS = 600
+
+
+@dataclass(frozen=True)
+class AuthorizationUrlResult:
+    auth_url: str
+    code_verifier: str
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -39,12 +46,13 @@ def sign_state(
     channel_slug: str | None = None,
     now_ts: int | None = None,
     extra: dict[str, Any] | None = None,
+    nonce: str | None = None,
 ) -> str:
     ts = int(time.time() if now_ts is None else now_ts)
     payload: dict[str, Any] = {
         "kind": kind,
         "ts": ts,
-        "nonce": secrets.token_urlsafe(12),
+        "nonce": nonce or secrets.token_urlsafe(12),
     }
     if channel_slug is not None:
         payload["channel_slug"] = channel_slug
@@ -111,17 +119,35 @@ def ensure_token_dir(token_path: Path) -> None:
         raise HTTPException(500, f"token directory is not writable: {token_dir}")
 
 
-def build_authorization_url(*, client_secret_path: str, scope: str, redirect_uri: str, state: str) -> str:
+def generate_code_verifier() -> str:
+    verifier = secrets.token_urlsafe(64)
+    return verifier[:128]
+
+
+def code_challenge_s256(code_verifier: str) -> str:
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    return _b64url_encode(digest)
+
+
+def build_authorization_url(*, client_secret_path: str, scope: str | list[str], redirect_uri: str, state: str) -> AuthorizationUrlResult:
     flow = Flow.from_client_secrets_file(client_secret_path, scopes=scope, redirect_uri=redirect_uri)
-    auth_url, _ = flow.authorization_url(access_type="offline", include_granted_scopes="false", state=state, prompt="consent")
-    return auth_url
+    code_verifier = generate_code_verifier()
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="false",
+        state=state,
+        prompt="consent",
+        code_challenge=code_challenge_s256(code_verifier),
+        code_challenge_method="S256",
+    )
+    return AuthorizationUrlResult(auth_url=auth_url, code_verifier=code_verifier)
 
 
 def exchange_code_for_token_json(
-    *, client_secret_path: str, scope: str, redirect_uri: str, code: str
+    *, client_secret_path: str, scope: str | list[str], redirect_uri: str, code: str, code_verifier: str | None = None
 ) -> str:
     flow = Flow.from_client_secrets_file(client_secret_path, scopes=scope, redirect_uri=redirect_uri)
-    flow.fetch_token(code=code)
+    flow.fetch_token(code=code, code_verifier=code_verifier)
     credentials = flow.credentials
     if credentials is None:
         raise HTTPException(500, "oauth token exchange failed")
