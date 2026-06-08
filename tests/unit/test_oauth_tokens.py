@@ -8,6 +8,8 @@ from fastapi import HTTPException
 
 from services.factory_api.oauth_tokens import (
     YOUTUBE_SCOPE,
+    code_challenge_s256,
+    generate_code_verifier,
     ensure_token_dir,
     oauth_token_path,
     sign_state,
@@ -38,6 +40,16 @@ class TestOauthTokens(unittest.TestCase):
         tampered = payload + '.AAAA'
         with self.assertRaises(HTTPException):
             verify_state(secret="secret", expected_kind="gdrive", state=tampered, now_ts=120)
+
+
+    def test_pkce_verifier_and_s256_challenge_shape(self) -> None:
+        verifier = generate_code_verifier()
+        challenge = code_challenge_s256(verifier)
+        self.assertGreaterEqual(len(verifier), 43)
+        self.assertLessEqual(len(verifier), 128)
+        self.assertRegex(challenge, r"^[A-Za-z0-9_-]+$")
+        self.assertNotIn("=", challenge)
+        self.assertNotEqual(verifier, challenge)
 
     def test_token_path_and_dir_creation(self) -> None:
         with tempfile.TemporaryDirectory() as td:
