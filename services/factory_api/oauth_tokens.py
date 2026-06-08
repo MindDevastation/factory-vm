@@ -8,7 +8,7 @@ import os
 import secrets
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from fastapi import HTTPException
 from google_auth_oauthlib.flow import Flow
@@ -111,16 +111,32 @@ def ensure_token_dir(token_path: Path) -> None:
         raise HTTPException(500, f"token directory is not writable: {token_dir}")
 
 
-def build_authorization_url(*, client_secret_path: str, scope: str, redirect_uri: str, state: str) -> str:
-    flow = Flow.from_client_secrets_file(client_secret_path, scopes=scope, redirect_uri=redirect_uri)
+def generate_code_verifier() -> str:
+    """Return a high-entropy PKCE code verifier accepted by Google OAuth."""
+
+    return secrets.token_urlsafe(96)[:128]
+
+
+def build_authorization_url(
+    *, client_secret_path: str, scope: str | Sequence[str], redirect_uri: str, state: str, code_verifier: str | None = None
+) -> str:
+    flow = Flow.from_client_secrets_file(
+        client_secret_path,
+        scopes=scope,
+        redirect_uri=redirect_uri,
+        code_verifier=code_verifier,
+    )
     auth_url, _ = flow.authorization_url(access_type="offline", include_granted_scopes="false", state=state, prompt="consent")
     return auth_url
 
 
 def exchange_code_for_token_json(
-    *, client_secret_path: str, scope: str, redirect_uri: str, code: str
+    *, client_secret_path: str, scope: str | Sequence[str], redirect_uri: str, code: str, code_verifier: str | None = None
 ) -> str:
-    flow = Flow.from_client_secrets_file(client_secret_path, scopes=scope, redirect_uri=redirect_uri)
+    flow_kwargs: dict[str, Any] = {}
+    if code_verifier:
+        flow_kwargs["code_verifier"] = code_verifier
+    flow = Flow.from_client_secrets_file(client_secret_path, scopes=scope, redirect_uri=redirect_uri, **flow_kwargs)
     flow.fetch_token(code=code)
     credentials = flow.credentials
     if credentials is None:

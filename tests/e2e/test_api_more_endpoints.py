@@ -16,6 +16,26 @@ from tests._helpers import temp_env, seed_minimal_db, insert_release_and_job, ba
 
 
 class TestApiMoreEndpoints(unittest.TestCase):
+    def _mock_oauth_auth_url(self, captured: list[dict]):
+        def _side_effect(**kwargs):
+            captured.append(dict(kwargs))
+            return f"https://accounts.google.com/auth?state={kwargs['state']}"
+
+        return _side_effect
+
+    def _write_oauth_verifier(self, mod, env: Env, *, state: str, kind: str, verifier: str, require_channel_slug: bool = True) -> Path:
+        payload = mod.verify_state(
+            secret="state-secret",
+            expected_kind=kind,
+            state=state,
+            require_channel_slug=require_channel_slug,
+        )
+        nonce = str(payload["nonce"])
+        verifier_path = Path(env.storage_root) / "tmp" / "oauth" / f"{nonce}.code_verifier"
+        verifier_path.parent.mkdir(parents=True, exist_ok=True)
+        verifier_path.write_text(verifier, encoding="utf-8")
+        return verifier_path
+
     def test_health_workers_logs_qa(self) -> None:
         with temp_env() as (_, _env0):
             env = Env.load()
@@ -259,15 +279,41 @@ class TestApiMoreEndpoints(unittest.TestCase):
             unauthorized = client.post("/v1/oauth/gdrive/darkwood-reverie/start")
             self.assertIn(unauthorized.status_code, (401, 403))
 
-            with mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/auth"):
+            captured: list[dict] = []
+            with mock.patch("services.factory_api.app.build_authorization_url", side_effect=self._mock_oauth_auth_url(captured)):
                 authorized = client.post("/v1/oauth/gdrive/darkwood-reverie/start", headers=h)
             self.assertEqual(authorized.status_code, 200)
-            self.assertEqual(authorized.json()["auth_url"], "https://accounts.google.com/auth")
+            self.assertIn("auth_url", authorized.json())
+            self.assertNotIn("code_verifier", authorized.json())
+            gdrive_start = captured[-1]
+            gdrive_payload = mod.verify_state(secret="state-secret", expected_kind="gdrive", state=gdrive_start["state"])
+            gdrive_verifier = Path(env.storage_root) / "tmp" / "oauth" / f"{gdrive_payload['nonce']}.code_verifier"
+            self.assertTrue(gdrive_verifier.is_file())
+            self.assertEqual(gdrive_verifier.read_text(encoding="utf-8"), gdrive_start["code_verifier"])
+            self.assertNotIn(gdrive_start["code_verifier"], authorized.text)
 
-            with mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/global-auth"):
+            with mock.patch("services.factory_api.app.build_authorization_url", side_effect=self._mock_oauth_auth_url(captured)):
+                authorized_yt = client.post("/v1/oauth/youtube/darkwood-reverie/start", headers=h)
+            self.assertEqual(authorized_yt.status_code, 200)
+            self.assertNotIn("code_verifier", authorized_yt.json())
+            yt_start = captured[-1]
+            yt_payload = mod.verify_state(secret="state-secret", expected_kind="youtube", state=yt_start["state"])
+            yt_verifier = Path(env.storage_root) / "tmp" / "oauth" / f"{yt_payload['nonce']}.code_verifier"
+            self.assertTrue(yt_verifier.is_file())
+            self.assertEqual(yt_verifier.read_text(encoding="utf-8"), yt_start["code_verifier"])
+            self.assertNotIn(yt_start["code_verifier"], authorized_yt.text)
+
+            with mock.patch("services.factory_api.app.build_authorization_url", side_effect=self._mock_oauth_auth_url(captured)):
                 authorized_global = client.post("/v1/oauth/gdrive_global/start", headers=h)
             self.assertEqual(authorized_global.status_code, 200)
-            self.assertEqual(authorized_global.json()["auth_url"], "https://accounts.google.com/global-auth")
+            self.assertIn("auth_url", authorized_global.json())
+            self.assertNotIn("code_verifier", authorized_global.json())
+            global_start = captured[-1]
+            global_payload = mod.verify_state(secret="state-secret", expected_kind="gdrive_global", state=global_start["state"], require_channel_slug=False)
+            global_verifier = Path(env.storage_root) / "tmp" / "oauth" / f"{global_payload['nonce']}.code_verifier"
+            self.assertTrue(global_verifier.is_file())
+            self.assertEqual(global_verifier.read_text(encoding="utf-8"), global_start["code_verifier"])
+            self.assertNotIn(global_start["code_verifier"], authorized_global.text)
 
             missing = client.post("/v1/oauth/gdrive/missing-channel/start", headers=h)
             self.assertEqual(missing.status_code, 404)
@@ -294,20 +340,33 @@ class TestApiMoreEndpoints(unittest.TestCase):
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
             state_gdrive = mod.sign_state(secret="state-secret", kind="gdrive", channel_slug="darkwood-reverie")
-            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"gdrive-token"}'):
+            gdrive_verifier = self._write_oauth_verifier(mod, env, state=state_gdrive, kind="gdrive", verifier="gdrive-verifier")
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"gdrive-token"}') as exchange:
                 rg = client.get(f"/v1/oauth/gdrive/callback?code=fake-code&state={state_gdrive}", headers=h)
             self.assertEqual(rg.status_code, 200)
+            self.assertEqual(exchange.call_args.kwargs["code_verifier"], "gdrive-verifier")
+            self.assertFalse(gdrive_verifier.exists())
+            self.assertNotIn("gdrive-verifier", rg.text)
             gdrive_token = Path(td.name) / "gdrive_tokens" / "darkwood-reverie" / "token.json"
             self.assertTrue(gdrive_token.is_file())
             self.assertIn("gdrive-token", gdrive_token.read_text(encoding="utf-8"))
 
             state_yt = mod.sign_state(secret="state-secret", kind="youtube", channel_slug="darkwood-reverie")
-            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}'):
+            yt_verifier = self._write_oauth_verifier(mod, env, state=state_yt, kind="youtube", verifier="yt-verifier")
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}') as exchange:
                 ry = client.get(f"/v1/oauth/youtube/callback?code=fake-code&state={state_yt}", headers=h)
             self.assertEqual(ry.status_code, 200)
+            self.assertEqual(exchange.call_args.kwargs["code_verifier"], "yt-verifier")
+            self.assertFalse(yt_verifier.exists())
+            self.assertNotIn("yt-verifier", ry.text)
             yt_token = Path(td.name) / "yt_tokens" / "darkwood-reverie" / "token.json"
             self.assertTrue(yt_token.is_file())
             self.assertIn("yt-token", yt_token.read_text(encoding="utf-8"))
+
+            missing_state = mod.sign_state(secret="state-secret", kind="youtube", channel_slug="darkwood-reverie")
+            missing = client.get(f"/v1/oauth/youtube/callback?code=fake-code&state={missing_state}", headers=h)
+            self.assertEqual(missing.status_code, 400)
+            self.assertEqual(missing.json().get("detail"), "oauth session expired; start authorization again")
 
     def test_oauth_global_gdrive_callback_writes_global_token_path(self) -> None:
         with temp_env() as (td, _env0):
@@ -329,9 +388,20 @@ class TestApiMoreEndpoints(unittest.TestCase):
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
             state = mod.sign_state(secret="state-secret", kind="gdrive_global")
-            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"global-gdrive-token"}'):
+            verifier_path = self._write_oauth_verifier(
+                mod,
+                env,
+                state=state,
+                kind="gdrive_global",
+                verifier="global-gdrive-verifier",
+                require_channel_slug=False,
+            )
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"global-gdrive-token"}') as exchange:
                 response = client.get(f"/v1/oauth/gdrive_global/callback?code=fake-code&state={state}", headers=h)
             self.assertEqual(response.status_code, 200)
+            self.assertEqual(exchange.call_args.kwargs["code_verifier"], "global-gdrive-verifier")
+            self.assertFalse(verifier_path.exists())
+            self.assertNotIn("global-gdrive-verifier", response.text)
 
             token_path = Path(td.name) / "secure" / "gdrive_token.json"
             self.assertTrue(token_path.is_file())
@@ -389,21 +459,39 @@ class TestApiMoreEndpoints(unittest.TestCase):
             client = TestClient(mod.app)
             h = basic_auth_header(env.basic_user, env.basic_pass)
 
-            with mock.patch("services.factory_api.app.build_authorization_url", return_value="https://accounts.google.com/auth"):
+            captured: list[dict] = []
+            with mock.patch("services.factory_api.app.build_authorization_url", side_effect=self._mock_oauth_auth_url(captured)):
                 start = client.post("/v1/oauth/youtube/add_channel/start", headers=h)
             self.assertEqual(start.status_code, 200)
             self.assertIn("auth_url", start.json())
+            self.assertNotIn("code_verifier", start.json())
+            start_kwargs = captured[-1]
+            start_payload = mod.verify_state(secret="state-secret", expected_kind="youtube_add_channel", state=start_kwargs["state"], require_channel_slug=False)
+            start_verifier = Path(env.storage_root) / "tmp" / "oauth" / f"{start_payload['nonce']}.code_verifier"
+            self.assertTrue(start_verifier.is_file())
+            self.assertNotIn(start_kwargs["code_verifier"], start.text)
 
             state = mod.sign_state(secret="state-secret", kind="youtube_add_channel")
+            verifier_path = self._write_oauth_verifier(
+                mod,
+                env,
+                state=state,
+                kind="youtube_add_channel",
+                verifier="add-channel-verifier",
+                require_channel_slug=False,
+            )
             channels = [
                 {"id": "UC111", "title": "Brand Channel One"},
                 {"id": "UC222", "title": "Brand Channel Two"},
             ]
-            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}'):
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}') as exchange:
                 with mock.patch("services.factory_api.app._youtube_channels_from_token_json", return_value=channels):
                     cb = client.get(f"/v1/oauth/youtube/add_channel/callback?code=fake-code&state={state}", headers=h)
             self.assertEqual(cb.status_code, 200)
+            self.assertEqual(exchange.call_args.kwargs["code_verifier"], "add-channel-verifier")
+            self.assertFalse(verifier_path.exists())
             self.assertIn("Select YouTube Channel", cb.text)
+            self.assertNotIn("add-channel-verifier", cb.text)
 
             m = __import__("re").search(r"name='state' value='([^']+)'", cb.text)
             self.assertIsNotNone(m)
@@ -460,18 +548,28 @@ class TestApiMoreEndpoints(unittest.TestCase):
                 conn.close()
 
             state = mod.sign_state(secret="state-secret", kind="youtube_add_channel")
+            first_verifier = self._write_oauth_verifier(
+                mod, env, state=state, kind="youtube_add_channel", verifier="first-add-verifier", require_channel_slug=False
+            )
             channels = [{"id": "UCX", "title": "Brand Channel"}]
-            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}'):
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token"}') as exchange:
                 with mock.patch("services.factory_api.app._youtube_channels_from_token_json", return_value=channels):
                     first = client.get(f"/v1/oauth/youtube/add_channel/callback?code=fake-code&state={state}", headers=h)
             self.assertEqual(first.status_code, 200)
+            self.assertEqual(exchange.call_args.kwargs["code_verifier"], "first-add-verifier")
+            self.assertFalse(first_verifier.exists())
             self.assertIn("brand-channel-2", first.text)
 
             state2 = mod.sign_state(secret="state-secret", kind="youtube_add_channel")
-            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token-2"}'):
+            second_verifier = self._write_oauth_verifier(
+                mod, env, state=state2, kind="youtube_add_channel", verifier="second-add-verifier", require_channel_slug=False
+            )
+            with mock.patch("services.factory_api.app.exchange_code_for_token_json", return_value='{"access_token":"yt-token-2"}') as exchange:
                 with mock.patch("services.factory_api.app._youtube_channels_from_token_json", return_value=channels):
                     second = client.get(f"/v1/oauth/youtube/add_channel/callback?code=fake-code&state={state2}", headers=h)
             self.assertEqual(second.status_code, 200)
+            self.assertEqual(exchange.call_args.kwargs["code_verifier"], "second-add-verifier")
+            self.assertFalse(second_verifier.exists())
             self.assertIn("already connected", second.text.lower())
 
 

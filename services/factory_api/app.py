@@ -113,6 +113,7 @@ from services.metadata import (
 from services.factory_api.oauth_tokens import (
     build_authorization_url,
     ensure_token_dir,
+    generate_code_verifier,
     exchange_code_for_token_json,
     oauth_token_path,
     redirect_uri,
@@ -3056,17 +3057,33 @@ def _require_channel(channel_slug: str) -> None:
         raise HTTPException(404, "channel not found")
 
 
+def _oauth_state_nonce(payload: dict[str, Any]) -> str:
+    nonce = str(payload.get("nonce") or "").strip()
+    if not nonce:
+        raise HTTPException(400, "invalid oauth state")
+    return nonce
+
+
 def _oauth_start(kind: str, channel_slug: str) -> dict:
     _require_channel(channel_slug)
     client_secret_path, tokens_dir, scope = validate_oauth_config(env, kind=kind)
     ensure_token_dir(oauth_token_path(base_dir=tokens_dir, channel_slug=channel_slug))
     state = sign_state(secret=env.oauth_state_secret, kind=kind, channel_slug=channel_slug)
-    url = build_authorization_url(
-        client_secret_path=client_secret_path,
-        scope=scope,
-        redirect_uri=redirect_uri(env, kind),
-        state=state,
-    )
+    payload = verify_state(secret=env.oauth_state_secret, expected_kind=kind, state=state)
+    nonce = _oauth_state_nonce(payload)
+    code_verifier = generate_code_verifier()
+    _write_temp_oauth_code_verifier(nonce, code_verifier)
+    try:
+        url = build_authorization_url(
+            client_secret_path=client_secret_path,
+            scope=scope,
+            redirect_uri=redirect_uri(env, kind),
+            state=state,
+            code_verifier=code_verifier,
+        )
+    except Exception:
+        _delete_temp_oauth_code_verifier(nonce)
+        raise
     return {"auth_url": url}
 
 
@@ -3080,24 +3097,37 @@ def _oauth_global_gdrive_start() -> dict[str, str]:
     token_path = _global_gdrive_token_path(env)
     ensure_token_dir(token_path)
     state = sign_state(secret=env.oauth_state_secret, kind="gdrive_global")
-    url = build_authorization_url(
-        client_secret_path=client_secret_path,
-        scope=scope,
-        redirect_uri=redirect_uri(env, "gdrive_global"),
-        state=state,
-    )
+    payload = verify_state(secret=env.oauth_state_secret, expected_kind="gdrive_global", state=state, require_channel_slug=False)
+    nonce = _oauth_state_nonce(payload)
+    code_verifier = generate_code_verifier()
+    _write_temp_oauth_code_verifier(nonce, code_verifier)
+    try:
+        url = build_authorization_url(
+            client_secret_path=client_secret_path,
+            scope=scope,
+            redirect_uri=redirect_uri(env, "gdrive_global"),
+            state=state,
+            code_verifier=code_verifier,
+        )
+    except Exception:
+        _delete_temp_oauth_code_verifier(nonce)
+        raise
     return {"auth_url": url}
 
 
 def _oauth_global_gdrive_callback(code: str, state: str) -> HTMLResponse:
     client_secret_path, _tokens_dir, scope = validate_oauth_config(env, kind="gdrive")
-    verify_state(secret=env.oauth_state_secret, expected_kind="gdrive_global", state=state, require_channel_slug=False)
+    payload = verify_state(secret=env.oauth_state_secret, expected_kind="gdrive_global", state=state, require_channel_slug=False)
+    nonce = _oauth_state_nonce(payload)
+    code_verifier = _read_temp_oauth_code_verifier(nonce)
     token_json = exchange_code_for_token_json(
         client_secret_path=client_secret_path,
         scope=scope,
         redirect_uri=redirect_uri(env, "gdrive_global"),
         code=code,
+        code_verifier=code_verifier,
     )
+    _delete_temp_oauth_code_verifier(nonce)
     token_path = _global_gdrive_token_path(env)
     ensure_token_dir(token_path)
     token_path.write_text(token_json, encoding="utf-8")
@@ -3117,12 +3147,16 @@ def _oauth_callback(kind: str, code: str, state: str) -> HTMLResponse:
     channel_slug = str(payload["channel_slug"])
     _require_channel(channel_slug)
 
+    nonce = _oauth_state_nonce(payload)
+    code_verifier = _read_temp_oauth_code_verifier(nonce)
     token_json = exchange_code_for_token_json(
         client_secret_path=client_secret_path,
         scope=scope,
         redirect_uri=redirect_uri(env, kind),
         code=code,
+        code_verifier=code_verifier,
     )
+    _delete_temp_oauth_code_verifier(nonce)
     token_path = oauth_token_path(base_dir=tokens_dir, channel_slug=channel_slug)
     ensure_token_dir(token_path)
     token_path.write_text(token_json, encoding="utf-8")
@@ -3141,6 +3175,38 @@ def _oauth_callback(kind: str, code: str, state: str) -> HTMLResponse:
 def _storage_tmp_oauth_dir() -> Path:
     root = Path(env.storage_root).expanduser()
     return root / "tmp" / "oauth"
+
+
+def _temp_oauth_path(nonce: str, suffix: str) -> Path:
+    safe_nonce = str(nonce or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", safe_nonce):
+        raise HTTPException(400, "invalid oauth state")
+    return _storage_tmp_oauth_dir() / f"{safe_nonce}{suffix}"
+
+
+def _write_temp_oauth_code_verifier(nonce: str, code_verifier: str) -> Path:
+    tmp_dir = _storage_tmp_oauth_dir()
+    tmp_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    verifier_path = _temp_oauth_path(nonce, ".code_verifier")
+    verifier_path.write_text(code_verifier, encoding="utf-8")
+    verifier_path.chmod(0o600)
+    return verifier_path
+
+
+def _read_temp_oauth_code_verifier(nonce: str) -> str:
+    verifier_path = _temp_oauth_path(nonce, ".code_verifier")
+    if not verifier_path.is_file():
+        raise HTTPException(400, "oauth session expired; start authorization again")
+    code_verifier = verifier_path.read_text(encoding="utf-8").strip()
+    if not code_verifier:
+        raise HTTPException(400, "oauth session expired; start authorization again")
+    return code_verifier
+
+
+def _delete_temp_oauth_code_verifier(nonce: str) -> None:
+    verifier_path = _temp_oauth_path(nonce, ".code_verifier")
+    if verifier_path.is_file():
+        verifier_path.unlink()
 
 
 def _write_temp_oauth_token(nonce: str, token_json: str) -> Path:
@@ -3346,12 +3412,21 @@ def api_oauth_youtube_start(channel_slug: str, _: bool = Depends(require_basic_a
 def api_oauth_youtube_add_channel_start(_: bool = Depends(require_basic_auth(env))):
     client_secret_path, _tokens_dir, scope = validate_oauth_config(env, kind="youtube")
     state = sign_state(secret=env.oauth_state_secret, kind="youtube_add_channel")
-    url = build_authorization_url(
-        client_secret_path=client_secret_path,
-        scope=scope,
-        redirect_uri=redirect_uri(env, "youtube/add_channel"),
-        state=state,
-    )
+    payload = verify_state(secret=env.oauth_state_secret, expected_kind="youtube_add_channel", state=state, require_channel_slug=False)
+    nonce = _oauth_state_nonce(payload)
+    code_verifier = generate_code_verifier()
+    _write_temp_oauth_code_verifier(nonce, code_verifier)
+    try:
+        url = build_authorization_url(
+            client_secret_path=client_secret_path,
+            scope=scope,
+            redirect_uri=redirect_uri(env, "youtube/add_channel"),
+            state=state,
+            code_verifier=code_verifier,
+        )
+    except Exception:
+        _delete_temp_oauth_code_verifier(nonce)
+        raise
     return {"auth_url": url}
 
 
@@ -3359,16 +3434,17 @@ def api_oauth_youtube_add_channel_start(_: bool = Depends(require_basic_auth(env
 def api_oauth_youtube_add_channel_callback(code: str, state: str, _: bool = Depends(require_basic_auth(env))):
     client_secret_path, _tokens_dir, scope = validate_oauth_config(env, kind="youtube")
     payload = verify_state(secret=env.oauth_state_secret, expected_kind="youtube_add_channel", state=state, require_channel_slug=False)
+    nonce = _oauth_state_nonce(payload)
+    code_verifier = _read_temp_oauth_code_verifier(nonce)
     token_json = exchange_code_for_token_json(
         client_secret_path=client_secret_path,
         scope=scope,
         redirect_uri=redirect_uri(env, "youtube/add_channel"),
         code=code,
+        code_verifier=code_verifier,
     )
+    _delete_temp_oauth_code_verifier(nonce)
     channels = _youtube_channels_from_token_json(token_json)
-    nonce = str(payload.get("nonce") or "")
-    if not nonce:
-        raise HTTPException(400, "invalid oauth state")
     _write_temp_oauth_token(nonce, token_json)
     if len(channels) == 1:
         only = channels[0]
