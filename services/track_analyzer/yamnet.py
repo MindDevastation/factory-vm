@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from services.track_analyzer.yamnet_resample import resample_1d_tf
+from services.track_analyzer.yamnet_resample import TrackAnalyzeMemoryLimitError, normalize_audio_for_yamnet, resample_1d_tf
 
 _IMPORT_ERROR: Exception | None = None
 try:
@@ -77,8 +77,9 @@ def _load_class_names() -> list[str]:
 
 
 def _resample_to_16k_mono(waveform: Any, sample_rate: Any) -> Any:
+    waveform = normalize_audio_for_yamnet(waveform)
     if int(sample_rate) == 16000:
-        return waveform
+        return tf.convert_to_tensor(waveform, dtype=tf.float32)
 
     return resample_1d_tf(waveform, int(sample_rate), 16000)
 
