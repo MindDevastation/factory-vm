@@ -4,13 +4,14 @@ import importlib
 import sqlite3
 import threading
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from services.common import db as dbm
 from services.common.env import Env
-from services.planner.materialization_service import PlannerMaterializationError
+from services.planner.materialization_service import PlannerMaterializationError, PlannerMaterializationService
 from tests._helpers import basic_auth_header, seed_minimal_db, temp_env
 
 
@@ -25,7 +26,9 @@ class TestPlannerMaterializeApi(unittest.TestCase):
                 """,
                 (publish_at,),
             )
-            return int(cur.lastrowid)
+            planned_release_id = int(cur.lastrowid)
+            conn.commit()
+            return planned_release_id
         finally:
             conn.close()
 
@@ -105,9 +108,11 @@ class TestPlannerMaterializeApi(unittest.TestCase):
                     ).lastrowid
                 )
                 conn.execute("UPDATE planned_releases SET materialized_release_id = ? WHERE id = ?", (release_id, planned_release_id))
+                conn.commit()
                 conn.execute("PRAGMA foreign_keys=OFF")
                 conn.execute("DELETE FROM releases WHERE id = ?", (release_id,))
                 conn.execute("PRAGMA foreign_keys=ON")
+                conn.commit()
             finally:
                 conn.close()
 
@@ -132,18 +137,37 @@ class TestPlannerMaterializeApi(unittest.TestCase):
             seed_minimal_db(env)
             planned_release_id = self._insert_planner_item(env)
 
-            mod = importlib.import_module("services.factory_api.app")
-            importlib.reload(mod)
-            auth = basic_auth_header(env.basic_user, env.basic_pass)
-
-            results: list[dict[str, int | str]] = []
+            results: list[dict[str, Any]] = []
             lock = threading.Lock()
+            start = threading.Barrier(2)
 
             def _call_once() -> None:
-                client = TestClient(mod.app)
-                resp = client.post(f"/v1/planner/planned-releases/{planned_release_id}/materialize", headers=auth)
-                with lock:
-                    results.append({"status": resp.status_code, "result": resp.json().get("result")})
+                conn = dbm.connect(env)
+                try:
+                    start.wait(timeout=5)
+                    out = PlannerMaterializationService(conn).materialize_planned_release(
+                        planned_release_id=planned_release_id,
+                        created_by="admin",
+                    )
+                    with lock:
+                        results.append({
+                            "status": 200,
+                            "result": out.result,
+                            "body": {
+                                "planned_release_id": out.planned_release_id,
+                                "result": out.result,
+                                "release": {"id": out.release_id, "channel_slug": out.release_channel_slug},
+                            },
+                        })
+                except Exception as exc:  # pragma: no cover - diagnostics for failed worker thread
+                    with lock:
+                        results.append({
+                            "status": 500,
+                            "result": None,
+                            "body": {"error": f"{exc.__class__.__name__}: {exc}"},
+                        })
+                finally:
+                    conn.close()
 
             with patch(
                 "services.planner.materialization_service.PlannedReleaseReadinessService.evaluate",
@@ -156,9 +180,10 @@ class TestPlannerMaterializeApi(unittest.TestCase):
                 t1.join()
                 t2.join()
 
-            self.assertEqual(len(results), 2)
-            self.assertEqual(sorted(item["status"] for item in results), [200, 200])
-            self.assertEqual(sorted(item["result"] for item in results), ["CREATED_NEW", "RETURNED_EXISTING"])
+            self.assertEqual(len(results), 2, results)
+            self.assertEqual(sorted(item["status"] for item in results), [200, 200], results)
+            self.assertEqual(sorted(item["result"] for item in results), ["CREATED_NEW", "RETURNED_EXISTING"], results)
+            self.assertEqual(len({item["body"]["release"]["id"] for item in results}), 1, results)
 
             conn = dbm.connect(env)
             try:

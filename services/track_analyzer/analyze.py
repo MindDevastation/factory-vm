@@ -19,6 +19,7 @@ from services.track_analyzer.track_analysis_flat import sync_track_analysis_flat
 import services.track_analyzer.yamnet as yamnet
 from services.track_analyzer.texture_heuristics import classify_texture
 from services.track_analyzer.yamnet_buckets import SPEECH_LABELS, VOICE_LABELS
+from services.track_analyzer.yamnet_resample import TrackAnalyzeMemoryLimitError
 
 
 class AnalyzeError(RuntimeError):
@@ -26,6 +27,15 @@ class AnalyzeError(RuntimeError):
 
 
 log = logging.getLogger(__name__)
+
+
+def _is_numpy_allocation_error(exc: BaseException) -> bool:
+    if isinstance(exc, MemoryError):
+        return True
+    if isinstance(exc, ValueError):
+        message = str(exc).lower()
+        return "unable to allocate" in message or "array is too big" in message
+    return False
 
 
 @dataclass(frozen=True)
@@ -215,6 +225,8 @@ def analyze_tracks(
                 yamnet_payload = yamnet.analyze_with_yamnet(local_path)
             except yamnet.YAMNetUnavailableError as exc:
                 raise AnalyzeError("YAMNET_NOT_INSTALLED: install via UI button and retry") from exc
+            except (yamnet.TrackAnalyzeMemoryLimitError, TrackAnalyzeMemoryLimitError) as exc:
+                raise AnalyzeError(str(exc)) from exc
             except yamnet.YAMNetRuntimeIncompatibleError as exc:
                 raise AnalyzeError("YAMNET_RUNTIME_INCOMPATIBLE: reinstall YamNet deps via UI and retry") from exc
 
@@ -447,9 +459,11 @@ def analyze_tracks(
             processed += 1
             if callable(progress_callback):
                 progress_callback(processed=processed, total=selected)
-        except Exception:
+        except Exception as exc:
             failed += 1
             track_failed = True
+            if _is_numpy_allocation_error(exc):
+                raise AnalyzeError(str(TrackAnalyzeMemoryLimitError(f"{exc.__class__.__name__}: {exc}"))) from exc
             raise
         finally:
             try:

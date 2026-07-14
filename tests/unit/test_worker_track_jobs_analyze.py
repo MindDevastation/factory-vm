@@ -206,6 +206,50 @@ class TestTrackJobsWorkerAnalyze(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_track_analyze_memory_limit_marks_job_failed_with_operator_guidance(self) -> None:
+        with temp_env() as (_, env):
+            os.environ["GDRIVE_CLIENT_SECRET_JSON"] = "/secure/gdrive/client_secret.json"
+            os.environ["GDRIVE_TOKENS_DIR"] = str(Path(env.storage_root) / "gdrive_tokens")
+            env = Env.load()
+            seed_minimal_db(env)
+            token_path = Path(env.gdrive_tokens_dir) / "darkwood-reverie" / "token.json"
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text("{}", encoding="utf-8")
+            conn = dbm.connect(env)
+            try:
+                conn.execute("INSERT INTO canon_thresholds(value) VALUES(?)", ("darkwood-reverie",))
+                conn.execute(
+                    """
+                    INSERT INTO tracks(channel_slug, track_id, gdrive_file_id, source, filename, title, artist, duration_sec, discovered_at, analyzed_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    ("darkwood-reverie", "001", "fid-1", "GDRIVE", "001_A.wav", "A", None, None, dbm.now_ts(), None),
+                )
+                job_id = tjdb.enqueue_job(conn, job_type="TRACK_ANALYZE", channel_slug="darkwood-reverie", payload={})
+            finally:
+                conn.close()
+
+            safe_message = (
+                "TRACK_ANALYZE_MEMORY_LIMIT: Track analysis ran out of RAM while resampling audio; "
+                "try shorter input, mono/16k preconversion, or lower concurrent workers."
+            )
+            with mock.patch("services.workers.track_jobs.assert_yamnet_available", return_value="data/pydeps"), mock.patch(
+                "services.workers.track_jobs.DriveClient"
+            ), mock.patch("services.workers.track_jobs.analyze_tracks", side_effect=RuntimeError(safe_message)):
+                track_jobs_cycle(env=env, worker_id="t-track-jobs-analyze-memory")
+
+            conn = dbm.connect(env)
+            try:
+                job = tjdb.get_job(conn, job_id)
+                assert job is not None
+                payload = dbm.json_loads(job["payload_json"])
+                self.assertEqual(job["status"], "FAILED")
+                self.assertIn("TRACK_ANALYZE_MEMORY_LIMIT", str(payload.get("last_message") or ""))
+                self.assertIn("lower concurrent workers", str(payload.get("last_message") or ""))
+                self.assertNotIn("disk", str(payload.get("last_message") or "").lower())
+            finally:
+                conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()
