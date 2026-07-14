@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from dataclasses import dataclass
 
 from services.common import db as dbm
@@ -19,10 +20,12 @@ class FakeItem:
 
 
 class FakeDrive:
-    def __init__(self, *, fail_file_id: str | None = None) -> None:
+    def __init__(self, *, fail_file_id: str | None = None, fail_on_call: int | None = None, mutate: bool = True) -> None:
         self._children: dict[str, list[FakeItem]] = {}
         self.rename_calls: list[tuple[str, str]] = []
         self.fail_file_id = fail_file_id
+        self.fail_on_call = fail_on_call
+        self.mutate = mutate
 
     def add_child(self, parent_id: str, item: FakeItem) -> None:
         self._children.setdefault(parent_id, []).append(item)
@@ -33,11 +36,15 @@ class FakeDrive:
     def update_name(self, file_id: str, new_name: str) -> None:
         if file_id == self.fail_file_id:
             raise RuntimeError("simulated rename failure")
+        if self.fail_on_call is not None and len(self.rename_calls) + 1 == self.fail_on_call:
+            self.fail_on_call = None
+            raise RuntimeError("simulated rename failure")
         self.rename_calls.append((file_id, new_name))
         for items in self._children.values():
             for item in items:
                 if item.id == file_id:
-                    item.name = new_name
+                    if self.mutate:
+                        item.name = new_name
                     return
         raise AssertionError(f"file not found: {file_id}")
 
@@ -144,6 +151,148 @@ class TestTrackDiscoverReconciliation(unittest.TestCase):
                     discover_channel_tracks(conn, drive, gdrive_library_root_id="lib", channel_slug="darkwood-reverie")
                 self.assertIn("TRACK_DISCOVER_RENAME_FAILED", str(ctx.exception))
                 self.assertEqual(len(drive.names("m")), 1)
+            finally:
+                conn.close()
+
+    def test_stale_canonical_id_collision_is_reserved_and_reappearance_reuses_row(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = _conn(td)
+            try:
+                conn.execute(
+                    "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, source, filename, title, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (10, "darkwood-reverie", "0001", "stale-fid", "GDRIVE", "0001_Stale.wav", "Stale", 1.0, None),
+                )
+                drive = _base_drive()
+                drive.add_child("audio", FakeItem("m", "2026-02", _FOLDER))
+                drive.add_child("m", FakeItem("active-fid", "Active.wav", _FILE))
+                stats = discover_channel_tracks(conn, drive, gdrive_library_root_id="lib", channel_slug="darkwood-reverie")
+                self.assertEqual(stats.stale_db_rows, 1)
+                active = conn.execute("SELECT id, track_id FROM tracks WHERE gdrive_file_id='active-fid'").fetchone()
+                stale = conn.execute("SELECT id, track_id FROM tracks WHERE gdrive_file_id='stale-fid'").fetchone()
+                self.assertEqual(active["track_id"], "0001")
+                self.assertEqual(stale["id"], 10)
+                self.assertTrue(stale["track_id"].startswith("__stale__10__0001"))
+                self.assertEqual(conn.execute("SELECT COUNT(*) AS n FROM tracks").fetchone()["n"], 2)
+
+                stats2 = discover_channel_tracks(conn, drive, gdrive_library_root_id="lib", channel_slug="darkwood-reverie")
+                self.assertEqual(stats2.renamed, 0)
+                self.assertEqual(conn.execute("SELECT COUNT(*) AS n FROM tracks").fetchone()["n"], 2)
+
+                drive.add_child("m", FakeItem("stale-fid", "0002_Stale.wav", _FILE))
+                discover_channel_tracks(conn, drive, gdrive_library_root_id="lib", channel_slug="darkwood-reverie")
+                restored = conn.execute("SELECT id, track_id FROM tracks WHERE gdrive_file_id='stale-fid'").fetchone()
+                self.assertEqual(restored["id"], 10)
+                self.assertEqual(restored["track_id"], "0002")
+            finally:
+                conn.close()
+
+    def test_db_failure_rolls_back_temp_and_stale_ids_and_flat_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = _conn(td)
+            try:
+                conn.execute(
+                    "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, source, filename, title, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (42, "darkwood-reverie", "001", "fid-1", "GDRIVE", "001_Old.wav", "Old", 1.0, 2.0),
+                )
+                conn.execute(
+                    "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, source, filename, title, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (43, "darkwood-reverie", "0001", "stale-fid", "GDRIVE", "0001_Stale.wav", "Stale", 1.0, None),
+                )
+                conn.execute(
+                    "INSERT INTO track_analysis_flat(track_pk, channel_slug, track_id, gdrive_file_id, analysis_computed_at, analysis_status, updated_at) VALUES(?,?,?,?,?,?,datetime('now'))",
+                    (42, "darkwood-reverie", "001", "fid-1", 123.0, "ok"),
+                )
+                before = [dict(r) for r in conn.execute("SELECT id, track_id, filename, title FROM tracks ORDER BY id").fetchall()]
+                drive = _base_drive()
+                drive.add_child("audio", FakeItem("m", "2026-02", _FOLDER))
+                drive.add_child("m", FakeItem("fid-1", "001_New.wav", _FILE))
+
+                def fail_on_final_update(conn_arg, sql, params=()):
+                    if "UPDATE tracks" in sql and "filename" in sql:
+                        raise RuntimeError("forced db update failure")
+                    return conn_arg.execute(sql, params)
+
+                with patch("services.track_analyzer.discover._execute_db", side_effect=fail_on_final_update):
+                    with self.assertRaises(RuntimeError):
+                        discover_channel_tracks(conn, drive, gdrive_library_root_id="lib", channel_slug="darkwood-reverie")
+                after = [dict(r) for r in conn.execute("SELECT id, track_id, filename, title FROM tracks ORDER BY id").fetchall()]
+                self.assertEqual(after, before)
+                self.assertFalse(any(r["track_id"].startswith("__tmp__") for r in after))
+                self.assertFalse(any(r["track_id"].startswith("__stale__") for r in after))
+            finally:
+                conn.close()
+
+    def test_track_analysis_flat_identity_fields_are_synchronized(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = _conn(td)
+            try:
+                conn.execute(
+                    "INSERT INTO tracks(id, channel_slug, track_id, gdrive_file_id, source, filename, title, discovered_at, analyzed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (42, "darkwood-reverie", "001", "fid-1", "GDRIVE", "001_Old.wav", "Old", 1.0, 2.0),
+                )
+                conn.execute(
+                    "INSERT INTO track_analysis_flat(track_pk, channel_slug, track_id, gdrive_file_id, analysis_computed_at, analysis_status, updated_at) VALUES(?,?,?,?,?,?,datetime('now'))",
+                    (42, "darkwood-reverie", "001", "fid-1", 123.0, "ok"),
+                )
+                drive = _base_drive()
+                drive.add_child("audio", FakeItem("m", "2026-02", _FOLDER))
+                drive.add_child("m", FakeItem("fid-1", "001_New.wav", _FILE))
+                discover_channel_tracks(conn, drive, gdrive_library_root_id="lib", channel_slug="darkwood-reverie")
+                flat = conn.execute("SELECT track_pk, channel_slug, track_id, gdrive_file_id, analysis_computed_at FROM track_analysis_flat WHERE track_pk=42").fetchone()
+                self.assertEqual(dict(flat), {"track_pk": 42, "channel_slug": "darkwood-reverie", "track_id": "0001", "gdrive_file_id": "fid-1", "analysis_computed_at": 123.0})
+            finally:
+                conn.close()
+
+    def test_rename_failures_restore_original_names_and_temp_recovery_uses_original_title(self) -> None:
+        cases = [(1, ["001_Title.wav", "002_Other.wav"]), (3, ["001_Title.wav", "002_Other.wav"]), (4, ["001_Title.wav", "002_Other.wav"])]
+        for fail_on_call, expected_names in cases:
+            with self.subTest(fail_on_call=fail_on_call):
+                with tempfile.TemporaryDirectory() as td:
+                    conn = _conn(td)
+                    try:
+                        drive = FakeDrive(fail_on_call=fail_on_call)
+                        drive.add_child("lib", FakeItem("ch", "Darkwood Reverie", _FOLDER))
+                        drive.add_child("ch", FakeItem("audio", "Audio", _FOLDER))
+                        drive.add_child("audio", FakeItem("m", "2026-02", _FOLDER))
+                        drive.add_child("m", FakeItem("fid-1", "001_Title.wav", _FILE))
+                        drive.add_child("m", FakeItem("fid-2", "002_Other.wav", _FILE))
+                        with self.assertRaises(DiscoverError):
+                            discover_channel_tracks(conn, drive, gdrive_library_root_id="lib", channel_slug="darkwood-reverie")
+                        self.assertEqual(drive.names("m"), expected_names)
+                    finally:
+                        conn.close()
+
+        with tempfile.TemporaryDirectory() as td:
+            conn = _conn(td)
+            try:
+                from services.track_analyzer import discover as discover_mod
+                encoded = discover_mod._encode_temp_original_name("001_Original Title.wav")
+                drive = _base_drive()
+                drive.add_child("audio", FakeItem("m", "2026-02", _FOLDER))
+                drive.add_child("m", FakeItem("fid-1", f".__discover_tmp__{encoded}__123_1_fid-1.wav", _FILE))
+                discover_channel_tracks(conn, drive, gdrive_library_root_id="lib", channel_slug="darkwood-reverie")
+                self.assertEqual(drive.names("m"), ["0001_Original Title.wav"])
+                row = conn.execute("SELECT filename, title FROM tracks WHERE gdrive_file_id='fid-1'").fetchone()
+                self.assertEqual(row["filename"], "0001_Original Title.wav")
+                self.assertEqual(row["title"], "Original Title")
+                self.assertNotIn("__discover_tmp__", row["filename"])
+                self.assertNotIn("__discover_tmp__", row["title"])
+            finally:
+                conn.close()
+
+    def test_drive_update_that_does_not_mutate_fails_integrity_before_db_success(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            conn = _conn(td)
+            try:
+                drive = FakeDrive(mutate=False)
+                drive.add_child("lib", FakeItem("ch", "Darkwood Reverie", _FOLDER))
+                drive.add_child("ch", FakeItem("audio", "Audio", _FOLDER))
+                drive.add_child("audio", FakeItem("m", "2026-02", _FOLDER))
+                drive.add_child("m", FakeItem("fid-1", "001_Title.wav", _FILE))
+                with self.assertRaises(DiscoverError) as ctx:
+                    discover_channel_tracks(conn, drive, gdrive_library_root_id="lib", channel_slug="darkwood-reverie")
+                self.assertIn("TRACK_DISCOVER_INTEGRITY_FAILED", str(ctx.exception))
+                self.assertIsNone(conn.execute("SELECT 1 FROM tracks WHERE gdrive_file_id='fid-1'").fetchone())
             finally:
                 conn.close()
 
