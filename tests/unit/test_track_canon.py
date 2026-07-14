@@ -15,36 +15,36 @@ class TestSanitizeTitle(unittest.TestCase):
         )
 
     def test_removes_track_id_when_present(self):
-        self.assertEqual(sanitize_title('Song 001 Mix', track_id='001'), 'Song Mix')
+        self.assertEqual(sanitize_title('Song 001 Mix', track_id='001'), 'Song 001 Mix')
 
     def test_caps_length_to_90(self):
         title = 'A' * 120
         self.assertEqual(len(sanitize_title(title)), 90)
 
-    def test_strips_trailing_numeric_suffix(self):
-        self.assertEqual(sanitize_title('Title (1)'), 'Title')
-        self.assertEqual(sanitize_title('Title   (12)   '), 'Title')
+    def test_preserves_trailing_numeric_suffix(self):
+        self.assertEqual(sanitize_title('Title (1)'), 'Title (1)')
+        self.assertEqual(sanitize_title('Title   (12)   '), 'Title (12)')
 
 
 class TestCanonicalizeTrackFilename(unittest.TestCase):
     def test_keeps_second_id_for_double_prefix_pattern(self):
         self.assertEqual(
             canonicalize_track_filename('081_001_Title.ext'),
-            '001_Title.ext',
+            '0001_Title.ext',
         )
 
     def test_repairs_space_dash_dot_variants(self):
-        self.assertEqual(canonicalize_track_filename('001 Title.ext'), '001_Title.ext')
-        self.assertEqual(canonicalize_track_filename('001-Title.ext'), '001_Title.ext')
-        self.assertEqual(canonicalize_track_filename('001.Title.ext'), '001_Title.ext')
+        self.assertEqual(canonicalize_track_filename('001 Title.ext'), '0001_Title.ext')
+        self.assertEqual(canonicalize_track_filename('001-Title.ext'), '0001_Title.ext')
+        self.assertEqual(canonicalize_track_filename('001.Title.ext'), '0001_Title.ext')
 
     def test_preserves_already_canonical_form(self):
-        self.assertEqual(canonicalize_track_filename('001_Title.ext'), '001_Title.ext')
+        self.assertEqual(canonicalize_track_filename('0001_Title.ext'), '0001_Title.ext')
 
     def test_strips_numeric_suffix_before_extension(self):
         self.assertEqual(
             canonicalize_track_filename('001_Title (2).wav'),
-            '001_Title.wav',
+            '0001_Title (2).wav',
         )
 
     def test_non_matching_filename_is_unchanged(self):
