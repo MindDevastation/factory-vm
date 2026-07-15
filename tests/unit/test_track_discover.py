@@ -68,7 +68,7 @@ class TestTrackDiscover(unittest.TestCase):
 
                 self.assertEqual(stats.seen_wav, 1)
                 self.assertEqual(stats.renamed, 1)
-                self.assertIn(("fid-1", "001_Title.wav"), drive.rename_calls)
+                self.assertIn(("fid-1", "0001_Title 1.wav"), drive.rename_calls)
             finally:
                 conn.close()
 
@@ -143,24 +143,22 @@ class TestTrackDiscover(unittest.TestCase):
                 )
 
                 self.assertEqual(stats.seen_wav, 4)
-                self.assertEqual(stats.inserted, 2)
+                self.assertEqual(stats.inserted, 3)
                 self.assertEqual(stats.updated, 1)
 
-                collision_suffix = deterministic_hash_suffix(
-                    "darkwood-reverie", "202501", "fid-rename", "001 Title.wav", "001_Title.wav"
-                )
-                self.assertIn(("fid-rename", f"001_Title_{collision_suffix}.wav"), drive.rename_calls)
-                self.assertIn(("fid-noid", "002_Ambient mix.wav"), drive.rename_calls)
-                self.assertIn(("fid-upd", "003_New Name.wav"), drive.rename_calls)
+                self.assertIn(("fid-existing", "0001_Title.wav"), drive.rename_calls)
+                self.assertIn(("fid-rename", "0002_Title Variant 2.wav"), drive.rename_calls)
+                self.assertIn(("fid-upd", "0003_New Name.wav"), drive.rename_calls)
+                self.assertIn(("fid-noid", "0004_Ambient mix.wav"), drive.rename_calls)
 
                 rows = conn.execute(
                     "SELECT channel_slug, track_id, gdrive_file_id, filename, month_batch FROM tracks WHERE channel_slug=? ORDER BY track_id ASC",
                     ("darkwood-reverie",),
                 ).fetchall()
-                self.assertEqual(len(rows), 3)
+                self.assertEqual(len(rows), 4)
                 by_id = {r["gdrive_file_id"]: r for r in rows}
-                self.assertEqual(by_id["fid-upd"]["track_id"], "003")
-                self.assertEqual(by_id["fid-noid"]["track_id"], "002")
+                self.assertEqual(by_id["fid-upd"]["track_id"], "0003")
+                self.assertEqual(by_id["fid-noid"]["track_id"], "0004")
                 self.assertEqual(by_id["fid-rename"]["month_batch"], "202501")
                 self.assertEqual(by_id["fid-noid"]["month_batch"], "202501")
                 self.assertEqual(by_id["fid-upd"]["month_batch"], "202501")
@@ -174,7 +172,7 @@ class TestTrackDiscover(unittest.TestCase):
                 self.assertEqual(stats_second.inserted, 0)
                 self.assertEqual(
                     conn.execute("SELECT COUNT(*) AS n FROM tracks WHERE channel_slug=?", ("darkwood-reverie",)).fetchone()["n"],
-                    3,
+                    4,
                 )
             finally:
                 conn.close()

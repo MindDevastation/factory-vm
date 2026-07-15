@@ -99,7 +99,11 @@ def _run_track_discover(conn, *, env: Env, job_id: int, channel_slug: str) -> No
     )
     msg = (
         f"discover done channel={channel_slug} seen_wav={stats.seen_wav} "
-        f"renamed={stats.renamed} inserted={stats.inserted} updated={stats.updated}"
+        f"renamed={stats.renamed} inserted={stats.inserted} updated={stats.updated} "
+        f"ids_repaired={stats.ids_repaired} legacy_three_digit_migrated={stats.legacy_three_digit_migrated} "
+        f"duplicate_ids_repaired={stats.duplicate_ids_repaired} duplicate_titles_repaired={stats.duplicate_titles_repaired} "
+        f"stacked_prefixes_repaired={stats.stacked_prefixes_repaired} stale_db_rows={stats.stale_db_rows} "
+        f"unparseable_month_folders={stats.unparseable_month_folders}"
     )
     level = "WARN" if stats.seen_wav == 0 else "INFO"
     tjdb.append_log(conn, job_id=job_id, level=level, message=msg)
