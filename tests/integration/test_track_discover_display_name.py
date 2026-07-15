@@ -77,8 +77,8 @@ class TestTrackDiscoverDisplayName(unittest.TestCase):
                     ("darkwood-reverie",),
                 ).fetchone()
                 assert row is not None
-                self.assertEqual(row["track_id"], "001")
-                self.assertEqual(row["filename"], "001_Title.wav")
+                self.assertEqual(row["track_id"], "0001")
+                self.assertEqual(row["filename"], "0001_Title.wav")
             finally:
                 conn2.close()
 

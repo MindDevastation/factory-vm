@@ -12,7 +12,6 @@ from typing import Optional
 
 _FORBIDDEN_TITLE_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
 _WHITESPACE_RE = re.compile(r"\s+")
-_TRAILING_NUMERIC_SUFFIX_RE = re.compile(r"\s+\(\d+\)\s*$")
 
 
 def sanitize_title(title: str, track_id: Optional[str] = None, max_len: int = 90) -> str:
@@ -23,46 +22,34 @@ def sanitize_title(title: str, track_id: Optional[str] = None, max_len: int = 90
     - repeated whitespace is collapsed to one space,
     - output is trimmed,
     - output length is capped (default 90),
-    - if ``track_id`` is provided, it is removed from the title.
+    - if ``track_id`` is provided, only leading ID prefixes are removed from the title.
     """
 
     cleaned = _FORBIDDEN_TITLE_CHARS_RE.sub(" ", title)
     if track_id:
-        cleaned = cleaned.replace(str(track_id), " ")
-    cleaned = _TRAILING_NUMERIC_SUFFIX_RE.sub("", cleaned)
+        cleaned = re.sub(rf"^(?:{re.escape(str(track_id))})(?:[_ .-]+)", "", cleaned)
 
     cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
     return cleaned[:max_len].rstrip()
 
 
 def canonicalize_track_filename(filename: str) -> str:
-    """Repair supported non-canonical track filename patterns.
-
-    Behavior:
-    - ``081_001_Title.ext`` -> keep second id (``001_Title.ext``)
-    - ``001 Title.ext`` / ``001-Title.ext`` / ``001.Title.ext`` -> ``001_Title.ext``
-    - canonical ``XXX_Title.ext`` is preserved (no extra prefixing)
-    """
+    """Repair supported non-canonical track filename patterns to four-digit IDs."""
 
     stem, ext = os.path.splitext(filename)
+    prefixes: list[str] = []
+    rest = stem
+    while True:
+        match = re.match(r"^(\d{3,4})[_ .-]+(.+)$", rest)
+        if not match:
+            break
+        prefixes.append(match.group(1))
+        rest = match.group(2)
+    if not prefixes:
+        return filename
 
-    match = re.match(r"^(\d{3})_(\d{3})_(.+)$", stem)
-    if match:
-        track_id = match.group(2)
-        title = match.group(3)
-    else:
-        match = re.match(r"^(\d{3})_(.+)$", stem)
-        if match:
-            track_id = match.group(1)
-            title = match.group(2)
-        else:
-            match = re.match(r"^(\d{3})[ .-]+(.+)$", stem)
-            if not match:
-                return filename
-            track_id = match.group(1)
-            title = match.group(2)
-
-    safe_title = sanitize_title(title, track_id=track_id)
+    track_id = f"{int(prefixes[-1]):04d}"
+    safe_title = sanitize_title(rest, track_id=track_id) or "Track"
     return f"{track_id}_{safe_title}{ext}"
 
 
